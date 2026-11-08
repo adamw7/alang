@@ -22,6 +22,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.UnaryOperator;
 
 /**
  * Compiles a checked ALang program to a single, self-contained C99 file.
@@ -141,45 +142,45 @@ public final class CGen {
             String t = cPrim(k);
             String n = k.name;
             String sig = "(" + t + " a, " + t + " b, int line, int col)";
-            String ovf = "al_overflow(\"%s\", \"" + n + "\", line, col)";
+            UnaryOperator<String> ovf = op -> "al_overflow(\"" + op + "\", \"" + n + "\", line, col)";
             if (k == PrimKind.I64) {
                 sb.append("static int64_t al_add_i64").append(sig).append(" {\n")
-                    .append("    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) ").append(ovf.formatted("+")).append(";\n")
+                    .append("    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) ").append(ovf.apply("+")).append(";\n")
                     .append("    return a + b;\n}\n");
                 sb.append("static int64_t al_sub_i64").append(sig).append(" {\n")
-                    .append("    if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) ").append(ovf.formatted("-")).append(";\n")
+                    .append("    if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) ").append(ovf.apply("-")).append(";\n")
                     .append("    return a - b;\n}\n");
                 sb.append("static int64_t al_mul_i64").append(sig).append(" {\n")
                     .append("    int bad;\n")
                     .append("    if (a > 0) bad = b > 0 ? a > INT64_MAX / b : b < INT64_MIN / a;\n")
                     .append("    else bad = b > 0 ? a < INT64_MIN / b : (a != 0 && b < INT64_MAX / a);\n")
-                    .append("    if (bad) ").append(ovf.formatted("*")).append(";\n")
+                    .append("    if (bad) ").append(ovf.apply("*")).append(";\n")
                     .append("    return a * b;\n}\n");
             } else if (k == PrimKind.U64) {
                 sb.append("static uint64_t al_add_u64").append(sig).append(" {\n")
-                    .append("    if (a + b < a) ").append(ovf.formatted("+")).append(";\n    return a + b;\n}\n");
+                    .append("    if (a + b < a) ").append(ovf.apply("+")).append(";\n    return a + b;\n}\n");
                 sb.append("static uint64_t al_sub_u64").append(sig).append(" {\n")
-                    .append("    if (a < b) ").append(ovf.formatted("-")).append(";\n    return a - b;\n}\n");
+                    .append("    if (a < b) ").append(ovf.apply("-")).append(";\n    return a - b;\n}\n");
                 sb.append("static uint64_t al_mul_u64").append(sig).append(" {\n")
-                    .append("    if (a != 0 && b > UINT64_MAX / a) ").append(ovf.formatted("*")).append(";\n    return a * b;\n}\n");
+                    .append("    if (a != 0 && b > UINT64_MAX / a) ").append(ovf.apply("*")).append(";\n    return a * b;\n}\n");
             } else {
                 String w = k.signed ? "int64_t" : "uint64_t";
                 for (String[] op : new String[][] {{"add", "+"}, {"mul", "*"}}) {
                     sb.append("static ").append(t).append(" al_").append(op[0]).append('_').append(n).append(sig).append(" {\n")
                         .append("    ").append(w).append(" r = (").append(w).append(")a ").append(op[1]).append(" (").append(w).append(")b;\n")
                         .append("    if (").append(k.signed ? "r < " + cMin(k) + " || " : "").append("r > ").append(cMax(k)).append(") ")
-                        .append(ovf.formatted(op[1])).append(";\n")
+                        .append(ovf.apply(op[1])).append(";\n")
                         .append("    return (").append(t).append(")r;\n}\n");
                 }
                 sb.append("static ").append(t).append(" al_sub_").append(n).append(sig).append(" {\n")
                     .append("    int64_t r = (int64_t)a - (int64_t)b;\n")
-                    .append("    if (r < ").append(cMin(k)).append(" || r > ").append(cMax(k)).append(") ").append(ovf.formatted("-")).append(";\n")
+                    .append("    if (r < ").append(cMin(k)).append(" || r > ").append(cMax(k)).append(") ").append(ovf.apply("-")).append(";\n")
                     .append("    return (").append(t).append(")r;\n}\n");
             }
             // division and remainder
             sb.append("static ").append(t).append(" al_div_").append(n).append(sig).append(" {\n")
                 .append("    if (b == 0) al_div_zero(\"division by zero\", line, col);\n");
-            if (k.signed) sb.append("    if (a == ").append(cMin(k)).append(" && b == -1) ").append(ovf.formatted("/")).append(";\n");
+            if (k.signed) sb.append("    if (a == ").append(cMin(k)).append(" && b == -1) ").append(ovf.apply("/")).append(";\n");
             sb.append("    return (").append(t).append(")(a / b);\n}\n");
             sb.append("static ").append(t).append(" al_rem_").append(n).append(sig).append(" {\n")
                 .append("    if (b == 0) al_div_zero(\"remainder by zero\", line, col);\n");
@@ -188,7 +189,7 @@ public final class CGen {
             String u = cPrim(unsignedOf(k));
             if (k.signed) {
                 sb.append("static ").append(t).append(" al_neg_").append(n).append("(").append(t).append(" a, int line, int col) {\n")
-                    .append("    if (a == ").append(cMin(k)).append(") ").append(ovf.formatted("-")).append(";\n")
+                    .append("    if (a == ").append(cMin(k)).append(") ").append(ovf.apply("-")).append(";\n")
                     .append("    return (").append(t).append(")-a;\n}\n");
                 sb.append("static ").append(t).append(" al_bnot_").append(n).append("(").append(t).append(" a) {\n")
                     .append("    return a < 0 ? (").append(t).append(")-(a + 1) : (").append(t).append(")(-a - 1);\n}\n");
