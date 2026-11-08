@@ -140,7 +140,8 @@ tests/examples/           golden output of the examples
 ## Development
 
 ```sh
-mvn test                          # 230+ tests: conformance, examples, determinism, fuzzing, C backend
+mvn test                          # 240+ tests: conformance, examples, determinism, fuzzing, C backend, architecture
+mvn test -Dtest=ArchitectureTest  # just the ArchUnit rules (package layers, no clock/locale/I/O in the core)
 mvn test -Dalang.fuzz=3000        # a longer fuzzing campaign
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```

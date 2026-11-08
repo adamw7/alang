@@ -150,7 +150,7 @@ public final class Main {
         if (positional.isEmpty()) throw new UsageException("missing source file");
         Path p = Path.of(positional.get(0));
         try {
-            return Source.read(p);
+            return new Source(p.toString(), Files.readString(p, StandardCharsets.UTF_8));
         } catch (NoSuchFileException e) {
             throw new UsageException("file not found: " + p);
         } catch (IOException e) {
