@@ -1,5 +1,7 @@
 # ALang
 
+Agentic language. For agents. Not for humans. Does not use heaps and other source of problems.
+
 **An agent-first programming language: no heap, fully deterministic, always terminates.**
 
 ALang is a small, statically typed language designed to be written by AI agents and executed
