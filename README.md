@@ -1,5 +1,7 @@
 # ALang
 
+[![CI](https://github.com/adamw7/alang/actions/workflows/ci.yml/badge.svg)](https://github.com/adamw7/alang/actions/workflows/ci.yml)
+
 Agentic language. For agents. Not for humans. Does not use heaps and other source of problems.
 
 **An agent-first programming language: no heap, fully deterministic, always terminates.**
@@ -145,6 +147,10 @@ mvn test -Dtest=ArchitectureTest  # just the ArchUnit rules (package layers, no 
 mvn test -Dalang.fuzz=3000        # a longer fuzzing campaign
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on JDK 21 with gcc
+and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
+packaged jar, and runs a 3000-mutation fuzzing campaign.
 
 ## Status
 
