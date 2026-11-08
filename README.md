@@ -154,7 +154,9 @@ packaged jar, and runs a 3000-mutation fuzzing campaign.
 
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
 plugins and GitHub Actions. The ANTLR tool and runtime are updated together, the Maven plugins
-in one pull request, and the workflow's actions in another.
+in one pull request, and the workflow's actions in another. Renovate merges each of its pull
+requests once every CI check on it has passed, rebasing it onto `main` first if it has fallen
+behind.
 
 ## Status
 
