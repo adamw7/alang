@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "description": "The ANTLR tool generates the parser and the ANTLR runtime runs it, so both move to a new version together.",
+      "matchPackageNames": ["org.antlr:*"],
+      "groupName": "ANTLR"
+    },
+    {
+      "description": "Maven build plugins only affect the build: update them in one pull request.",
+      "matchPackageNames": ["org.apache.maven.plugins:*"],
+      "groupName": "Maven plugins"
+    },
+    {
+      "description": "Update the CI workflow's actions in one pull request.",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    }
+  ]
+}

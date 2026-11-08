@@ -152,6 +152,10 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on
 and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
 packaged jar, and runs a 3000-mutation fuzzing campaign.
 
+Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
+plugins and GitHub Actions. The ANTLR tool and runtime are updated together, the Maven plugins
+in one pull request, and the workflow's actions in another.
+
 ## Status
 
 Version 0.1. Not yet included: modules/imports, generics, slices, a formatter, and a
