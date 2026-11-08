@@ -1,0 +1,10 @@
+int=-42 u=7 f=2.5 b=true c=120x
+31 64
+33 31
+Abc 98 true true
+true 128
+[] 0 true
+l count: 2
+["tab\there", "quote\"q", "nl\nback\\"]
+café
+going

@@ -1,0 +1,16 @@
+eval a
+eval b
+eval c
+s = 7
+eval b
+eval a
+P(a: 1, b: 2)
+eval value
+eval index
+[0, 5]
+cond 1
+cond 3
+short-circuit ok
+eval x
+eval y
+12

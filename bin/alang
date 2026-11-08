@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# ALang launcher: builds target/alang.jar on first use, then runs it.
+set -e
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+JAR="$ROOT/target/alang.jar"
+if [ ! -f "$JAR" ] || [ "$ROOT/grammar/ALang.g4" -nt "$JAR" ]; then
+  echo "alang: building $JAR (first run)..." >&2
+  (cd "$ROOT" && mvn -q -B -DskipTests package >&2)
+fi
+exec java -jar "$JAR" "$@"

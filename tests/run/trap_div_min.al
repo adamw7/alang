@@ -1,0 +1,1 @@
+fn main() { let a: i32 = -2147483648; let b: i32 = -1; print(a / b); }

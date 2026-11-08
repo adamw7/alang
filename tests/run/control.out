@@ -1,0 +1,16 @@
+0: Light.Red
+1: Light.Green
+2: Light.Yellow
+3: Light.Red
+zero, one, minus one, positive, negative
+odd sum below 8: 16
+collatz(27) steps: 111
+01
+02
+10
+20
+long
+250
+251
+252
+empty ranges ran 0 times
