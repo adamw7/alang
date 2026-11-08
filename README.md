@@ -147,8 +147,8 @@ mvn test -Dalang.fuzz=3000        # a longer fuzzing campaign
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` with gcc and clang
-on Linux (JDK 21 and 25) and macOS (JDK 21), smoke-tests the `bin/alang` commands against the
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on JDK 21 with gcc
+and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
 packaged jar, and runs a 3000-mutation fuzzing campaign.
 
 ## Status
