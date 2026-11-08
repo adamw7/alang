@@ -1,0 +1,4 @@
+Counter(hits: [10, 20], total: 32)
+Counter(hits: [11, 0], total: 32)
+[1, 2, 4]
+32 38

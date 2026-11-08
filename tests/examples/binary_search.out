@@ -1,0 +1,4 @@
+search 13 -> 4
+search 144 -> 9
+search -5 -> 0
+search 7 -> -1

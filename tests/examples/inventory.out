@@ -1,0 +1,5 @@
+stock value: 66271
+order 3 x B-200: OrderResult.Accepted(11997)
+order 3 x B-200: OrderResult.OutOfStock("B-200", 1)
+order 1 x Z-999: OrderResult.UnknownSku("Z-999")
+stock value: 54274

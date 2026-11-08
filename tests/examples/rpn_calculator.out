@@ -1,0 +1,5 @@
+3 4 + 2 * => Outcome.Value(14)
+100 7 / => Outcome.Value(14)
+1 2 3 => Outcome.Leftover(3)
+5 0 / => Outcome.DivisionByZero
+2 x => Outcome.BadInput(2)

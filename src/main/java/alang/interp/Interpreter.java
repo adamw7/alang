@@ -1,0 +1,732 @@
+package alang.interp;
+
+import alang.ast.Ast.*;
+import alang.ast.Builtin;
+import alang.diag.Code;
+import alang.diag.Source;
+import alang.diag.Span;
+import alang.interp.Values.ArrV;
+import alang.interp.Values.EnumV;
+import alang.interp.Values.ListV;
+import alang.interp.Values.StrV;
+import alang.interp.Values.StructV;
+import alang.types.PrimKind;
+import alang.types.Type;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Deque;
+import java.util.List;
+
+/**
+ * A tree-walking reference interpreter. It implements ALang semantics exactly: value
+ * semantics for aggregates, checked arithmetic, bounds checks, contracts, loop limits.
+ */
+public final class Interpreter {
+    public static final long DEFAULT_MAX_STEPS = 100_000_000L;
+
+    private static final int NORMAL = 0;
+    private static final int BREAK = 1;
+    private static final int CONTINUE = 2;
+    private static final int RETURN = 3;
+
+    private final Source source;
+    private final OutputStream out;
+    private final long maxSteps;
+    private long steps;
+    private Object retVal;
+
+    private record CallSite(String name, Span site) {}
+
+    private final Deque<CallSite> callStack = new ArrayDeque<>();
+
+    public Interpreter(Source source, OutputStream out, long maxSteps) {
+        this.source = source;
+        this.out = out;
+        this.maxSteps = maxSteps;
+    }
+
+    /** Evaluates a constant expression (the checker guarantees it needs no frame). */
+    public static Object evalConst(Expr e) {
+        Interpreter in = new Interpreter(null, OutputStream.nullOutputStream(), 0);
+        return in.owned(e, null);
+    }
+
+    public long steps() {
+        return steps;
+    }
+
+    // =================================================================== entry points
+
+    /** Calls a function with already-converted argument values. */
+    public Object call(FnDecl f, Object[] args, Span site) {
+        try {
+            return invoke(f, args, site);
+        } catch (Trap t) {
+            fillTrace(t);
+            throw t;
+        } finally {
+            flush();
+        }
+    }
+
+    public void runTest(TestDecl t) {
+        try {
+            Object[] slots = new Object[t.frameSlots()];
+            callStack.push(new CallSite("test \"" + t.name + "\"", t.span));
+            execBlock(t.body, slots);
+            callStack.pop();
+        } catch (Trap trap) {
+            fillTrace(trap);
+            throw trap;
+        } finally {
+            flush();
+        }
+    }
+
+    private void fillTrace(Trap t) {
+        if (!t.trace.isEmpty()) return;
+        int i = 0;
+        for (CallSite c : callStack) {
+            boolean outermost = ++i == callStack.size();
+            String where = outermost ? " (entry point, line " + c.site.line() + ")"
+                : " (called at " + c.site.line() + ":" + c.site.col() + ")";
+            t.trace.add(c.name + where);
+        }
+        callStack.clear();
+    }
+
+    private void flush() {
+        try {
+            out.flush();
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    private void step(Span at) {
+        if (maxSteps > 0 && ++steps > maxSteps) {
+            throw new Trap(Code.R0011, at, "step budget of " + maxSteps + " statements exhausted");
+        }
+    }
+
+    private String text(Span s) {
+        if (source == null) return "?";
+        String line = source.line(s.line());
+        int start = Math.max(0, s.col() - 1);
+        int end = Math.min(line.length(), start + s.length());
+        return start < end ? line.substring(start, end) : "?";
+    }
+
+    // =================================================================== functions
+
+    private Object invoke(FnDecl f, Object[] args, Span site) {
+        Object[] slots = new Object[f.frameSlots()];
+        System.arraycopy(args, 0, slots, 0, args.length);
+        callStack.push(new CallSite("fn " + f.name, site));
+        for (Expr r : f.requires) {
+            if (!(Boolean) eval(r, slots)) {
+                throw new Trap(Code.R0006, site, "precondition of `" + f.name + "` failed: requires " + text(r.span));
+            }
+        }
+        retVal = null;
+        execBlock(f.body, slots);
+        Object result = retVal == null ? null : Values.coerce(retVal, f.ret);
+        retVal = null;
+        if (f.resultVar != null) slots[f.resultVar.slot] = result;
+        for (Expr e : f.ensures) {
+            if (!(Boolean) eval(e, slots)) {
+                String detail = f.resultVar != null ? " (result = " + Format.toText(result, f.ret) + ")" : "";
+                throw new Trap(Code.R0007, e.span, "postcondition of `" + f.name + "` failed: ensures " + text(e.span) + detail);
+            }
+        }
+        callStack.pop();
+        return result;
+    }
+
+    // =================================================================== statements
+
+    private int execBlock(Block b, Object[] slots) {
+        for (Stmt s : b.stmts) {
+            int r = exec(s, slots);
+            if (r != NORMAL) return r;
+        }
+        return NORMAL;
+    }
+
+    private int exec(Stmt s, Object[] slots) {
+        step(s.span);
+        switch (s) {
+            case Let l -> {
+                slots[l.var.slot] = Values.coerce(owned(l.init, slots), l.var.type);
+                return NORMAL;
+            }
+            case Assign a -> {
+                assign(a, slots);
+                return NORMAL;
+            }
+            case If i -> {
+                for (int k = 0; k < i.conds.size(); k++) {
+                    if ((Boolean) eval(i.conds.get(k), slots)) return execBlock(i.blocks.get(k), slots);
+                }
+                return i.elseBlock != null ? execBlock(i.elseBlock, slots) : NORMAL;
+            }
+            case While w -> {
+                return whileLoop(w, slots);
+            }
+            case For f -> {
+                return f.isRange() ? rangeLoop(f, slots) : eachLoop(f, slots);
+            }
+            case Match m -> {
+                return match(m, slots);
+            }
+            case Break b -> {
+                return BREAK;
+            }
+            case Continue c -> {
+                return CONTINUE;
+            }
+            case Return r -> {
+                retVal = r.value == null ? null : owned(r.value, slots);
+                return RETURN;
+            }
+            case Assert a -> {
+                assertStmt(a, slots);
+                return NORMAL;
+            }
+            case ExprStmt e -> {
+                eval(e.expr, slots);
+                return NORMAL;
+            }
+        }
+    }
+
+    private void assign(Assign a, Object[] slots) {
+        Type t = a.target.type;
+        if (a.op == null) {
+            Object v = Values.coerce(owned(a.value, slots), t);
+            ref(a.target, slots).set(v);
+            return;
+        }
+        Object rhs = eval(a.value, slots);
+        Ref r = ref(a.target, slots);
+        r.set(arith(a.op, Type.kind(t), Type.kind(a.value.type), r.get(), rhs, a.span));
+    }
+
+    private int whileLoop(While w, Object[] slots) {
+        Object lim = eval(w.limit, slots);
+        PrimKind lk = Type.kind(w.limit.type);
+        long count = 0;
+        while ((Boolean) eval(w.cond, slots)) {
+            boolean exceeded = lk == PrimKind.U64 ? Long.compareUnsigned(count, (Long) lim) >= 0 : count >= (Long) lim;
+            if (exceeded) {
+                throw new Trap(Code.R0008, w.span, "while loop exceeded its limit of " + IntOps.toString(lk, (Long) lim)
+                    + " iterations");
+            }
+            count++;
+            step(w.span);
+            int r = execBlock(w.body, slots);
+            if (r == BREAK) break;
+            if (r == RETURN) return r;
+        }
+        return NORMAL;
+    }
+
+    private int rangeLoop(For f, Object[] slots) {
+        PrimKind k = Type.kind(f.var.type);
+        long from = (Long) eval(f.from, slots);
+        long to = (Long) eval(f.to, slots);
+        for (long i = from; IntOps.compare(k, i, to) < 0; i++) {
+            step(f.span);
+            slots[f.var.slot] = i;
+            int r = execBlock(f.body, slots);
+            if (r == BREAK) break;
+            if (r == RETURN) return r;
+        }
+        return NORMAL;
+    }
+
+    private int eachLoop(For f, Object[] slots) {
+        // The collection is evaluated once and iterated as a snapshot.
+        Object coll = owned(f.from, slots);
+        Object[] items;
+        int n;
+        StrV str = null;
+        switch (coll) {
+            case ArrV a -> {
+                items = a.items;
+                n = items.length;
+            }
+            case ListV l -> {
+                items = l.items;
+                n = l.len;
+            }
+            case StrV s -> {
+                items = null;
+                str = s;
+                n = s.len;
+            }
+            default -> throw new IllegalStateException();
+        }
+        for (int i = 0; i < n; i++) {
+            step(f.span);
+            slots[f.var.slot] = str != null ? (Object) (long) (str.b[i] & 0xFF) : items[i];
+            int r = execBlock(f.body, slots);
+            if (r == BREAK) break;
+            if (r == RETURN) return r;
+        }
+        return NORMAL;
+    }
+
+    private int match(Match m, Object[] slots) {
+        Object v = eval(m.subject, slots);
+        for (Arm arm : m.arms) {
+            if (matches(arm.pattern, v, slots)) return execBlock(arm.body, slots);
+        }
+        throw new IllegalStateException("non-exhaustive match passed the checker");
+    }
+
+    private boolean matches(Pattern p, Object v, Object[] slots) {
+        switch (p) {
+            case WildPat w -> {
+                return true;
+            }
+            case VariantPat vp -> {
+                EnumV e = (EnumV) v;
+                if (e.tag != vp.variant.index) return false;
+                for (int i = 0; i < vp.vars.size(); i++) {
+                    LocalVar lv = vp.vars.get(i);
+                    if (lv != null) slots[lv.slot] = e.payload[i];
+                }
+                return true;
+            }
+            case IntPat ip -> {
+                return ((Long) v) == ip.value.longValue();
+            }
+            case StrPat sp -> {
+                StrV s = (StrV) v;
+                return s.len == sp.value.length && Arrays.equals(s.b, 0, s.len, sp.value, 0, sp.value.length);
+            }
+            case BoolPat bp -> {
+                return (Boolean) v == bp.value;
+            }
+        }
+    }
+
+    private void assertStmt(Assert a, Object[] slots) {
+        Expr c = a.cond;
+        String detail = "";
+        boolean ok;
+        if (c instanceof Binary b && (b.op.isEquality() || b.op.isOrdering())) {
+            Object l = eval(b.left, slots);
+            Object r = eval(b.right, slots);
+            ok = compare(b, l, r);
+            if (!ok) {
+                detail = " (left: " + Format.toText(l, b.left.type) + ", right: " + Format.toText(r, b.right.type) + ")";
+            }
+        } else {
+            ok = (Boolean) eval(c, slots);
+        }
+        if (!ok) {
+            String msg = a.message != null ? a.message + ": " : "";
+            throw new Trap(Code.R0005, a.span, "assertion failed: " + msg + text(c.span) + detail);
+        }
+    }
+
+    // =================================================================== places
+
+    /** A reference to storage: a variable slot, an element, a field or a string byte. */
+    interface Ref {
+        Object get();
+
+        void set(Object v);
+    }
+
+    private record SlotRef(Object[] slots, int i) implements Ref {
+        public Object get() {
+            return slots[i];
+        }
+
+        public void set(Object v) {
+            slots[i] = v;
+        }
+    }
+
+    private record ByteRef(StrV s, int i) implements Ref {
+        public Object get() {
+            return (long) (s.b[i] & 0xFF);
+        }
+
+        public void set(Object v) {
+            s.b[i] = (byte) (long) (Long) v;
+        }
+    }
+
+    private Ref ref(Expr place, Object[] slots) {
+        switch (place) {
+            case Name n -> {
+                if (n.local.byRef) return (Ref) slots[n.local.slot];
+                return new SlotRef(slots, n.local.slot);
+            }
+            case FieldAccess f -> {
+                StructV sv = (StructV) ref(f.target, slots).get();
+                return new SlotRef(sv.fields, f.fieldIndex);
+            }
+            case Index ix -> {
+                Object container = ref(ix.target, slots).get();
+                long i = (Long) eval(ix.index, slots);
+                return elementRef(container, i, Type.kind(ix.index.type), ix.span);
+            }
+            default -> throw new IllegalStateException("not a place");
+        }
+    }
+
+    private Ref elementRef(Object container, long i, PrimKind ik, Span at) {
+        int len = switch (container) {
+            case ArrV a -> a.items.length;
+            case ListV l -> l.len;
+            case StrV s -> s.len;
+            default -> throw new IllegalStateException();
+        };
+        if ((ik == PrimKind.U64 ? Long.compareUnsigned(i, len) >= 0 : (i < 0 || i >= len))) {
+            throw new Trap(Code.R0003, at, "index " + IntOps.toString(ik, i) + " is out of bounds for length " + len);
+        }
+        return switch (container) {
+            case ArrV a -> new SlotRef(a.items, (int) i);
+            case ListV l -> new SlotRef(l.items, (int) i);
+            default -> new ByteRef((StrV) container, (int) i);
+        };
+    }
+
+    // =================================================================== expressions
+
+    private static boolean isPlace(Expr e) {
+        return e instanceof Name || e instanceof Index || (e instanceof FieldAccess f && f.variant == null);
+    }
+
+    /** Evaluates an expression to a value that the caller may store (aggregates are copied). */
+    private Object owned(Expr e, Object[] slots) {
+        Object v = eval(e, slots);
+        return isPlace(e) && Type.isAggregate(e.type) ? Values.copy(v) : v;
+    }
+
+    private Object eval(Expr e, Object[] slots) {
+        switch (e) {
+            case IntLit i -> {
+                if (Type.isFloat(i.type)) return round(i.value.doubleValue(), i.type);
+                return i.value.longValue();
+            }
+            case FloatLit f -> {
+                return round(f.value, f.type);
+            }
+            case StrLit s -> {
+                return new StrV(s.value.clone(), s.value.length);
+            }
+            case BoolLit b -> {
+                return b.value;
+            }
+            case Name n -> {
+                if (n.local != null) {
+                    Object v = slots[n.local.slot];
+                    return n.local.byRef ? ((Ref) v).get() : v;
+                }
+                return n.constant.value;
+            }
+            case FieldAccess f -> {
+                if (f.variant != null) return new EnumV(f.variant.index, new Object[0]);
+                return ((StructV) eval(f.target, slots)).fields[f.fieldIndex];
+            }
+            case Index ix -> {
+                Object container = eval(ix.target, slots);
+                long i = (Long) eval(ix.index, slots);
+                return elementRef(container, i, Type.kind(ix.index.type), ix.span).get();
+            }
+            case Call c -> {
+                return c.builtin != null ? builtin(c, slots) : callUser(c, slots);
+            }
+            case VariantCall v -> {
+                Object[] payload = new Object[v.args.size()];
+                for (int i = 0; i < payload.length; i++) {
+                    payload[i] = Values.coerce(owned(v.args.get(i).expr, slots), v.variant.payload.get(i));
+                }
+                return new EnumV(v.variant.index, payload);
+            }
+            case StructLit s -> {
+                Object[] given = new Object[s.fields.size()];
+                for (int i = 0; i < given.length; i++) given[i] = owned(s.fields.get(i).value, slots);
+                Object[] fields = new Object[s.decl.fields.size()];
+                for (int i = 0; i < fields.length; i++) {
+                    fields[i] = Values.coerce(given[s.order[i]], s.decl.fields.get(i).type);
+                }
+                return new StructV(fields);
+            }
+            case Convert c -> {
+                return convert(c, eval(c.arg, slots));
+            }
+            case Unary u -> {
+                Object v = eval(u.operand, slots);
+                return switch (u.op) {
+                    case NOT -> !(Boolean) v;
+                    // Explicit boxing: a plain ?: would promote the long branch to double.
+                    case NEG -> Type.isFloat(u.type) ? (Object) round(-(Double) v, u.type)
+                        : (Object) IntOps.neg(Type.kind(u.type), (Long) v, u.span);
+                    case BNOT -> IntOps.bnot(Type.kind(u.type), (Long) v);
+                };
+            }
+            case Binary b -> {
+                return binary(b, slots);
+            }
+            case ArrayLit a -> {
+                Type elem = Type.elementOf(a.type);
+                Object[] vals = new Object[a.elems.size()];
+                for (int i = 0; i < vals.length; i++) vals[i] = Values.coerce(owned(a.elems.get(i), slots), elem);
+                if (a.type instanceof Type.ListT l) {
+                    return new ListV(Arrays.copyOf(vals, l.cap()), vals.length);
+                }
+                return new ArrV(vals);
+            }
+            case Repeat r -> {
+                Type elem = Type.elementOf(r.type);
+                Object v = Values.coerce(owned(r.value, slots), elem);
+                int cap = r.type instanceof Type.ListT l ? l.cap() : r.n;
+                Object[] items = new Object[cap];
+                for (int i = 0; i < r.n; i++) items[i] = i == 0 ? v : Values.copy(v);
+                if (r.type instanceof Type.ListT) return new ListV(items, r.n);
+                return new ArrV(items);
+            }
+        }
+    }
+
+    private static double round(double d, Type t) {
+        return Type.kind(t) == PrimKind.F32 ? (double) (float) d : d;
+    }
+
+    private Object callUser(Call c, Object[] slots) {
+        FnDecl f = c.fn;
+        Object[] args = new Object[f.params.size()];
+        for (int i = 0; i < args.length; i++) {
+            LocalVar p = f.paramVars.get(i);
+            Expr a = c.args.get(i).expr;
+            if (p.byRef) {
+                args[i] = ref(a, slots);
+            } else {
+                Object v = eval(a, slots);
+                Object co = Values.coerce(v, p.type);
+                args[i] = co;
+            }
+        }
+        return invoke(f, args, c.span);
+    }
+
+    private Object binary(Binary b, Object[] slots) {
+        if (b.op == BinOp.AND) return (Boolean) eval(b.left, slots) && (Boolean) eval(b.right, slots);
+        if (b.op == BinOp.OR) return (Boolean) eval(b.left, slots) || (Boolean) eval(b.right, slots);
+        Object l = eval(b.left, slots);
+        Object r = eval(b.right, slots);
+        if (b.op.isEquality() || b.op.isOrdering()) return compare(b, l, r);
+        return arith(b.op, Type.kind(b.left.type), Type.kind(b.right.type), l, r, b.span);
+    }
+
+    private boolean compare(Binary b, Object l, Object r) {
+        Type t = b.left.type;
+        if (b.op.isEquality()) {
+            boolean eq = Values.equal(l, r, t);
+            return b.op == BinOp.EQ ? eq : !eq;
+        }
+        int c;
+        if (Type.isFloat(t)) {
+            double x = (Double) l;
+            double y = (Double) r;
+            return switch (b.op) {
+                case LT -> x < y;
+                case LE -> x <= y;
+                case GT -> x > y;
+                default -> x >= y;
+            };
+        }
+        c = IntOps.compare(Type.kind(t), (Long) l, (Long) r);
+        return switch (b.op) {
+            case LT -> c < 0;
+            case LE -> c <= 0;
+            case GT -> c > 0;
+            default -> c >= 0;
+        };
+    }
+
+    private Object arith(BinOp op, PrimKind k, PrimKind rk, Object l, Object r, Span at) {
+        if (k.isFloat) {
+            double x = (Double) l;
+            double y = (Double) r;
+            double v = switch (op) {
+                case ADD -> x + y;
+                case SUB -> x - y;
+                case MUL -> x * y;
+                case DIV -> x / y;
+                default -> throw new IllegalStateException(op.name());
+            };
+            return k == PrimKind.F32 ? (double) (float) v : v;
+        }
+        long x = (Long) l;
+        long y = (Long) r;
+        return switch (op) {
+            case ADD -> IntOps.add(k, x, y, at);
+            case SUB -> IntOps.sub(k, x, y, at);
+            case MUL -> IntOps.mul(k, x, y, at);
+            case DIV -> IntOps.div(k, x, y, at);
+            case MOD -> IntOps.rem(k, x, y, at);
+            case BAND -> x & y;
+            case BOR -> x | y;
+            case BXOR -> x ^ y;
+            case SHL -> IntOps.shl(k, rk, x, y, at);
+            case SHR -> IntOps.shr(k, rk, x, y, at);
+            default -> throw new IllegalStateException(op.name());
+        };
+    }
+
+    private Object convert(Convert c, Object v) {
+        PrimKind from = Type.kind(c.arg.type);
+        PrimKind to = c.target;
+        if (from == to) return v;
+        if (from == PrimKind.BOOL) {
+            long n = (Boolean) v ? 1 : 0;
+            return n;
+        }
+        if (from.isFloat) {
+            double d = (Double) v;
+            if (to == PrimKind.F64) return d;
+            if (to == PrimKind.F32) return (double) (float) d;
+            return IntOps.fromDouble(d, to, c.span);
+        }
+        long n = (Long) v;
+        if (to == PrimKind.F64) return IntOps.toDouble(from, n);
+        if (to == PrimKind.F32) return (double) IntOps.toFloat(from, n);
+        return IntOps.convertInt(from, to, n, c.span);
+    }
+
+    // =================================================================== builtins
+
+    private Object builtin(Call c, Object[] slots) {
+        List<Arg> args = c.args;
+        switch (c.builtin) {
+            case PRINT -> {
+                ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                for (Arg a : args) Format.format(buf, eval(a.expr, slots), a.expr.type, false);
+                buf.write('\n');
+                try {
+                    out.write(buf.toByteArray());
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+                return null;
+            }
+            case LEN -> {
+                return switch (eval(args.get(0).expr, slots)) {
+                    case ArrV a -> (long) a.items.length;
+                    case ListV l -> (long) l.len;
+                    case StrV s -> (long) s.len;
+                    default -> throw new IllegalStateException();
+                };
+            }
+            case CAP -> {
+                Type t = args.get(0).expr.type;
+                return (long) (t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap());
+            }
+            case PUSH -> {
+                Object container = ref(args.get(0).expr, slots).get();
+                Type elem = Type.elementOf(args.get(0).expr.type);
+                Object v = Values.coerce(owned(args.get(1).expr, slots), elem);
+                if (container instanceof ListV l) {
+                    if (l.len == l.items.length) {
+                        throw new Trap(Code.R0004, c.span, "push to a full list (capacity " + l.items.length + ")");
+                    }
+                    l.items[l.len++] = v;
+                } else {
+                    StrV s = (StrV) container;
+                    if (s.len == s.b.length) {
+                        throw new Trap(Code.R0004, c.span, "push to a full str (capacity " + s.b.length + ")");
+                    }
+                    s.b[s.len++] = (byte) (long) (Long) v;
+                }
+                return null;
+            }
+            case POP -> {
+                Object container = ref(args.get(0).expr, slots).get();
+                if (container instanceof ListV l) {
+                    if (l.len == 0) throw new Trap(Code.R0012, c.span, "pop from an empty list");
+                    Object v = l.items[--l.len];
+                    l.items[l.len] = null;
+                    return v;
+                }
+                StrV s = (StrV) container;
+                if (s.len == 0) throw new Trap(Code.R0012, c.span, "pop from an empty str");
+                return (long) (s.b[--s.len] & 0xFF);
+            }
+            case CLEAR -> {
+                Object container = ref(args.get(0).expr, slots).get();
+                if (container instanceof ListV l) {
+                    Arrays.fill(l.items, null);
+                    l.len = 0;
+                } else {
+                    ((StrV) container).len = 0;
+                }
+                return null;
+            }
+            case APPEND -> {
+                Ref target = ref(args.get(0).expr, slots);
+                List<byte[]> parts = new ArrayList<>();
+                for (int i = 1; i < args.size(); i++) {
+                    ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                    Format.format(buf, eval(args.get(i).expr, slots), args.get(i).expr.type, false);
+                    parts.add(buf.toByteArray());
+                }
+                StrV s = (StrV) target.get();
+                for (byte[] p : parts) {
+                    if (s.len + p.length > s.b.length) {
+                        throw new Trap(Code.R0004, c.span, "append exceeds str capacity " + s.b.length
+                            + " (length " + s.len + ", appending " + p.length + " bytes)");
+                    }
+                    System.arraycopy(p, 0, s.b, s.len, p.length);
+                    s.len += p.length;
+                }
+                return null;
+            }
+            case ABS -> {
+                Object v = eval(args.get(0).expr, slots);
+                Type t = c.type;
+                if (Type.isFloat(t)) return Math.abs((Double) v);
+                long n = (Long) v;
+                return n < 0 ? IntOps.neg(Type.kind(t), n, c.span) : n;
+            }
+            case MIN, MAX -> {
+                Object a = eval(args.get(0).expr, slots);
+                Object b = eval(args.get(1).expr, slots);
+                Type t = c.type;
+                boolean bSmaller;
+                if (Type.isFloat(t)) bSmaller = (Double) b < (Double) a;
+                else bSmaller = IntOps.compare(Type.kind(t), (Long) b, (Long) a) < 0;
+                boolean bLarger;
+                if (Type.isFloat(t)) bLarger = (Double) b > (Double) a;
+                else bLarger = IntOps.compare(Type.kind(t), (Long) b, (Long) a) > 0;
+                if (c.builtin == Builtin.MIN) return bSmaller ? b : a;
+                return bLarger ? b : a;
+            }
+            case SQRT, FLOOR, CEIL -> {
+                double d = (Double) eval(args.get(0).expr, slots);
+                double r = switch (c.builtin) {
+                    case SQRT -> Math.sqrt(d);
+                    case FLOOR -> Math.floor(d);
+                    default -> Math.ceil(d);
+                };
+                return round(r, c.type);
+            }
+            case PANIC -> {
+                StrV s = (StrV) eval(args.get(0).expr, slots);
+                throw new Trap(Code.R0010, c.span, "panic: " + new String(s.b, 0, s.len, java.nio.charset.StandardCharsets.UTF_8));
+            }
+        }
+        throw new IllegalStateException();
+    }
+}

@@ -1,0 +1,6 @@
+Shape.Circle(Point(x: 0.0, y: 0.0), 1.0) area=3.141593
+Shape.Rect(Point(x: 0.0, y: 0.0), Point(x: 2.0, y: 3.0)) area=6.0
+Shape.Dot(Point(x: 5.0, y: 5.0)) area=0.0
+total area: 9.141593
+moved copy: Shape.Circle(Point(x: 10.0, y: -1.0), 1.0)
+original:   Shape.Circle(Point(x: 0.0, y: 0.0), 1.0)
