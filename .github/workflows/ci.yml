@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, JDK ${{ matrix.java }})
+    # Branch pushes already run CI; build pull requests only when they come from a fork.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        java: ['21']
+        include:
+          - os: ubuntu-latest
+            java: '25'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - name: Require gcc and clang
+        # CBackendTest skips (instead of failing) when no C compiler is on PATH.
+        run: |
+          gcc --version
+          clang --version
+
+      - name: Build and test
+        run: mvn -B -ntp verify
+
+      - name: CLI smoke test
+        # Exercises the packaged jar through bin/alang, which the unit tests do not.
+        run: |
+          out="$RUNNER_TEMP/alang"
+          mkdir -p "$out"
+
+          # Every example type-checks, passes its tests and prints its golden output.
+          for f in examples/*.al; do
+            n="$(basename "$f" .al)"
+            bin/alang check "$f"
+            bin/alang test "$f"
+            bin/alang run "$f" > "$out/$n.out"
+            diff -u "tests/examples/$n.out" "$out/$n.out"
+          done
+
+          # Tools: JSON definitions and a JSON call.
+          bin/alang tools examples/text_tools.al | python3 -m json.tool > /dev/null
+          bin/alang call examples/inventory.al place_order '{"sku": "B-200", "quantity": 2}' > "$out/call.json"
+          cat "$out/call.json"
+          grep -q '"ok": true' "$out/call.json"
+
+          # C backend: the compiled program prints the same bytes as the interpreter.
+          bin/alang build examples/shapes.al -o "$out/shapes.c"
+          cc -std=c99 -O2 "$out/shapes.c" -lm -o "$out/shapes"
+          "$out/shapes" | diff -u tests/examples/shapes.out -
+
+          # Exit codes: 1 for diagnostics, 2 for usage errors.
+          status=0
+          bin/alang check tests/errors/E0001_and_and.al --json > "$out/err.json" || status=$?
+          test "$status" -eq 1
+          grep -q '"code": "E0001"' "$out/err.json"
+          status=0
+          bin/alang no-such-command || status=$?
+          test "$status" -eq 2
+          bin/alang explain E0215 > /dev/null
+
+  fuzz:
+    name: Fuzz (3000 mutations per program)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Fuzz the checker and interpreter
+        run: mvn -B -ntp test -Dtest=FuzzTest -Dalang.fuzz=3000
