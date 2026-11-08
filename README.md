@@ -59,6 +59,9 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 | **Safe to run agent code** | Tool functions take JSON in and return JSON out with no access to the host. A deterministic step budget bounds runtime. |
 | **Runs anywhere** | A reference interpreter (JVM) and a C99 backend that emits heap-free, stdio-free C with byte-identical behavior. |
 
+[docs/COMPARISON.md](docs/COMPARISON.md) puts these guarantees side by side with Python, JavaScript,
+Go, Rust, C and Java, using programs you can run.
+
 ## Quick start
 
 Requirements: JDK 21+ and Maven. A C compiler is optional (for `alang build`).
@@ -118,6 +121,7 @@ The test suite does not just claim determinism, it checks it:
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — the one-page guide for AI agents writing ALang (start here)
+- [docs/COMPARISON.md](docs/COMPARISON.md) — how ALang compares with Python, JavaScript, Go, Rust and C
 - [docs/SPEC.md](docs/SPEC.md) — the language specification
 - [docs/ERRORS.md](docs/ERRORS.md) — every diagnostic and trap code (generated)
 - [grammar/ALang.g4](grammar/ALang.g4) — the grammar

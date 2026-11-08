@@ -267,7 +267,7 @@ public final class Main {
             "trace", t.trace, "hint", t.code.explanation);
     }
 
-    static String renderTrap(Source src, Trap t) {
+    public static String renderTrap(Source src, Trap t) {
         StringBuilder sb = new StringBuilder();
         sb.append("trap[").append(t.code.name()).append("]: ").append(t.getMessage()).append('\n');
         Span s = t.span;
