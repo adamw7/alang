@@ -145,16 +145,44 @@ tests/examples/           golden output of the examples
 mvn test                          # 240+ tests: conformance, examples, determinism, fuzzing, C backend, architecture
 mvn test -Dtest=ArchitectureTest  # just the ArchUnit rules (package layers, no clock/locale/I/O in the core)
 mvn test -Dalang.fuzz=3000        # a longer fuzzing campaign
+mvn test-compile pitest:mutationCoverage      # mutation testing of the toolchain (see below)
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on JDK 21 with gcc
 and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
-packaged jar, and runs a 3000-mutation fuzzing campaign.
+packaged jar, runs a 3000-mutation fuzzing campaign, and runs mutation testing, uploading the
+report as the `pit-report` artifact.
 
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
-plugins and GitHub Actions. The ANTLR tool and runtime are updated together, the Maven plugins
-in one pull request, and the workflow's actions in another.
+plugins and GitHub Actions. The ANTLR tool and runtime are updated together, PIT and its JUnit 5
+plugin together, the Maven plugins in one pull request, and the workflow's actions in another.
+
+### Mutation testing
+
+The fuzzer mutates ALang *programs* to show that the toolchain never crashes. Mutation testing
+checks the *tests* instead: [PIT](https://pitest.org) makes small changes to the toolchain's
+compiled code (flips a comparison, removes a call, returns a constant) and runs the tests that
+cover the changed line against each of these mutants. A mutant that no test notices points at
+behavior the suite does not pin down.
+
+```sh
+mvn test-compile pitest:mutationCoverage                      # about 2,500 mutants, 7 minutes on 4 cores
+mvn test-compile pitest:mutationCoverage -Dpitest.threads=8   # more parallel JVMs
+```
+
+The report, `target/pit-reports/index.html`, shows every surviving mutant on its source line.
+Every class under `alang` is mutated except the ANTLR-generated parser and the C backend: only
+`CBackendTest` can catch a C backend mutant, and it compiles every program with gcc and clang,
+which would turn minutes into hours. That test and `ArchitectureTest`, which reads class files
+from disk and so never sees a mutant, are left out of the run.
+
+The run fails when the mutation score (mutants killed out of all mutants) drops below 54% or the
+test strength (killed out of those that some test covers) below 70%. The baseline is 55% and
+71%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
+the CLI and the JSON side of tool calls (`Main`, `JsonValues`, `Json`), which the unit tests
+barely reach, and output whose exact text or numbers no test asserts: syntax error hints
+(`SyntaxErrorListener`), rendered diagnostics (`Diagnostics`) and memory layout (`Layout`).
 
 ## Status
 
