@@ -129,7 +129,7 @@ jobs:
   mutation:
     name: Mutation testing (PIT)
     runs-on: ubuntu-latest
-    # A run takes about 4 minutes on the 2-CPU runner.
+    # A run takes about 5 minutes on the 2-CPU runner.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
