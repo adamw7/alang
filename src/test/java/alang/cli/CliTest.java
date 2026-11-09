@@ -179,6 +179,36 @@ class CliTest {
     }
 
     @Test
+    void integerArgumentsWithHugeExponentsAreRejectedQuickly() throws IOException {
+        // Converting these exactly used to run for minutes.
+        Path p = write("t.al", "/// Identity.\ntool fn id(x: i64) -> i64 { return x; }\n");
+        Result big = run("call", p.toString(), "id", "{\"x\": 1e100000000}");
+        assertEquals(1, big.code(), big.err());
+        assertTrue(big.out().contains("\"message\": \"x: 1E+100000000 is out of range for i64"), big.out());
+        Result tiny = run("call", p.toString(), "id", "{\"x\": 1e-100000000}");
+        assertEquals(1, tiny.code(), tiny.err());
+        assertTrue(tiny.out().contains("\"message\": \"x: expected an integer, found 1E-100000000\""), tiny.out());
+        assertEquals("{\"ok\": true, \"result\": 0, \"stdout\": \"\"}\n", run("call", p.toString(), "id", "{\"x\": 0e-100000000}").out());
+        assertEquals("{\"ok\": true, \"result\": 1, \"stdout\": \"\"}\n", run("call", p.toString(), "id", "{\"x\": 100e-2}").out());
+        assertEquals("{\"ok\": true, \"result\": -9223372036854775808, \"stdout\": \"\"}\n",
+            run("call", p.toString(), "id", "{\"x\": -9.223372036854775808e18}").out());
+    }
+
+    @Test
+    void f32ArgumentsAreRoundedOnce() throws IOException {
+        // Just above halfway between 1 and the next f32: via f64 it would land on the halfway point and round down.
+        Path p = write("t.al", "/// Identity.\ntool fn id(x: f32) -> bool { return x != 1.0; }\n");
+        assertEquals("{\"ok\": true, \"result\": true, \"stdout\": \"\"}\n",
+            run("call", p.toString(), "id", "{\"x\": 1.00000005960464477539062500000001}").out());
+    }
+
+    @Test
+    void negativeSizesAreReportedAsNegative() throws IOException {
+        Result r = run("check", write("t.al", "fn main() { let s: str[-1] = \"\"; }\n").toString());
+        assertTrue(r.err().startsWith("error[E0210]: string capacity must be between 1 and 1048576, found -1\n"), r.err());
+    }
+
+    @Test
     void deeplyNestedJsonArgumentsAreAJsonError() throws IOException {
         Path p = write("t.al", "/// Identity.\ntool fn id(x: i64) -> i64 { return x; }\n");
         Result r = run("call", p.toString(), "id", "{\"x\": " + "[".repeat(5000) + "]".repeat(5000) + "}");
