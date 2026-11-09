@@ -1,9 +1,11 @@
 package alang.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import alang.Harness;
 import alang.util.Json;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -34,7 +36,8 @@ class CliTest {
         Result[] result = new Result[1];
         Thread t = new Thread(null, () -> result[0] = run(args), "alang-test", 256 * 1024);
         t.start();
-        t.join();
+        t.join(Harness.TEST_TIMEOUT.toMillis());
+        assertFalse(t.isAlive(), "the command did not finish within " + Harness.TEST_TIMEOUT);
         return result[0];
     }
 
@@ -60,6 +63,18 @@ class CliTest {
         assertEquals(1, r.code(), r.err());
         assertTrue(r.out().startsWith("{\"ok\": false, \"error\": {\"code\": \"bad_json\""), r.out());
         assertEquals("", r.err());
+    }
+
+    @Test
+    void undecodableArgumentIsRefusedOnEveryHost() throws IOException {
+        Path p = write("t.al", "/// Echo.\ntool fn echo(s: str[8]) -> str[8] { return s; }\n");
+        Result r = run("call", p.toString(), "echo", "{\"s\": \"h\uFFFDy\"}");
+        assertEquals(1, r.code(), r.err());
+        assertTrue(r.out().startsWith("{\"ok\": false, \"error\": {\"code\": \"bad_arguments\""), r.out());
+        assertTrue(r.out().contains("pass the arguments on stdin"), r.out());
+        // The same character written as a JSON escape is ordinary input.
+        Result escaped = run("call", p.toString(), "echo", "{\"s\": \"h\\ufffdy\"}");
+        assertEquals(0, escaped.code(), escaped.out() + escaped.err());
     }
 
     @Test

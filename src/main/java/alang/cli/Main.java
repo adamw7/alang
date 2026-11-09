@@ -411,13 +411,12 @@ public final class Main {
             String msg = f == null ? "no function `" + name + "`" : "`" + name + "` is not declared as `tool fn`";
             return callError(j, "bad_tool", msg + "; available tools: " + tools);
         }
-        String argEncoding = System.getProperty("sun.jnu.encoding", "UTF-8");
-        if (fromArgv && argText.indexOf('\uFFFD') >= 0 && !argEncoding.equalsIgnoreCase("UTF-8")) {
-            // Java decoded the argument with a non-UTF-8 host locale and replaced bytes it could not
-            // decode, so the text is no longer what the caller sent. Refuse rather than silently
-            // computing a locale-dependent result.
-            return callError(j, "bad_arguments", "the JSON argument contains characters that could not be decoded in this "
-                + "host locale (" + argEncoding + "); pass the arguments on stdin, or use a UTF-8 locale such as C.UTF-8");
+        if (fromArgv && argText.indexOf('\uFFFD') >= 0) {
+            // Java decodes command-line arguments with the host locale and replaces bytes it cannot
+            // decode with U+FFFD, so the text may not be what the caller sent. Refuse it on every host
+            // rather than compute a result that depends on the locale; stdin is always read as UTF-8.
+            return callError(j, "bad_arguments", "the JSON argument contains U+FFFD, the character Java substitutes for "
+                + "bytes it cannot decode in the host locale; pass the arguments on stdin, or write the character as \\ufffd");
         }
         Object parsed;
         try {
