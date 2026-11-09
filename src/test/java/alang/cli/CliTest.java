@@ -435,6 +435,31 @@ class CliTest {
     }
 
     @Test
+    void strResultsMustBeUtf8() throws IOException {
+        // Bytes that are not UTF-8 used to come back as U+FFFD with "ok": true, so the bytes 0xff 0xc0 and
+        // the three bytes of U+FFFD itself gave the same result.
+        Path p = write("b.al", """
+            struct Named {
+                name: str[8],
+            }
+
+            tool fn named(xs: list[u8; 8]) -> Named {
+                var s: str[8] = "";
+                for x in xs {
+                    push(mut s, x);
+                }
+                return Named(name: s);
+            }
+            """);
+        Result bad = run("call", p.toString(), "named", "{\"xs\": [104, 105, 255, 192]}");
+        assertEquals(1, bad.code(), bad.out());
+        assertTrue(bad.out().startsWith("{\"ok\": false, \"error\": {\"code\": \"bad_result\", \"message\": "
+            + "\"result.name: the str value is not UTF-8 text (byte 0xff at offset 2)"), bad.out());
+        Result good = run("call", p.toString(), "named", "{\"xs\": [104, 105, 239, 191, 189]}");
+        assertEquals("{\"ok\": true, \"result\": {\"name\": \"hi\uFFFD\"}, \"stdout\": \"\"}\n", good.out());
+    }
+
+    @Test
     void theDefaultMemoryBudgetStopsProgramsThatWouldExhaustMemory() throws IOException {
         // Each of these passed `check` and then exhausted the JVM's memory: 8 TiB in a local, in a
         // temporary, and in a constant (which `check` itself evaluates).

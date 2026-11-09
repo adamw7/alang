@@ -404,7 +404,7 @@ more, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are adde
 | `bool` | boolean |
 | integers | integer, range-checked (`minimum`/`maximum` in the schema) |
 | floats | number; NaN and infinities have none, so a result holding one fails with `bad_result`, and an argument too large for the type is rejected |
-| `str[N]` | string of at most N UTF-8 bytes |
+| `str[N]` | string of at most N UTF-8 bytes; a result that is not UTF-8 text has none and fails with `bad_result` |
 | `[T; N]` | array of exactly N items |
 | `list[T; N]` | array of at most N items |
 | struct | object with every field required, no extra fields |

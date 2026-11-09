@@ -13,6 +13,11 @@ import alang.types.Type;
 import alang.util.Json;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CoderResult;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,7 +45,7 @@ public final class JsonValues {
         }
     }
 
-    /** A result that JSON cannot represent: NaN or an infinity. */
+    /** A result that JSON cannot represent: NaN, an infinity, or a str that is not UTF-8 text. */
     public static final class EncodeException extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
@@ -118,8 +123,9 @@ public final class JsonValues {
     /**
      * The JSON form of a value.
      *
-     * @throws EncodeException for NaN and infinities, which JSON cannot represent: writing them as
-     *     null, as before, made a broken result look like a successful one
+     * @throws EncodeException for NaN, infinities and str values that are not UTF-8, which JSON cannot
+     *     represent: writing null or U+FFFD instead, as before, made a broken result look like a successful
+     *     one
      */
     public static Object toJson(Object v, Type t) {
         return switch (t) {
@@ -130,7 +136,8 @@ public final class JsonValues {
                     double d = (Double) v;
                     if (!Double.isFinite(d)) {
                         throw new EncodeException("", "the " + k.name + " value " + Format.toText(v, t)
-                            + " has no JSON representation");
+                            + " has no JSON representation; JSON has no NaN or infinity, so check for them in the tool "
+                            + "and return an enum instead");
                     }
                     // The shortest decimal that reads back as the same f32, as print shows it: 0.1, not
                     // the 0.10000000149011612 that the widened double would print.
@@ -140,7 +147,7 @@ public final class JsonValues {
             }
             case Type.Str s -> {
                 StrV sv = (StrV) v;
-                yield new String(sv.b, 0, sv.len, StandardCharsets.UTF_8);
+                yield utf8Text(sv);
             }
             case Type.ArrayT a -> {
                 List<Object> out = new ArrayList<>();
@@ -182,6 +189,27 @@ public final class JsonValues {
             }
             default -> null;
         };
+    }
+
+    /**
+     * The text of a str for a JSON string, which can only hold Unicode text. Decoding leniently, as before,
+     * turned each byte that is not UTF-8 into U+FFFD, so different results came back as the same string.
+     */
+    private static String utf8Text(StrV sv) {
+        CharsetDecoder dec = StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT);
+        ByteBuffer in = ByteBuffer.wrap(sv.b, 0, sv.len);
+        CharBuffer out = CharBuffer.allocate(sv.len);
+        CoderResult r = dec.decode(in, out, true);
+        if (!r.isError()) r = dec.flush(out);
+        if (r.isError()) {
+            int at = in.position();
+            throw new EncodeException("", "the str value is not UTF-8 text (byte 0x"
+                + String.format(java.util.Locale.ROOT, "%02x", sv.b[at] & 0xFF) + " at offset " + at
+                + "), so it has no JSON string; return its bytes as a list[u8; N] instead");
+        }
+        return out.flip().toString();
     }
 
     /** An element of an array or list; its path is built only for an error. */

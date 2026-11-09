@@ -604,8 +604,7 @@ public final class Main {
             encoded = f.ret instanceof Type.Void ? null : JsonValues.toJson(result, f.ret);
         } catch (JsonValues.EncodeException e) {
             j.put("ok", false);
-            j.put("error", Json.obj("code", "bad_result", "message", e.messageAt("result")
-                + "; JSON has no NaN or infinity, so check for them in the tool and return an enum instead"));
+            j.put("error", Json.obj("code", "bad_result", "message", e.messageAt("result")));
             putStdout(j, captured);
             line(out, Json.write(j));
             return 1;
