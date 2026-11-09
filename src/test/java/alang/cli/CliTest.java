@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-/** The command line: tool calls with malformed JSON, programs nested too deeply, and non-ASCII arguments. */
+/** The command line: tool calls with malformed JSON, the nesting limit, and non-ASCII arguments. */
 class CliTest {
     @TempDir
     Path dir;
@@ -29,15 +29,6 @@ class CliTest {
         int code = new Main(new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(err, true, StandardCharsets.UTF_8))
             .run(args);
         return new Result(code, out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
-    }
-
-    /** Runs the command on a thread with a small stack, so stack exhaustion is quick and certain. */
-    private static Result runWithSmallStack(String... args) throws InterruptedException {
-        Result[] result = new Result[1];
-        Thread t = new Thread(null, () -> result[0] = run(args), "alang-test", 256 * 1024);
-        t.start();
-        t.join();
-        return result[0];
     }
 
     private Path write(String name, String text) throws IOException {
@@ -137,11 +128,61 @@ class CliTest {
     }
 
     @Test
-    void tooDeeplyNestedProgramsFailCleanly() throws Exception {
-        int depth = 3000;
-        Path p = write("deep.al", "fn main() { let x: i64 = " + "1 + ".repeat(depth) + "1; print(x); }\n");
-        Result r = runWithSmallStack("check", p.toString());
-        assertEquals(1, r.code());
-        assertTrue(r.err().startsWith("alang: the program is nested too deeply"), r.err());
+    void tooDeeplyNestedProgramsGetE0404() throws Exception {
+        // Each of these used to exhaust the stack somewhere between a few hundred and a few thousand
+        // levels, depending on the machine. Now the limit is fixed and checked before anything recurses.
+        String plus = "fn main() { let x: i64 = " + "1 + ".repeat(3000) + "1; print(x); }\n";
+        StringBuilder consts = new StringBuilder("fn main() { print(C0); }\n");
+        StringBuilder types = new StringBuilder("fn main() { print(1); }\n");
+        for (int i = 0; i < 3000; i++) {
+            consts.append("const C").append(i).append(": i64 = C").append(i + 1).append(" + 1;\n");
+            types.append("struct S").append(i).append(" {\n    next: S").append(i + 1).append(",\n}\n");
+        }
+        consts.append("const C3000: i64 = 0;\n");
+        types.append("struct S3000 {\n    v: i64,\n}\n");
+        for (String program : new String[] {plus, consts.toString(), types.toString(), callChain(3000)}) {
+            Result r = run("check", write("deep.al", program).toString());
+            assertEquals(1, r.code(), r.err());
+            assertTrue(r.err().startsWith("error[E0404]: "), r.err());
+        }
+    }
+
+    /** main calls g0, which calls g1, and so on: main weighs 3, each g 2 and the last one 1. */
+    private static String callChain(int length) {
+        StringBuilder sb = new StringBuilder("fn main() { print(g0()); }\n");
+        for (int i = 0; i < length; i++) {
+            sb.append("fn g").append(i).append("() -> i64 { return g").append(i + 1).append("() + 1; }\n");
+        }
+        return sb.append("fn g").append(length).append("() -> i64 { return 0; }\n").toString();
+    }
+
+    /**
+     * Programs right at the limit (the deepest-recursing constructs: parentheses, and calls in the
+     * interpreter) are checked, run and compiled on this test's default thread stack; one more level
+     * is E0404. This is what keeps the limit safe on the machines CI runs on.
+     */
+    @Test
+    void programsAtTheNestingLimitWork() throws Exception {
+        String parens127 = "fn main() { let x: i64 = " + "(".repeat(127) + "1" + ")".repeat(127) + "; print(x); }\n";
+        String parens128 = "fn main() { let x: i64 = " + "(".repeat(128) + "1" + ")".repeat(128) + "; print(x); }\n";
+        for (String[] ok : new String[][] {{parens127, "1"}, {callChain(62), "62"}}) {
+            Path p = write("limit.al", ok[0]);
+            Result r = run("run", p.toString());
+            assertEquals(0, r.code(), r.err());
+            assertEquals(ok[1] + "\n", r.out());
+            assertEquals(0, run("build", p.toString(), "-o", dir.resolve("limit.c").toString()).code());
+        }
+        for (String tooDeep : new String[] {parens128, callChain(63)}) {
+            Result r = run("check", write("deep.al", tooDeep).toString());
+            assertTrue(r.err().startsWith("error[E0404]: "), r.err());
+        }
+    }
+
+    @Test
+    void deeplyNestedJsonArgumentsAreAJsonError() throws IOException {
+        Path p = write("t.al", "/// Identity.\ntool fn id(x: i64) -> i64 { return x; }\n");
+        Result r = run("call", p.toString(), "id", "{\"x\": " + "[".repeat(5000) + "]".repeat(5000) + "}");
+        assertEquals(1, r.code(), r.err());
+        assertTrue(r.out().startsWith("{\"ok\": false, \"error\": {\"code\": \"bad_json\""), r.out());
     }
 }
