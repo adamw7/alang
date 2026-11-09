@@ -183,7 +183,7 @@ cover the changed line against each of these mutants. A mutant that no test noti
 behavior the suite does not pin down.
 
 ```sh
-mvn test-compile pitest:mutationCoverage                      # about 2,600 mutants, 7 minutes on 4 cores
+mvn test-compile pitest:mutationCoverage                      # about 2,700 mutants, 4 minutes on 4 cores
 mvn test-compile pitest:mutationCoverage -Dpitest.threads=8   # parallel test JVMs: default 4, at most one per core
 ```
 

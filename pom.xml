@@ -154,11 +154,19 @@
                spread Checker over every thread; each unit starts a fresh test JVM, so much smaller
                units only add start-up time (50 per unit was 20% slower). -->
           <mutationUnitSize>100</mutationUnitSize>
-          <!-- Some mutants loop forever while allocating. A small heap ends them quickly with
-               MEMORY_ERROR (counted as killed, like a timeout) instead of minutes of garbage
-               collection before the timeout fires. The tests need far less. -->
           <jvmArgs>
+            <!-- Some mutants loop forever while allocating. A small heap ends them quickly with
+                 MEMORY_ERROR (counted as killed, like a timeout) instead of minutes of garbage
+                 collection before the timeout fires. The tests need far less. -->
             <value>-Xmx256m</value>
+            <!-- Compile with C1 only. PIT swaps each mutant into the running test JVM, which throws
+                 away the compiled code of the class it replaces, and the JVM itself lives for at
+                 most 100 mutants. C2's slow, optimizing compiles rarely pay off before then; they
+                 only take CPU from the tests. This halves the run, with the same mutants killed. -->
+            <value>-XX:TieredStopAtLevel=1</value>
+            <!-- One collector thread instead of G1's several, which compete with the parallel
+                 test JVMs; enough for a 256 MB heap. A few percent faster. -->
+            <value>-XX:+UseSerialGC</value>
           </jvmArgs>
           <!-- A ratchet: the build fails when either score drops below these percentages.
                Raise them as the tests improve. -->
