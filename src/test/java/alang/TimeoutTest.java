@@ -16,7 +16,7 @@ import org.opentest4j.AssertionFailedError;
 
 /**
  * CI stays fast because every test, and the whole run, has a time limit: JUnit's default timeout
- * for test methods, {@link Harness#dynamicTest} for dynamic tests, and Surefire's budget for the
+ * for test methods, {@link Harness#dynamicTest} for dynamic tests, and Surefire's limit on the
  * whole run (pom.xml). These checks keep those limits from being dropped by accident.
  */
 class TimeoutTest {
@@ -55,7 +55,7 @@ class TimeoutTest {
     void theWholeRunHasALimit() {
         String pom = Harness.read(Harness.ROOT.resolve("pom.xml"));
         assertTrue(pom.contains("<forkedProcessTimeoutInSeconds>${surefire.timeout}</forkedProcessTimeoutInSeconds>"),
-            "Surefire must fail a test run that takes too long");
+            "Surefire must stop a test run that takes too long");
         assertTrue(pom.matches("(?s).*<surefire\\.timeout>[1-9][0-9]*</surefire\\.timeout>.*"),
             "surefire.timeout must default to a positive number of seconds");
     }

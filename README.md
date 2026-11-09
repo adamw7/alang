@@ -59,6 +59,9 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 | **Safe to run agent code** | Tool functions take JSON in and return JSON out with no access to the host. A deterministic step budget bounds runtime. |
 | **Runs anywhere** | A reference interpreter (JVM) and a C99 backend that emits heap-free, stdio-free C with byte-identical behavior. |
 
+[docs/COMPARISON.md](docs/COMPARISON.md) puts these guarantees side by side with Python, JavaScript,
+Go, Rust, C and Java, using programs you can run.
+
 ## Quick start
 
 Requirements: JDK 21+ and Maven. A C compiler is optional (for `alang build`).
@@ -118,6 +121,7 @@ The test suite does not just claim determinism, it checks it:
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — the one-page guide for AI agents writing ALang (start here)
+- [docs/COMPARISON.md](docs/COMPARISON.md) — how ALang compares with Python, JavaScript, Go, Rust and C
 - [docs/SPEC.md](docs/SPEC.md) — the language specification
 - [docs/ERRORS.md](docs/ERRORS.md) — every diagnostic and trap code (generated)
 - [grammar/ALang.g4](grammar/ALang.g4) — the grammar
@@ -155,9 +159,9 @@ packaged jar, and runs a 3000-mutation fuzzing campaign.
 Every test has a time limit, so a hang fails fast instead of stalling CI. A test fails after 10 s,
 even if it never checks for interrupts
 ([`junit-platform.properties`](src/test/resources/junit-platform.properties); dynamic tests are
-built with `Harness.dynamicTest`, which an ArchUnit rule enforces). The build fails if the whole
-test run takes longer than 180 s (`surefire.timeout` in `pom.xml`). Each CI step and job also has
-a limit of a few minutes.
+built with `Harness.dynamicTest`, which an ArchUnit rule enforces). Surefire kills the test JVM if
+the whole test run takes longer than 180 s (`surefire.timeout` in `pom.xml`). Each CI step and job
+also has a limit of a few minutes.
 
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
 plugins and GitHub Actions. The ANTLR tool and runtime are updated together, the Maven plugins
