@@ -22,8 +22,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The command line: tool calls with malformed JSON, the nesting limit, non-ASCII arguments, the memory
- * budget, captured output and arguments on stdin.
+ * The command line: the JSON reports of `check`, tool calls with malformed JSON, the nesting limit,
+ * non-ASCII arguments, the memory budget, captured output and arguments on stdin.
  */
 class CliTest {
     @TempDir
@@ -131,6 +131,130 @@ class CliTest {
         assertTrue(r.err().contains("could not be decoded in this host locale"), r.err());
         r = runInLocale("C.UTF-8", "call size.al size \"$(printf '{\"text\": \"\\377\"}')\"");
         assertTrue(r.out().contains("\"code\": \"bad_arguments\""), r.out() + r.err());
+    }
+
+    /** `check --json` for a program that compiles: no diagnostics, and the memory report of every routine. */
+    @Test
+    void checkJsonReportsMemory() throws IOException {
+        Path p = write("ok.al", """
+            const LIMIT: i64 = 3;
+
+            fn twice(x: i64) -> i64 {
+                return x * 2;
+            }
+
+            /// Doubles a number.
+            tool fn double(x: i64) -> i64 {
+                return twice(x);
+            }
+
+            fn main() {
+                print(twice(LIMIT));
+            }
+
+            test "doubles" {
+                assert twice(2) == 4;
+            }
+            """);
+        Result r = run("check", p.toString(), "--json");
+        assertEquals(0, r.code(), r.err());
+        assertEquals("""
+            {
+              "ok": true,
+              "file": "FILE",
+              "errors": 0,
+              "warnings": 0,
+              "diagnostics": [],
+              "memory": {
+                "heap_bytes": 0,
+                "static_bytes": 8,
+                "max_stack_bytes": 32,
+                "routines": [
+                  {
+                    "name": "fn twice",
+                    "frame_bytes": 16,
+                    "stack_bytes": 16,
+                    "entry_point": false
+                  },
+                  {
+                    "name": "fn double",
+                    "frame_bytes": 16,
+                    "stack_bytes": 32,
+                    "entry_point": true
+                  },
+                  {
+                    "name": "fn main",
+                    "frame_bytes": 0,
+                    "stack_bytes": 16,
+                    "entry_point": true
+                  },
+                  {
+                    "name": "test \\"doubles\\"",
+                    "frame_bytes": 0,
+                    "stack_bytes": 16,
+                    "entry_point": true
+                  }
+                ]
+              }
+            }
+            """, r.out().replace(p.toString(), "FILE"));
+        assertEquals("", r.err());
+    }
+
+    /** `check --json` for a program that does not compile: errors with and without a hint, a warning, no memory report. */
+    @Test
+    void checkJsonReportsDiagnostics() throws IOException {
+        Path p = write("bad.al", "fn main() {\n\tlet s: str[4] = \"abcde\";\n    print(nope);\n    return;\n    print(1);\n}\n");
+        Result r = run("check", p.toString(), "--json");
+        assertEquals(1, r.code(), r.err());
+        assertEquals("""
+            {
+              "ok": false,
+              "file": "FILE",
+              "errors": 2,
+              "warnings": 1,
+              "diagnostics": [
+                {
+                  "severity": "error",
+                  "code": "E0201",
+                  "title": "type mismatch",
+                  "message": "type mismatch: expected str[4], found str[5]",
+                  "file": "FILE",
+                  "line": 2,
+                  "column": 18,
+                  "length": 7,
+                  "source_line": "\\tlet s: str[4] = \\"abcde\\";",
+                  "hint": "a str[5] may not fit in str[4]; increase the capacity of the target"
+                },
+                {
+                  "severity": "error",
+                  "code": "E0101",
+                  "title": "unknown name",
+                  "message": "unknown name `nope`",
+                  "file": "FILE",
+                  "line": 3,
+                  "column": 11,
+                  "length": 4,
+                  "source_line": "    print(nope);",
+                  "hint": null
+                },
+                {
+                  "severity": "warning",
+                  "code": "W0301",
+                  "title": "unreachable code",
+                  "message": "unreachable statement",
+                  "file": "FILE",
+                  "line": 5,
+                  "column": 5,
+                  "length": 9,
+                  "source_line": "    print(1);",
+                  "hint": "remove it, or move it before the return/break"
+                }
+              ],
+              "memory": null
+            }
+            """, r.out().replace(p.toString(), "FILE"));
+        assertEquals("", r.err());
     }
 
     @Test

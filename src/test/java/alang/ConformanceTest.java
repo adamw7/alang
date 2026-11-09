@@ -24,6 +24,8 @@ import org.junit.jupiter.api.TestFactory;
  * tests/errors/NAME.al  first line `// expect: CODE...` lists the exact set of diagnostic codes;
  *                       an optional `// max-stack: N` line sets the memory budget (default: the
  *                       command line's, 8 MiB).
+ *                       NAME.err (if present) holds the diagnostics exactly as `alang check` prints them
+ *                       (bin/alang check tests/errors/NAME.al), so that messages and hints are checked too.
  */
 class ConformanceTest {
 
@@ -55,12 +57,17 @@ class ConformanceTest {
             Matcher m = EXPECT.matcher(text);
             assertTrue(m.find(), "missing // expect: line");
             TreeSet<String> expected = new TreeSet<>(List.of(m.group(1).trim().split("\\s+")));
-            Frontend.Result r = Frontend.compile(new Source(p.toString(), text), Harness.budget(text));
+            String name = Harness.ROOT.relativize(p).toString();
+            Frontend.Result r = Frontend.compile(new Source(name, text), Harness.budget(text));
             TreeSet<String> got = new TreeSet<>();
             for (Diagnostic d : r.diags().all()) got.add(d.code().name());
             assertEquals(expected, got, () -> r.diags().renderText());
             for (Diagnostic d : r.diags().all()) {
                 assertTrue(d.span().line() > 0, "diagnostic without location: " + d);
+            }
+            Path errFile = Path.of(p.toString().substring(0, p.toString().length() - 3) + ".err");
+            if (Files.exists(errFile)) {
+                assertEquals(Harness.read(errFile), r.diags().renderText(), "diagnostics of " + name);
             }
         }));
     }

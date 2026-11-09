@@ -1,0 +1,7 @@
+error[E0001]: unexpected '*', expected a statement or expression
+ --> tests/errors/E0001_block_comment.al:3:21
+  |
+3 |     let x: i64 = 4 /* half */ / 2;
+  |                     ^
+  = hint: block comments are not supported; start each comment line with //
+

@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'print', expected ';'
+ --> tests/errors/E0001_after_break.al:4:15
+  |
+4 |         break print(1);
+  |               ^^^^^
+  = hint: add `;` at the end of the previous statement
+

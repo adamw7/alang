@@ -1,0 +1,7 @@
+error[E0001]: unexpected ',', expected ':'
+ --> tests/errors/E0001_parameter_type.al:2:9
+  |
+2 | fn add(a, b) -> i64 {
+  |         ^
+  = hint: parameters need explicit types: fn f(x: i32, ys: mut list[i32; 8])
+

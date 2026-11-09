@@ -1,0 +1,180 @@
+error[E0203]: unary `-` needs a signed integer or float, found u32
+  --> tests/errors/operand_types.al:12:19
+   |
+12 |     let a1: u32 = -u;
+   |                   ^^
+
+error[E0203]: unary `-` needs a signed integer or float, found bool
+  --> tests/errors/operand_types.al:13:19
+   |
+13 |     let a2: i64 = -true;
+   |                   ^^^^^
+
+error[E0101]: unknown name `nope`
+  --> tests/errors/operand_types.al:14:20
+   |
+14 |     let a3: i64 = -nope;
+   |                    ^^^^
+
+error[E0203]: `~` needs an integer, found bool
+  --> tests/errors/operand_types.al:15:19
+   |
+15 |     let a4: i64 = ~b;
+   |                   ^^
+  = hint: for logical negation use `not`
+
+error[E0101]: unknown name `nope`
+  --> tests/errors/operand_types.al:16:20
+   |
+16 |     let a5: i64 = ~nope;
+   |                    ^^^^
+
+error[E0211]: `and` needs bool operands, found i64
+  --> tests/errors/operand_types.al:17:20
+   |
+17 |     let a6: bool = n and b;
+   |                    ^
+  = hint: for bitwise operations use & or |; for conditions compare explicitly (x != 0)
+
+error[E0201]: cannot compare str[4] with i64
+  --> tests/errors/operand_types.al:18:20
+   |
+18 |     let a7: bool = s == n;
+   |                    ^^^^^^
+
+error[E0201]: cannot compare u32 with i64
+  --> tests/errors/operand_types.al:19:20
+   |
+19 |     let a8: bool = u == n;
+   |                    ^^^^^^
+  = hint: convert one side: i64(...)
+
+error[E0201]: cannot compare list[i64; 4] with list[str[4]; 4]
+  --> tests/errors/operand_types.al:20:20
+   |
+20 |     let a9: bool = big == words;
+   |                    ^^^^^^^^^^^^
+
+error[E0201]: cannot compare [i64; 2] with i64
+  --> tests/errors/operand_types.al:21:21
+   |
+21 |     let a10: bool = [0; 2] == 5;
+   |                     ^^^^^^^^^^^
+
+error[E0203]: `<` needs numbers, found str[4] and str[4]
+  --> tests/errors/operand_types.al:22:21
+   |
+22 |     let a11: bool = s < s;
+   |                     ^^^^^
+
+error[E0203]: `+` needs numbers, found str[4] and i64
+  --> tests/errors/operand_types.al:23:20
+   |
+23 |     let a12: i64 = s + n;
+   |                    ^^^^^
+  = hint: strings are joined with append(mut s, a, b)
+
+error[E0201]: operands of `+` have different types: i64 and u32
+  --> tests/errors/operand_types.al:24:20
+   |
+24 |     let a13: i64 = n + u;
+   |                    ^^^^^
+  = hint: convert one side explicitly, e.g. i64(u)
+
+error[E0203]: `%` needs integers, found f64 and f64
+  --> tests/errors/operand_types.al:25:20
+   |
+25 |     let a14: f64 = 5.0 % 2.0;
+   |                    ^^^^^^^^^
+  = hint: % is only defined for integers
+
+error[E0101]: unknown name `nope`
+  --> tests/errors/operand_types.al:26:25
+   |
+26 |     let a15: i64 = n << nope;
+   |                         ^^^^
+
+error[E0101]: unknown name `nope`
+  --> tests/errors/operand_types.al:27:20
+   |
+27 |     let a16: i64 = nope + 1;
+   |                    ^^^^
+
+error[E0101]: unknown name `nope`
+  --> tests/errors/operand_types.al:28:21
+   |
+28 |     let a17: bool = nope < 1;
+   |                     ^^^^
+
+error[E0212]: index must be an integer, found bool
+  --> tests/errors/operand_types.al:29:23
+   |
+29 |     let a18: i64 = xs[b];
+   |                       ^
+
+error[E0214]: cannot convert str[4] to i64
+  --> tests/errors/operand_types.al:30:20
+   |
+30 |     let a19: i64 = i64(s);
+   |                    ^^^^^^
+  = hint: conversions work between numbers (and from bool to integers)
+
+error[E0202]: literal 300 does not fit in u8
+  --> tests/errors/operand_types.al:31:22
+   |
+31 |     let a20: u8 = u8(300);
+   |                      ^^^
+
+error[E0101]: unknown name `nope`
+  --> tests/errors/operand_types.al:32:24
+   |
+32 |     let a21: i64 = i64(nope);
+   |                        ^^^^
+
+error[E0201]: expected 3 element(s) for [i64; 3], found 2
+  --> tests/errors/operand_types.al:33:25
+   |
+33 |     let a22: [i64; 3] = [1, 2];
+   |                         ^^^^^^
+  = hint: arrays always have exactly N elements; use list[T; N] for fewer
+
+error[E0201]: expected 1 element(s) for [i64; 1], found 2
+  --> tests/errors/operand_types.al:34:25
+   |
+34 |     let a23: [i64; 1] = [1, 2];
+   |                         ^^^^^^
+
+error[E0201]: list literal has 2 elements but the capacity of list[i64; 1] is 1
+  --> tests/errors/operand_types.al:35:29
+   |
+35 |     let a24: list[i64; 1] = [1, 2];
+   |                             ^^^^^^
+
+error[E0201]: type mismatch: expected bool, found i64
+  --> tests/errors/operand_types.al:36:21
+   |
+36 |     let a25: bool = n;
+   |                     ^
+  = hint: there is no truthiness; compare explicitly, e.g. n != 0
+
+error[E0201]: type mismatch: expected list[i64; 2], found list[i64; 4]
+  --> tests/errors/operand_types.al:37:29
+   |
+37 |     let a26: list[i64; 2] = big;
+   |                             ^^^
+  = hint: lists convert only to lists of the same element type with equal or larger capacity
+
+error[E0201]: type mismatch: expected list[i64; 2], found [i64; 2]
+  --> tests/errors/operand_types.al:38:29
+   |
+38 |     let a27: list[i64; 2] = xs;
+   |                             ^^
+  = hint: arrays and lists are different types; only array literals like [1, 2] can initialize a list
+
+error[E0201]: type mismatch: expected i64, found bool
+  --> tests/errors/operand_types.al:39:29
+   |
+39 |     let a28: [i64; 2] = [n, b];
+   |                             ^
+  = hint: convert explicitly: i64(b)
+
