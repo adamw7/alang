@@ -9,25 +9,41 @@ import alang.types.Type;
  * Byte sizes and alignments of ALang values, following the C layout used by the C backend:
  * arrays are wrapped in structs, str/list carry a u32 length, enums carry a u32 tag
  * followed by a union of their payloads.
+ *
+ * <p>Sizes saturate at {@link Long#MAX_VALUE} instead of wrapping around, so a type that is too
+ * large for any machine (e.g. three nested arrays of 2^20 elements) never reports a tiny or
+ * negative size and can never slip under a {@code --max-stack} budget.
  */
 public final class Layout {
     private Layout() {}
 
+    /** a + b for sizes (both non-negative), saturating at Long.MAX_VALUE. */
+    public static long add(long a, long b) {
+        long r = a + b;
+        return r < 0 ? Long.MAX_VALUE : r;
+    }
+
+    /** a * b for sizes (both non-negative), saturating at Long.MAX_VALUE. */
+    public static long mul(long a, long b) {
+        if (a == 0 || b == 0) return 0;
+        return a > Long.MAX_VALUE / b ? Long.MAX_VALUE : a * b;
+    }
+
     public static long size(Type t) {
         return switch (t) {
             case Type.Prim p -> p.kind().size;
-            case Type.Str s -> align(4 + (long) s.cap(), 4);
-            case Type.ArrayT a -> size(a.elem()) * a.len();
+            case Type.Str s -> align(add(4, s.cap()), 4);
+            case Type.ArrayT a -> mul(size(a.elem()), a.len());
             case Type.ListT l -> {
                 long al = Math.max(4, align(l.elem()));
-                yield align(align(4, align(l.elem())) + size(l.elem()) * l.cap(), al);
+                yield align(add(align(4, align(l.elem())), mul(size(l.elem()), l.cap())), al);
             }
             case Type.StructT s -> {
                 long off = 0;
                 long al = 1;
                 for (Field f : s.decl().fields) {
                     long fa = align(f.type);
-                    off = align(off, fa) + size(f.type);
+                    off = add(align(off, fa), size(f.type));
                     al = Math.max(al, fa);
                 }
                 yield align(Math.max(off, 1), al);
@@ -45,13 +61,13 @@ public final class Layout {
             long off = 0;
             for (Type t : v.payload) {
                 long fa = align(t);
-                off = align(off, fa) + size(t);
+                off = add(align(off, fa), size(t));
                 al = Math.max(al, fa);
             }
             payload = Math.max(payload, off);
         }
         if (payload == 0) return 4;
-        return align(align(4, al) + payload, al);
+        return align(add(align(4, al), payload), al);
     }
 
     public static long align(Type t) {
@@ -78,6 +94,7 @@ public final class Layout {
     }
 
     static long align(long off, long al) {
+        if (off > Long.MAX_VALUE - (al - 1)) return Long.MAX_VALUE;
         return (off + al - 1) / al * al;
     }
 

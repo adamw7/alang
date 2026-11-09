@@ -36,7 +36,12 @@ class CBackendTest {
         Path err = dir.resolve("err.txt");
         Process p = new ProcessBuilder(cmd).directory(dir.toFile())
             .redirectOutput(out.toFile()).redirectError(err.toFile()).start();
-        assertTrue(p.waitFor(60, TimeUnit.SECONDS), "timeout: " + String.join(" ", cmd));
+        try {
+            assertTrue(p.waitFor(Harness.TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), "timeout: " + String.join(" ", cmd));
+        } finally {
+            // Also when the test's own timeout interrupts the wait: never leave a compiler or program running.
+            if (p.isAlive()) p.destroyForcibly();
+        }
         return new Proc(p.exitValue(), Files.readString(out, StandardCharsets.UTF_8), Files.readString(err, StandardCharsets.UTF_8));
     }
 
@@ -71,7 +76,7 @@ class CBackendTest {
     Stream<DynamicTest> differential() {
         List<Path> files = new ArrayList<>(Harness.files("tests/run", ".al"));
         files.addAll(Harness.files("examples", ".al"));
-        return files.stream().map(p -> DynamicTest.dynamicTest(p.getFileName().toString(), () -> {
+        return files.stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), () -> {
             List<String[]> ccs = compilers();
             assumeTrue(!ccs.isEmpty(), "no C compiler available");
             Frontend.Result r = Harness.compile(p);

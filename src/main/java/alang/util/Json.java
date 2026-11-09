@@ -242,8 +242,14 @@ public final class Json {
                         case 'r' -> sb.append('\r');
                         case 't' -> sb.append('\t');
                         case 'u' -> {
-                            if (pos + 4 > s.length()) throw error("bad unicode escape");
-                            sb.append((char) Integer.parseInt(s.substring(pos, pos + 4), 16));
+                            int code = 0;
+                            for (int k = 0; k < 4; k++) {
+                                int d = pos + k < s.length() ? Character.digit(s.charAt(pos + k), 16) : -1;
+                                // Character.digit also accepts non-ASCII digits; JSON allows only [0-9a-fA-F].
+                                if (d < 0 || s.charAt(pos + k) > 'f') throw error("bad unicode escape");
+                                code = code * 16 + d;
+                            }
+                            sb.append((char) code);
                             pos += 4;
                         }
                         default -> throw error("bad escape");

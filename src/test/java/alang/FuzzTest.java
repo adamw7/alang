@@ -10,6 +10,7 @@ import alang.interp.Trap;
 import java.io.OutputStream;
 import alang.parser.ALangLexer;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.SplittableRandom;
@@ -65,11 +66,13 @@ class FuzzTest {
     Stream<DynamicTest> mutations() {
         List<Path> files = new ArrayList<>(Harness.files("examples", ".al"));
         files.addAll(Harness.files("tests/run", ".al"));
-        return files.stream().map(p -> DynamicTest.dynamicTest(p.getFileName().toString(), () -> {
+        int iterations = Integer.getInteger("alang.fuzz", 120);
+        // A longer campaign (-Dalang.fuzz=3000 in CI) gets 3 ms more per mutation.
+        Duration timeout = Harness.TEST_TIMEOUT.plusMillis(3L * iterations);
+        return files.stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), timeout, () -> {
             List<String> toks = tokens(Harness.read(p));
             SplittableRandom rnd = new SplittableRandom(p.getFileName().toString().hashCode());
             int n = toks.size();
-            int iterations = Integer.getInteger("alang.fuzz", 120);
             for (int k = 0; k < iterations; k++) {
                 List<String> m = new ArrayList<>(toks);
                 int i = rnd.nextInt(n);

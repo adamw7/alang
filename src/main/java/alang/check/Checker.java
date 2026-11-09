@@ -182,11 +182,15 @@ public final class Checker {
         }
         c.state = State.IN_PROGRESS;
         Ctx saved = enterTopLevel();
-        c.type = resolveType(c.typeRef);
+        // Count errors from the declared type too: a constant whose type is unknown must not get a
+        // value, or constants computed from it would be evaluated with an error type.
         int before = diags.errorCount();
+        c.type = resolveType(c.typeRef);
         Type t = expr(c.init, c.type);
         requireAssignable(c.init, t, c.type);
-        if (diags.errorCount() == before) {
+        // An error-typed initializer (e.g. one using a constant that already failed) was reported
+        // where it went wrong; skip evaluation without piling on another diagnostic.
+        if (diags.errorCount() == before && !Type.isError(t)) {
             if (!isConst(c.init)) {
                 diags.error(Code.E0209, c.init.span, "the value of constant `" + c.name + "` is not a constant expression",
                     "constants may use literals, other constants, operators and conversions, but not function calls");
@@ -194,6 +198,9 @@ public final class Checker {
                 c.value = evalConst(c.init);
             }
         }
+        // A constant without a value is error-typed, so its uses (other constants, array sizes)
+        // stay quiet instead of each reporting a follow-on error.
+        if (c.value == null) c.type = Type.ERROR;
         ctx = saved;
         c.state = State.DONE;
     }
@@ -277,7 +284,7 @@ public final class Checker {
     private int constSize(Expr e, String what) {
         int before = diags.errorCount();
         Type t = expr(e, Type.I64);
-        if (diags.errorCount() != before) return -1;
+        if (diags.errorCount() != before || Type.isError(t)) return -1;
         if (!Type.isInt(t)) {
             diags.error(Code.E0210, e.span, what + " must be an integer constant, found " + t);
             return -1;

@@ -7,10 +7,7 @@ if [ ! -f "$JAR" ] || [ "$ROOT/grammar/ALang.g4" -nt "$JAR" ]; then
   echo "alang: building $JAR (first run)..." >&2
   (cd "$ROOT" && mvn -q -B -DskipTests package >&2)
 fi
-# The JVM decodes arguments and file names with the locale's character set. In the C/POSIX locale
-# that is ASCII, which turns every non-ASCII byte into U+FFFD. Treat that locale as UTF-8, as
-# Python does (PEP 538); other locales are left as they are.
-case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
-  ""|C|POSIX) export LC_ALL=C.UTF-8 ;;
-esac
-exec java -jar "$JAR" "$@"
+# Java decodes command-line arguments (file names, `alang call` JSON) with the host locale's
+# charset; under a POSIX/C locale every non-ASCII byte would be replaced. Use UTF-8 so the
+# result never depends on the host locale (the toolchain's own output is locale-independent).
+exec env LC_ALL=C.UTF-8 java -jar "$JAR" "$@"
