@@ -141,6 +141,14 @@
             <!-- The ArchUnit rules read class files from disk, so they never see an in-memory mutant. -->
             <param>alang.*ArchitectureTest</param>
             <param>alang.CBackendTest</param>
+            <!-- These two only check that the toolchain does not crash or change its mind: FuzzTest on
+                 thousands of corrupted programs, DeterminismTest across repeated runs and locales. So
+                 they notice a mutant only when it crashes, and the exact-output tests (tests/errors
+                 with their .err files, CliTest's JSON reports) notice all of those too. Together they
+                 were two thirds of the run. Both still run in `mvn verify`, and the fuzzer in its own
+                 CI job. -->
+            <param>alang.DeterminismTest</param>
+            <param>alang.FuzzTest</param>
           </excludedTestClasses>
           <threads>${pitest.threads}</threads>
           <!-- Print "N mutations completed" every 30 seconds instead of a spinner. The spinner never
@@ -170,8 +178,8 @@
           </jvmArgs>
           <!-- A ratchet: the build fails when either score drops below these percentages.
                Raise them as the tests improve. -->
-          <mutationThreshold>62</mutationThreshold>
-          <testStrengthThreshold>75</testStrengthThreshold>
+          <mutationThreshold>74</mutationThreshold>
+          <testStrengthThreshold>85</testStrengthThreshold>
           <timestampedReports>false</timestampedReports>
           <outputFormats>
             <param>HTML</param>

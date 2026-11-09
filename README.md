@@ -183,7 +183,7 @@ cover the changed line against each of these mutants. A mutant that no test noti
 behavior the suite does not pin down.
 
 ```sh
-mvn test-compile pitest:mutationCoverage                      # about 2,700 mutants, 4 minutes on 4 cores
+mvn test-compile pitest:mutationCoverage                      # about 2,700 mutants, 2 minutes on 4 cores
 mvn test-compile pitest:mutationCoverage -Dpitest.threads=8   # parallel test JVMs: default 4, at most one per core
 ```
 
@@ -192,14 +192,16 @@ PIT prints how many mutants are done every 30 seconds. The report,
 Every class under `alang` is mutated except the ANTLR-generated parser and the C backend: only
 `CBackendTest` can catch a C backend mutant, and it compiles every program with gcc and clang,
 which would turn minutes into hours. That test and the ArchUnit rules (`*ArchitectureTest`), which
-read class files from disk and so never see a mutant, are left out of the run.
+read class files from disk and so never see a mutant, are left out of the run. So are `FuzzTest`
+and `DeterminismTest`: they check only that the toolchain neither crashes nor changes its mind, so
+they notice a mutant only when it crashes, and the exact-output tests notice those too
+(`tests/errors` with `.err` files pins every message and hint). They were two thirds of the run.
 
-The run fails when the mutation score (mutants killed out of all mutants) drops below 62% or the
-test strength (killed out of those that some test covers) below 75%. The baseline is 63% and
-76%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
-the CLI and the JSON side of tool calls (`Main`, `JsonValues`, `Json`), which the unit tests
-barely reach, and output whose exact numbers or text few tests assert: memory layout (`Layout`)
-and syntax error hints (`SyntaxErrorListener`).
+The run fails when the mutation score (mutants killed out of all mutants) drops below 74% or the
+test strength (killed out of those that some test covers) below 85%. The baseline is 75% and
+86%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
+the CLI and the JSON side of tool calls (`Main`, `JsonValues`), which the unit tests barely
+reach, and memory layout (`Layout`), whose exact numbers few tests assert.
 
 ## Status
 
