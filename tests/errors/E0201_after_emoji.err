@@ -1,0 +1,7 @@
+error[E0201]: type mismatch: expected i32, found i64
+ --> tests/errors/E0201_after_emoji.al:5:40
+  |
+5 |     let s: str[8] = "😀😀"; let n: i32 = len(s);
+  |                                        ^^^^^^
+  = hint: convert explicitly: i32(len(s))
+

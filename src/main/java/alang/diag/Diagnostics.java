@@ -75,15 +75,8 @@ public final class Diagnostics {
             String pad = " ".repeat(lineNo.length());
             sb.append(pad).append("--> ").append(source.path).append(':').append(s.line()).append(':').append(s.col()).append('\n');
             sb.append(pad).append(" |\n");
-            String text = source.line(s.line());
-            sb.append(lineNo).append(" | ").append(text).append('\n');
-            int col = Math.max(1, s.col());
-            int len = Math.max(1, Math.min(s.length(), Math.max(1, text.length() - col + 1)));
-            StringBuilder caretPad = new StringBuilder();
-            for (int i = 0; i < col - 1 && i < text.length(); i++) {
-                caretPad.append(text.charAt(i) == '\t' ? '\t' : ' ');
-            }
-            sb.append(pad).append(" | ").append(caretPad).append("^".repeat(len)).append('\n');
+            sb.append(lineNo).append(" | ").append(source.line(s.line())).append('\n');
+            sb.append(pad).append(" | ").append(source.caret(s)).append('\n');
         }
         if (d.hint() != null) {
             sb.append("  = hint: ").append(d.hint()).append('\n');

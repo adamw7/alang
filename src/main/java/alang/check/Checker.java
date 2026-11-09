@@ -1788,10 +1788,8 @@ public final class Checker {
     }
 
     private String exprText(Expr e) {
-        String line = diags.source().line(e.span.line());
-        int start = Math.max(0, e.span.col() - 1);
-        int end = Math.min(line.length(), start + e.span.length());
-        return start < end ? line.substring(start, end) : "x";
+        String t = diags.source().text(e.span);
+        return t.isEmpty() ? "x" : t;
     }
 
     /** Can this expression be evaluated at compile time? */

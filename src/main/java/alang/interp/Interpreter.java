@@ -180,11 +180,8 @@ public final class Interpreter {
     }
 
     private String text(Span s) {
-        if (source == null) return "?";
-        String line = source.line(s.line());
-        int start = Math.max(0, s.col() - 1);
-        int end = Math.min(line.length(), start + s.length());
-        return start < end ? line.substring(start, end) : "?";
+        String t = source == null ? "" : source.text(s);
+        return t.isEmpty() ? "?" : t;
     }
 
     // =================================================================== functions

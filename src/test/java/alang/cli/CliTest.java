@@ -619,6 +619,18 @@ class CliTest {
     }
 
     @Test
+    void trapsQuoteTheSourceByColumn() throws IOException {
+        // Columns count code points, but the source text was cut by UTF-16 chars: after the emoji (two
+        // chars, one column) the assert was quoted as " n ==  ", and the caret ignored the tab.
+        Path p = write("emoji.al", "fn main() {\n\tlet s: str[8] = \"\uD83D\uDE00\"; assert len(s) == 3;\n}\n");
+        Result r = run("run", p.toString());
+        assertEquals(1, r.code(), r.out());
+        assertTrue(r.err().startsWith("trap[R0005]: assertion failed: len(s) == 3 (left: 4, right: 3)\n"
+            + " --> " + p + ":2:23\n  |\n2 | \tlet s: str[8] = \"\uD83D\uDE00\"; assert len(s) == 3;\n"
+            + "  | \t" + " ".repeat(21) + "^".repeat(19) + "\n"), r.err());
+    }
+
+    @Test
     void absOfTheMinimumNamesAbs() throws IOException {
         // The trap used to blame `-`, which the program does not contain.
         Path p = write("abs.al", "fn main() {\n    let x: i64 = -9223372036854775807 - 1;\n    print(abs(x));\n}\n");

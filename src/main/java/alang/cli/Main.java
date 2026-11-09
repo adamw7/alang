@@ -400,12 +400,11 @@ public final class Main {
         if (s.line() > 0) {
             String lineNo = String.valueOf(s.line());
             String pad = " ".repeat(lineNo.length());
-            String text = src.line(s.line());
             sb.append(pad).append("--> ").append(src.path).append(':').append(s.line()).append(':').append(s.col()).append('\n');
             sb.append(pad).append(" |\n");
-            sb.append(lineNo).append(" | ").append(text).append('\n');
-            int len = Math.max(1, Math.min(s.length(), Math.max(1, text.length() - s.col() + 1)));
-            sb.append(pad).append(" | ").append(" ".repeat(Math.max(0, s.col() - 1))).append("^".repeat(len)).append('\n');
+            sb.append(lineNo).append(" | ").append(src.line(s.line())).append('\n');
+            // The same marker line as diagnostics: tabs kept, columns counted in code points.
+            sb.append(pad).append(" | ").append(src.caret(s)).append('\n');
         }
         for (String frame : t.trace) sb.append("  in ").append(frame).append('\n');
         sb.append("  = hint: ").append(t.code.explanation).append('\n');

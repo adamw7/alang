@@ -1273,10 +1273,8 @@ public final class CGen {
     // =================================================================== text helpers
 
     private String text(Span s) {
-        String line = source.line(s.line());
-        int start = Math.max(0, s.col() - 1);
-        int end = Math.min(line.length(), start + s.length());
-        return start < end ? line.substring(start, end) : "?";
+        String t = source.text(s);
+        return t.isEmpty() ? "?" : t;
     }
 
     private static byte[] utf8(String s) {
