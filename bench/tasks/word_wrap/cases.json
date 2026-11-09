@@ -1,0 +1,26 @@
+{
+  "tool": "word_wrap",
+  "examples": [
+    {"args": {"text": "the quick brown fox jumps over the lazy dog", "width": 10}, "expect": ["the quick", "brown fox", "jumps over", "the lazy", "dog"]},
+    {"args": {"text": "a bb ccc", "width": 3}, "expect": ["a", "bb", "ccc"]},
+    {"args": {"text": "", "width": 5}, "expect": []}
+  ],
+  "hidden": [
+    {"args": {"text": "a well-known state-of-the-art tool", "width": 10}, "expect": ["a", "well-known", "state-of-the-art", "tool"]},
+    {"args": {"text": "use a pre-built read-only cache", "width": 12}, "expect": ["use a", "pre-built", "read-only", "cache"]},
+    {"args": {"text": "supercalifragilistic is long", "width": 5}, "expect": ["supercalifragilistic", "is", "long"]},
+    {"args": {"text": "a b c", "width": 1}, "expect": ["a", "b", "c"]},
+    {"args": {"text": "abc", "width": 3}, "expect": ["abc"]},
+    {"args": {"text": "abc def", "width": 7}, "expect": ["abc def"]},
+    {"args": {"text": "abc def", "width": 6}, "expect": ["abc", "def"]},
+    {"args": {"text": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word", "width": 80}, "expect": ["word word word word word word word word word word word word word word word word", "word word word word word word word word word word word word word word word word", "word word word word word word word word word word word word word word word word", "word word word"]},
+    {"args": {"text": "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x y", "width": 1}, "expect": ["x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "x", "y"]},
+    {"args": {"text": "one", "width": 80}, "expect": ["one"]},
+    {"args": {"text": "eaaaa aaeba abee d-bc---", "width": 25}, "expect": ["eaaaa aaeba abee d-bc---"]},
+    {"args": {"text": "a-ee cadbcedc acda", "width": 7}, "expect": ["a-ee", "cadbcedc", "acda"]},
+    {"args": {"text": "b aac beadb- dba- beeeb-", "width": 27}, "expect": ["b aac beadb- dba- beeeb-"]},
+    {"args": {"text": "bacb- a cbdc d-e bbeecc", "width": 19}, "expect": ["bacb- a cbdc d-e", "bbeecc"]},
+    {"args": {"text": "a--b -eeaa cd bc -ec d e-eeaca bb --e- d-cbece a bc e-b-bb-d e-cbbcacc c- c c--c-d aae-aad a-a ceee - bbce d-eed a-eaac ce-b ea ce ba- dbeecba- e ea bcad-ea - cdeacecec dede-be bccebb-c cde-a -b-cd- abaa-dbd b -- deccddeec b daab-", "width": 29}, "expect": ["a--b -eeaa cd bc -ec d", "e-eeaca bb --e- d-cbece a bc", "e-b-bb-d e-cbbcacc c- c", "c--c-d aae-aad a-a ceee -", "bbce d-eed a-eaac ce-b ea ce", "ba- dbeecba- e ea bcad-ea -", "cdeacecec dede-be bccebb-c", "cde-a -b-cd- abaa-dbd b --", "deccddeec b daab-"]},
+    {"args": {"text": "bbbece", "width": 30}, "expect": ["bbbece"]}
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "tool": "parse_duration",
+  "examples": [
+    {"args": {"text": "1h30m"}, "expect": 5400},
+    {"args": {"text": "45s"}, "expect": 45},
+    {"args": {"text": "1h1h"}, "expect": -1}
+  ],
+  "hidden": [
+    {"args": {"text": "2h"}, "expect": 7200},
+    {"args": {"text": "90m"}, "expect": 5400},
+    {"args": {"text": "1h2m3s"}, "expect": 3723},
+    {"args": {"text": "0s"}, "expect": 0},
+    {"args": {"text": "000001s"}, "expect": 1},
+    {"args": {"text": "999999h"}, "expect": 3599996400},
+    {"args": {"text": "1234567s"}, "expect": -1},
+    {"args": {"text": ""}, "expect": -1},
+    {"args": {"text": "h"}, "expect": -1},
+    {"args": {"text": "10"}, "expect": -1},
+    {"args": {"text": "1H"}, "expect": -1},
+    {"args": {"text": "1h 30m"}, "expect": -1},
+    {"args": {"text": " 1h"}, "expect": -1},
+    {"args": {"text": "1m1h"}, "expect": -1},
+    {"args": {"text": "1h1s"}, "expect": 3601},
+    {"args": {"text": "1s1m"}, "expect": -1},
+    {"args": {"text": "1h30m0s"}, "expect": 5400},
+    {"args": {"text": "-5s"}, "expect": -1},
+    {"args": {"text": "+5s"}, "expect": -1},
+    {"args": {"text": "1.5h"}, "expect": -1},
+    {"args": {"text": "5ss"}, "expect": -1},
+    {"args": {"text": "٥s"}, "expect": -1},
+    {"args": {"text": "5s\n"}, "expect": -1},
+    {"args": {"text": "00h00m00s"}, "expect": 0},
+    {"args": {"text": "110300s"}, "expect": 110300},
+    {"args": {"text": "783226s"}, "expect": 783226},
+    {"args": {"text": "290066s"}, "expect": 290066},
+    {"args": {"text": "120025h474976s"}, "expect": 432564976},
+    {"args": {"text": "941004h57570s"}, "expect": 3387671970},
+    {"args": {"text": "161988h"}, "expect": 583156800}
+  ]
+}

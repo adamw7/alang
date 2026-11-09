@@ -1,0 +1,69 @@
+// expect: E0404
+// main (3 levels) calls g0 (2), which calls g1 (2), ... g63 (1): 130 levels, through calls alone.
+fn main() {
+    print(g0());
+}
+fn g0() -> i64 { return g1() + 1; }
+fn g1() -> i64 { return g2() + 1; }
+fn g2() -> i64 { return g3() + 1; }
+fn g3() -> i64 { return g4() + 1; }
+fn g4() -> i64 { return g5() + 1; }
+fn g5() -> i64 { return g6() + 1; }
+fn g6() -> i64 { return g7() + 1; }
+fn g7() -> i64 { return g8() + 1; }
+fn g8() -> i64 { return g9() + 1; }
+fn g9() -> i64 { return g10() + 1; }
+fn g10() -> i64 { return g11() + 1; }
+fn g11() -> i64 { return g12() + 1; }
+fn g12() -> i64 { return g13() + 1; }
+fn g13() -> i64 { return g14() + 1; }
+fn g14() -> i64 { return g15() + 1; }
+fn g15() -> i64 { return g16() + 1; }
+fn g16() -> i64 { return g17() + 1; }
+fn g17() -> i64 { return g18() + 1; }
+fn g18() -> i64 { return g19() + 1; }
+fn g19() -> i64 { return g20() + 1; }
+fn g20() -> i64 { return g21() + 1; }
+fn g21() -> i64 { return g22() + 1; }
+fn g22() -> i64 { return g23() + 1; }
+fn g23() -> i64 { return g24() + 1; }
+fn g24() -> i64 { return g25() + 1; }
+fn g25() -> i64 { return g26() + 1; }
+fn g26() -> i64 { return g27() + 1; }
+fn g27() -> i64 { return g28() + 1; }
+fn g28() -> i64 { return g29() + 1; }
+fn g29() -> i64 { return g30() + 1; }
+fn g30() -> i64 { return g31() + 1; }
+fn g31() -> i64 { return g32() + 1; }
+fn g32() -> i64 { return g33() + 1; }
+fn g33() -> i64 { return g34() + 1; }
+fn g34() -> i64 { return g35() + 1; }
+fn g35() -> i64 { return g36() + 1; }
+fn g36() -> i64 { return g37() + 1; }
+fn g37() -> i64 { return g38() + 1; }
+fn g38() -> i64 { return g39() + 1; }
+fn g39() -> i64 { return g40() + 1; }
+fn g40() -> i64 { return g41() + 1; }
+fn g41() -> i64 { return g42() + 1; }
+fn g42() -> i64 { return g43() + 1; }
+fn g43() -> i64 { return g44() + 1; }
+fn g44() -> i64 { return g45() + 1; }
+fn g45() -> i64 { return g46() + 1; }
+fn g46() -> i64 { return g47() + 1; }
+fn g47() -> i64 { return g48() + 1; }
+fn g48() -> i64 { return g49() + 1; }
+fn g49() -> i64 { return g50() + 1; }
+fn g50() -> i64 { return g51() + 1; }
+fn g51() -> i64 { return g52() + 1; }
+fn g52() -> i64 { return g53() + 1; }
+fn g53() -> i64 { return g54() + 1; }
+fn g54() -> i64 { return g55() + 1; }
+fn g55() -> i64 { return g56() + 1; }
+fn g56() -> i64 { return g57() + 1; }
+fn g57() -> i64 { return g58() + 1; }
+fn g58() -> i64 { return g59() + 1; }
+fn g59() -> i64 { return g60() + 1; }
+fn g60() -> i64 { return g61() + 1; }
+fn g61() -> i64 { return g62() + 1; }
+fn g62() -> i64 { return g63() + 1; }
+fn g63() -> i64 { return 0; }

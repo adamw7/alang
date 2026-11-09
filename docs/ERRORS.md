@@ -46,7 +46,7 @@ Codes are never reused for a different meaning.
 | [E0401](#e0401) | recursion is not allowed |
 | [E0402](#e0402) | stack bound exceeded |
 | [E0403](#e0403) | recursive type |
-| [E0404](#e0404) | nesting limit exceeded |
+| [E0404](#e0404) | nested too deeply |
 | [E0501](#e0501) | misplaced `result` |
 | [E0601](#e0601) | invalid tool signature |
 | [E0602](#e0602) | invalid main |
@@ -433,12 +433,14 @@ struct Node { next: Node }  // error
 
 ## E0404
 
-**nesting limit exceeded**
+**nested too deeply**
 
-So that every machine accepts and runs exactly the same programs, nesting is limited to 128 levels. This applies to brackets ( ) [ ] { } together with the prefix operators -, ~ and `not`; to blocks, statements and expressions, counted through calls (a call made at depth d into a function whose body reaches depth n reaches depth d + n); and to types (a field, element or payload is one level deeper than its container). Move inner parts of a deep expression into `let` bindings or helper functions, call deep functions from a shallower place, and flatten deep types.
+A program may nest at most 128 levels deep. Each bracket and each operator chained in an expression counts one level, and a function, constant or type adds the levels of every function, constant and type it uses. The limit is the same on every machine: the toolchain recurses over the program, and without it the machine's stack size would decide whether a deeply nested program can be checked or run. Split deep expressions with intermediate `let` bindings and shorten long chains of declarations that use each other.
 
 ```
-let x: i64 = 1 + 1 + ... + 1;  // error with more than about 125 operators in one chain
+let x: i64 = 1 + 1 + 1 + ... + 1;  // 200 chained `+`: error
+let a: i64 = 1 + 1 + ... + 1;       // 100 of them
+let x: i64 = a + 1 + ... + 1;       // and 100 more: ok
 ```
 
 ## E0501

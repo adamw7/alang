@@ -1,0 +1,32 @@
+{
+  "tool": "luhn_valid",
+  "examples": [
+    {"args": {"number": "79927398713"}, "expect": true},
+    {"args": {"number": "79927398710"}, "expect": false},
+    {"args": {"number": "7"}, "expect": false}
+  ],
+  "hidden": [
+    {"args": {"number": ""}, "expect": false},
+    {"args": {"number": "0"}, "expect": false},
+    {"args": {"number": "00"}, "expect": true},
+    {"args": {"number": "18"}, "expect": true},
+    {"args": {"number": "4111111111111111"}, "expect": true},
+    {"args": {"number": "4111 1111 1111 1111"}, "expect": false},
+    {"args": {"number": "4539578763621486"}, "expect": true},
+    {"args": {"number": "1234567812345670"}, "expect": true},
+    {"args": {"number": "1234567812345678"}, "expect": false},
+    {"args": {"number": "-18"}, "expect": false},
+    {"args": {"number": "+18"}, "expect": false},
+    {"args": {"number": "18\n"}, "expect": false},
+    {"args": {"number": "١٨"}, "expect": false},
+    {"args": {"number": "a1"}, "expect": false},
+    {"args": {"number": "00000000000000000000000000000000"}, "expect": true},
+    {"args": {"number": "98765432109876543210987654321092"}, "expect": true},
+    {"args": {"number": "683318"}, "expect": true},
+    {"args": {"number": "85784487188395666788229"}, "expect": true},
+    {"args": {"number": "23665888003631792249558942"}, "expect": false},
+    {"args": {"number": "0271845381589782848688394185"}, "expect": true},
+    {"args": {"number": "7803663275589686"}, "expect": true},
+    {"args": {"number": "10134643458"}, "expect": false}
+  ]
+}

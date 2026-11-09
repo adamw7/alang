@@ -304,18 +304,11 @@ order:
 - Large values can be passed by `mut` reference to avoid copies. Read-only aggregate parameters
   are passed by address by the C backend, so they are not copied either.
 - Capacities are part of the type. `push` past capacity traps (R0004); there is no reallocation.
-- **Nesting limit (E0404).** The checker, the interpreter and the C backend's generator recurse
-  over nested code and types, so nesting is limited to 128 levels, identically on every machine:
-  - brackets `( ) [ ] { }` together with the prefix operators `-`, `~` and `not` (each counted
-    until its operand ends);
-  - blocks, statements and expressions, counted through calls: a function body is depth 1 and its
-    statements depth 2, and a call made at depth *d* into a function whose body reaches depth *n*
-    reaches depth *d + n*;
-  - types: a field, element or payload is one level deeper than its container.
-
-  Ordinary programs stay far below these limits. Move inner parts of a deep expression into `let`
-  bindings or helper functions, call deep functions from a shallower place, and flatten deep
-  types.
+- Nesting is limited to 128 levels (E0404), counted on the source before anything else runs: each
+  bracket and each operator chained in an expression counts one level, and a function, constant or
+  type adds the levels of every function, constant and type it uses. The toolchain recurses over the
+  program, so a fixed limit keeps whether a program can be checked, run or compiled the same on every
+  machine, instead of leaving it to the machine's stack size.
 
 ---
 
@@ -401,8 +394,7 @@ Anthropic-style tool definitions (`name`, `description`, `input_schema`); the de
 | enum | `"Variant"` for variants without payload, `{"Variant": [v1, v2]}` otherwise |
 
 Arguments are validated against the parameter types before the call; unknown, missing or
-duplicate keys are errors, and so are arrays and objects nested more than 128 levels deep (no
-parameter type needs more). Because tools have no I/O, no heap and bounded loops, running a tool
+duplicate keys are errors. Because tools have no I/O, no heap and bounded loops, running a tool
 written by an agent is safe: it cannot touch the host, cannot exhaust memory, and terminates.
 
 ---

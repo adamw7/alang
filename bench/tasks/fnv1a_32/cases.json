@@ -1,0 +1,25 @@
+{
+  "tool": "fnv1a_32",
+  "examples": [
+    {"args": {"text": ""}, "expect": 2166136261},
+    {"args": {"text": "a"}, "expect": 3826002220},
+    {"args": {"text": "foobar"}, "expect": 3214735720}
+  ],
+  "hidden": [
+    {"args": {"text": "hello"}, "expect": 1335831723},
+    {"args": {"text": "é"}, "expect": 513665217},
+    {"args": {"text": "日本"}, "expect": 2670128721},
+    {"args": {"text": "😀"}, "expect": 866293256},
+    {"args": {"text": "naïve café"}, "expect": 1954863637},
+    {"args": {"text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}, "expect": 3516603077},
+    {"args": {"text": "The quick brown fox"}, "expect": 2924308450},
+    {"args": {"text": "\u0000"}, "expect": 84696351},
+    {"args": {"text": "Ünïcödé ✓"}, "expect": 1307316841},
+    {"args": {"text": "v3TsMu."}, "expect": 4130162573},
+    {"args": {"text": "MYmaVj2k85qce8😀"}, "expect": 248089833},
+    {"args": {"text": "qx9zéhUo,z2aWSOhZBBwQADsGЖnWDsYvWuM4"}, "expect": 956985514},
+    {"args": {"text": "ßCskWY8XXzVb09fDNrRU"}, "expect": 2885673044},
+    {"args": {"text": "dUЖF.2xs9A"}, "expect": 561923297},
+    {"args": {"text": "ekwr"}, "expect": 1043100000}
+  ]
+}

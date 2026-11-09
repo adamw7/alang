@@ -1,5 +1,5 @@
 // expect: E0404
-// Brackets and prefix operators nest at most 128 levels: the body's `{` and 128 parentheses are 129.
+// 128 parentheses inside a function body make 129 levels; 127 would be the deepest allowed.
 fn main() {
     let x: i64 = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
     print(x);

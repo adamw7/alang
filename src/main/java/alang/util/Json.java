@@ -130,13 +130,6 @@ public final class Json {
         }
     }
 
-    /**
-     * The deepest nesting of arrays and objects {@link #parse} accepts. Reading recurses once per
-     * level, so deeper input is refused instead of exhausting the stack. Tool arguments never need
-     * more: a type nests at most 128 levels, and its JSON one level less, inside the arguments object.
-     */
-    public static final int MAX_DEPTH = 128;
-
     public static Object parse(String text) {
         Reader r = new Reader(text);
         r.skipWs();
@@ -149,6 +142,9 @@ public final class Json {
     }
 
     private static final class Reader {
+        /** Parsing recurses, so nesting is limited; no ALang value nests nearly this deep. */
+        static final int MAX_DEPTH = 256;
+
         final String s;
         int pos;
         int depth;
@@ -169,8 +165,7 @@ public final class Json {
             if (pos >= s.length()) throw error("unexpected end of JSON");
             char c = s.charAt(pos);
             if (c == '{' || c == '[') {
-                if (depth == MAX_DEPTH) throw error("arrays and objects nested more than " + MAX_DEPTH + " levels deep");
-                depth++;
+                if (++depth > MAX_DEPTH) throw error("values nested more than " + MAX_DEPTH + " levels deep");
                 Object v = c == '{' ? object() : array();
                 depth--;
                 return v;
