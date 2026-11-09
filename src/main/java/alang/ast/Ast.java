@@ -428,9 +428,10 @@ public final class Ast {
 
     public static final class Assert extends Stmt {
         public final Expr cond;
-        public final String message;
+        /** The bytes of the message literal, or null; like any str they need not be valid UTF-8. */
+        public final byte[] message;
 
-        public Assert(Span span, Expr cond, String message) {
+        public Assert(Span span, Expr cond, byte[] message) {
             super(span);
             this.cond = cond;
             this.message = message;

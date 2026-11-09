@@ -1,5 +1,6 @@
 package alang;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -13,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
@@ -37,7 +39,8 @@ class CBackendTest {
      */
     private static final Duration COMPILE_AND_RUN_TIMEOUT = Duration.ofSeconds(60);
 
-    private record Proc(int exit, String stdout, String stderr) {}
+    /** A finished process; {@code stderrBytes} keeps the bytes that are not UTF-8, which {@code stderr} replaces. */
+    private record Proc(int exit, String stdout, String stderr, byte[] stderrBytes) {}
 
     private static Proc exec(Path dir, String... cmd) throws IOException, InterruptedException {
         Path out = dir.resolve("out.txt");
@@ -50,7 +53,9 @@ class CBackendTest {
             // Also when the test's own timeout interrupts the wait: never leave a compiler or program running.
             if (p.isAlive()) p.destroyForcibly();
         }
-        return new Proc(p.exitValue(), Files.readString(out, StandardCharsets.UTF_8), Files.readString(err, StandardCharsets.UTF_8));
+        byte[] errBytes = Files.readAllBytes(err);
+        return new Proc(p.exitValue(), new String(Files.readAllBytes(out), StandardCharsets.UTF_8),
+            new String(errBytes, StandardCharsets.UTF_8), errBytes);
     }
 
     private static boolean available(String tool) {
@@ -106,8 +111,15 @@ class CBackendTest {
                     assertEquals("", run.stderr(), who);
                 } else {
                     assertEquals(1, run.exit(), who);
-                    String firstLine = run.stderr().lines().findFirst().orElse("");
-                    assertEquals("trap[" + expected.trap().code + "]: " + expected.trap().getMessage(), firstLine, who);
+                    // Byte for byte: the message holds the bytes of str values, which need not be UTF-8.
+                    byte[] message = expected.trap().messageBytes();
+                    byte[] head = ("trap[" + expected.trap().code + "]: ").getBytes(StandardCharsets.UTF_8);
+                    byte[] line = new byte[head.length + message.length + 1];
+                    System.arraycopy(head, 0, line, 0, head.length);
+                    System.arraycopy(message, 0, line, head.length, message.length);
+                    line[line.length - 1] = '\n';
+                    byte[] got = Arrays.copyOf(run.stderrBytes(), Math.min(line.length, run.stderrBytes().length));
+                    assertArrayEquals(line, got, () -> who + "\n" + run.stderr());
                     String where = r.diags().source().path + ":" + expected.trap().span.line() + ":" + expected.trap().span.col();
                     assertTrue(run.stderr().contains("--> " + where), who + "\n" + run.stderr());
                 }

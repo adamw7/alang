@@ -360,7 +360,7 @@ public final class Main {
             j.put("steps", in.steps());
             line(out, Json.pretty(j));
         } else if (trap != null) {
-            err.print(renderTrap(src, trap));
+            err.writeBytes(renderTrapBytes(src, trap));
         }
         return trap == null ? 0 : 1;
     }
@@ -381,9 +381,21 @@ public final class Main {
             "trace", t.trace, "hint", t.code.explanation);
     }
 
+    /** The trap as text; a byte of a str value in the message that is not UTF-8 becomes U+FFFD. */
     public static String renderTrap(Source src, Trap t) {
+        return new String(renderTrapBytes(src, t), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The trap as it goes to stderr, byte for byte: the message keeps the bytes of the str values in it,
+     * as the C backend writes them, even where they are not UTF-8.
+     */
+    public static byte[] renderTrapBytes(Source src, Trap t) {
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        bytes.writeBytes(("trap[" + t.code.name() + "]: ").getBytes(StandardCharsets.UTF_8));
+        bytes.writeBytes(t.messageBytes());
         StringBuilder sb = new StringBuilder();
-        sb.append("trap[").append(t.code.name()).append("]: ").append(t.getMessage()).append('\n');
+        sb.append('\n');
         Span s = t.span;
         if (s.line() > 0) {
             String lineNo = String.valueOf(s.line());
@@ -397,7 +409,8 @@ public final class Main {
         }
         for (String frame : t.trace) sb.append("  in ").append(frame).append('\n');
         sb.append("  = hint: ").append(t.code.explanation).append('\n');
-        return sb.toString();
+        bytes.writeBytes(sb.toString().getBytes(StandardCharsets.UTF_8));
+        return bytes.toByteArray();
     }
 
     // =================================================================== test
@@ -461,7 +474,10 @@ public final class Main {
                         }
                         if (captured.truncated()) line(err, "    " + truncationNote(captured));
                     }
-                    err.print(renderTrap(src, trap).indent(2));
+                    // Indented line by line; ISO-8859-1 maps each byte to one char and back, so the bytes of
+                    // the message survive even where they are not UTF-8.
+                    err.writeBytes(new String(renderTrapBytes(src, trap), StandardCharsets.ISO_8859_1).indent(2)
+                        .getBytes(StandardCharsets.ISO_8859_1));
                 }
             }
         }

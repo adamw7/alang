@@ -592,6 +592,33 @@ class CliTest {
     }
 
     @Test
+    void trapMessagesKeepTheirBytes() throws IOException {
+        // The 0xff byte of the panic message used to come out as U+FFFD (ef bf bd), where the C backend
+        // writes the byte itself; `alang run` and `alang test` now write it as it is.
+        Path p = write("bytes.al", """
+            fn main() {
+                var s: str[4] = "x";
+                push(mut s, 0xff);
+                panic(s);
+            }
+
+            test "bytes" {
+                main();
+            }
+            """);
+        byte[] expected = "trap[R0010]: panic: x\u00ff\n".getBytes(StandardCharsets.ISO_8859_1);
+        for (String cmd : List.of("run", "test")) {
+            ByteArrayOutputStream err = new ByteArrayOutputStream();
+            int code = new Main(new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                new PrintStream(err, true, StandardCharsets.UTF_8)).run(new String[] {cmd, p.toString()});
+            assertEquals(1, code, cmd);
+            String text = new String(err.toByteArray(), StandardCharsets.ISO_8859_1);
+            String want = new String(expected, StandardCharsets.ISO_8859_1);
+            assertTrue(text.contains(cmd.equals("run") ? want : "  " + want), cmd + ": " + text);
+        }
+    }
+
+    @Test
     void absOfTheMinimumNamesAbs() throws IOException {
         // The trap used to blame `-`, which the program does not contain.
         Path p = write("abs.al", "fn main() {\n    let x: i64 = -9223372036854775807 - 1;\n    print(abs(x));\n}\n");

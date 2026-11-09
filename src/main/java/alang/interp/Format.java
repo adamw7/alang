@@ -136,8 +136,13 @@ public final class Format {
     }
 
     public static String toText(Object v, Type t) {
+        return new String(toBytes(v, t), StandardCharsets.UTF_8);
+    }
+
+    /** The text of a value as it appears inside a trap message, byte for byte. */
+    public static byte[] toBytes(Object v, Type t) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         format(ByteSink.of(out), v, t, true);
-        return out.toString(StandardCharsets.UTF_8);
+        return out.toByteArray();
     }
 }

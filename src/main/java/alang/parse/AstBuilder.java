@@ -199,8 +199,7 @@ final class AstBuilder {
         }
         if (ctx.assertStmt() != null) {
             AssertStmtContext a = ctx.assertStmt();
-            String msg = a.STRING_LIT() == null ? null
-                : new String(unescape(a.STRING_LIT().getSymbol()), StandardCharsets.UTF_8);
+            byte[] msg = a.STRING_LIT() == null ? null : unescape(a.STRING_LIT().getSymbol());
             return new Assert(sp, expr(a.expression()), msg);
         }
         return new ExprStmt(sp, expr(ctx.exprStmt().expression()));

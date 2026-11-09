@@ -620,7 +620,7 @@ public final class CGen {
             emit("{");
             indent++;
             String c = lower(r);
-            emit("if (!(" + c + ")) al_trap(\"R0006\", " + cString(utf8("precondition of `" + f.name + "` failed: requires " + text(r.span)))
+            emit("if (!(" + c + ")) AL_TRAP(\"R0006\", " + cString(utf8("precondition of `" + f.name + "` failed: requires " + text(r.span)))
                 + ", al_call_line, al_call_col);");
             indent--;
             emit("}");
@@ -881,7 +881,14 @@ public final class CGen {
 
     private void assertStmt(Assert a) {
         Expr c = a.cond;
-        String prefix = "assertion failed: " + (a.message != null ? a.message + ": " : "") + text(c.span);
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        bytes.writeBytes(utf8("assertion failed: "));
+        if (a.message != null) {
+            bytes.writeBytes(a.message);
+            bytes.writeBytes(utf8(": "));
+        }
+        bytes.writeBytes(utf8(text(c.span)));
+        String prefix = cString(bytes.toByteArray());
         if (c instanceof Binary b && (b.op.isEquality() || b.op.isOrdering())) {
             String l = lowerLvalue(b.left);
             String r = lowerLvalue(b.right);
@@ -889,7 +896,7 @@ public final class CGen {
             emit("if (!(" + ok + ")) {");
             indent++;
             emit("al_out al_e = al_trap_begin(\"R0005\");");
-            emit("AL_PUTS(&al_e, " + cString(utf8(prefix)) + ");");
+            emit("AL_PUTS(&al_e, " + prefix + ");");
             emit("AL_PUTS(&al_e, \" (left: \");");
             emit(fmtStmt(b.left.type, "&al_e", l, "1"));
             emit("AL_PUTS(&al_e, \", right: \");");
@@ -901,7 +908,7 @@ public final class CGen {
             return;
         }
         String v = lower(c);
-        emit("if (!(" + v + ")) al_trap(\"R0005\", " + cString(utf8(prefix)) + ", " + a.span.line() + ", " + a.span.col() + ");");
+        emit("if (!(" + v + ")) AL_TRAP(\"R0005\", " + prefix + ", " + a.span.line() + ", " + a.span.col() + ");");
     }
 
     // =================================================================== expressions
@@ -1178,7 +1185,7 @@ public final class CGen {
                 String vt = Type.isAggregate(elem) ? v : tmp(elem, v);
                 int cap = t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap();
                 String kind = t instanceof Type.Str ? "str" : "list";
-                emit("if ((" + place + ").len >= " + cap + "u) al_trap(\"R0004\", \"push to a full " + kind + " (capacity " + cap + ")\", " + at + ");");
+                emit("if ((" + place + ").len >= " + cap + "u) AL_TRAP(\"R0004\", \"push to a full " + kind + " (capacity " + cap + ")\", " + at + ");");
                 emit("(" + place + ")." + (t instanceof Type.Str ? "b" : "v") + "[(" + place + ").len++] = " + vt + ";");
                 return null;
             }
@@ -1186,7 +1193,7 @@ public final class CGen {
                 Type t = args.get(0).expr.type;
                 String place = lower(args.get(0).expr);
                 String kind = t instanceof Type.Str ? "str" : "list";
-                emit("if ((" + place + ").len == 0) al_trap(\"R0012\", \"pop from an empty " + kind + "\", " + at + ");");
+                emit("if ((" + place + ").len == 0) AL_TRAP(\"R0012\", \"pop from an empty " + kind + "\", " + at + ");");
                 return tmp(Type.elementOf(t), "(" + place + ")." + (t instanceof Type.Str ? "b" : "v") + "[--(" + place + ").len]");
             }
             case CLEAR -> {

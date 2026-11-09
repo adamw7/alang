@@ -315,14 +315,14 @@ static void al_trap_end(al_out *e, int line, int col) {
     _Exit(1);
 }
 
-static void al_trap(const char *code, const char *msg, int line, int col) {
+/* The message is a string literal; its length comes from sizeof, so a NUL byte in it is kept. */
+static void al_trap_n(const char *code, const char *msg, uint32_t n, int line, int col) {
     al_out e = al_trap_begin(code);
-    const char *p = msg;
-    uint32_t n = 0;
-    while (p[n] != 0) n++;
     al_put(&e, msg, n);
     al_trap_end(&e, line, col);
 }
+
+#define AL_TRAP(code, msg, line, col) al_trap_n((code), (msg), (uint32_t)(sizeof(msg) - 1), (line), (col))
 
 static void al_overflow(const char *op, const char *type, int line, int col) {
     al_out e = al_trap_begin("R0001");
