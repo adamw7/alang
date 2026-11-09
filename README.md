@@ -152,12 +152,14 @@ mvn test                              # 270+ tests: conformance, examples, deter
 mvn test -Dtest='*ArchitectureTest'   # just the ArchUnit rules (layers, determinism, I/O at the edge, test conventions)
 mvn test -Dalang.fuzz=3000            # a longer fuzzing campaign
 python3 bench/bench.py selftest       # the benchmark's tasks, grader and feedback loop, offline
+mvn test-compile pitest:mutationCoverage      # mutation testing of the toolchain (see below)
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on JDK 21 with gcc
 and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
-packaged jar, runs the benchmark self-test on Linux, and runs a 3000-mutation fuzzing campaign.
+packaged jar, runs the benchmark self-test on Linux, runs a 3000-mutation fuzzing campaign, and
+runs mutation testing, uploading the report as the `pit-report` artifact.
 
 Every test has a time limit, so a hang fails fast instead of stalling CI. A test fails after 10 s,
 even if it never checks for interrupts
@@ -167,10 +169,37 @@ the whole test run takes longer than 180 s (`surefire.timeout` in `pom.xml`). Ea
 also has a limit of a few minutes.
 
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
-plugins and GitHub Actions. The ANTLR tool and runtime are updated together, the Maven plugins
-in one pull request, and the workflow's actions in another. Renovate merges each of its pull
-requests once every CI check on it has passed, rebasing it onto `main` first if it has fallen
-behind.
+plugins and GitHub Actions. The ANTLR tool and runtime are updated together, PIT and its JUnit 5
+plugin together, the Maven plugins in one pull request, and the workflow's actions in another.
+Renovate merges each of its pull requests once every CI check on it has passed, rebasing it onto
+`main` first if it has fallen behind.
+
+### Mutation testing
+
+The fuzzer mutates ALang *programs* to show that the toolchain never crashes. Mutation testing
+checks the *tests* instead: [PIT](https://pitest.org) makes small changes to the toolchain's
+compiled code (flips a comparison, removes a call, returns a constant) and runs the tests that
+cover the changed line against each of these mutants. A mutant that no test notices points at
+behavior the suite does not pin down.
+
+```sh
+mvn test-compile pitest:mutationCoverage                      # about 2,600 mutants, 7 minutes on 4 cores
+mvn test-compile pitest:mutationCoverage -Dpitest.threads=8   # parallel test JVMs: default 4, at most one per core
+```
+
+PIT prints how many mutants are done every 30 seconds. The report,
+`target/pit-reports/index.html`, shows every surviving mutant on its source line.
+Every class under `alang` is mutated except the ANTLR-generated parser and the C backend: only
+`CBackendTest` can catch a C backend mutant, and it compiles every program with gcc and clang,
+which would turn minutes into hours. That test and the ArchUnit rules (`*ArchitectureTest`), which
+read class files from disk and so never see a mutant, are left out of the run.
+
+The run fails when the mutation score (mutants killed out of all mutants) drops below 62% or the
+test strength (killed out of those that some test covers) below 75%. The baseline is 63% and
+76%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
+the CLI and the JSON side of tool calls (`Main`, `JsonValues`, `Json`), which the unit tests
+barely reach, and output whose exact numbers or text few tests assert: memory layout (`Layout`)
+and syntax error hints (`SyntaxErrorListener`).
 
 ## Status
 

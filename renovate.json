@@ -14,6 +14,11 @@
       "groupName": "ANTLR"
     },
     {
+      "description": "The PIT JUnit 5 plugin runs inside PIT, so both move to a new version together.",
+      "matchPackageNames": ["org.pitest:*"],
+      "groupName": "PIT"
+    },
+    {
       "description": "Maven build plugins only affect the build: update them in one pull request.",
       "matchPackageNames": ["org.apache.maven.plugins:*"],
       "groupName": "Maven plugins"
