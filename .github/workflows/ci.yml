@@ -105,7 +105,8 @@ jobs:
 
       - name: Mutate the toolchain and run the tests against every mutant
         # Fails when the mutation score or test strength drops below its threshold in pom.xml.
-        run: mvn -B -ntp test-compile pitest:mutationCoverage
+        # One test JVM per CPU: more only adds contention (private repositories get 2 CPUs).
+        run: mvn -B -ntp test-compile pitest:mutationCoverage -Dpitest.threads="$(nproc)"
 
       - name: Upload the mutation report
         if: always()

@@ -134,6 +134,17 @@
             <param>alang.CBackendTest</param>
           </excludedTestClasses>
           <threads>${pitest.threads}</threads>
+          <!-- Print "N mutations completed" every 30 seconds instead of a spinner. The spinner never
+               ends its line, so a CI log showed no output at all until the run was over. -->
+          <features>
+            <feature>+progress</feature>
+          </features>
+          <verbosity>NO_SPINNER</verbosity>
+          <!-- By default PIT makes one analysis unit per class, and the count stayed at 0 until
+               all of Checker's ~900 mutants were done. Smaller units keep the count moving and
+               spread Checker over every thread; each unit starts a fresh test JVM, so much smaller
+               units only add start-up time (50 per unit was 20% slower). -->
+          <mutationUnitSize>100</mutationUnitSize>
           <!-- A ratchet: the build fails when either score drops below these percentages.
                Raise them as the tests improve. -->
           <mutationThreshold>58</mutationThreshold>

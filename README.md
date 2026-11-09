@@ -174,10 +174,11 @@ behavior the suite does not pin down.
 
 ```sh
 mvn test-compile pitest:mutationCoverage                      # about 2,500 mutants, 6 minutes on 4 cores
-mvn test-compile pitest:mutationCoverage -Dpitest.threads=8   # more parallel JVMs
+mvn test-compile pitest:mutationCoverage -Dpitest.threads=8   # parallel test JVMs: default 4, at most one per core
 ```
 
-The report, `target/pit-reports/index.html`, shows every surviving mutant on its source line.
+PIT prints how many mutants are done every 30 seconds. The report,
+`target/pit-reports/index.html`, shows every surviving mutant on its source line.
 Every class under `alang` is mutated except the ANTLR-generated parser and the C backend: only
 `CBackendTest` can catch a C backend mutant, and it compiles every program with gcc and clang,
 which would turn minutes into hours. That test and the ArchUnit rules (`*ArchitectureTest`), which
