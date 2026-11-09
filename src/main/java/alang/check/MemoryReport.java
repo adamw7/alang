@@ -37,7 +37,7 @@ public final class MemoryReport {
 
     static MemoryReport compute(Program program) {
         long statics = 0;
-        for (ConstDecl c : program.itemsOf(ConstDecl.class)) statics += Layout.size(c.type);
+        for (ConstDecl c : program.itemsOf(ConstDecl.class)) statics = Layout.add(statics, Layout.size(c.type));
         MemoryReport r = new MemoryReport(statics);
         for (FnDecl f : program.itemsOf(FnDecl.class)) {
             Entry e = new Entry("fn " + f.name, f, r.frame(f), r.stack(f));
@@ -59,9 +59,9 @@ public final class MemoryReport {
         int params = r instanceof FnDecl f ? f.paramVars.size() : 0;
         for (int i = 0; i < r.locals.size(); i++) {
             LocalVar v = r.locals.get(i);
-            bytes += i < params ? Layout.paramSize(v.type, v.byRef) : Layout.size(v.type);
+            bytes = Layout.add(bytes, i < params ? Layout.paramSize(v.type, v.byRef) : Layout.size(v.type));
         }
-        if (r instanceof FnDecl f) bytes += Layout.size(f.ret);
+        if (r instanceof FnDecl f) bytes = Layout.add(bytes, Layout.size(f.ret));
         frames.put(r, bytes);
         return bytes;
     }
@@ -71,7 +71,7 @@ public final class MemoryReport {
         if (cached != null) return cached;
         long deepest = 0;
         for (FnDecl c : r.callees) deepest = Math.max(deepest, stack(c));
-        long total = frame(r) + deepest;
+        long total = Layout.add(frame(r), deepest);
         stacks.put(r, total);
         return total;
     }

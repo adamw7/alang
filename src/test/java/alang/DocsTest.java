@@ -38,7 +38,7 @@ class DocsTest {
             while (m.find()) {
                 String code = m.group(1);
                 String name = doc + " block " + ++n;
-                tests.add(DynamicTest.dynamicTest(name, () -> {
+                tests.add(Harness.dynamicTest(name, () -> {
                     Frontend.Result r = Frontend.compile(new Source(name, code), 0);
                     assertTrue(r.diags().all().isEmpty(), () -> r.diags().renderText());
                     assertEquals(List.of(), Harness.runTests(r));
@@ -64,7 +64,7 @@ class DocsTest {
             String code = m.group(3);
             Matcher out = OUTPUT.matcher(text).region(m.end(), text.length());
             String shown = out.lookingAt() ? out.group(1) : null;
-            tests.add(DynamicTest.dynamicTest(doc + " " + file, () -> {
+            tests.add(Harness.dynamicTest(doc + " " + file, () -> {
                 assertNotNull(shown, file + " must be followed by a ```text block with the toolchain's output");
                 Frontend.Result r = Frontend.compile(new Source(file, code), 0);
                 String actual;

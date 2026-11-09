@@ -158,6 +158,13 @@ and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
 packaged jar, runs a 3000-mutation fuzzing campaign, and runs mutation testing, uploading the
 report as the `pit-report` artifact.
 
+Every test has a time limit, so a hang fails fast instead of stalling CI. A test fails after 10 s,
+even if it never checks for interrupts
+([`junit-platform.properties`](src/test/resources/junit-platform.properties); dynamic tests are
+built with `Harness.dynamicTest`, which an ArchUnit rule enforces). Surefire kills the test JVM if
+the whole test run takes longer than 180 s (`surefire.timeout` in `pom.xml`). Each CI step and job
+also has a limit of a few minutes.
+
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
 plugins and GitHub Actions. The ANTLR tool and runtime are updated together, PIT and its JUnit 5
 plugin together, the Maven plugins in one pull request, and the workflow's actions in another.
@@ -184,9 +191,9 @@ Every class under `alang` is mutated except the ANTLR-generated parser and the C
 which would turn minutes into hours. That test and the ArchUnit rules (`*ArchitectureTest`), which
 read class files from disk and so never see a mutant, are left out of the run.
 
-The run fails when the mutation score (mutants killed out of all mutants) drops below 58% or the
-test strength (killed out of those that some test covers) below 74%. The baseline is 59% and
-76%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
+The run fails when the mutation score (mutants killed out of all mutants) drops below 61% or the
+test strength (killed out of those that some test covers) below 75%. The baseline is 62% and
+77%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
 the CLI and the JSON side of tool calls (`Main`, `JsonValues`, `Json`), which the unit tests
 barely reach, and output whose exact numbers or text few tests assert: memory layout (`Layout`)
 and syntax error hints (`SyntaxErrorListener`).
