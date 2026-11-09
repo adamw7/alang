@@ -130,6 +130,13 @@ public final class Main {
         } catch (NumberFormatException e) {
             line(err, "alang: expected a number: " + e.getMessage());
             return 2;
+        } catch (StackOverflowError e) {
+            // The parser, checker and interpreter recurse over the syntax tree; extremely deep
+            // nesting (hundreds of levels) exhausts the thread stack. Report it instead of crashing.
+            out.flush();
+            line(err, "alang: the program is nested too deeply to process; split the deepest expression or block "
+                + "into smaller parts using intermediate `let` bindings or helper functions");
+            return 1;
         }
     }
 
@@ -375,7 +382,8 @@ public final class Main {
         if (positional.size() < 2) throw new UsageException("usage: alang call <file.al> <tool> [json-arguments]");
         String name = positional.get(1);
         String argText;
-        if (positional.size() >= 3 && !positional.get(2).equals("-")) {
+        boolean fromArgv = positional.size() >= 3 && !positional.get(2).equals("-");
+        if (fromArgv) {
             argText = positional.get(2);
         } else {
             try {
@@ -402,6 +410,14 @@ public final class Main {
             }
             String msg = f == null ? "no function `" + name + "`" : "`" + name + "` is not declared as `tool fn`";
             return callError(j, "bad_tool", msg + "; available tools: " + tools);
+        }
+        String argEncoding = System.getProperty("sun.jnu.encoding", "UTF-8");
+        if (fromArgv && argText.indexOf('\uFFFD') >= 0 && !argEncoding.equalsIgnoreCase("UTF-8")) {
+            // Java decoded the argument with a non-UTF-8 host locale and replaced bytes it could not
+            // decode, so the text is no longer what the caller sent. Refuse rather than silently
+            // computing a locale-dependent result.
+            return callError(j, "bad_arguments", "the JSON argument contains characters that could not be decoded in this "
+                + "host locale (" + argEncoding + "); pass the arguments on stdin, or use a UTF-8 locale such as C.UTF-8");
         }
         Object parsed;
         try {
