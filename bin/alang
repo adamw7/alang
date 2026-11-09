@@ -7,4 +7,7 @@ if [ ! -f "$JAR" ] || [ "$ROOT/grammar/ALang.g4" -nt "$JAR" ]; then
   echo "alang: building $JAR (first run)..." >&2
   (cd "$ROOT" && mvn -q -B -DskipTests package >&2)
 fi
-exec java -jar "$JAR" "$@"
+# Java decodes command-line arguments (file names, `alang call` JSON) with the host locale's
+# charset; under a POSIX/C locale every non-ASCII byte would be replaced. Use UTF-8 so the
+# result never depends on the host locale (the toolchain's own output is locale-independent).
+exec env LC_ALL=C.UTF-8 java -jar "$JAR" "$@"
