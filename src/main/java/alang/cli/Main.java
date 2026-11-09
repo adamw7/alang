@@ -91,6 +91,15 @@ public final class Main {
         }
         String cmd = args[0];
         try {
+            for (int i = 0; i < args.length; i++) {
+                // The JVM turns bytes it cannot decode with the locale's character set into U+FFFD.
+                // Running on such an argument would quietly use different text than the user typed.
+                if (args[i].indexOf('\uFFFD') >= 0) {
+                    throw new UsageException("argument " + (i + 1) + " (" + args[i] + ") is not valid text in "
+                        + "this locale's character set; use a UTF-8 locale (bin/alang switches the C/POSIX "
+                        + "locale to C.UTF-8), or pass the JSON arguments of `call` on stdin");
+                }
+            }
             for (int i = 1; i < args.length; i++) {
                 String a = args[i];
                 switch (a) {
