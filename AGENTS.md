@@ -215,7 +215,9 @@ bin/alang call prog.al word_counts '{"text": "a b a"}'
 JSON mapping: integers/floats/bools as JSON numbers/booleans, `str[N]` as a string,
 arrays and lists as JSON arrays, structs as objects (all fields required), enum variants as
 `"Name"` or `{"Name": [payload...]}`. Tools cannot take `mut` parameters. A trap inside a tool
-returns `{"ok": false, "error": {"code": "R....", ...}}` instead of crashing the caller.
+returns `{"ok": false, "error": {"code": "R....", ...}}` instead of crashing the caller. JSON has no
+NaN or infinity, so a float result holding one fails with `bad_result`: check for it in the tool.
+Pass `-` instead of the JSON to read the arguments from stdin.
 
 Tools are safe to run even when you wrote them minutes ago: no file, network, clock or random
 access, no heap, bounded loops, no recursion, and a deterministic step budget.

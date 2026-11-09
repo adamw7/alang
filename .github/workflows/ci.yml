@@ -63,6 +63,26 @@ jobs:
           bin/alang call examples/inventory.al place_order '{"sku": "B-200", "quantity": 2}' > "$out/call.json"
           cat "$out/call.json"
           grep -q '"ok": true' "$out/call.json"
+          # `-` reads the arguments from stdin.
+          echo '{"sku": "B-200", "quantity": 2}' > "$out/args.json"
+          bin/alang call examples/inventory.al place_order - < "$out/args.json" > "$out/call.json"
+          grep -q '"ok": true' "$out/call.json"
+          # Without an argument, `call` must not read stdin: here stdin stays open and never sends
+          # anything, so a call that reads it hangs until the step's time limit.
+          printf 'tool fn one() -> i64 {\n    return 1;\n}\n' > "$out/one.al"
+          mkfifo "$out/stdin"
+          sleep 600 > "$out/stdin" &
+          writer=$!
+          bin/alang call "$out/one.al" one < "$out/stdin" > "$out/one.json"
+          kill "$writer"
+          grep -q '"result": 1' "$out/one.json"
+
+          # bin/alang rebuilds the jar after a source change, and only then.
+          touch src/main/java/alang/cli/Main.java
+          bin/alang version 2> "$out/rebuild.err"
+          grep -q 'building .* (sources changed)' "$out/rebuild.err"
+          bin/alang version 2> "$out/rebuild.err"
+          if grep -q 'building' "$out/rebuild.err"; then exit 1; fi
 
           # C backend: the compiled program prints the same bytes as the interpreter.
           bin/alang build examples/shapes.al -o "$out/shapes.c"

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import alang.check.Checker;
 import alang.cli.Frontend;
 import alang.cli.Main;
 import alang.diag.Source;
@@ -39,7 +40,7 @@ class DocsTest {
                 String code = m.group(1);
                 String name = doc + " block " + ++n;
                 tests.add(Harness.dynamicTest(name, () -> {
-                    Frontend.Result r = Frontend.compile(new Source(name, code), 0);
+                    Frontend.Result r = Frontend.compile(new Source(name, code), Checker.DEFAULT_MAX_STACK);
                     assertTrue(r.diags().all().isEmpty(), () -> r.diags().renderText());
                     assertEquals(List.of(), Harness.runTests(r));
                     if (r.program().function("main") != null) {
@@ -66,7 +67,7 @@ class DocsTest {
             String shown = out.lookingAt() ? out.group(1) : null;
             tests.add(Harness.dynamicTest(doc + " " + file, () -> {
                 assertNotNull(shown, file + " must be followed by a ```text block with the toolchain's output");
-                Frontend.Result r = Frontend.compile(new Source(file, code), 0);
+                Frontend.Result r = Frontend.compile(new Source(file, code), Checker.DEFAULT_MAX_STACK);
                 String actual;
                 if (rejected) {
                     assertFalse(r.ok(), file + " is shown as rejected, but it compiles");

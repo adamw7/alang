@@ -230,7 +230,7 @@ def call(lang: str, task: Task, workdir: Path, args: dict) -> dict:
     """Runs one call; returns {"ok": true, "result": value} or {"ok": false, "error": text}."""
     stdin = json.dumps(args).encode()  # on stdin: argv would be decoded with the host locale
     if lang == "alang":
-        code, out, _ = _run(_alang("call", "solution.al", task.name, "--max-steps", str(ALANG_MAX_STEPS)),
+        code, out, _ = _run(_alang("call", "solution.al", task.name, "-", "--max-steps", str(ALANG_MAX_STEPS)),
                             workdir, stdin)
         if code is None:
             return {"ok": False, "error": f"timed out after {CASE_TIMEOUT} s"}

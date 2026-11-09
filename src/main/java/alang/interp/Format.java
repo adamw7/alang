@@ -40,7 +40,7 @@ public final class Format {
         return (negative ? "-" : "") + s.substring(0, end);
     }
 
-    public static void format(ByteArrayOutputStream out, Object v, Type t, boolean nested) {
+    public static void format(ByteSink out, Object v, Type t, boolean nested) {
         switch (t) {
             case Type.Prim p -> {
                 PrimKind k = p.kind();
@@ -100,7 +100,7 @@ public final class Format {
         }
     }
 
-    private static void list(ByteArrayOutputStream out, Object[] items, int n, Type elem) {
+    private static void list(ByteSink out, Object[] items, int n, Type elem) {
         out.write('[');
         for (int i = 0; i < n; i++) {
             if (i > 0) ascii(out, ", ");
@@ -109,7 +109,7 @@ public final class Format {
         out.write(']');
     }
 
-    private static void quote(ByteArrayOutputStream out, byte[] b, int len) {
+    private static void quote(ByteSink out, byte[] b, int len) {
         out.write('"');
         for (int i = 0; i < len; i++) {
             int c = b[i] & 0xFF;
@@ -131,13 +131,13 @@ public final class Format {
         out.write('"');
     }
 
-    private static void ascii(ByteArrayOutputStream out, String s) {
+    private static void ascii(ByteSink out, String s) {
         out.writeBytes(s.getBytes(StandardCharsets.UTF_8));
     }
 
     public static String toText(Object v, Type t) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        format(out, v, t, true);
+        format(ByteSink.of(out), v, t, true);
         return out.toString(StandardCharsets.UTF_8);
     }
 }

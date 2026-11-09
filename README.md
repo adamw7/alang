@@ -53,7 +53,7 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 | Property | How ALang guarantees it |
 |----------|-------------------------|
 | **Easy for agents** | One way to do things; explicit types; familiar Rust-like syntax; no precedence puzzles; no shadowing. Every diagnostic has a stable code, an exact location and a concrete fix hint, also as JSON. Built-in `test` blocks and contracts (`requires` / `ensures`). |
-| **No heap** | Every type has a compile-time size: `str[N]`, `list[T; N]`, `[T; N]`, structs, enums. No pointers, no `null`, no allocator. `alang check` reports the exact worst-case memory of every entry point. |
+| **No heap** | Every type has a compile-time size: `str[N]`, `list[T; N]`, `[T; N]`, structs, enums. No pointers, no `null`, no allocator. `alang check` reports the worst-case memory of every entry point and rejects a program over its budget (8 MiB by default). |
 | **Deterministic** | No clock, randomness, environment, threads or I/O except `print`. No undefined behavior: overflow, bad indexes, bad conversions all trap with fixed codes. Fixed evaluation order. Only correctly rounded float operations, and exact float formatting. Same bytes out on every run, machine, compiler and locale. |
 | **Always terminates** | Recursion is a compile error, and every `while` loop states an iteration `limit`. |
 | **Safe to run agent code** | Tool functions take JSON in and return JSON out with no access to the host. A deterministic step budget bounds runtime. |
@@ -67,7 +67,7 @@ Go, Rust, C and Java, using programs you can run.
 Requirements: JDK 21+ and Maven. A C compiler is optional (for `alang build`).
 
 ```sh
-bin/alang run examples/hello.al         # builds target/alang.jar on first use
+bin/alang run examples/hello.al         # builds target/alang.jar on first use and after source changes
 bin/alang test examples/rpn_calculator.al
 bin/alang check examples/maze_bfs.al --memory
 bin/alang tools examples/text_tools.al
@@ -79,11 +79,11 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 
 | Command | Purpose |
 |---------|---------|
-| `alang check FILE [--json] [--memory] [--max-stack B]` | Type-check; print diagnostics and the static memory bound |
+| `alang check FILE [--json] [--memory] [--max-stack B]` | Type-check; print diagnostics and the static memory bound (8 MiB budget unless `--max-stack` sets another) |
 | `alang run FILE [--json] [--max-steps N]` | Run `fn main()` |
 | `alang test FILE [--json] [--filter TEXT]` | Run all `test "..." { }` blocks |
 | `alang tools FILE` | JSON tool definitions for every `tool fn` (name, description, input_schema) |
-| `alang call FILE TOOL [JSON]` | Call a tool with JSON arguments (or read them from stdin) |
+| `alang call FILE TOOL [JSON \| -]` | Call a tool with JSON arguments; `-` reads them from stdin, and none means `{}` |
 | `alang build FILE [-o out.c]` | Compile to heap-free C99 |
 | `alang explain CODE` | Explain a diagnostic or trap code |
 

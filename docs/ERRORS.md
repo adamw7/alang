@@ -47,6 +47,7 @@ Codes are never reused for a different meaning.
 | [E0402](#e0402) | stack bound exceeded |
 | [E0403](#e0403) | recursive type |
 | [E0404](#e0404) | nested too deeply |
+| [E0405](#e0405) | constant too large |
 | [E0501](#e0501) | misplaced `result` |
 | [E0601](#e0601) | invalid tool signature |
 | [E0602](#e0602) | invalid main |
@@ -415,10 +416,12 @@ fn fact(n: u64) -> u64 { return n * fact(n - 1); }  // error
 
 **stack bound exceeded**
 
-The worst-case stack usage computed by the checker exceeds the --max-stack budget.
+The worst-case stack usage computed by the checker exceeds the memory budget: 8 MiB (8388608 bytes) unless --max-stack sets another, 0 for none. The figure for an entry point (main, a tool or a test) counts the parameters, locals, return values and aggregate temporaries of its deepest chain of calls; `alang check --memory` lists it per function. The budget keeps a checked program within the memory of the interpreter and of the default C stack. Reduce capacities, or pass large values as `mut` parameters instead of copying them.
 
 ```
-alang check big.al --max-stack 4096
+fn main() {
+    let grid: [[i64; 1024]; 1024] = [[0; 1024]; 1024];  // 8 MiB, plus 8 MiB to build it: error
+}
 ```
 
 ## E0403
@@ -441,6 +444,16 @@ A program may nest at most 128 levels deep. Each bracket and each operator chain
 let x: i64 = 1 + 1 + 1 + ... + 1;  // 200 chained `+`: error
 let a: i64 = 1 + 1 + ... + 1;       // 100 of them
 let x: i64 = a + 1 + ... + 1;       // and 100 more: ok
+```
+
+## E0405
+
+**constant too large**
+
+Constants are evaluated while the program is checked and stay in memory for the whole run. Together they may hold at most the memory budget: 8 MiB (8388608 bytes) unless --max-stack sets another, 0 for none. Each constant counts its own size, the values its initializer builds on the way, and the constants checked before it. Make the constant smaller, or build the data at run time in a function.
+
+```
+const TABLE: [[i64; 1024]; 1024] = [[0; 1024]; 1024];  // 8 MiB, plus 8 MiB to build it: error
 ```
 
 ## E0501
