@@ -156,6 +156,13 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on
 and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
 packaged jar, and runs a 3000-mutation fuzzing campaign.
 
+Every test has a time limit, so a hang fails fast instead of stalling CI. A test fails after 10 s,
+even if it never checks for interrupts
+([`junit-platform.properties`](src/test/resources/junit-platform.properties); dynamic tests are
+built with `Harness.dynamicTest`, which an ArchUnit rule enforces). Surefire kills the test JVM if
+the whole test run takes longer than 180 s (`surefire.timeout` in `pom.xml`). Each CI step and job
+also has a limit of a few minutes.
+
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
 plugins and GitHub Actions. The ANTLR tool and runtime are updated together, the Maven plugins
 in one pull request, and the workflow's actions in another. Renovate merges each of its pull

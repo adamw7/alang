@@ -4,6 +4,7 @@ import static com.tngtech.archunit.core.domain.AccessTarget.Predicates.declaredI
 import static com.tngtech.archunit.core.domain.JavaAccess.Predicates.target;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.name;
+import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.nameMatching;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.fields;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
@@ -20,8 +21,10 @@ import java.util.SplittableRandom;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.DynamicTest;
 
 /**
  * Rules for the test code itself, so the suites stay fast, honest and as reproducible as the
@@ -86,6 +89,26 @@ class TestConventionsArchitectureTest {
             .orShould().callMethod(Thread.class, "sleep", Duration.class)
             .orShould().callMethod(TimeUnit.class, "sleep", long.class)
             .because("a test that sleeps is slow and flaky; wait on a condition instead");
+
+    @ArchTest
+    static final ArchRule dynamic_tests_have_a_timeout = noClasses()
+            .that().doNotHaveFullyQualifiedName(Harness.class.getName())
+            .should().callMethodWhere(target(declaredIn(DynamicTest.class))
+                    .and(target(nameMatching("dynamicTest|stream")))
+                    .as("target is DynamicTest.(dynamicTest|stream)"))
+            .because("JUnit's default timeout (junit-platform.properties) bounds a @TestFactory method but "
+                    + "not the dynamic tests it returns; build them with Harness.dynamicTest, which fails each "
+                    + "one after Harness.TEST_TIMEOUT so CI stays fast even when a test hangs");
+
+    @ArchTest
+    static final ArchRule waits_are_bounded = noClasses()
+            .should().callMethod(Process.class, "waitFor")
+            .orShould().callMethod(Thread.class, "join")
+            .orShould().callMethodWhere(target(declaredIn(Assertions.class)).and(target(name("assertTimeout")))
+                    .as("target is Assertions.assertTimeout"))
+            .because("a wait without a limit can hang CI; pass one (process.waitFor(seconds, TimeUnit.SECONDS)), "
+                    + "and use assertTimeoutPreemptively, since assertTimeout lets a hung executable run on and "
+                    + "only fails once it returns");
 
     @ArchTest
     static final ArchRule tests_do_not_print = noClasses()

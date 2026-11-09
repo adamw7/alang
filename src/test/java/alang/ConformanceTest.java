@@ -28,7 +28,7 @@ class ConformanceTest {
 
     @TestFactory
     Stream<DynamicTest> runTests() {
-        return Harness.files("tests/run", ".al").stream().map(p -> DynamicTest.dynamicTest(p.getFileName().toString(), () -> {
+        return Harness.files("tests/run", ".al").stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), () -> {
             Frontend.Result r = Harness.compile(p);
             assertTrue(r.diags().all().isEmpty(), () -> r.diags().renderText());
             Harness.Run run = Harness.runMain(r);
@@ -51,7 +51,7 @@ class ConformanceTest {
 
     @TestFactory
     Stream<DynamicTest> errorTests() {
-        return Harness.files("tests/errors", ".al").stream().map(p -> DynamicTest.dynamicTest(p.getFileName().toString(), () -> {
+        return Harness.files("tests/errors", ".al").stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), () -> {
             String text = Harness.read(p);
             Matcher m = EXPECT.matcher(text);
             assertTrue(m.find(), "missing // expect: line");
