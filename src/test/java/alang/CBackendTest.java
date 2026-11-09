@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +30,13 @@ class CBackendTest {
         "printf", "fprintf", "sprintf", "snprintf", "puts", "fwrite", "fputs", "putchar",
         "time", "clock", "rand", "srand", "getenv");
 
+    /**
+     * Each test compiles the program with up to three C compilers and runs each build, then compiles it
+     * once more for the symbol check. That is far more than a typical test, and on a cold CI runner the
+     * first one took over Harness.TEST_TIMEOUT, so these tests (and each process) get this long.
+     */
+    private static final Duration COMPILE_AND_RUN_TIMEOUT = Duration.ofSeconds(60);
+
     private record Proc(int exit, String stdout, String stderr) {}
 
     private static Proc exec(Path dir, String... cmd) throws IOException, InterruptedException {
@@ -37,7 +45,7 @@ class CBackendTest {
         Process p = new ProcessBuilder(cmd).directory(dir.toFile())
             .redirectOutput(out.toFile()).redirectError(err.toFile()).start();
         try {
-            assertTrue(p.waitFor(Harness.TEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), "timeout: " + String.join(" ", cmd));
+            assertTrue(p.waitFor(COMPILE_AND_RUN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), "timeout: " + String.join(" ", cmd));
         } finally {
             // Also when the test's own timeout interrupts the wait: never leave a compiler or program running.
             if (p.isAlive()) p.destroyForcibly();
@@ -76,7 +84,7 @@ class CBackendTest {
     Stream<DynamicTest> differential() {
         List<Path> files = new ArrayList<>(Harness.files("tests/run", ".al"));
         files.addAll(Harness.files("examples", ".al"));
-        return files.stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), () -> {
+        return files.stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), COMPILE_AND_RUN_TIMEOUT, () -> {
             List<String[]> ccs = compilers();
             assumeTrue(!ccs.isEmpty(), "no C compiler available");
             Frontend.Result r = Harness.compile(p);
