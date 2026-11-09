@@ -14,6 +14,8 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
@@ -341,10 +343,137 @@ class CliTest {
     void negativeLimitsAreUsageErrors() {
         // They used to mean "no limit" without saying so.
         for (String option : new String[] {"--max-steps", "--max-stack"}) {
-            Result r = run("check", "missing.al", option, "-1");
+            Result r = run("run", "missing.al", option, "-1");
             assertEquals(2, r.code(), r.err());
             assertTrue(r.err().contains(option + " must be 0 (no limit) or more"), r.err());
         }
+    }
+
+    @Test
+    void explainTakesTheFormsItsUsageShows() {
+        // `explain --all` and `explain --markdown` used to fail with "unknown option".
+        for (String form : new String[] {"--all", "all"}) {
+            Result r = run("explain", form);
+            assertEquals(0, r.code(), r.err());
+            assertTrue(r.out().startsWith("E0001: syntax error\n"), r.out());
+        }
+        for (String form : new String[] {"--markdown", "markdown"}) {
+            Result r = run("explain", form);
+            assertEquals(0, r.code(), r.err());
+            assertEquals(Main.errorsMarkdown(), r.out());
+        }
+    }
+
+    @Test
+    void argumentsACommandDoesNotTakeAreUsageErrors() throws IOException {
+        // They used to be ignored: `check -o x.c` wrote no file, and arguments after the file were dropped.
+        String hello = write("hello.al", "fn main() {\n    print(1);\n}\n").toString();
+        String[][] cases = {
+            {"unexpected argument `extra` for `alang run`", "run", hello, "extra"},
+            {"unexpected argument `E0201` for `alang explain`", "explain", "E0101", "E0201"},
+            {"unexpected argument `now` for `alang version`", "version", "now"},
+            {"-o does not apply to `alang check`", "check", hello, "-o", "x.c"},
+            {"--filter does not apply to `alang run`", "run", hello, "--filter", "x"},
+            {"--max-steps does not apply to `alang check`", "check", hello, "--max-steps", "5"},
+            {"--json does not apply to `alang build`", "build", hello, "--json"},
+            {"unknown option --verbose", "run", hello, "--verbose"},
+            {"unknown option -v", "run", hello, "-v"},
+            {"unknown command `bogus`", "bogus", "--json"},
+        };
+        for (String[] c : cases) {
+            Result r = run(Arrays.copyOfRange(c, 1, c.length));
+            assertEquals(2, r.code(), String.join(" ", c));
+            assertTrue(r.err().startsWith("alang: " + c[0]), r.err());
+            assertEquals("", r.out());
+        }
+        assertFalse(Files.exists(dir.resolve("x.c")));
+        // `call` takes a file, a tool and its arguments, and reports the extra argument as JSON.
+        Path tool = write("one.al", "tool fn one() -> i64 {\n    return 1;\n}\n");
+        Result r = run("call", tool.toString(), "one", "{}", "extra");
+        assertEquals(2, r.code(), r.out());
+        assertEquals("{\"ok\": false, \"error\": {\"code\": \"usage_error\", \"message\": \"unexpected argument `extra` for "
+            + "`alang call`; see `alang help`\"}}\n", r.out());
+    }
+
+    @Test
+    void usageErrorsAreJsonWhenTheOutputIs() throws IOException {
+        // A missing file used to be reported as text on stderr even with --json, and by `call`.
+        Result r = run("check", "missing.al", "--json");
+        assertEquals(2, r.code(), r.err());
+        assertEquals("{\n  \"ok\": false,\n  \"error\": \"file not found: missing.al\"\n}\n", r.out());
+        assertEquals("", r.err());
+        // An error found before --json is reached.
+        r = run("run", "missing.al", "--max-steps", "many", "--json");
+        assertEquals(2, r.code(), r.err());
+        assertEquals("{\n  \"ok\": false,\n  \"error\": \"expected a number: For input string: \\\"many\\\"\"\n}\n", r.out());
+        // `--filter --json` filters on the text "--json"; it does not ask for JSON.
+        r = run("test", "missing.al", "--filter", "--json");
+        assertEquals(2, r.code());
+        assertEquals("alang: file not found: missing.al\n", r.err());
+        r = run("call", "missing.al", "f");
+        assertEquals(2, r.code(), r.err());
+        assertEquals("{\"ok\": false, \"error\": {\"code\": \"usage_error\", \"message\": \"file not found: missing.al\"}}\n", r.out());
+        assertEquals("", r.err());
+    }
+
+    @Test
+    void compileErrorsInToolCommandsAreReportedAsJson() throws IOException {
+        Path bad = write("bad.al", "tool fn f() -> i64 {\n    return true;\n}\n");
+        // `call` used to report them with the code "E".
+        Result r = run("call", bad.toString(), "f");
+        assertEquals(1, r.code(), r.err());
+        assertTrue(r.out().startsWith("{\"ok\": false, \"error\": {\"code\": \"compile_error\", "), r.out());
+        r = run("tools", bad.toString(), "--json");
+        assertEquals(1, r.code(), r.err());
+        Map<?, ?> j = (Map<?, ?>) Json.parse(r.out());
+        assertEquals(false, j.get("ok"));
+        assertEquals(1, ((List<?>) j.get("diagnostics")).size(), r.out());
+        assertEquals("", r.err());
+        r = run("tools", bad.toString());
+        assertEquals(1, r.code());
+        assertTrue(r.err().startsWith("error[E0201]: "), r.err());
+    }
+
+    @Test
+    void aFilterThatMatchesNoTestFails() throws IOException {
+        // It used to run no test and exit 0, so a typo in the filter passed.
+        Path p = write("t.al", "test \"adds\" {\n    assert 1 + 1 == 2;\n}\n\ntest \"subtracts\" {\n    assert 2 - 1 == 1;\n}\n");
+        Result r = run("test", p.toString(), "--filter", "add");
+        assertEquals(0, r.code(), r.err());
+        assertTrue(r.out().endsWith("1 test(s): 1 passed, 0 failed\n"), r.out());
+        r = run("test", p.toString(), "--filter", "ads");
+        assertEquals(1, r.code(), r.out());
+        assertEquals("alang: no test name contains \"ads\"; the tests are \"adds\", \"subtracts\"\n", r.err());
+        r = run("test", p.toString(), "--filter", "ads", "--json");
+        assertEquals(1, r.code(), r.err());
+        Map<?, ?> j = (Map<?, ?>) Json.parse(r.out());
+        assertEquals(false, j.get("ok"));
+        assertEquals("no test name contains \"ads\"; the tests are \"adds\", \"subtracts\"", j.get("error"));
+        assertEquals(List.of(), j.get("tests"));
+        Path none = write("none.al", "fn main() {\n    print(1);\n}\n");
+        r = run("test", none.toString(), "--filter", "x");
+        assertEquals(1, r.code(), r.out());
+        assertEquals("alang: no test name contains \"x\"; " + none + " has no tests\n", r.err());
+        // Without a filter, a file without tests still passes.
+        assertEquals(0, run("test", none.toString()).code());
+    }
+
+    @Test
+    void failingTestOutputKeepsBlankLines() throws IOException {
+        // Blank lines used to be dropped from the output shown for a failing test.
+        Path p = write("t.al", "test \"prints\" {\n    print(\"a\\n\\nb\");\n    print(\"\\n\");\n    assert false;\n}\n");
+        Result r = run("test", p.toString());
+        assertEquals(1, r.code(), r.out());
+        assertTrue(r.err().startsWith("  output:\n    a\n\n    b\n\n\n  trap[R0005]: "), r.err());
+    }
+
+    @Test
+    void absOfTheMinimumNamesAbs() throws IOException {
+        // The trap used to blame `-`, which the program does not contain.
+        Path p = write("abs.al", "fn main() {\n    let x: i64 = -9223372036854775807 - 1;\n    print(abs(x));\n}\n");
+        Result r = run("run", p.toString());
+        assertEquals(1, r.code(), r.out());
+        assertTrue(r.err().startsWith("trap[R0001]: integer overflow: result of `abs` does not fit in i64\n"), r.err());
     }
 
     @Test

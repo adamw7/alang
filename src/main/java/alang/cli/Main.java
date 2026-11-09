@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /** The `alang` command line tool. */
 public final class Main {
@@ -56,17 +57,39 @@ public final class Main {
           grammar                      print the path of the ANTLR grammar, grammar/ALang.g4
           version                      print the version
 
-        options:
-          --json             machine-readable output (check, run, test)
-          --max-steps N      interpreter statement budget (default %d, 0 = unlimited)
+        options (an option a command does not take is a usage error):
+          --json             machine-readable output (check, run, test, tools; call always prints JSON)
+          --max-steps N      interpreter statement budget (run, test, call; default %d, 0 = unlimited)
           --max-stack BYTES  memory budget: the worst-case stack of each entry point, and the
-                             constants (default %d = 8 MiB, 0 = unlimited)
-          --filter TEXT      only run tests whose name contains TEXT
+                             constants (check, run, test, tools, call, build; default %d = 8 MiB,
+                             0 = unlimited)
+          --filter TEXT      only run tests whose name contains TEXT (test)
           --memory           print the per-function memory table (check)
           -o FILE            output file (build)
 
         exit codes: 0 success, 1 errors / traps / failed tests, 2 usage error
         """;
+
+    /**
+     * The options each command takes. Any other option is a usage error: ignoring it would hide the
+     * mistake, e.g. `check -o out.c` writing no file.
+     */
+    private static final Map<String, Set<String>> OPTIONS = Map.of(
+        "check", Set.of("--json", "--memory", "--max-stack"),
+        "run", Set.of("--json", "--max-steps", "--max-stack"),
+        "test", Set.of("--json", "--filter", "--max-steps", "--max-stack"),
+        "tools", Set.of("--json", "--max-stack"),
+        "call", Set.of("--json", "--max-steps", "--max-stack"),
+        "build", Set.of("-o", "--max-stack"),
+        "explain", Set.of(),
+        "grammar", Set.of(),
+        "version", Set.of(),
+        "--version", Set.of());
+
+    /** The options that take a value, the next argument. */
+    private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--filter", "-o");
+
+    private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--filter", "-o");
 
     private final PrintStream out;
     private final PrintStream err;
@@ -98,21 +121,39 @@ public final class Main {
             return args.length == 0 ? 2 : 0;
         }
         String cmd = args[0];
+        Set<String> accepted = OPTIONS.get(cmd);
+        // `call` reports every error as JSON; check, run, test and tools do when asked to with --json.
+        boolean jsonErrors = cmd.equals("call") || (accepted != null && accepted.contains("--json") && jsonRequested(args));
         try {
+            if (accepted == null) throw new UsageException("unknown command `" + cmd + "`; run `alang help`");
             for (int i = 1; i < args.length; i++) {
                 String a = args[i];
-                switch (a) {
-                    case "--json" -> json = true;
-                    case "--memory" -> memoryTable = true;
-                    case "--max-steps" -> maxSteps = nonNegative(next(args, ++i, a), a);
-                    case "--max-stack" -> maxStack = nonNegative(next(args, ++i, a), a);
-                    case "--filter" -> filter = next(args, ++i, a);
-                    case "-o" -> output = next(args, ++i, a);
-                    default -> {
-                        if (a.startsWith("--")) throw new UsageException("unknown option " + a);
-                        positional.add(a);
+                if (cmd.equals("explain") && (a.equals("--all") || a.equals("--markdown"))) {
+                    // The forms the usage shows; explain() also takes them without the dashes.
+                    positional.add(a);
+                } else if (a.length() > 1 && a.startsWith("-")) {
+                    if (!accepted.contains(a)) {
+                        throw new UsageException(KNOWN_OPTIONS.contains(a)
+                            ? a + " does not apply to `alang " + cmd + "`; see `alang help`"
+                            : "unknown option " + a + "; see `alang help`");
                     }
+                    switch (a) {
+                        case "--json" -> json = true;
+                        case "--memory" -> memoryTable = true;
+                        case "--max-steps" -> maxSteps = nonNegative(next(args, ++i, a), a);
+                        case "--max-stack" -> maxStack = nonNegative(next(args, ++i, a), a);
+                        case "--filter" -> filter = next(args, ++i, a);
+                        case "-o" -> output = next(args, ++i, a);
+                        default -> throw new IllegalStateException(a);
+                    }
+                } else {
+                    positional.add(a);
                 }
+            }
+            // Arguments past these were dropped without a word.
+            int most = maxPositional(cmd);
+            if (positional.size() > most) {
+                throw new UsageException("unexpected argument `" + positional.get(most) + "` for `alang " + cmd + "`; see `alang help`");
             }
             // A changed file name or filter would quietly open another file or match no test. The JSON
             // argument of `call` is checked by call() itself, which reports it as a JSON error.
@@ -137,15 +178,50 @@ public final class Main {
                     line(out, "alang " + VERSION);
                     yield 0;
                 }
-                default -> throw new UsageException("unknown command `" + cmd + "`; run `alang help`");
+                default -> throw new IllegalStateException(cmd);
             };
         } catch (UsageException e) {
-            line(err, "alang: " + e.getMessage());
-            return 2;
+            return usageError(cmd, jsonErrors, e.getMessage());
         } catch (NumberFormatException e) {
-            line(err, "alang: expected a number: " + e.getMessage());
-            return 2;
+            return usageError(cmd, jsonErrors, "expected a number: " + e.getMessage());
         }
+    }
+
+    /** The most positional arguments a command takes: the file, and for `call` the tool and its arguments. */
+    private static int maxPositional(String cmd) {
+        return switch (cmd) {
+            case "call" -> 3;
+            case "grammar", "version", "--version" -> 0;
+            default -> 1;
+        };
+    }
+
+    /**
+     * Whether the arguments ask for --json. They are scanned before they are parsed, so that a usage error
+     * found before --json is reached is reported as JSON too. An option's value is skipped: in
+     * `--filter --json`, --json is the filter.
+     */
+    private static boolean jsonRequested(String[] args) {
+        for (int i = 1; i < args.length; i++) {
+            if (args[i].equals("--json")) return true;
+            if (VALUE_OPTIONS.contains(args[i])) i++;
+        }
+        return false;
+    }
+
+    /**
+     * Reports a usage error and returns exit code 2. Where the output is JSON it stays JSON, on stdout:
+     * `call`'s error object with code "usage_error", or {"ok": false, "error": message} for the others.
+     */
+    private int usageError(String cmd, boolean asJson, String message) {
+        if (!asJson) {
+            line(err, "alang: " + message);
+        } else if (cmd.equals("call")) {
+            line(out, Json.write(Json.obj("ok", false, "error", Json.obj("code", "usage_error", "message", message))));
+        } else {
+            line(out, Json.pretty(Json.obj("ok", false, "error", message)));
+        }
+        return 2;
     }
 
     private static final class UsageException extends RuntimeException {
@@ -331,11 +407,31 @@ public final class Main {
         Map<String, Object> j = new LinkedHashMap<>();
         j.put("ok", false);
         if (!report(r, j)) return failCompile(r, j);
+        List<TestDecl> selected = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (TestDecl t : r.program().itemsOf(TestDecl.class)) {
+            names.add("\"" + t.name + "\"");
+            if (filter == null || t.name.contains(filter)) selected.add(t);
+        }
+        if (filter != null && selected.isEmpty()) {
+            // A filter with a typo used to run no test and pass.
+            String msg = "no test name contains \"" + filter + "\"; "
+                + (names.isEmpty() ? src.path + " has no tests" : "the tests are " + String.join(", ", names));
+            if (json) {
+                j.put("error", msg);
+                j.put("passed", 0);
+                j.put("failed", 0);
+                j.put("tests", List.of());
+                line(out, Json.pretty(j));
+            } else {
+                line(err, "alang: " + msg);
+            }
+            return 1;
+        }
         List<Object> results = new ArrayList<>();
         int passed = 0;
         int failed = 0;
-        for (TestDecl t : r.program().itemsOf(TestDecl.class)) {
-            if (filter != null && !t.name.contains(filter)) continue;
+        for (TestDecl t : selected) {
             CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
             Interpreter in = new Interpreter(src, captured, maxSteps);
             Trap trap = null;
@@ -358,8 +454,10 @@ public final class Main {
                     out.flush();
                     if (!stdout.isEmpty()) {
                         line(err, "  output:");
-                        for (String line : stdout.split("\n", -1)) {
-                            if (!line.isEmpty()) line(err, "    " + line);
+                        // Every line, blank ones included; only the newline that ends the output starts no line.
+                        String body = stdout.endsWith("\n") ? stdout.substring(0, stdout.length() - 1) : stdout;
+                        for (String line : body.split("\n", -1)) {
+                            line(err, line.isEmpty() ? "" : "    " + line);
                         }
                         if (captured.truncated()) line(err, "    " + truncationNote(captured));
                     }
@@ -384,11 +482,9 @@ public final class Main {
 
     private int tools(Source src) {
         Frontend.Result r = compile(src);
-        if (!r.ok()) {
-            err.print(r.diags().renderText());
-            line(err, "check failed: " + r.diags().errorCount() + " error(s)");
-            return 1;
-        }
+        Map<String, Object> j = new LinkedHashMap<>();
+        j.put("ok", false);
+        if (!report(r, j)) return failCompile(r, j);
         List<Object> list = new ArrayList<>();
         for (FnDecl f : r.program().itemsOf(FnDecl.class)) {
             if (!f.tool) continue;
@@ -432,7 +528,7 @@ public final class Main {
         Map<String, Object> j = new LinkedHashMap<>();
         if (!r.ok()) {
             j.put("ok", false);
-            j.put("error", Json.obj("code", "E", "message", "the program has compile errors"));
+            j.put("error", Json.obj("code", "compile_error", "message", "the program has compile errors"));
             j.put("diagnostics", r.diags().toJson());
             line(out, Json.write(j));
             return 1;

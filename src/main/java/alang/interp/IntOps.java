@@ -116,6 +116,12 @@ final class IntOps {
         return range(k, -a, at, "-");
     }
 
+    /** |a| for a signed kind. Only the minimum has no absolute value; its trap names `abs`, not `-`. */
+    static long abs(PrimKind k, long a, Span at) {
+        if (a == min(k)) throw overflow(at, k, "abs");
+        return a < 0 ? -a : a;
+    }
+
     static long bnot(PrimKind k, long a) {
         if (k.signed || k == PrimKind.U64) return ~a;
         return ~a & max(k);

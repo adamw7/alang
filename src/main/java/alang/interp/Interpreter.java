@@ -757,8 +757,7 @@ public final class Interpreter {
                 Object v = eval(args.get(0).expr, slots);
                 Type t = c.type;
                 if (Type.isFloat(t)) return Math.abs((Double) v);
-                long n = (Long) v;
-                return n < 0 ? IntOps.neg(Type.kind(t), n, c.span) : n;
+                return IntOps.abs(Type.kind(t), (Long) v, c.span);
             }
             case MIN, MAX -> {
                 Object a = eval(args.get(0).expr, slots);
