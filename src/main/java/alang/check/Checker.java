@@ -15,6 +15,7 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,10 +59,12 @@ public final class Checker {
     }
 
     private CheckResult run(long maxStack) {
+        // Checking recurses over the program, so first make sure it is not nested too deeply.
+        if (Nesting.checkSyntax(program, diags)) return new CheckResult(program, null);
         collect();
         for (StructDecl s : structs.values()) ensureStruct(s);
         for (EnumDecl e : enums.values()) ensureEnum(e);
-        boolean recursiveTypes = checkRecursiveTypes();
+        boolean recursiveTypes = checkTypes();
         for (ConstDecl c : consts.values()) ensureConst(c);
         for (FnDecl f : fns.values()) signature(f);
         for (Item item : program.items) {
@@ -69,6 +72,7 @@ public final class Checker {
             if (item instanceof TestDecl t) testBody(t);
         }
         boolean recursion = checkRecursion();
+        if (!recursion) Nesting.checkCalls(program, diags);
         MemoryReport memory = null;
         if (!diags.hasErrors() && !recursiveTypes && !recursion) {
             memory = MemoryReport.compute(program);
@@ -304,18 +308,37 @@ public final class Checker {
         return (int) n;
     }
 
+    /**
+     * Reports types that nest too deeply or contain themselves. Returns true if it reported any:
+     * the rest of the checker must then not compute layouts, which recurse through types.
+     */
+    private boolean checkTypes() {
+        Nesting.Types types = Nesting.checkTypes(structs.values(), enums.values(), diags);
+        if (types.tooDeep()) return true;
+        boolean found = checkRecursiveTypes();
+        if (!found && types.onCycle() != null) {
+            // A cycle too long for contains() to follow; report it all the same.
+            Item d = types.onCycle();
+            diags.error(Code.E0403, d.span, (d instanceof StructDecl ? "struct `" : "enum `") + d.name
+                + "` contains itself and would have infinite size",
+                "store related items in a fixed-capacity list and refer to them by index");
+            found = true;
+        }
+        return found;
+    }
+
     private boolean checkRecursiveTypes() {
         boolean found = false;
         Set<Object> reported = new HashSet<>();
         for (StructDecl s : structs.values()) {
-            if (contains(new Type.StructT(s), s, new HashSet<>()) && reported.add(s)) {
+            if (contains(new Type.StructT(s), s, new HashSet<>(), 0) && reported.add(s)) {
                 diags.error(Code.E0403, s.span, "struct `" + s.name + "` contains itself and would have infinite size",
                     "store related items in a fixed-capacity list and refer to them by index");
                 found = true;
             }
         }
         for (EnumDecl e : enums.values()) {
-            if (contains(new Type.EnumT(e), e, new HashSet<>()) && reported.add(e)) {
+            if (contains(new Type.EnumT(e), e, new HashSet<>(), 0) && reported.add(e)) {
                 diags.error(Code.E0403, e.span, "enum `" + e.name + "` contains itself and would have infinite size",
                     "store related items in a fixed-capacity list and refer to them by index");
                 found = true;
@@ -324,8 +347,12 @@ public final class Checker {
         return found;
     }
 
-    /** Does a value of type {@code t} (transitively) contain the declaration {@code target}? */
-    private boolean contains(Type t, Object target, Set<Object> visiting) {
+    /**
+     * Does a value of type {@code t} (transitively) contain the declaration {@code target}? Follows at
+     * most {@link Nesting#MAX_TYPE_DEPTH} levels; {@link Nesting#checkTypes} reports longer cycles.
+     */
+    private boolean contains(Type t, Object target, Set<Object> visiting, int level) {
+        if (level > Nesting.MAX_TYPE_DEPTH) return false;
         List<Type> children = new ArrayList<>();
         Object key = null;
         switch (t) {
@@ -346,7 +373,7 @@ public final class Checker {
         for (Type c : children) {
             if (c instanceof Type.StructT s && s.decl() == target) return true;
             if (c instanceof Type.EnumT e && e.decl() == target) return true;
-            if (contains(c, target, visiting)) return true;
+            if (contains(c, target, visiting, level + 1)) return true;
         }
         return false;
     }
@@ -425,8 +452,7 @@ public final class Checker {
         Map<FnDecl, Integer> state = new HashMap<>();
         boolean found = false;
         for (FnDecl f : fns.values()) {
-            List<FnDecl> path = new ArrayList<>();
-            List<FnDecl> cycle = findCycle(f, state, path);
+            List<FnDecl> cycle = findCycle(f, state);
             if (cycle != null) {
                 found = true;
                 StringBuilder sb = new StringBuilder();
@@ -442,28 +468,38 @@ public final class Checker {
         return found;
     }
 
-    /** DFS that returns a cycle (first element repeated at the end) or null. */
-    private List<FnDecl> findCycle(FnDecl f, Map<FnDecl, Integer> state, List<FnDecl> path) {
-        Integer st = state.get(f);
-        if (st != null && st == 2) return null;
-        if (st != null && st == 1) {
-            int i = path.indexOf(f);
-            List<FnDecl> cycle = new ArrayList<>(path.subList(i, path.size()));
-            cycle.add(f);
-            return cycle;
-        }
-        state.put(f, 1);
-        path.add(f);
-        for (FnDecl c : f.callees) {
-            List<FnDecl> cycle = findCycle(c, state, path);
-            if (cycle != null) {
+    /**
+     * Depth-first search that returns a cycle (first element repeated at the end) or null. Iterative,
+     * so that a long chain of calls cannot exhaust the checker's own stack.
+     */
+    private List<FnDecl> findCycle(FnDecl root, Map<FnDecl, Integer> state) {
+        if (state.get(root) != null) return null;
+        List<FnDecl> path = new ArrayList<>();
+        Deque<Iterator<FnDecl>> next = new ArrayDeque<>();
+        state.put(root, 1);
+        path.add(root);
+        next.push(root.callees.iterator());
+        while (!next.isEmpty()) {
+            Iterator<FnDecl> it = next.peek();
+            if (!it.hasNext()) {
+                state.put(path.remove(path.size() - 1), 2);
+                next.pop();
+                continue;
+            }
+            FnDecl c = it.next();
+            Integer st = state.get(c);
+            if (st != null && st == 2) continue;
+            if (st != null && st == 1) {
+                List<FnDecl> cycle = new ArrayList<>(path.subList(path.indexOf(c), path.size()));
+                cycle.add(c);
                 // Mark the rest as done so the same cycle is reported once.
                 for (FnDecl p : path) state.put(p, 2);
                 return cycle;
             }
+            state.put(c, 1);
+            path.add(c);
+            next.push(c.callees.iterator());
         }
-        path.remove(path.size() - 1);
-        state.put(f, 2);
         return null;
     }
 

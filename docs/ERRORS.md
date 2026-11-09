@@ -46,6 +46,7 @@ Codes are never reused for a different meaning.
 | [E0401](#e0401) | recursion is not allowed |
 | [E0402](#e0402) | stack bound exceeded |
 | [E0403](#e0403) | recursive type |
+| [E0404](#e0404) | nesting limit exceeded |
 | [E0501](#e0501) | misplaced `result` |
 | [E0601](#e0601) | invalid tool signature |
 | [E0602](#e0602) | invalid main |
@@ -428,6 +429,16 @@ A struct or enum contains itself (directly or through other types). Without poin
 
 ```
 struct Node { next: Node }  // error
+```
+
+## E0404
+
+**nesting limit exceeded**
+
+So that every machine accepts and runs exactly the same programs, nesting is limited to 128 levels. This applies to brackets ( ) [ ] { } together with the prefix operators -, ~ and `not`; to blocks, statements and expressions, counted through calls (a call made at depth d into a function whose body reaches depth n reaches depth d + n); and to types (a field, element or payload is one level deeper than its container). Move inner parts of a deep expression into `let` bindings or helper functions, call deep functions from a shallower place, and flatten deep types.
+
+```
+let x: i64 = 1 + 1 + ... + 1;  // error with more than about 125 operators in one chain
 ```
 
 ## E0501

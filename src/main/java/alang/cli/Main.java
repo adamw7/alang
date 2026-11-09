@@ -130,13 +130,6 @@ public final class Main {
         } catch (NumberFormatException e) {
             line(err, "alang: expected a number: " + e.getMessage());
             return 2;
-        } catch (StackOverflowError e) {
-            // The parser, checker and interpreter recurse over the syntax tree; extremely deep
-            // nesting (hundreds of levels) exhausts the thread stack. Report it instead of crashing.
-            out.flush();
-            line(err, "alang: the program is nested too deeply to process; split the deepest expression or block "
-                + "into smaller parts using intermediate `let` bindings or helper functions");
-            return 1;
         }
     }
 

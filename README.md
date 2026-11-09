@@ -180,7 +180,7 @@ cover the changed line against each of these mutants. A mutant that no test noti
 behavior the suite does not pin down.
 
 ```sh
-mvn test-compile pitest:mutationCoverage                      # about 2,500 mutants, 6 minutes on 4 cores
+mvn test-compile pitest:mutationCoverage                      # about 2,600 mutants, 8 minutes on 4 cores
 mvn test-compile pitest:mutationCoverage -Dpitest.threads=8   # parallel test JVMs: default 4, at most one per core
 ```
 
@@ -191,9 +191,9 @@ Every class under `alang` is mutated except the ANTLR-generated parser and the C
 which would turn minutes into hours. That test and the ArchUnit rules (`*ArchitectureTest`), which
 read class files from disk and so never see a mutant, are left out of the run.
 
-The run fails when the mutation score (mutants killed out of all mutants) drops below 61% or the
-test strength (killed out of those that some test covers) below 75%. The baseline is 62% and
-77%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
+The run fails when the mutation score (mutants killed out of all mutants) drops below 64% or the
+test strength (killed out of those that some test covers) below 75%. The baseline is 65% and
+76%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
 the CLI and the JSON side of tool calls (`Main`, `JsonValues`, `Json`), which the unit tests
 barely reach, and output whose exact numbers or text few tests assert: memory layout (`Layout`)
 and syntax error hints (`SyntaxErrorListener`).

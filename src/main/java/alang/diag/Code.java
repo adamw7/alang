@@ -119,6 +119,9 @@ public enum Code {
     E0403("recursive type",
         "A struct or enum contains itself (directly or through other types). Without pointers this would have infinite size. Use indexes into a fixed-capacity list instead.",
         "struct Node { next: Node }  // error"),
+    E0404("nesting limit exceeded",
+        "So that every machine accepts and runs exactly the same programs, nesting is limited to 128 levels. This applies to brackets ( ) [ ] { } together with the prefix operators -, ~ and `not`; to blocks, statements and expressions, counted through calls (a call made at depth d into a function whose body reaches depth n reaches depth d + n); and to types (a field, element or payload is one level deeper than its container). Move inner parts of a deep expression into `let` bindings or helper functions, call deep functions from a shallower place, and flatten deep types.",
+        "let x: i64 = 1 + 1 + ... + 1;  // error with more than about 125 operators in one chain"),
 
     // ---- contracts ----
     E0501("misplaced `result`",

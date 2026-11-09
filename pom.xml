@@ -156,7 +156,7 @@
           <mutationUnitSize>100</mutationUnitSize>
           <!-- A ratchet: the build fails when either score drops below these percentages.
                Raise them as the tests improve. -->
-          <mutationThreshold>61</mutationThreshold>
+          <mutationThreshold>64</mutationThreshold>
           <testStrengthThreshold>75</testStrengthThreshold>
           <timestampedReports>false</timestampedReports>
           <outputFormats>

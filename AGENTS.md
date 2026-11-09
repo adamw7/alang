@@ -102,6 +102,8 @@ test "counts repeated words" {
 16. **No methods.** `len(xs)`, not `xs.len()`; `push(mut xs, v)`, not `xs.push(v)`.
 17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`.
 18. **No exceptions.** Return an enum for recoverable failures; `panic("...")` or `assert` for bugs.
+19. **Nesting stops at 128 levels** (E0404), counted through calls. Split a long chain such as
+    `a + b + c + ...` or deeply nested code with `let` bindings or helper functions.
 
 ## Translating habits from other languages
 

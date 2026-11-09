@@ -99,8 +99,8 @@ jobs:
   mutation:
     name: Mutation testing (PIT)
     runs-on: ubuntu-latest
-    # A run takes about 11 minutes on the 2-CPU runner.
-    timeout-minutes: 25
+    # A run takes about 15 minutes on the 2-CPU runner.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -113,7 +113,7 @@ jobs:
       - name: Mutate the toolchain and run the tests against every mutant
         # Fails when the mutation score or test strength drops below its threshold in pom.xml.
         # One test JVM per CPU: more only adds contention (private repositories get 2 CPUs).
-        timeout-minutes: 20
+        timeout-minutes: 25
         run: mvn -B -ntp test-compile pitest:mutationCoverage -Dpitest.threads="$(nproc)"
 
       - name: Upload the mutation report
