@@ -1,10 +1,17 @@
 #!/usr/bin/env sh
-# ALang launcher: builds target/alang.jar on first use, then runs it.
+# ALang launcher: builds target/alang.jar when it is missing or older than the sources, then runs it.
 set -e
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 JAR="$ROOT/target/alang.jar"
-if [ ! -f "$JAR" ] || [ "$ROOT/grammar/ALang.g4" -nt "$JAR" ]; then
-  echo "alang: building $JAR (first run)..." >&2
+if [ ! -f "$JAR" ]; then
+  reason="first run"
+elif [ -n "$(find "$ROOT/pom.xml" "$ROOT/grammar" "$ROOT/src/main" -newer "$JAR" -print | head -n 1)" ]; then
+  # Any change to the toolchain's sources (Java, the grammar, the C prelude, the build) since the jar
+  # was built; without this check an edit or a `git pull` would keep running the old toolchain.
+  reason="sources changed"
+fi
+if [ -n "${reason:-}" ]; then
+  echo "alang: building $JAR ($reason)..." >&2
   (cd "$ROOT" && mvn -q -B -DskipTests package >&2)
 fi
 # Java decodes command-line arguments (file names, `alang call` JSON) with the host locale's

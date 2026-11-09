@@ -22,7 +22,8 @@ import org.junit.jupiter.api.TestFactory;
  * tests/run/NAME.al     must compile cleanly; stdout must equal NAME.out;
  *                       NAME.trap (if present) holds the expected trap code and line:col.
  * tests/errors/NAME.al  first line `// expect: CODE...` lists the exact set of diagnostic codes;
- *                       an optional `// max-stack: N` line sets the stack budget.
+ *                       an optional `// max-stack: N` line sets the memory budget (default: the
+ *                       command line's, 8 MiB).
  */
 class ConformanceTest {
 
@@ -47,8 +48,6 @@ class ConformanceTest {
     }
 
     private static final Pattern EXPECT = Pattern.compile("^// expect: (.*)$", Pattern.MULTILINE);
-    private static final Pattern MAX_STACK = Pattern.compile("^// max-stack: (\\d+)$", Pattern.MULTILINE);
-
     @TestFactory
     Stream<DynamicTest> errorTests() {
         return Harness.files("tests/errors", ".al").stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), () -> {
@@ -56,9 +55,7 @@ class ConformanceTest {
             Matcher m = EXPECT.matcher(text);
             assertTrue(m.find(), "missing // expect: line");
             TreeSet<String> expected = new TreeSet<>(List.of(m.group(1).trim().split("\\s+")));
-            Matcher ms = MAX_STACK.matcher(text);
-            long maxStack = ms.find() ? Long.parseLong(ms.group(1)) : 0;
-            Frontend.Result r = Frontend.compile(new Source(p.toString(), text), maxStack);
+            Frontend.Result r = Frontend.compile(new Source(p.toString(), text), Harness.budget(text));
             TreeSet<String> got = new TreeSet<>();
             for (Diagnostic d : r.diags().all()) got.add(d.code().name());
             assertEquals(expected, got, () -> r.diags().renderText());

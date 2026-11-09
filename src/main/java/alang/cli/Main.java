@@ -6,6 +6,7 @@ import alang.ast.Ast.Program;
 import alang.ast.Ast.TestDecl;
 import alang.ast.Builtin;
 import alang.cgen.CGen;
+import alang.check.Checker;
 import alang.check.MemoryReport;
 import alang.diag.Code;
 import alang.diag.Source;
@@ -15,10 +16,12 @@ import alang.interp.JsonValues;
 import alang.interp.Trap;
 import alang.types.Type;
 import alang.util.Json;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
@@ -33,6 +36,9 @@ import java.util.Map;
 public final class Main {
     public static final String VERSION = "0.1.0";
 
+    /** How much of a program's output `call`, `run --json` and `test` keep: 1 MiB. */
+    static final int MAX_CAPTURED_OUTPUT = 1 << 20;
+
     private static final String USAGE = """
         ALang %s - an agent-first, heap-free programming language
 
@@ -43,7 +49,8 @@ public final class Main {
           run <file.al>                check, then run fn main()
           test <file.al>               check, then run every `test "..." { }` block
           tools <file.al>              print JSON schemas of all `tool fn` functions
-          call <file.al> <tool> [json] call a tool with a JSON object of arguments (or read it from stdin)
+          call <file.al> <tool> [json] call a tool with a JSON object of arguments (`-`: read it from
+                                       stdin; omitted: {}, for a tool without parameters)
           build <file.al> [-o out.c]   compile to heap-free C99 (no malloc; stack and static data only)
           explain <CODE>               explain a diagnostic or trap code, e.g. E0201 (or --all, markdown)
           grammar                      print the path of the ANTLR grammar, grammar/ALang.g4
@@ -52,7 +59,8 @@ public final class Main {
         options:
           --json             machine-readable output (check, run, test)
           --max-steps N      interpreter statement budget (default %d, 0 = unlimited)
-          --max-stack BYTES  fail `check` if any entry point may need more stack
+          --max-stack BYTES  memory budget: the worst-case stack of each entry point, and the
+                             constants (default %d = 8 MiB, 0 = unlimited)
           --filter TEXT      only run tests whose name contains TEXT
           --memory           print the per-function memory table (check)
           -o FILE            output file (build)
@@ -66,7 +74,7 @@ public final class Main {
     private boolean json;
     private boolean memoryTable;
     private long maxSteps = Interpreter.DEFAULT_MAX_STEPS;
-    private long maxStack;
+    private long maxStack = Checker.DEFAULT_MAX_STACK;
     private String filter;
     private String output;
     private final List<String> positional = new ArrayList<>();
@@ -86,7 +94,7 @@ public final class Main {
 
     int run(String[] args) {
         if (args.length == 0 || args[0].equals("help") || args[0].equals("--help") || args[0].equals("-h")) {
-            out.print(String.format(Locale.ROOT, USAGE, VERSION, Interpreter.DEFAULT_MAX_STEPS));
+            out.print(String.format(Locale.ROOT, USAGE, VERSION, Interpreter.DEFAULT_MAX_STEPS, Checker.DEFAULT_MAX_STACK));
             return args.length == 0 ? 2 : 0;
         }
         String cmd = args[0];
@@ -96,8 +104,8 @@ public final class Main {
                 switch (a) {
                     case "--json" -> json = true;
                     case "--memory" -> memoryTable = true;
-                    case "--max-steps" -> maxSteps = Long.parseLong(next(args, ++i, a));
-                    case "--max-stack" -> maxStack = Long.parseLong(next(args, ++i, a));
+                    case "--max-steps" -> maxSteps = nonNegative(next(args, ++i, a), a);
+                    case "--max-stack" -> maxStack = nonNegative(next(args, ++i, a), a);
                     case "--filter" -> filter = next(args, ++i, a);
                     case "-o" -> output = next(args, ++i, a);
                     default -> {
@@ -162,6 +170,13 @@ public final class Main {
             throw new UsageException("the argument `" + arg + "` could not be decoded in this host locale; "
                 + "use a UTF-8 locale such as C.UTF-8 (bin/alang does)");
         }
+    }
+
+    /** A limit: a negative one used to mean "no limit" without saying so. */
+    private static long nonNegative(String value, String opt) {
+        long n = Long.parseLong(value);
+        if (n < 0) throw new UsageException(opt + " must be 0 (no limit) or more, found " + value);
+        return n;
     }
 
     private static String next(String[] args, int i, String opt) {
@@ -252,7 +267,7 @@ public final class Main {
             }
             return 1;
         }
-        ByteArrayOutputStream captured = json ? new ByteArrayOutputStream() : null;
+        CappedOutput captured = json ? new CappedOutput(MAX_CAPTURED_OUTPUT) : null;
         OutputStream sink = json ? captured : out;
         Interpreter in = new Interpreter(src, sink, maxSteps);
         Trap trap = null;
@@ -264,7 +279,7 @@ public final class Main {
         out.flush();
         if (json) {
             j.put("ok", trap == null);
-            j.put("stdout", captured.toString(StandardCharsets.UTF_8));
+            putStdout(j, captured);
             j.put("trap", trap == null ? null : trapJson(src, trap));
             j.put("steps", in.steps());
             line(out, Json.pretty(j));
@@ -321,7 +336,7 @@ public final class Main {
         int failed = 0;
         for (TestDecl t : r.program().itemsOf(TestDecl.class)) {
             if (filter != null && !t.name.contains(filter)) continue;
-            ByteArrayOutputStream captured = new ByteArrayOutputStream();
+            CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
             Interpreter in = new Interpreter(src, captured, maxSteps);
             Trap trap = null;
             try {
@@ -329,12 +344,14 @@ public final class Main {
             } catch (Trap e) {
                 trap = e;
             }
-            String stdout = captured.toString(StandardCharsets.UTF_8);
+            String stdout = captured.text();
             if (trap == null) passed++;
             else failed++;
             if (json) {
-                results.add(Json.obj("name", t.name, "ok", trap == null, "line", t.span.line(), "stdout", stdout,
-                    "trap", trap == null ? null : trapJson(src, trap)));
+                Map<String, Object> one = Json.obj("name", t.name, "ok", trap == null, "line", t.span.line());
+                putStdout(one, captured);
+                one.put("trap", trap == null ? null : trapJson(src, trap));
+                results.add(one);
             } else {
                 line(out, "test \"" + t.name + "\" ... " + (trap == null ? "ok" : "FAILED"));
                 if (trap != null) {
@@ -344,6 +361,7 @@ public final class Main {
                         for (String line : stdout.split("\n", -1)) {
                             if (!line.isEmpty()) line(err, "    " + line);
                         }
+                        if (captured.truncated()) line(err, "    " + truncationNote(captured));
                     }
                     err.print(renderTrap(src, trap).indent(2));
                 }
@@ -397,17 +415,18 @@ public final class Main {
     private int call(Source src) {
         if (positional.size() < 2) throw new UsageException("usage: alang call <file.al> <tool> [json-arguments]");
         String name = positional.get(1);
+        // Arguments come from argv, or from stdin only when asked for with `-`: reading stdin by default
+        // made a call without arguments wait forever whenever the caller left stdin open.
+        String given = positional.size() >= 3 ? positional.get(2) : null;
+        boolean fromArgv = given != null && !given.equals("-");
         String argText;
-        boolean fromArgv = positional.size() >= 3 && !positional.get(2).equals("-");
-        if (fromArgv) {
-            argText = positional.get(2);
+        if (given == null) {
+            argText = "{}";
+        } else if (fromArgv) {
+            argText = given;
         } else {
-            try {
-                argText = new String(System.in.readAllBytes(), StandardCharsets.UTF_8);
-            } catch (IOException e) {
-                throw new UsageException("cannot read stdin: " + e.getMessage());
-            }
-            if (argText.isBlank()) argText = "{}";
+            argText = readStdinUtf8();
+            if (argText != null && argText.isBlank()) argText = "{}";
         }
         Frontend.Result r = compile(src);
         Map<String, Object> j = new LinkedHashMap<>();
@@ -430,7 +449,11 @@ public final class Main {
         if (fromArgv && undecodable(argText)) {
             // Refuse rather than silently computing a locale-dependent result.
             return callError(j, "bad_arguments", "the JSON argument contains characters that could not be decoded in this "
-                + "host locale; pass the arguments on stdin, or use a UTF-8 locale such as C.UTF-8");
+                + "host locale; pass the arguments on stdin with `-`, or use a UTF-8 locale such as C.UTF-8");
+        }
+        if (argText == null) {
+            // A lenient decoder would have replaced the bad bytes with U+FFFD and called the tool anyway.
+            return callError(j, "bad_arguments", "the JSON arguments on stdin are not valid UTF-8");
         }
         Object parsed;
         try {
@@ -453,21 +476,69 @@ public final class Main {
         } catch (JsonValues.DecodeException e) {
             return callError(j, "bad_arguments", e.getMessage());
         }
-        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
         Interpreter in = new Interpreter(src, captured, maxSteps);
+        Object result;
         try {
-            Object result = in.call(f, args, f.nameSpan);
-            j.put("ok", true);
-            j.put("result", f.ret instanceof Type.Void ? null : JsonValues.toJson(result, f.ret));
-            j.put("stdout", captured.toString(StandardCharsets.UTF_8));
-            line(out, Json.write(j));
-            return 0;
+            result = in.call(f, args, f.nameSpan);
         } catch (Trap t) {
             j.put("ok", false);
             j.put("error", trapJson(src, t));
-            j.put("stdout", captured.toString(StandardCharsets.UTF_8));
+            putStdout(j, captured);
             line(out, Json.write(j));
             return 1;
+        }
+        Object encoded;
+        try {
+            encoded = f.ret instanceof Type.Void ? null : JsonValues.toJson(result, f.ret);
+        } catch (JsonValues.EncodeException e) {
+            j.put("ok", false);
+            j.put("error", Json.obj("code", "bad_result", "message", e.messageAt("result")
+                + "; JSON has no NaN or infinity, so check for them in the tool and return an enum instead"));
+            putStdout(j, captured);
+            line(out, Json.write(j));
+            return 1;
+        }
+        j.put("ok", true);
+        j.put("result", encoded);
+        putStdout(j, captured);
+        line(out, Json.write(j));
+        return 0;
+    }
+
+    /**
+     * The captured output; when it was longer than {@link #MAX_CAPTURED_OUTPUT}, also "stdout_truncated":
+     * true and "stdout_bytes", the length of the whole output.
+     */
+    private static void putStdout(Map<String, Object> j, CappedOutput captured) {
+        j.put("stdout", captured.text());
+        if (captured.truncated()) {
+            j.put("stdout_truncated", true);
+            j.put("stdout_bytes", captured.total());
+        }
+    }
+
+    private static String truncationNote(CappedOutput captured) {
+        return "output truncated: the program printed " + captured.total() + " bytes, only the first "
+            + MAX_CAPTURED_OUTPUT + " are kept";
+    }
+
+    /** All of stdin as UTF-8 text, or null if it is not valid UTF-8. */
+    private static String readStdinUtf8() {
+        byte[] bytes;
+        try {
+            bytes = System.in.readAllBytes();
+        } catch (IOException e) {
+            throw new UsageException("cannot read stdin: " + e.getMessage());
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString();
+        } catch (CharacterCodingException e) {
+            return null;
         }
     }
 

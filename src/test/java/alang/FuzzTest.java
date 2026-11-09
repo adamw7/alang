@@ -3,6 +3,7 @@ package alang;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import alang.check.Checker;
 import alang.cli.Frontend;
 import alang.diag.Source;
 import alang.interp.Interpreter;
@@ -39,7 +40,9 @@ class FuzzTest {
 
     private static void mustNotCrash(String text, String what) {
         try {
-            Frontend.Result r = Frontend.compile(new Source("fuzz.al", text), 0);
+            // The command line's budget: a mutation such as [0; 1048576] -> [[0; 1048576]; 1048576] must be
+            // rejected, as `alang` rejects it, not built.
+            Frontend.Result r = Frontend.compile(new Source("fuzz.al", text), Checker.DEFAULT_MAX_STACK);
             if (!r.ok()) assertTrue(r.diags().hasErrors(), "failed without an error diagnostic: " + what);
             r.diags().renderText();
             if (r.ok()) {

@@ -298,9 +298,17 @@ order:
 - Every type has a compile-time size (§2). The only memory a program uses is **static data**
   (constants) and **stack frames**. There is no heap.
 - Because recursion is forbidden, the call graph is a DAG, so the worst-case stack depth is
-  computable: `stack(f) = frame(f) + max(stack(g) for g called by f)`. `alang check` prints it,
-  `alang check --memory` prints it per function, and `--max-stack BYTES` turns an overrun into
-  error E0402.
+  computable: `stack(f) = frame(f) + max(stack(g) for g called by f)`. A frame counts the
+  parameters (aggregates and `mut` parameters by address), the locals, the return value and the
+  aggregate temporaries its largest statement can hold at once (literals, call results, copies,
+  and the snapshot of a `for x in xs` loop), so the figure is an upper bound. `alang check` prints
+  it and `alang check --memory` prints it per function.
+- Every command checks the program against a **memory budget**, 8 MiB (8 388 608 bytes) unless
+  `--max-stack BYTES` sets another (`0`: no limit). An entry point (`main`, a tool or a test) whose
+  worst-case stack exceeds it is error E0402. Constants are evaluated while checking, so they are
+  checked first: all of them together, with the values their initializers build, must fit in the
+  same budget (E0405). A program that passes the check cannot exhaust the interpreter's memory,
+  and fits the default C stack of Linux and macOS.
 - Large values can be passed by `mut` reference to avoid copies. Read-only aggregate parameters
   are passed by address by the C backend, so they are not copied either.
 - Capacities are part of the type. `push` past capacity traps (R0004); there is no reallocation.
@@ -380,21 +388,25 @@ failed `assert`) is:
 A `tool fn` is a function an agent can call with JSON. `alang tools file.al` prints
 Anthropic-style tool definitions (`name`, `description`, `input_schema`); the description is the
 `///` doc comment. `alang call file.al name '{"arg": ...}'` runs one call and prints
-`{"ok": true, "result": ..., "stdout": "..."}` or `{"ok": false, "error": {...}}`.
+`{"ok": true, "result": ..., "stdout": "..."}` or `{"ok": false, "error": {...}}`. With `-` in
+place of the JSON, the arguments are read from stdin (as UTF-8; bytes that are not are an error);
+with nothing, they are `{}`. `stdout` keeps the first 1 MiB of the tool's output; when there was
+more, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are added.
 
 | ALang type | JSON |
 |------------|------|
 | `bool` | boolean |
 | integers | integer, range-checked (`minimum`/`maximum` in the schema) |
-| floats | number |
+| floats | number; NaN and infinities have none, so a result holding one fails with `bad_result`, and an argument too large for the type is rejected |
 | `str[N]` | string of at most N UTF-8 bytes |
 | `[T; N]` | array of exactly N items |
 | `list[T; N]` | array of at most N items |
 | struct | object with every field required, no extra fields |
 | enum | `"Variant"` for variants without payload, `{"Variant": [v1, v2]}` otherwise |
 
-Arguments are validated against the parameter types before the call; unknown, missing or
-duplicate keys are errors. Because tools have no I/O, no heap and bounded loops, running a tool
+Arguments must be strict JSON (RFC 8259: ASCII digits, no leading zeros, escaped control characters,
+paired surrogates) and are validated against the parameter types before the call; unknown,
+missing or duplicate keys are errors. Because tools have no I/O, no heap and bounded loops, running a tool
 written by an agent is safe: it cannot touch the host, cannot exhaust memory, and terminates.
 
 ---

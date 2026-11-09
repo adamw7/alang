@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import alang.ast.Ast.FnDecl;
 import alang.ast.Ast.TestDecl;
+import alang.check.Checker;
 import alang.cli.Frontend;
 import alang.diag.Source;
 import alang.interp.Interpreter;
@@ -17,6 +18,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.function.Executable;
@@ -75,8 +78,20 @@ public final class Harness {
         }
     }
 
+    private static final Pattern MAX_STACK = Pattern.compile("^// max-stack: (\\d+)$", Pattern.MULTILINE);
+
+    /**
+     * The memory budget a program is checked with: the one on its {@code // max-stack: N} line, else the
+     * command line's default, so the suites check programs the way {@code alang} does.
+     */
+    public static long budget(String text) {
+        Matcher m = MAX_STACK.matcher(text);
+        return m.find() ? Long.parseLong(m.group(1)) : Checker.DEFAULT_MAX_STACK;
+    }
+
     public static Frontend.Result compile(Path p) {
-        return Frontend.compile(source(p), 0);
+        Source src = source(p);
+        return Frontend.compile(src, budget(src.text));
     }
 
     /** Runs fn main() and captures stdout. */

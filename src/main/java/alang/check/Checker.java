@@ -27,6 +27,13 @@ import java.util.Set;
 public final class Checker {
     public static final int MAX_SIZE = 1 << 20;
 
+    /**
+     * The memory budget the command line applies unless --max-stack says otherwise: 8 MiB, the default
+     * thread stack on Linux and macOS. Every entry point's worst-case stack must fit in it (E0402), and
+     * so must the constants, which are evaluated while checking (E0405). 0 turns the limit off.
+     */
+    public static final long DEFAULT_MAX_STACK = 8L << 20;
+
     private final Program program;
     private final Diagnostics diags;
 
@@ -47,17 +54,23 @@ public final class Checker {
 
     private Ctx ctx = new Ctx();
 
-    private Checker(Program program, Diagnostics diags) {
+    /** The memory budget in bytes (0: none), and the bytes of the constants evaluated so far. */
+    private final long maxStack;
+    private long staticBytes;
+
+    private Checker(Program program, Diagnostics diags, long maxStack) {
         this.program = program;
         this.diags = diags;
+        this.maxStack = maxStack;
     }
 
+    /** Checks the program; {@code maxStack} is the memory budget in bytes, 0 for none. */
     public static CheckResult check(Program program, Diagnostics diags, long maxStack) {
-        Checker c = new Checker(program, diags);
-        return c.run(maxStack);
+        Checker c = new Checker(program, diags, maxStack);
+        return c.run();
     }
 
-    private CheckResult run(long maxStack) {
+    private CheckResult run() {
         collect();
         for (StructDecl s : structs.values()) ensureStruct(s);
         for (EnumDecl e : enums.values()) ensureEnum(e);
@@ -76,8 +89,10 @@ public final class Checker {
                 for (MemoryReport.Entry e : memory.roots) {
                     if (e.stackBytes() > maxStack) {
                         diags.error(Code.E0402, e.routine().span,
-                            e.label() + " needs up to " + e.stackBytes() + " bytes of stack, budget is " + maxStack,
-                            "reduce array/list/str capacities, or pass large values as `mut` parameters");
+                            e.label() + " needs up to " + e.stackBytes() + " bytes of stack, more than the budget of "
+                                + maxStack + " bytes",
+                            "reduce array/list/str capacities, or pass large values as `mut` parameters; "
+                                + "`alang check --memory` shows where the bytes go, and --max-stack sets the budget");
                     }
                 }
             }
@@ -194,7 +209,7 @@ public final class Checker {
             if (!isConst(c.init)) {
                 diags.error(Code.E0209, c.init.span, "the value of constant `" + c.name + "` is not a constant expression",
                     "constants may use literals, other constants, operators and conversions, but not function calls");
-            } else {
+            } else if (withinBudget(c)) {
                 c.value = evalConst(c.init);
             }
         }
@@ -203,6 +218,24 @@ public final class Checker {
         if (c.value == null) c.type = Type.ERROR;
         ctx = saved;
         c.state = State.DONE;
+    }
+
+    /**
+     * Constants are evaluated now, in this process, so their size is checked first: a constant such as
+     * [[0; 1048576]; 1048576] would otherwise exhaust the memory of the checker itself.
+     */
+    private boolean withinBudget(ConstDecl c) {
+        long size = Layout.size(c.type);
+        long need = Layout.add(staticBytes, Layout.add(size, Temporaries.expr(c.init)));
+        if (maxStack > 0 && need > maxStack) {
+            diags.error(Code.E0405, c.span, "constant `" + c.name + "` needs up to " + need
+                    + " bytes, counting the constants before it and the values its initializer builds; the budget is "
+                    + maxStack + " bytes",
+                "make the constant smaller, or build the data at run time in a function; --max-stack sets the budget");
+            return false;
+        }
+        staticBytes = Layout.add(staticBytes, size);
+        return true;
     }
 
     private Object evalConst(Expr e) {

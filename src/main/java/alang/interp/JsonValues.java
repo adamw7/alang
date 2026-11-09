@@ -40,6 +40,31 @@ public final class JsonValues {
         }
     }
 
+    /** A result that JSON cannot represent: NaN or an infinity. */
+    public static final class EncodeException extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+
+        /** Where the value is, relative to the one being encoded: "", ".items[2]". */
+        private final String path;
+        private final String problem;
+
+        EncodeException(String path, String problem) {
+            super(path + ": " + problem);
+            this.path = path;
+            this.problem = problem;
+        }
+
+        /** The same problem, one level further out: inside {@code segment}. */
+        EncodeException within(String segment) {
+            return new EncodeException(segment + path, problem);
+        }
+
+        /** The message, with the path starting at {@code root}: "result.items[2]: ...". */
+        public String messageAt(String root) {
+            return root + path + ": " + problem;
+        }
+    }
+
     // ------------------------------------------------------------------ schema
 
     public static Map<String, Object> schema(Type t) {
@@ -90,6 +115,12 @@ public final class JsonValues {
 
     // ------------------------------------------------------------------ encode
 
+    /**
+     * The JSON form of a value.
+     *
+     * @throws EncodeException for NaN and infinities, which JSON cannot represent: writing them as
+     *     null, as before, made a broken result look like a successful one
+     */
     public static Object toJson(Object v, Type t) {
         return switch (t) {
             case Type.Prim p -> {
@@ -97,7 +128,13 @@ public final class JsonValues {
                 if (k == PrimKind.BOOL) yield v;
                 if (k.isFloat) {
                     double d = (Double) v;
-                    yield Double.isFinite(d) ? new BigDecimal(Double.toString(d)) : null;
+                    if (!Double.isFinite(d)) {
+                        throw new EncodeException("", "the " + k.name + " value " + Format.toText(v, t)
+                            + " has no JSON representation");
+                    }
+                    // The shortest decimal that reads back as the same f32, as print shows it: 0.1, not
+                    // the 0.10000000149011612 that the widened double would print.
+                    yield new BigDecimal(k == PrimKind.F32 ? Float.toString((float) d) : Double.toString(d));
                 }
                 yield IntOps.toBig(k, (Long) v);
             }
@@ -107,19 +144,26 @@ public final class JsonValues {
             }
             case Type.ArrayT a -> {
                 List<Object> out = new ArrayList<>();
-                for (Object o : ((ArrV) v).items) out.add(toJson(o, a.elem()));
+                Object[] items = ((ArrV) v).items;
+                for (int i = 0; i < items.length; i++) out.add(element(items[i], a.elem(), i));
                 yield out;
             }
             case Type.ListT l -> {
                 ListV lv = (ListV) v;
                 List<Object> out = new ArrayList<>();
-                for (int i = 0; i < lv.len; i++) out.add(toJson(lv.items[i], l.elem()));
+                for (int i = 0; i < lv.len; i++) out.add(element(lv.items[i], l.elem(), i));
                 yield out;
             }
             case Type.StructT st -> {
                 Map<String, Object> out = new LinkedHashMap<>();
                 int i = 0;
-                for (Field f : st.decl().fields) out.put(f.name, toJson(((StructV) v).fields[i++], f.type));
+                for (Field f : st.decl().fields) {
+                    try {
+                        out.put(f.name, toJson(((StructV) v).fields[i++], f.type));
+                    } catch (EncodeException e) {
+                        throw e.within("." + f.name);
+                    }
+                }
                 yield out;
             }
             case Type.EnumT et -> {
@@ -127,11 +171,26 @@ public final class JsonValues {
                 Variant var = et.decl().variants.get(ev.tag);
                 if (var.payload.isEmpty()) yield var.name;
                 List<Object> vals = new ArrayList<>();
-                for (int i = 0; i < var.payload.size(); i++) vals.add(toJson(ev.payload[i], var.payload.get(i)));
+                for (int i = 0; i < var.payload.size(); i++) {
+                    try {
+                        vals.add(toJson(ev.payload[i], var.payload.get(i)));
+                    } catch (EncodeException e) {
+                        throw e.within("." + var.name + "[" + i + "]");
+                    }
+                }
                 yield Json.obj(var.name, vals);
             }
             default -> null;
         };
+    }
+
+    /** An element of an array or list; its path is built only for an error. */
+    private static Object element(Object v, Type t, int i) {
+        try {
+            return toJson(v, t);
+        } catch (EncodeException e) {
+            throw e.within("[" + i + "]");
+        }
     }
 
     // ------------------------------------------------------------------ decode
@@ -149,7 +208,10 @@ public final class JsonValues {
                     if (j instanceof BigInteger bi) d = bi.doubleValue();
                     else if (j instanceof BigDecimal bd) d = bd.doubleValue();
                     else throw fail(path, "expected a number");
-                    return k == PrimKind.F32 ? (double) (float) d : d;
+                    if (k == PrimKind.F32) d = (float) d;
+                    // Too large a number rounds to an infinity, which is not the number that was sent.
+                    if (Double.isInfinite(d)) throw fail(path, j + " is out of range for " + k.name);
+                    return d;
                 }
                 BigInteger v;
                 if (j instanceof BigInteger bi) {
