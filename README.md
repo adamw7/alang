@@ -80,14 +80,17 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | Command | Purpose |
 |---------|---------|
 | `alang check FILE [--json] [--memory] [--max-stack B]` | Type-check; print diagnostics and the static memory bound (8 MiB budget unless `--max-stack` sets another) |
-| `alang run FILE [--json] [--max-steps N]` | Run `fn main()` |
-| `alang test FILE [--json] [--filter TEXT]` | Run all `test "..." { }` blocks |
-| `alang tools FILE` | JSON tool definitions for every `tool fn` (name, description, input_schema) |
-| `alang call FILE TOOL [JSON \| -]` | Call a tool with JSON arguments; `-` reads them from stdin, and none means `{}` |
-| `alang build FILE [-o out.c]` | Compile to heap-free C99 |
-| `alang explain CODE` | Explain a diagnostic or trap code |
+| `alang run FILE [--json] [--max-steps N] [--max-stack B]` | Run `fn main()` |
+| `alang test FILE [--json] [--filter TEXT] [--max-steps N] [--max-stack B]` | Run all `test "..." { }` blocks; a filter that matches no test fails |
+| `alang tools FILE [--json] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema) |
+| `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B]` | Call a tool with JSON arguments; `-` reads them from stdin, and none means `{}` |
+| `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
+| `alang explain CODE \| --all \| --markdown` | Explain a diagnostic or trap code, or all of them |
 
-Exit codes: `0` success, `1` errors / traps / failing tests, `2` usage errors.
+Exit codes: `0` success, `1` errors / traps / failing tests, `2` usage errors. An option a command
+does not take, or an extra argument, is a usage error. With `--json`, and always for `call`, errors
+are reported as JSON on stdout too; `call`'s error codes are `usage_error`, `compile_error`,
+`bad_tool`, `bad_json`, `bad_arguments`, `bad_result` and the trap codes (`R....`).
 
 ## Diagnostics built for agents
 

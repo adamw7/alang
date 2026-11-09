@@ -195,6 +195,9 @@ public final class CGen {
                 sb.append("static ").append(t).append(" al_neg_").append(n).append("(").append(t).append(" a, int line, int col) {\n")
                     .append("    if (a == ").append(cMin(k)).append(") ").append(ovf.apply("-")).append(";\n")
                     .append("    return (").append(t).append(")-a;\n}\n");
+                sb.append("static ").append(t).append(" al_abs_").append(n).append("(").append(t).append(" a, int line, int col) {\n")
+                    .append("    if (a == ").append(cMin(k)).append(") ").append(ovf.apply("abs")).append(";\n")
+                    .append("    return a < 0 ? (").append(t).append(")-a : a;\n}\n");
                 sb.append("static ").append(t).append(" al_bnot_").append(n).append("(").append(t).append(" a) {\n")
                     .append("    return a < 0 ? (").append(t).append(")-(a + 1) : (").append(t).append(")(-a - 1);\n}\n");
                 // two's complement reinterpretation without implementation-defined conversions
@@ -1215,7 +1218,7 @@ public final class CGen {
                 PrimKind k = Type.kind(c.type);
                 String v = tmp(c.type, lower(args.get(0).expr));
                 if (k.isFloat) return "((" + cPrim(k) + ")fabs(" + v + "))";
-                return tmp(c.type, "(" + v + " < 0 ? al_neg_" + k.name + "(" + v + ", " + at + ") : " + v + ")");
+                return tmp(c.type, "al_abs_" + k.name + "(" + v + ", " + at + ")");
             }
             case MIN, MAX -> {
                 String a = tmp(c.type, lower(args.get(0).expr));
