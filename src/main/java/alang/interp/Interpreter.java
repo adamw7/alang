@@ -12,11 +12,9 @@ import alang.interp.Values.StrV;
 import alang.interp.Values.StructV;
 import alang.types.PrimKind;
 import alang.types.Type;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
@@ -42,6 +40,72 @@ public final class Interpreter {
     private record CallSite(String name, Span site) {}
 
     private final Deque<CallSite> callStack = new ArrayDeque<>();
+
+    /** print() formats into this fixed buffer, which goes to {@link #out} whenever it fills up. */
+    private final class PrintSink implements ByteSink {
+        private final byte[] buf = new byte[8192];
+        private int len;
+
+        @Override
+        public void write(int b) {
+            if (len == buf.length) drain();
+            buf[len++] = (byte) b;
+        }
+
+        @Override
+        public void write(byte[] b, int off, int n) {
+            while (n > 0) {
+                if (len == buf.length) drain();
+                int k = Math.min(n, buf.length - len);
+                System.arraycopy(b, off, buf, len, k);
+                len += k;
+                off += k;
+                n -= k;
+            }
+        }
+
+        void drain() {
+            try {
+                out.write(buf, 0, len);
+            } catch (IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+            len = 0;
+        }
+    }
+
+    private final PrintSink printSink = new PrintSink();
+
+    /**
+     * append() formats into the target's spare capacity. Bytes past the capacity are only counted, so
+     * an append that does not fit is reported with its full length without its text being built.
+     */
+    private static final class StrSink implements ByteSink {
+        private final byte[] dest;
+        private int pos;
+        long count;
+
+        StrSink(byte[] dest, int start) {
+            this.dest = dest;
+            this.pos = start;
+        }
+
+        @Override
+        public void write(int b) {
+            if (pos < dest.length) dest[pos++] = (byte) b;
+            count++;
+        }
+
+        @Override
+        public void write(byte[] b, int off, int n) {
+            int k = Math.min(n, dest.length - pos);
+            if (k > 0) {
+                System.arraycopy(b, off, dest, pos, k);
+                pos += k;
+            }
+            count += n;
+        }
+    }
 
     public Interpreter(Source source, OutputStream out, long maxSteps) {
         this.source = source;
@@ -612,14 +676,12 @@ public final class Interpreter {
         List<Arg> args = c.args;
         switch (c.builtin) {
             case PRINT -> {
-                ByteArrayOutputStream buf = new ByteArrayOutputStream();
-                for (Arg a : args) Format.format(buf, eval(a.expr, slots), a.expr.type, false);
-                buf.write('\n');
-                try {
-                    out.write(buf.toByteArray());
-                } catch (IOException e) {
-                    throw new java.io.UncheckedIOException(e);
-                }
+                // Every argument is evaluated before anything is written, so a trap prints nothing.
+                Object[] values = new Object[args.size()];
+                for (int i = 0; i < values.length; i++) values[i] = eval(args.get(i).expr, slots);
+                for (int i = 0; i < values.length; i++) Format.format(printSink, values[i], args.get(i).expr.type, false);
+                printSink.write('\n');
+                printSink.drain();
                 return null;
             }
             case LEN -> {
@@ -676,20 +738,18 @@ public final class Interpreter {
             }
             case APPEND -> {
                 Ref target = ref(args.get(0).expr, slots);
-                List<byte[]> parts = new ArrayList<>();
-                for (int i = 1; i < args.size(); i++) {
-                    ByteArrayOutputStream buf = new ByteArrayOutputStream();
-                    Format.format(buf, eval(args.get(i).expr, slots), args.get(i).expr.type, false);
-                    parts.add(buf.toByteArray());
-                }
+                Object[] values = new Object[args.size()];
+                for (int i = 1; i < values.length; i++) values[i] = eval(args.get(i).expr, slots);
                 StrV s = (StrV) target.get();
-                for (byte[] p : parts) {
-                    if (s.len + p.length > s.b.length) {
+                for (int i = 1; i < values.length; i++) {
+                    // The text goes straight into the spare capacity; only its length is kept beyond that.
+                    StrSink part = new StrSink(s.b, s.len);
+                    Format.format(part, values[i], args.get(i).expr.type, false);
+                    if (part.count > s.b.length - s.len) {
                         throw new Trap(Code.R0004, c.span, "append exceeds str capacity " + s.b.length
-                            + " (length " + s.len + ", appending " + p.length + " bytes)");
+                            + " (length " + s.len + ", appending " + part.count + " bytes)");
                     }
-                    System.arraycopy(p, 0, s.b, s.len, p.length);
-                    s.len += p.length;
+                    s.len += (int) part.count;
                 }
                 return null;
             }

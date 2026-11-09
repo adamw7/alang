@@ -26,7 +26,7 @@ class DeterminismTest {
 
     private static String fingerprint(Path p) {
         Source src = Harness.source(p);
-        Frontend.Result r = Frontend.compile(src, 0);
+        Frontend.Result r = Frontend.compile(src, Harness.budget(src.text));
         StringBuilder sb = new StringBuilder();
         sb.append(alang.util.Json.pretty(r.diags().toJson())).append('\n');
         sb.append(r.diags().renderText());

@@ -153,8 +153,13 @@ public final class Json {
             this.s = s;
         }
 
+        /** JSON whitespace only: Character.isWhitespace would also skip form feeds and Unicode spaces. */
         void skipWs() {
-            while (pos < s.length() && Character.isWhitespace(s.charAt(pos))) pos++;
+            while (pos < s.length()) {
+                char c = s.charAt(pos);
+                if (c != ' ' && c != '\t' && c != '\n' && c != '\r') return;
+                pos++;
+            }
         }
 
         ParseException error(String what) {
@@ -237,6 +242,10 @@ public final class Json {
                 if (pos >= s.length()) throw error("unterminated string");
                 char c = s.charAt(pos++);
                 if (c == '"') return sb.toString();
+                if (c < 0x20) {
+                    pos--;
+                    throw error("control character U+00" + HEX[c >> 4] + HEX[c & 15] + " in a string must be escaped");
+                }
                 if (c == '\\') {
                     if (pos >= s.length()) throw error("unterminated escape");
                     char e = s.charAt(pos++);
@@ -250,44 +259,92 @@ public final class Json {
                         case 'r' -> sb.append('\r');
                         case 't' -> sb.append('\t');
                         case 'u' -> {
-                            int code = 0;
-                            for (int k = 0; k < 4; k++) {
-                                int d = pos + k < s.length() ? Character.digit(s.charAt(pos + k), 16) : -1;
-                                // Character.digit also accepts non-ASCII digits; JSON allows only [0-9a-fA-F].
-                                if (d < 0 || s.charAt(pos + k) > 'f') throw error("bad unicode escape");
-                                code = code * 16 + d;
+                            char unit = hex4();
+                            if (Character.isHighSurrogate(unit)) {
+                                // A pair is written as two escapes, a high then a low surrogate.
+                                if (!s.startsWith("\\u", pos)) throw error("unpaired surrogate escape");
+                                pos += 2;
+                                char low = hex4();
+                                if (!Character.isLowSurrogate(low)) throw error("unpaired surrogate escape");
+                                sb.append(unit).append(low);
+                            } else if (Character.isLowSurrogate(unit)) {
+                                throw error("unpaired surrogate escape");
+                            } else {
+                                sb.append(unit);
                             }
-                            sb.append((char) code);
-                            pos += 4;
                         }
                         default -> throw error("bad escape");
                     }
+                } else if (Character.isSurrogate(c)) {
+                    // Text that reached Java with a lone surrogate would become "?" in UTF-8.
+                    if (!Character.isHighSurrogate(c) || pos >= s.length() || !Character.isLowSurrogate(s.charAt(pos))) {
+                        pos--;
+                        throw error("unpaired surrogate");
+                    }
+                    sb.append(c).append(s.charAt(pos++));
                 } else {
                     sb.append(c);
                 }
             }
         }
 
+        /** The four hex digits of a backslash-u escape. */
+        char hex4() {
+            int code = 0;
+            for (int k = 0; k < 4; k++) {
+                int d = pos + k < s.length() ? hexDigit(s.charAt(pos + k)) : -1;
+                if (d < 0) throw error("bad unicode escape");
+                code = code * 16 + d;
+            }
+            pos += 4;
+            return (char) code;
+        }
+
+        /** Character.digit would also accept non-ASCII digits; JSON allows only [0-9a-fA-F]. */
+        static int hexDigit(char c) {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        }
+
+        /** Only ASCII digits: Character.isDigit and BigInteger would also read an Arabic-Indic three as 3. */
+        static boolean isDigit(char c) {
+            return c >= '0' && c <= '9';
+        }
+
+        void digits() {
+            if (!isDigit(peek())) throw error("bad number: expected a digit");
+            while (isDigit(peek())) pos++;
+        }
+
+        /** A number exactly as JSON spells it: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? */
         Object number() {
             int start = pos;
             if (peek() == '-') pos++;
-            while (pos < s.length() && Character.isDigit(s.charAt(pos))) pos++;
-            boolean isFloat = false;
-            if (pos < s.length() && s.charAt(pos) == '.') {
-                isFloat = true;
+            if (peek() == '0') {
                 pos++;
-                while (pos < s.length() && Character.isDigit(s.charAt(pos))) pos++;
+                if (isDigit(peek())) throw error("bad number: leading zeros are not allowed");
+            } else {
+                digits();
             }
-            if (pos < s.length() && (s.charAt(pos) == 'e' || s.charAt(pos) == 'E')) {
+            boolean isFloat = false;
+            if (peek() == '.') {
                 isFloat = true;
                 pos++;
-                if (pos < s.length() && (s.charAt(pos) == '+' || s.charAt(pos) == '-')) pos++;
-                while (pos < s.length() && Character.isDigit(s.charAt(pos))) pos++;
+                digits();
+            }
+            if (peek() == 'e' || peek() == 'E') {
+                isFloat = true;
+                pos++;
+                if (peek() == '+' || peek() == '-') pos++;
+                digits();
             }
             String t = s.substring(start, pos);
             try {
                 return isFloat ? new BigDecimal(t) : new BigInteger(t);
             } catch (NumberFormatException ex) {
+                // An exponent beyond the range of int; no ALang type holds such a number.
                 throw error("bad number '" + t + "'");
             }
         }

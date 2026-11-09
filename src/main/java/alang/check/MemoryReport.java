@@ -17,8 +17,10 @@ import java.util.Map;
  * worst-case memory of every entry point is a finite number computed here:
  * <pre>stack(f) = frame(f) + max(stack(g) for g called by f)</pre>
  * Frame sizes count parameters (aggregates and `mut` parameters by address), every local
- * variable, and the return value. Compiler temporaries and ABI overhead are not included,
- * so treat the figures as a close estimate of the value storage the program needs.
+ * variable, the return value, and the aggregate temporaries its largest statement can hold at once
+ * ({@link Temporaries}, an upper bound). Scalar temporaries and ABI overhead are not included.
+ * Checking a program against a budget ({@code --max-stack}, 8 MiB by default) keeps the interpreter
+ * from exhausting the host's memory, whatever the program does.
  */
 public final class MemoryReport {
     public record Entry(String label, Routine routine, long frameBytes, long stackBytes) {}
@@ -62,6 +64,7 @@ public final class MemoryReport {
             bytes = Layout.add(bytes, i < params ? Layout.paramSize(v.type, v.byRef) : Layout.size(v.type));
         }
         if (r instanceof FnDecl f) bytes = Layout.add(bytes, Layout.size(f.ret));
+        bytes = Layout.add(bytes, Temporaries.of(r));
         frames.put(r, bytes);
         return bytes;
     }

@@ -264,22 +264,23 @@ The budget counts work, not seconds.
 ## 4. Memory you can read before running
 
 Every ALang type has a size known at compile time (`str[64]`, `list[Item; 16]`, `[f64; 3]`), there
-is no heap, and there is no recursion. So the checker can compute the exact worst-case memory of
-every entry point:
+is no heap, and there is no recursion. So the checker can compute a worst-case bound on the memory of
+every entry point, counting its variables and the temporary values its statements build:
 
 ```
 $ bin/alang check examples/maze_bfs.al --memory
 ok: examples/maze_bfs.al: 3 function(s), 1 test(s), 0 warning(s)
-memory: heap 0 B, static 96 B, worst-case stack 1358 B
+memory: heap 0 B, static 96 B, worst-case stack 2234 B
   routine                                     frame (B)    stack (B)
-  fn find                                            33           33
-  fn shortest_path                                 1313         1346
-  fn main                                            12         1358  (entry)
-  test "finds the shortest path"                      0         1346  (entry)
+  fn find                                            61           61
+  fn shortest_path                                 2089         2150
+  fn main                                            84         2234  (entry)
+  test "finds the shortest path"                      0         2150  (entry)
 ```
 
-`--max-stack 1024` turns that bound into a compile error (E0402), which is useful for embedded
-targets or for a host that gives each tool call a fixed budget. In Python, JavaScript, Go and Java,
+A program whose bound exceeds the budget does not compile (E0402, or E0405 for constants). The
+budget is 8 MiB unless `--max-stack` sets another: `--max-stack 1024` suits embedded targets or a
+host that gives each tool call a fixed budget. In Python, JavaScript, Go and Java,
 memory use is only known after the program runs. In C and Rust a stack overflow or failed
 allocation shows up at run time, and bounding memory takes external analysis tools.
 
