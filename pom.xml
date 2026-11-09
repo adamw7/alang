@@ -17,6 +17,12 @@
     <antlr.version>4.13.2</antlr.version>
     <junit.version>5.14.4</junit.version>
     <archunit.version>1.5.1</archunit.version>
+    <!-- Budget in seconds for the whole test run (it takes about 20 s). A run that takes longer
+         fails the build with "There was a timeout in the fork" and leaves a thread dump in
+         target/surefire-reports. Surefire does not stop the run at the limit: each test's own 10 s
+         limit (src/test/resources/junit-platform.properties) stops a hung test, and the CI steps'
+         limits stop everything else. Override with -Dsurefire.timeout=N; 0 turns the check off. -->
+    <surefire.timeout>180</surefire.timeout>
   </properties>
 
   <!-- One JUnit Platform version for Jupiter and the ArchUnit engine. -->
@@ -93,6 +99,9 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.2</version>
+        <configuration>
+          <forkedProcessTimeoutInSeconds>${surefire.timeout}</forkedProcessTimeoutInSeconds>
+        </configuration>
       </plugin>
 
       <!-- Produces target/alang.jar, a single runnable jar. -->

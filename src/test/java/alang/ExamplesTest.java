@@ -15,7 +15,7 @@ import org.junit.jupiter.api.TestFactory;
 class ExamplesTest {
     @TestFactory
     Stream<DynamicTest> examples() {
-        return Harness.files("examples", ".al").stream().map(p -> DynamicTest.dynamicTest(p.getFileName().toString(), () -> {
+        return Harness.files("examples", ".al").stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), () -> {
             Frontend.Result r = Harness.compile(p);
             assertTrue(r.diags().all().isEmpty(), () -> r.diags().renderText());
             assertEquals(List.of(), Harness.runTests(r));

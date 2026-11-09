@@ -49,7 +49,7 @@ class DeterminismTest {
         List<Path> files = new ArrayList<>(Harness.files("tests/run", ".al"));
         files.addAll(Harness.files("tests/errors", ".al"));
         files.addAll(Harness.files("examples", ".al"));
-        return files.stream().map(p -> DynamicTest.dynamicTest(p.toString(), () -> {
+        return files.stream().map(p -> Harness.dynamicTest(p.toString(), () -> {
             Locale saved = Locale.getDefault();
             try {
                 Locale.setDefault(Locale.ROOT);

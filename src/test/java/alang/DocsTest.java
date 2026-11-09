@@ -28,7 +28,7 @@ class DocsTest {
             while (m.find()) {
                 String code = m.group(1);
                 String name = doc + " block " + ++n;
-                tests.add(DynamicTest.dynamicTest(name, () -> {
+                tests.add(Harness.dynamicTest(name, () -> {
                     Frontend.Result r = Frontend.compile(new Source(name, code), 0);
                     assertTrue(r.diags().all().isEmpty(), () -> r.diags().renderText());
                     assertEquals(List.of(), Harness.runTests(r));

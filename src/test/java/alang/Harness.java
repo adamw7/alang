@@ -1,5 +1,7 @@
 package alang;
 
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+
 import alang.ast.Ast.FnDecl;
 import alang.ast.Ast.TestDecl;
 import alang.cli.Frontend;
@@ -12,9 +14,12 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.function.Executable;
 
 /** Shared helpers for the test suites. */
 public final class Harness {
@@ -23,6 +28,27 @@ public final class Harness {
     public static final Path ROOT = Path.of(System.getProperty("user.dir"));
 
     public record Run(String stdout, Trap trap) {}
+
+    /**
+     * The longest one test may run; the slowest takes under 2 s. JUnit applies the same limit to
+     * every {@code @Test} and {@code @TestFactory} method (junit-platform.properties) but not to the
+     * dynamic tests a factory returns, so build those with {@link #dynamicTest}.
+     */
+    public static final Duration TEST_TIMEOUT = Duration.ofSeconds(10);
+
+    /** A dynamic test that fails once it has run for {@link #TEST_TIMEOUT}. */
+    public static DynamicTest dynamicTest(String name, Executable body) {
+        return dynamicTest(name, TEST_TIMEOUT, body);
+    }
+
+    /**
+     * A dynamic test that fails once it has run for {@code timeout}. The body runs on its own thread
+     * and is abandoned when time is up, so a body that never checks for interrupts (a checker stuck in
+     * a loop) still fails on time instead of hanging the build.
+     */
+    public static DynamicTest dynamicTest(String name, Duration timeout, Executable body) {
+        return DynamicTest.dynamicTest(name, () -> assertTimeoutPreemptively(timeout, body, () -> name));
+    }
 
     public static Source source(Path p) {
         try {

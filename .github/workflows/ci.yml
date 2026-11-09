@@ -15,7 +15,10 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # A run takes about a minute. These limits make a hang fail fast instead of holding a runner.
+    # Inside the tests, each test fails after 10 s, and the build fails if the whole test run takes
+    # longer than 180 s (see pom.xml).
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -36,10 +39,12 @@ jobs:
           clang --version
 
       - name: Build and test
+        timeout-minutes: 5
         run: mvn -B -ntp verify
 
       - name: CLI smoke test
         # Exercises the packaged jar through bin/alang, which the unit tests do not.
+        timeout-minutes: 3
         run: |
           out="$RUNNER_TEMP/alang"
           mkdir -p "$out"
@@ -77,7 +82,7 @@ jobs:
   fuzz:
     name: Fuzz (3000 mutations per program)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 
@@ -88,4 +93,5 @@ jobs:
           cache: maven
 
       - name: Fuzz the checker and interpreter
+        timeout-minutes: 5
         run: mvn -B -ntp test -Dtest=FuzzTest -Dalang.fuzz=3000
