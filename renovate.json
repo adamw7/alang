@@ -3,6 +3,12 @@
   "extends": ["config:recommended"],
   "packageRules": [
     {
+      "description": "Merge an update once every CI check on its branch has passed. Renovate merges it itself instead of GitHub auto-merge, which waits only for the checks branch protection requires, and first rebases a branch that is behind main so the merged commit is the tested one.",
+      "matchPackageNames": ["*"],
+      "automerge": true,
+      "platformAutomerge": false
+    },
+    {
       "description": "The ANTLR tool generates the parser and the ANTLR runtime runs it, so both move to a new version together.",
       "matchPackageNames": ["org.antlr:*"],
       "groupName": "ANTLR"

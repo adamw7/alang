@@ -59,6 +59,9 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 | **Safe to run agent code** | Tool functions take JSON in and return JSON out with no access to the host. A deterministic step budget bounds runtime. |
 | **Runs anywhere** | A reference interpreter (JVM) and a C99 backend that emits heap-free, stdio-free C with byte-identical behavior. |
 
+[docs/COMPARISON.md](docs/COMPARISON.md) puts these guarantees side by side with Python, JavaScript,
+Go, Rust, C and Java, using programs you can run.
+
 ## Quick start
 
 Requirements: JDK 21+ and Maven. A C compiler is optional (for `alang build`).
@@ -118,6 +121,7 @@ The test suite does not just claim determinism, it checks it:
 ## Documentation
 
 - [AGENTS.md](AGENTS.md) — the one-page guide for AI agents writing ALang (start here)
+- [docs/COMPARISON.md](docs/COMPARISON.md) — how ALang compares with Python, JavaScript, Go, Rust and C
 - [docs/SPEC.md](docs/SPEC.md) — the language specification
 - [docs/ERRORS.md](docs/ERRORS.md) — every diagnostic and trap code (generated)
 - [grammar/ALang.g4](grammar/ALang.g4) — the grammar
@@ -142,9 +146,9 @@ tests/examples/           golden output of the examples
 ## Development
 
 ```sh
-mvn test                          # 240+ tests: conformance, examples, determinism, fuzzing, C backend, architecture
-mvn test -Dtest=ArchitectureTest  # just the ArchUnit rules (package layers, no clock/locale/I/O in the core)
-mvn test -Dalang.fuzz=3000        # a longer fuzzing campaign
+mvn test                              # 270+ tests: conformance, examples, determinism, fuzzing, C backend, architecture
+mvn test -Dtest='*ArchitectureTest'   # just the ArchUnit rules (layers, determinism, I/O at the edge, test conventions)
+mvn test -Dalang.fuzz=3000            # a longer fuzzing campaign
 mvn test-compile pitest:mutationCoverage      # mutation testing of the toolchain (see below)
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
@@ -157,6 +161,8 @@ report as the `pit-report` artifact.
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
 plugins and GitHub Actions. The ANTLR tool and runtime are updated together, PIT and its JUnit 5
 plugin together, the Maven plugins in one pull request, and the workflow's actions in another.
+Renovate merges each of its pull requests once every CI check on it has passed, rebasing it onto
+`main` first if it has fallen behind.
 
 ### Mutation testing
 
@@ -167,22 +173,22 @@ cover the changed line against each of these mutants. A mutant that no test noti
 behavior the suite does not pin down.
 
 ```sh
-mvn test-compile pitest:mutationCoverage                      # about 2,500 mutants, 7 minutes on 4 cores
+mvn test-compile pitest:mutationCoverage                      # about 2,500 mutants, 6 minutes on 4 cores
 mvn test-compile pitest:mutationCoverage -Dpitest.threads=8   # more parallel JVMs
 ```
 
 The report, `target/pit-reports/index.html`, shows every surviving mutant on its source line.
 Every class under `alang` is mutated except the ANTLR-generated parser and the C backend: only
 `CBackendTest` can catch a C backend mutant, and it compiles every program with gcc and clang,
-which would turn minutes into hours. That test and `ArchitectureTest`, which reads class files
-from disk and so never sees a mutant, are left out of the run.
+which would turn minutes into hours. That test and the ArchUnit rules (`*ArchitectureTest`), which
+read class files from disk and so never see a mutant, are left out of the run.
 
-The run fails when the mutation score (mutants killed out of all mutants) drops below 54% or the
-test strength (killed out of those that some test covers) below 70%. The baseline is 55% and
-71%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
+The run fails when the mutation score (mutants killed out of all mutants) drops below 58% or the
+test strength (killed out of those that some test covers) below 74%. The baseline is 59% and
+76%; raise the thresholds in [`pom.xml`](pom.xml) as the tests improve. The weakest areas are
 the CLI and the JSON side of tool calls (`Main`, `JsonValues`, `Json`), which the unit tests
-barely reach, and output whose exact text or numbers no test asserts: syntax error hints
-(`SyntaxErrorListener`), rendered diagnostics (`Diagnostics`) and memory layout (`Layout`).
+barely reach, and output whose exact numbers or text few tests assert: memory layout (`Layout`)
+and syntax error hints (`SyntaxErrorListener`).
 
 ## Status
 
