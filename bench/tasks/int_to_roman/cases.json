@@ -1,0 +1,30 @@
+{
+  "tool": "int_to_roman",
+  "examples": [
+    {"args": {"n": 3}, "expect": "III"},
+    {"args": {"n": 1994}, "expect": "MCMXCIV"},
+    {"args": {"n": 58}, "expect": "LVIII"}
+  ],
+  "hidden": [
+    {"args": {"n": 1}, "expect": "I"},
+    {"args": {"n": 4}, "expect": "IV"},
+    {"args": {"n": 9}, "expect": "IX"},
+    {"args": {"n": 14}, "expect": "XIV"},
+    {"args": {"n": 40}, "expect": "XL"},
+    {"args": {"n": 90}, "expect": "XC"},
+    {"args": {"n": 400}, "expect": "CD"},
+    {"args": {"n": 900}, "expect": "CM"},
+    {"args": {"n": 444}, "expect": "CDXLIV"},
+    {"args": {"n": 999}, "expect": "CMXCIX"},
+    {"args": {"n": 1000}, "expect": "M"},
+    {"args": {"n": 2024}, "expect": "MMXXIV"},
+    {"args": {"n": 3888}, "expect": "MMMDCCCLXXXVIII"},
+    {"args": {"n": 3999}, "expect": "MMMCMXCIX"},
+    {"args": {"n": 2959}, "expect": "MMCMLIX"},
+    {"args": {"n": 1963}, "expect": "MCMLXIII"},
+    {"args": {"n": 2467}, "expect": "MMCDLXVII"},
+    {"args": {"n": 905}, "expect": "CMV"},
+    {"args": {"n": 3444}, "expect": "MMMCDXLIV"},
+    {"args": {"n": 216}, "expect": "CCXVI"}
+  ]
+}

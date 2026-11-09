@@ -106,6 +106,13 @@ public final class Main {
                     }
                 }
             }
+            // A changed file name or filter would quietly open another file or match no test. The JSON
+            // argument of `call` is checked by call() itself, which reports it as a JSON error.
+            for (int i = 0; i < positional.size(); i++) {
+                if (!(cmd.equals("call") && i == 2)) requireDecodable(positional.get(i));
+            }
+            if (filter != null) requireDecodable(filter);
+            if (output != null) requireDecodable(output);
             return switch (cmd) {
                 case "check" -> check(file());
                 case "run" -> runMain(file());
@@ -130,13 +137,6 @@ public final class Main {
         } catch (NumberFormatException e) {
             line(err, "alang: expected a number: " + e.getMessage());
             return 2;
-        } catch (StackOverflowError e) {
-            // The parser, checker and interpreter recurse over the syntax tree; extremely deep
-            // nesting (hundreds of levels) exhausts the thread stack. Report it instead of crashing.
-            out.flush();
-            line(err, "alang: the program is nested too deeply to process; split the deepest expression or block "
-                + "into smaller parts using intermediate `let` bindings or helper functions");
-            return 1;
         }
     }
 
@@ -145,6 +145,22 @@ public final class Main {
 
         UsageException(String m) {
             super(m);
+        }
+    }
+
+    /**
+     * True if Java changed the argument while decoding it with the host locale's charset: it replaces the
+     * bytes it cannot decode (in the POSIX locale, every non-ASCII byte) with U+FFFD, so the text is not
+     * what was typed. Checking for U+FFFD needs no system property, so the result stays the same everywhere.
+     */
+    private static boolean undecodable(String arg) {
+        return arg.indexOf('\uFFFD') >= 0;
+    }
+
+    private static void requireDecodable(String arg) {
+        if (undecodable(arg)) {
+            throw new UsageException("the argument `" + arg + "` could not be decoded in this host locale; "
+                + "use a UTF-8 locale such as C.UTF-8 (bin/alang does)");
         }
     }
 
@@ -411,13 +427,10 @@ public final class Main {
             String msg = f == null ? "no function `" + name + "`" : "`" + name + "` is not declared as `tool fn`";
             return callError(j, "bad_tool", msg + "; available tools: " + tools);
         }
-        String argEncoding = System.getProperty("sun.jnu.encoding", "UTF-8");
-        if (fromArgv && argText.indexOf('\uFFFD') >= 0 && !argEncoding.equalsIgnoreCase("UTF-8")) {
-            // Java decoded the argument with a non-UTF-8 host locale and replaced bytes it could not
-            // decode, so the text is no longer what the caller sent. Refuse rather than silently
-            // computing a locale-dependent result.
+        if (fromArgv && undecodable(argText)) {
+            // Refuse rather than silently computing a locale-dependent result.
             return callError(j, "bad_arguments", "the JSON argument contains characters that could not be decoded in this "
-                + "host locale (" + argEncoding + "); pass the arguments on stdin, or use a UTF-8 locale such as C.UTF-8");
+                + "host locale; pass the arguments on stdin, or use a UTF-8 locale such as C.UTF-8");
         }
         Object parsed;
         try {

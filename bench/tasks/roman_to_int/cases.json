@@ -1,0 +1,30 @@
+{
+  "tool": "roman_to_int",
+  "examples": [
+    {"args": {"s": "III"}, "expect": 3},
+    {"args": {"s": "MCMXCIV"}, "expect": 1994},
+    {"args": {"s": "XLII"}, "expect": 42}
+  ],
+  "hidden": [
+    {"args": {"s": "I"}, "expect": 1},
+    {"args": {"s": "IV"}, "expect": 4},
+    {"args": {"s": "IX"}, "expect": 9},
+    {"args": {"s": "XIV"}, "expect": 14},
+    {"args": {"s": "XL"}, "expect": 40},
+    {"args": {"s": "XC"}, "expect": 90},
+    {"args": {"s": "CD"}, "expect": 400},
+    {"args": {"s": "CM"}, "expect": 900},
+    {"args": {"s": "CDXLIV"}, "expect": 444},
+    {"args": {"s": "CMXCIX"}, "expect": 999},
+    {"args": {"s": "MDCLXVI"}, "expect": 1666},
+    {"args": {"s": "MMXXIV"}, "expect": 2024},
+    {"args": {"s": "MMMDCCCLXXXVIII"}, "expect": 3888},
+    {"args": {"s": "MMMCMXCIX"}, "expect": 3999},
+    {"args": {"s": "MMCCCV"}, "expect": 2305},
+    {"args": {"s": "MDCCCLXII"}, "expect": 1862},
+    {"args": {"s": "MCMXXXVIII"}, "expect": 1938},
+    {"args": {"s": "MMMCCLXXIII"}, "expect": 3273},
+    {"args": {"s": "CCLXIX"}, "expect": 269},
+    {"args": {"s": "CMX"}, "expect": 910}
+  ]
+}

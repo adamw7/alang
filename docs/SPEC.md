@@ -304,6 +304,11 @@ order:
 - Large values can be passed by `mut` reference to avoid copies. Read-only aggregate parameters
   are passed by address by the C backend, so they are not copied either.
 - Capacities are part of the type. `push` past capacity traps (R0004); there is no reallocation.
+- Nesting is limited to 128 levels (E0404), counted on the source before anything else runs: each
+  bracket and each operator chained in an expression counts one level, and a function, constant or
+  type adds the levels of every function, constant and type it uses. The toolchain recurses over the
+  program, so a fixed limit keeps whether a program can be checked, run or compiled the same on every
+  machine, instead of leaving it to the machine's stack size.
 
 ---
 

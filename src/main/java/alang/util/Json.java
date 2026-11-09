@@ -142,8 +142,12 @@ public final class Json {
     }
 
     private static final class Reader {
+        /** Parsing recurses, so nesting is limited; no ALang value nests nearly this deep. */
+        static final int MAX_DEPTH = 256;
+
         final String s;
         int pos;
+        int depth;
 
         Reader(String s) {
             this.s = s;
@@ -160,9 +164,13 @@ public final class Json {
         Object value() {
             if (pos >= s.length()) throw error("unexpected end of JSON");
             char c = s.charAt(pos);
+            if (c == '{' || c == '[') {
+                if (++depth > MAX_DEPTH) throw error("values nested more than " + MAX_DEPTH + " levels deep");
+                Object v = c == '{' ? object() : array();
+                depth--;
+                return v;
+            }
             return switch (c) {
-                case '{' -> object();
-                case '[' -> array();
                 case '"' -> string();
                 case 't' -> literal("true", Boolean.TRUE);
                 case 'f' -> literal("false", Boolean.FALSE);

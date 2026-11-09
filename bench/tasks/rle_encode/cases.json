@@ -1,0 +1,29 @@
+{
+  "tool": "rle_encode",
+  "examples": [
+    {"args": {"text": "aaabcc"}, "expect": "3a1b2c"},
+    {"args": {"text": "abbbbbbbbbbbb"}, "expect": "1a12b"},
+    {"args": {"text": ""}, "expect": ""}
+  ],
+  "hidden": [
+    {"args": {"text": "a"}, "expect": "1a"},
+    {"args": {"text": "ab"}, "expect": "1a1b"},
+    {"args": {"text": "aa"}, "expect": "2a"},
+    {"args": {"text": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"}, "expect": "64z"},
+    {"args": {"text": "  "}, "expect": "2 "},
+    {"args": {"text": "a a"}, "expect": "1a1 1a"},
+    {"args": {"text": "!!!??"}, "expect": "3!2?"},
+    {"args": {"text": "aabbaa"}, "expect": "2a2b2a"},
+    {"args": {"text": "xyz"}, "expect": "1x1y1z"},
+    {"args": {"text": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"}, "expect": "1a1b1c1d1e1f1g1h1i1j1a1b1c1d1e1f1g1h1i1j1a1b1c1d1e1f1g1h1i1j1a1b1c1d1e1f1g1h1i1j1a1b1c1d1e1f1g1h1i1j1a1b1c1d1e1f1g1h1i1j"},
+    {"args": {"text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"}, "expect": "49a1b"},
+    {"args": {"text": "..--.."}, "expect": "2.2-2."},
+    {"args": {"text": "AaAa"}, "expect": "1A1a1A1a"},
+    {"args": {"text": "aaaaba   . b ! !b.aaa.ab  b ab a"}, "expect": "4a1b1a3 1.1 1b1 1!1 1!1b1.3a1.1a1b2 1b1 1a1b1 1a"},
+    {"args": {"text": "   aa ab a a bb"}, "expect": "3 2a1 1a1b1 1a1 1a1 2b"},
+    {"args": {"text": "ba ba !bba!a ba  !ba!!a. ab.aabbb!aa .ab...a.aa    aabb."}, "expect": "1b1a1 1b1a1 1!2b1a1!1a1 1b1a2 1!1b1a2!1a1.1 1a1b1.2a3b1!2a1 1.1a1b3.1a1.2a4 2a2b1."},
+    {"args": {"text": "!b!.bb!!. ab. ba!a..a!.b!.!!aababaaa!.!bba ab aa !ba a.bbba aa"}, "expect": "1!1b1!1.2b2!1.1 1a1b1.1 1b1a1!1a2.1a1!1.1b1!1.2!2a1b1a1b3a1!1.1!2b1a1 1a1b1 2a1 1!1b1a1 1a1.3b1a1 2a"},
+    {"args": {"text": "abaa.!baab!!..!abb.bba aba..!aba. a!ab"}, "expect": "1a1b2a1.1!1b2a1b2!2.1!1a2b1.2b1a1 1a1b1a2.1!1a1b1a1.1 1a1!1a1b"},
+    {"args": {"text": "b!a!!a"}, "expect": "1b1!1a2!1a"}
+  ]
+}

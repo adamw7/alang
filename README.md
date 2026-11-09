@@ -122,6 +122,7 @@ The test suite does not just claim determinism, it checks it:
 
 - [AGENTS.md](AGENTS.md) — the one-page guide for AI agents writing ALang (start here)
 - [docs/COMPARISON.md](docs/COMPARISON.md) — how ALang compares with Python, JavaScript, Go, Rust and C
+- [bench/](bench) — a benchmark: do models write more correct tools in ALang or in Python?
 - [docs/SPEC.md](docs/SPEC.md) — the language specification
 - [docs/ERRORS.md](docs/ERRORS.md) — every diagnostic and trap code (generated)
 - [grammar/ALang.g4](grammar/ALang.g4) — the grammar
@@ -138,6 +139,7 @@ src/main/java/alang/
   cgen/                   C99 backend (runtime prelude in src/main/resources)
   cli/                    the `alang` command
 examples/                 example programs
+bench/                    ALang vs Python benchmark for model-written tools
 tests/run/                programs with golden output (.out) and expected traps (.trap)
 tests/errors/             programs that must fail with specific diagnostic codes
 tests/examples/           golden output of the examples
@@ -149,12 +151,13 @@ tests/examples/           golden output of the examples
 mvn test                              # 270+ tests: conformance, examples, determinism, fuzzing, C backend, architecture
 mvn test -Dtest='*ArchitectureTest'   # just the ArchUnit rules (layers, determinism, I/O at the edge, test conventions)
 mvn test -Dalang.fuzz=3000            # a longer fuzzing campaign
+python3 bench/bench.py selftest       # the benchmark's tasks, grader and feedback loop, offline
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on JDK 21 with gcc
 and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
-packaged jar, and runs a 3000-mutation fuzzing campaign.
+packaged jar, runs the benchmark self-test on Linux, and runs a 3000-mutation fuzzing campaign.
 
 Every test has a time limit, so a hang fails fast instead of stalling CI. A test fails after 10 s,
 even if it never checks for interrupts

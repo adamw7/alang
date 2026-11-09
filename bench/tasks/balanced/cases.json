@@ -1,0 +1,31 @@
+{
+  "tool": "balanced",
+  "examples": [
+    {"args": {"text": "([]{})"}, "expect": true},
+    {"args": {"text": "([)]"}, "expect": false},
+    {"args": {"text": "no brackets here"}, "expect": true}
+  ],
+  "hidden": [
+    {"args": {"text": ""}, "expect": true},
+    {"args": {"text": "("}, "expect": false},
+    {"args": {"text": ")"}, "expect": false},
+    {"args": {"text": ")("}, "expect": false},
+    {"args": {"text": "((()))"}, "expect": true},
+    {"args": {"text": "{[()()]}"}, "expect": true},
+    {"args": {"text": "{[(])}"}, "expect": false},
+    {"args": {"text": "a(b[c]d)e"}, "expect": true},
+    {"args": {"text": "(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((())))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}, "expect": true},
+    {"args": {"text": "((((((((((("}, "expect": false},
+    {"args": {"text": "}"}, "expect": false},
+    {"args": {"text": "[]]"}, "expect": false},
+    {"args": {"text": "[[]"}, "expect": false},
+    {"args": {"text": "f(x) = {a[0]}"}, "expect": true},
+    {"args": {"text": "<>"}, "expect": true},
+    {"args": {"text": "x}[){x]{("}, "expect": false},
+    {"args": {"text": "[x[[){]}((({x[{[]([]]}}))(())][())[("}, "expect": false},
+    {"args": {"text": "]]x[})x)({(x[[]()[]()(x}x(){])x)})]x)){("}, "expect": false},
+    {"args": {"text": ")][){)[))}(x{x}]})[)))(((x{[()"}, "expect": false},
+    {"args": {"text": "[]{"}, "expect": false},
+    {"args": {"text": "}))})x({}())}{x})())x"}, "expect": false}
+  ]
+}
