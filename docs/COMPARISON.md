@@ -527,3 +527,11 @@ Use Python, Go or Rust to build applications, talk to the outside world and reus
 ALang for the self-contained computations an agent writes and calls on its own: parsing, scoring,
 validating, planning, pricing and other business rules. These have to be correct, repeatable and
 safe to run the first time.
+
+## 10. Measuring it
+
+The sections above show what ALang guarantees. They do not show that models write better tools in
+it: that is an empirical question, and models have seen far more Python than ALang. The benchmark in
+[bench/](../bench) measures it: a model writes the same 20 tools in both languages, gets the same
+feedback, and the results are graded on hidden cases, counting how often a tool that passed its
+examples still returns wrong values without any error.

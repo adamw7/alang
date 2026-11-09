@@ -1,0 +1,25 @@
+{
+  "tool": "levenshtein",
+  "examples": [
+    {"args": {"a": "kitten", "b": "sitting"}, "expect": 3},
+    {"args": {"a": "", "b": "abc"}, "expect": 3},
+    {"args": {"a": "flaw", "b": "lawn"}, "expect": 2}
+  ],
+  "hidden": [
+    {"args": {"a": "same", "b": "same"}, "expect": 0},
+    {"args": {"a": "a", "b": "b"}, "expect": 1},
+    {"args": {"a": "abc", "b": ""}, "expect": 3},
+    {"args": {"a": "intention", "b": "execution"}, "expect": 5},
+    {"args": {"a": "", "b": ""}, "expect": 0},
+    {"args": {"a": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}, "expect": 32},
+    {"args": {"a": "abcdefghijklmnopqrstuvwxyz012345", "b": "bcdefghijklmnopqrstuvwxyz0123456"}, "expect": 2},
+    {"args": {"a": "ab", "b": "ba"}, "expect": 2},
+    {"args": {"a": "Saturday", "b": "Sunday"}, "expect": 3},
+    {"args": {"a": "acacaac", "b": "ababbcba"}, "expect": 5},
+    {"args": {"a": "cabccaabbcaaacacbacac", "b": "c"}, "expect": 20},
+    {"args": {"a": "bccbaacbaabcabbbaa", "b": "acbbabcccbbaaaacaccbcbabbaa"}, "expect": 13},
+    {"args": {"a": "bbccaac", "b": "abbaabca"}, "expect": 5},
+    {"args": {"a": "bcacaacbbaccbbbcaacccbacccb", "b": ""}, "expect": 27},
+    {"args": {"a": "ccbaccbccbccabcbbbabacaca", "b": "bbbaacacacbcac"}, "expect": 15}
+  ]
+}

@@ -74,6 +74,11 @@ jobs:
           test "$status" -eq 2
           bin/alang explain E0215 > /dev/null
 
+      - name: Benchmark self-test
+        # The benchmark's reference solutions must keep passing as the language changes (no API calls).
+        if: runner.os == 'Linux'
+        run: python3 bench/bench.py selftest
+
   fuzz:
     name: Fuzz (3000 mutations per program)
     runs-on: ubuntu-latest

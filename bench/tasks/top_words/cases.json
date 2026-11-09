@@ -1,0 +1,27 @@
+{
+  "tool": "top_words",
+  "examples": [
+    {"args": {"text": "the cat and the hat", "k": 2}, "expect": ["the", "and"]},
+    {"args": {"text": "b a c b a", "k": 3}, "expect": ["a", "b", "c"]},
+    {"args": {"text": "one, two; two... three! three three", "k": 8}, "expect": ["three", "two", "one"]}
+  ],
+  "hidden": [
+    {"args": {"text": "zeta alpha zeta alpha mid", "k": 2}, "expect": ["alpha", "zeta"]},
+    {"args": {"text": "zeta alpha zeta alpha mid", "k": 3}, "expect": ["alpha", "zeta", "mid"]},
+    {"args": {"text": "ab abc ab abc", "k": 2}, "expect": ["ab", "abc"]},
+    {"args": {"text": "", "k": 3}, "expect": []},
+    {"args": {"text": "?!? 42 ...", "k": 1}, "expect": []},
+    {"args": {"text": "a1b2c3a", "k": 8}, "expect": ["a", "b", "c"]},
+    {"args": {"text": "x y z", "k": 1}, "expect": ["x"]},
+    {"args": {"text": "dog cat dog bird cat dog fish", "k": 8}, "expect": ["dog", "cat", "bird", "fish"]},
+    {"args": {"text": "same same same", "k": 8}, "expect": ["same"]},
+    {"args": {"text": "c b a", "k": 8}, "expect": ["a", "b", "c"]},
+    {"args": {"text": "q-r q_r q.r", "k": 2}, "expect": ["q", "r"]},
+    {"args": {"text": "abad, f b f. b!? b1fdfa. bdb fe. fdfa bbcc ", "k": 2}, "expect": ["b", "f"]},
+    {"args": {"text": "bd be!? beed beed-dd-fecf!? fecf be, eabf!? beed, fecf fecf!? be. fecf dd!? bf, fab aad!? be1be aaab-be, fecf1be!? bf, bf!? fab bf aad bd bf-fab!? beed-aaab1dd-fecf!? fecf beed. fab-", "k": 4}, "expect": ["fecf", "be", "beed", "bf"]},
+    {"args": {"text": "d. a-b bed, bed ceb, bed1a, d ffb1ffb1bed ab ceb ceb, d!? bed-b b, f. ceb. ffb d1ffb1ebc cab-ab-bed, b, ceb ebc ab!? bed. ceb. bed b-ceb bed bed a cab ebc!? f1ab bed-a1b a1cab-d!? ffb!? ceb1b ", "k": 3}, "expect": ["bed", "ceb", "b"]},
+    {"args": {"text": "bdea-fbaf ", "k": 4}, "expect": ["bdea", "fbaf"]},
+    {"args": {"text": "bd ac!? e f-edb e, ffdc e!? fedc1cdb. cdb baf. cdb e. e. ", "k": 6}, "expect": ["e", "cdb", "ac", "baf", "bd", "edb"]},
+    {"args": {"text": "eed1bf. eed-dbbb-dbbb-bf fc, a1c!? fde. db-ff!? fde1fde. bf. c dbbb-db!? a-cabc bf db eed fde c a1ff. ff fc c-bf1bf cabc ff, a1fde dbbb ", "k": 3}, "expect": ["bf", "fde", "a"]}
+  ]
+}
