@@ -17,8 +17,8 @@ import java.util.Map;
  * worst-case memory of every entry point is a finite number computed here:
  * <pre>stack(f) = frame(f) + max(stack(g) for g called by f)</pre>
  * Frame sizes count parameters (aggregates and `mut` parameters by address), every local
- * variable, the return value, and the aggregate temporaries its largest statement can hold at once
- * ({@link Temporaries}, an upper bound). Scalar temporaries and ABI overhead are not included.
+ * variable, the return value, and the aggregate temporaries its statements build ({@link Temporaries},
+ * an upper bound). Scalar temporaries and ABI overhead are not included.
  * Checking a program against a budget ({@code --max-stack}, 8 MiB by default) keeps the interpreter
  * from exhausting the host's memory, whatever the program does.
  */

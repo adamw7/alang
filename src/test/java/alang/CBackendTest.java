@@ -122,4 +122,42 @@ class CBackendTest {
             }
         }));
     }
+
+    /**
+     * Room for what the checker's bound leaves out on purpose: the C runtime's start-up frames, scalar
+     * temporaries and ABI overhead. The programs in tests/stack overran their bound by 400 KB or more.
+     */
+    private static final long STACK_SLACK_KB = 64;
+
+    /**
+     * The checker's worst-case stack is a promise about the C backend too: each program in tests/stack,
+     * built with gcc and clang with and without optimization, must run in a stack of that size (plus
+     * {@link #STACK_SLACK_KB}). clang -O0 never reuses a dead variable's stack slot, so every temporary of
+     * a function counts, and so does any copy the generated C makes beyond the ones the bound counts.
+     */
+    @TestFactory
+    Stream<DynamicTest> stackBound() {
+        return Harness.files("tests/stack", ".al").stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), COMPILE_AND_RUN_TIMEOUT, () -> {
+            List<String> ccs = new ArrayList<>();
+            if (available("gcc")) ccs.add("gcc");
+            if (available("clang")) ccs.add("clang");
+            assumeTrue(!ccs.isEmpty() && available("sh"), "no C compiler or shell available");
+            Frontend.Result r = Harness.compile(p);
+            assertTrue(r.ok(), () -> r.diags().renderText());
+            Harness.Run expected = Harness.runMain(r);
+            long limitKb = r.check().memory().maxStack() / 1024 + STACK_SLACK_KB;
+            Path dir = Files.createTempDirectory("alang-stack");
+            Files.writeString(dir.resolve("prog.c"), CGen.generate(r.program()), StandardCharsets.UTF_8);
+            for (String cc : ccs) {
+                for (String opt : List.of("-O0", "-O2")) {
+                    Proc build = exec(dir, cc, opt, "-std=c99", "-o", "prog", "prog.c", "-lm");
+                    assertEquals(0, build.exit(), () -> cc + " " + opt + ":\n" + build.stderr());
+                    Proc run = exec(dir, "sh", "-c", "ulimit -s " + limitKb + " && exec ./prog");
+                    String who = cc + " " + opt + " on " + p + " with a stack of " + limitKb + " KB";
+                    assertEquals(0, run.exit(), who + "\n" + run.stderr());
+                    assertEquals(expected.stdout(), run.stdout(), who);
+                }
+            }
+        }));
+    }
 }
