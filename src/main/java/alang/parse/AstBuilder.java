@@ -352,7 +352,7 @@ final class AstBuilder {
             if (op == UnOp.NEG && ctx.unary().postfix() != null && ctx.unary().postfix().postfixOp().isEmpty()
                 && ctx.unary().postfix().primary() instanceof LiteralExprContext) {
                 if (operand instanceof IntLit i && !i.isChar) return new IntLit(span(ctx), i.value.negate(), false);
-                if (operand instanceof FloatLit f) return new FloatLit(span(ctx), -f.value);
+                if (operand instanceof FloatLit f) return new FloatLit(span(ctx), -f.value, -f.f32Value);
             }
             return new Unary(span(ctx), op, operand);
         }
@@ -415,7 +415,10 @@ final class AstBuilder {
         Span sp = span(t);
         return switch (t.getType()) {
             case ALangLexer.INT_LIT -> new IntLit(sp, parseInt(t.getText()), false);
-            case ALangLexer.FLOAT_LIT -> new FloatLit(sp, Double.parseDouble(t.getText().replace("_", "")));
+            case ALangLexer.FLOAT_LIT -> {
+                String text = t.getText().replace("_", "");
+                yield new FloatLit(sp, Double.parseDouble(text), Float.parseFloat(text));
+            }
             case ALangLexer.STRING_LIT -> new StrLit(sp, unescape(t));
             case ALangLexer.CHAR_LIT -> new IntLit(sp, BigInteger.valueOf(charValue(t)), true);
             case ALangLexer.TRUE -> new BoolLit(sp, true);

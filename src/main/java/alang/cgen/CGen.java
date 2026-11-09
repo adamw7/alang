@@ -93,7 +93,11 @@ public final class CGen {
         sb.append("int main(void) {\n");
         sb.append("    al_source_path = ").append(cString(source.path.getBytes(StandardCharsets.UTF_8))).append(";\n");
         for (ConstDecl c : program.itemsOf(ConstDecl.class)) sb.append("    (void)al_c_").append(c.name).append(";\n");
-        if (main != null) sb.append("    al_f_main();\n");
+        if (main != null) {
+            // A failed `requires` of main is reported at its name, as the interpreter does.
+            String site = main.requires.isEmpty() ? "" : main.nameSpan.line() + ", " + main.nameSpan.col();
+            sb.append("    al_f_main(").append(site).append(");\n");
+        }
         sb.append("    al_flush();\n    return 0;\n}\n");
         return sb.toString();
     }
@@ -892,13 +896,11 @@ public final class CGen {
     private String lower(Expr e) {
         switch (e) {
             case IntLit i -> {
-                if (Type.isFloat(i.type)) return floatLiteral(Type.kind(i.type) == PrimKind.F32
-                    ? (double) (float) i.value.doubleValue() : i.value.doubleValue(), Type.kind(i.type));
+                if (Type.isFloat(i.type)) return floatLiteral(i.floatValue(Type.kind(i.type)), Type.kind(i.type));
                 return intLiteral(i.value.longValue(), Type.kind(i.type));
             }
             case FloatLit f -> {
-                double d = Type.kind(f.type) == PrimKind.F32 ? (double) (float) f.value : f.value;
-                return floatLiteral(d, Type.kind(f.type));
+                return floatLiteral(f.valueAs(Type.kind(f.type)), Type.kind(f.type));
             }
             case StrLit s -> {
                 return strLiteral(s.value);

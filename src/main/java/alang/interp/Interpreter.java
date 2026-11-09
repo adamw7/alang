@@ -416,11 +416,11 @@ public final class Interpreter {
     private Object eval(Expr e, Object[] slots) {
         switch (e) {
             case IntLit i -> {
-                if (Type.isFloat(i.type)) return round(i.value.doubleValue(), i.type);
+                if (Type.isFloat(i.type)) return i.floatValue(Type.kind(i.type));
                 return i.value.longValue();
             }
             case FloatLit f -> {
-                return round(f.value, f.type);
+                return f.valueAs(Type.kind(f.type));
             }
             case StrLit s -> {
                 return new StrV(s.value.clone(), s.value.length);

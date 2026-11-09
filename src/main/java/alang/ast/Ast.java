@@ -577,14 +577,31 @@ public final class Ast {
             this.value = value;
             this.isChar = isChar;
         }
+
+        /**
+         * The value in a float context ({@code f32} or {@code f64}), rounded once to nearest-even.
+         * Going through double first would round twice for f32.
+         */
+        public double floatValue(PrimKind k) {
+            return k == PrimKind.F32 ? (double) value.floatValue() : value.doubleValue();
+        }
     }
 
     public static final class FloatLit extends Expr {
+        /** The literal rounded to f64. */
         public final double value;
+        /** The literal rounded to f32 directly from its decimal text (not via f64, which would round twice). */
+        public final float f32Value;
 
-        public FloatLit(Span span, double value) {
+        public FloatLit(Span span, double value, float f32Value) {
             super(span);
             this.value = value;
+            this.f32Value = f32Value;
+        }
+
+        /** The value for this literal's type ({@code f32} or {@code f64}). */
+        public double valueAs(PrimKind k) {
+            return k == PrimKind.F32 ? (double) f32Value : value;
         }
     }
 

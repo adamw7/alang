@@ -297,8 +297,10 @@ public final class Checker {
         Object v = evalConst(e);
         if (v == null) return -1;
         long n = (Long) v;
-        if (Type.kind(t) == PrimKind.U64 && n < 0 || n < 1 || n > MAX_SIZE) {
-            diags.error(Code.E0210, e.span, what + " must be between 1 and " + MAX_SIZE + ", found " + Long.toUnsignedString(n));
+        // A u64 above 2^63 is negative as a long, so `n < 1` also rejects it.
+        if (n < 1 || n > MAX_SIZE) {
+            String found = Type.kind(t) == PrimKind.U64 ? Long.toUnsignedString(n) : Long.toString(n);
+            diags.error(Code.E0210, e.span, what + " must be between 1 and " + MAX_SIZE + ", found " + found);
             return -1;
         }
         return (int) n;
@@ -879,14 +881,19 @@ public final class Checker {
                     }
                     return expected;
                 }
-                if (expected != null && Type.isFloat(expected)) return expected;
+                if (expected != null && Type.isFloat(expected)) {
+                    floatLiteralRange(i, i.floatValue(Type.kind(expected)), expected);
+                    return expected;
+                }
                 if (PrimKind.I64.fits(i.value)) return Type.I64;
                 if (PrimKind.U64.fits(i.value)) return Type.U64;
                 diags.error(Code.E0202, i.span, "literal " + i.value + " does not fit in any integer type");
                 return Type.ERROR;
             }
             case FloatLit f -> {
-                return expected != null && Type.kind(expected) == PrimKind.F32 ? Type.F32 : Type.F64;
+                Type t = expected != null && Type.kind(expected) == PrimKind.F32 ? Type.F32 : Type.F64;
+                floatLiteralRange(f, f.valueAs(Type.kind(t)), t);
+                return t;
             }
             case StrLit s -> {
                 return new Type.Str(s.value.length);
@@ -938,6 +945,14 @@ public final class Checker {
             case Repeat r -> {
                 return repeat(r, expected);
             }
+        }
+    }
+
+    /** A literal too large for its float type would silently become inf; integer literals get E0202 too. */
+    private void floatLiteralRange(Expr lit, double value, Type t) {
+        if (Double.isInfinite(value)) {
+            diags.error(Code.E0202, lit.span, "literal " + exprText(lit) + " is too large for " + t + " and would become inf",
+                Type.kind(t) == PrimKind.F32 ? "f32 holds magnitudes up to about 3.4e38; use f64" : "f64 holds magnitudes up to about 1.8e308");
         }
     }
 
@@ -1147,11 +1162,16 @@ public final class Checker {
             return Type.ERROR;
         }
         LocalVar v = lookupLocal(root.name);
+        int before = diags.errorCount();
         Type t = expr(place, null);
         if (v == null) {
             if (consts.containsKey(root.name)) {
                 diags.error(Code.E0205, root.span, "a constant cannot be passed as `mut`",
                     "copy it into a variable first: var x: T = " + root.name + ";");
+            } else if (diags.errorCount() == before) {
+                // An enum variant such as Color.Red type-checks as a value, but it is not storage.
+                diags.error(Code.E0206, place.span, "`" + exprText(place) + "` is not a variable and cannot be passed as `mut`",
+                    "copy it into a variable first: var x: " + t + " = " + exprText(place) + ";");
             }
             return Type.ERROR;
         }
@@ -1522,11 +1542,27 @@ public final class Checker {
         };
     }
 
-    /** Checks two operands that should share a type, typing literals from the other side. */
+    /** True if an untyped expression contains a float literal, so that it must be a float. */
+    private static boolean hasFloatLiteral(Expr e) {
+        return switch (e) {
+            case FloatLit f -> true;
+            case Unary u -> hasFloatLiteral(u.operand);
+            case Binary b -> hasFloatLiteral(b.left) || hasFloatLiteral(b.right);
+            default -> false;
+        };
+    }
+
+    /**
+     * Checks two operands that should share a type, typing literals from the other side. When both
+     * sides are literals and nothing else gives the type, a float literal decides it, so that
+     * {@code 2 + 1.5} types like {@code 1.5 + 2}.
+     */
     private Type[] sameTypeOperands(Expr l, Expr r, Type hint) {
         Type lt;
         Type rt;
-        if (isUntyped(l) && !isUntyped(r)) {
+        boolean rightFirst = isUntyped(l)
+            && (!isUntyped(r) || hint == null && !hasFloatLiteral(l) && hasFloatLiteral(r));
+        if (rightFirst) {
             rt = expr(r, hint);
             lt = expr(l, Type.isError(rt) ? hint : rt);
         } else {
@@ -1626,12 +1662,45 @@ public final class Checker {
                 "assign it to a typed variable: let xs: list[i32; 8] = [];");
             return Type.ERROR;
         }
-        Type t0 = expr(a.elems.get(0), null);
-        for (int i = 1; i < a.elems.size(); i++) {
-            Expr e = a.elems.get(i);
-            requireAssignable(e, expr(e, t0), t0);
+        // The element type comes from the first element that is not a bare literal (or, among
+        // literals only, from a float literal), so that [1, x] types like [x, 1] and [1, 2.5] like
+        // [2.5, 1]. Strings and lists then widen to the largest capacity: ["a", "bbb"] is a [str[3]; 2].
+        int n = a.elems.size();
+        int anchor = 0;
+        for (int i = 0; i < n; i++) {
+            if (!isUntyped(a.elems.get(i))) {
+                anchor = i;
+                break;
+            }
+            if (hasFloatLiteral(a.elems.get(i)) && !hasFloatLiteral(a.elems.get(anchor))) anchor = i;
         }
-        return Type.isError(t0) ? t0 : new Type.ArrayT(t0, a.elems.size());
+        Type[] ts = new Type[n];
+        ts[anchor] = expr(a.elems.get(anchor), null);
+        Type t0 = ts[anchor];
+        if (t0 instanceof Type.Void) {
+            diags.error(Code.E0201, a.elems.get(anchor).span, "`" + exprText(a.elems.get(anchor)) + "` returns nothing, "
+                + "so it cannot be an element of an array", "call it as a statement of its own");
+            for (int i = 0; i < n; i++) {
+                if (i != anchor) expr(a.elems.get(i), null);
+            }
+            return Type.ERROR;
+        }
+        Type elem = t0;
+        for (int i = 0; i < n; i++) {
+            if (i != anchor) ts[i] = expr(a.elems.get(i), Type.isError(t0) ? null : t0);
+            elem = widen(elem, ts[i]);
+        }
+        for (int i = 0; i < n; i++) requireAssignable(a.elems.get(i), ts[i], elem);
+        return Type.isError(elem) ? elem : new Type.ArrayT(elem, n);
+    }
+
+    /** The smaller of two str (or list) types widened to the larger capacity; otherwise {@code a}. */
+    private static Type widen(Type a, Type b) {
+        if (a instanceof Type.Str x && b instanceof Type.Str y) return y.cap() > x.cap() ? y : x;
+        if (a instanceof Type.ListT x && b instanceof Type.ListT y && x.elem().equals(y.elem())) {
+            return y.cap() > x.cap() ? y : x;
+        }
+        return a;
     }
 
     private Type repeat(Repeat r, Type expected) {
@@ -1652,6 +1721,11 @@ public final class Checker {
             return lt;
         }
         Type t = expr(r.value, null);
+        if (t instanceof Type.Void) {
+            diags.error(Code.E0201, r.value.span, "`" + exprText(r.value) + "` returns nothing, "
+                + "so it cannot be an element of an array", "call it as a statement of its own");
+            return Type.ERROR;
+        }
         return n < 0 || Type.isError(t) ? Type.ERROR : new Type.ArrayT(t, n);
     }
 
