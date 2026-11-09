@@ -1,0 +1,129 @@
+error[E0207]: parameter `xs` of `grow` is `mut`
+  --> tests/errors/calls_and_literals.al:24:10
+   |
+24 |     grow(small, 1);
+   |          ^^^^^
+  = hint: pass a variable by reference: mut small
+
+error[E0207]: `mut` argument must have exactly type list[i64; 4], found list[i64; 2]
+  --> tests/errors/calls_and_literals.al:25:10
+   |
+25 |     grow(mut small, 1);
+   |          ^^^^^^^^^
+  = hint: `mut` parameters cannot convert or widen; declare the variable as list[i64; 4]
+
+error[E0204]: `grow` takes 2 argument(s) but 1 were given
+  --> tests/errors/calls_and_literals.al:26:5
+   |
+26 |     grow(1);
+   |     ^^^^^^^
+  = hint: signature: fn grow(xs: mut list[i64; 4], by: i64)
+
+error[E0207]: parameter `n` of `show` is not `mut`
+  --> tests/errors/calls_and_literals.al:27:10
+   |
+27 |     show(mut n);
+   |          ^^^^^
+  = hint: remove `mut`; the value is passed read-only
+
+error[E0213]: `show` is a function; named arguments are only used to build structs
+  --> tests/errors/calls_and_literals.al:28:5
+   |
+28 |     show(n: 1);
+   |     ^^^^^^^^^^
+  = hint: pass arguments by position: show(a, b)
+
+error[E0305]: this expression has no effect
+  --> tests/errors/calls_and_literals.al:28:5
+   |
+28 |     show(n: 1);
+   |     ^^^^^^^^^^
+  = hint: only function calls can be used as statements
+
+error[E0213]: struct values need named fields
+  --> tests/errors/calls_and_literals.al:29:20
+   |
+29 |     let p: Point = Point(1, 2);
+   |                    ^^^^^^^^^^^
+  = hint: write Point(x: ..., y: ...)
+
+error[E0103]: unknown struct `Pointt`
+  --> tests/errors/calls_and_literals.al:30:20
+   |
+30 |     let q: Point = Pointt(x: 1, y: 2);
+   |                    ^^^^^^^^^^^^^^^^^^
+  = hint: did you mean `Point`?
+
+error[E0213]: missing field(s) y in Point(...)
+  --> tests/errors/calls_and_literals.al:31:20
+   |
+31 |     let r: Point = Point(x: 1, z: 2);
+   |                    ^^^^^^^^^^^^^^^^^
+  = hint: every field must be given: y: ...
+
+error[E0106]: struct `Point` has no field `z`
+  --> tests/errors/calls_and_literals.al:31:32
+   |
+31 |     let r: Point = Point(x: 1, z: 2);
+   |                                ^
+  = hint: did you mean `x`?
+
+error[E0102]: there are no methods: `n.Circle(...)` is not valid
+  --> tests/errors/calls_and_literals.al:32:20
+   |
+32 |     let d: Shape = n.Circle(1.0);
+   |                    ^^^^^^^^^^^^^
+  = hint: pass the value as the first argument: Circle(n, ...)
+
+error[E0103]: unknown enum `Shap`
+  --> tests/errors/calls_and_literals.al:33:20
+   |
+33 |     let e: Shape = Shap.Circle(1.0);
+   |                    ^^^^^^^^^^^^^^^^
+  = hint: did you mean `Shape`?
+
+error[E0107]: enum `Shape` has no variant `Square`
+  --> tests/errors/calls_and_literals.al:34:20
+   |
+34 |     let f: Shape = Shape.Square(1.0);
+   |                    ^^^^^^^^^^^^^^^^^
+
+error[E0204]: Shape.Circle takes 1 value(s) but 2 were given
+  --> tests/errors/calls_and_literals.al:35:20
+   |
+35 |     let g: Shape = Shape.Circle(1.0, 2.0);
+   |                    ^^^^^^^^^^^^^^^^^^^^^^
+  = hint: write Shape.Circle(f64)
+
+error[E0106]: struct `Point` has no field `z`
+  --> tests/errors/calls_and_literals.al:36:20
+   |
+36 |     let h: i64 = p.z;
+   |                    ^
+  = hint: did you mean `x`?
+
+error[E0106]: a value of type list[i64; 2] has no field `len`
+  --> tests/errors/calls_and_literals.al:37:24
+   |
+37 |     let i: i64 = small.len;
+   |                        ^^^
+  = hint: use the builtin len(x)
+
+error[E0106]: a value of type i64 has no field `size`
+  --> tests/errors/calls_and_literals.al:38:20
+   |
+38 |     let j: i64 = n.size;
+   |                    ^^^^
+
+error[E0101]: unknown name `nope`
+  --> tests/errors/calls_and_literals.al:39:18
+   |
+39 |     let k: i64 = nope.size;
+   |                  ^^^^
+
+error[E0201]: cannot compare Point with i64
+  --> tests/errors/calls_and_literals.al:40:22
+   |
+40 |     let same: bool = p == n;
+   |                      ^^^^^^
+

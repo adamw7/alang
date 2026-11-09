@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'or', expected ';' or an operator
+ --> tests/errors/E0001_and_or.al:4:27
+  |
+4 |     let b: bool = a and a or a;
+  |                           ^^
+  = hint: `and` and `or` cannot be mixed without parentheses: (a and b) or c
+

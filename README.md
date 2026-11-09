@@ -141,7 +141,7 @@ src/main/java/alang/
 examples/                 example programs
 bench/                    ALang vs Python benchmark for model-written tools
 tests/run/                programs with golden output (.out) and expected traps (.trap)
-tests/errors/             programs that must fail with specific diagnostic codes
+tests/errors/             programs that must fail with specific diagnostic codes (and exact messages, .err)
 tests/examples/           golden output of the examples
 ```
 

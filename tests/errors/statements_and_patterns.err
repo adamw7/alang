@@ -1,0 +1,111 @@
+error[E0104]: duplicate constant `LIMIT`
+ --> tests/errors/statements_and_patterns.al:5:7
+  |
+5 | const LIMIT: i64 = 5;
+  |       ^^^^^
+  = hint: rename or remove one of the declarations
+
+error[E0303]: function `value` must return a value of type i64
+  --> tests/errors/statements_and_patterns.al:18:5
+   |
+18 |     return;
+   |     ^^^^^^^
+
+error[E0105]: `LIMIT` is already a constant
+  --> tests/errors/statements_and_patterns.al:22:9
+   |
+22 |     let LIMIT: i64 = 1;
+   |         ^^^^^
+  = hint: choose a different name
+
+error[E0210]: array length must be an integer constant, found f64
+  --> tests/errors/statements_and_patterns.al:25:19
+   |
+25 |     let xs: [i64; HALF] = [0; 2];
+   |                   ^^^^
+
+error[E0209]: array length must be a compile-time constant
+  --> tests/errors/statements_and_patterns.al:26:19
+   |
+26 |     let zs: [i64; len(ys)] = [0; 2];
+   |                   ^^^^^^^
+  = hint: use an integer literal or a `const`, e.g. const N: i64 = 16;
+
+error[E0101]: unknown name `missing`
+  --> tests/errors/statements_and_patterns.al:27:5
+   |
+27 |     missing = 1;
+   |     ^^^^^^^
+
+error[E0305]: this expression has no effect
+  --> tests/errors/statements_and_patterns.al:28:5
+   |
+28 |     n == 1;
+   |     ^^^^^^
+  = hint: did you mean assignment `=` instead of `==`?
+
+error[E0305]: this expression has no effect
+  --> tests/errors/statements_and_patterns.al:29:5
+   |
+29 |     n + 1;
+   |     ^^^^^
+  = hint: did you mean a compound assignment like x += ...?
+
+error[E0305]: this expression has no effect
+  --> tests/errors/statements_and_patterns.al:30:5
+   |
+30 |     n;
+   |     ^
+  = hint: only function calls can be used as statements
+
+error[E0201]: loop limit must be an integer, found f64
+  --> tests/errors/statements_and_patterns.al:31:23
+   |
+31 |     while n < 3 limit 2.5 {
+   |                       ^^^
+
+error[E0212]: cannot iterate over i64
+  --> tests/errors/statements_and_patterns.al:34:14
+   |
+34 |     for c in 5 {
+   |              ^
+  = hint: to count, use a range: for i in 0..n { }
+
+error[E0101]: unknown name `nothing`
+  --> tests/errors/statements_and_patterns.al:36:14
+   |
+36 |     for c in nothing {
+   |              ^^^^^^^
+
+error[E0308]: string pattern cannot match a value of type i64
+  --> tests/errors/statements_and_patterns.al:39:9
+   |
+39 |         "a" => { }
+   |         ^^^
+
+error[E0201]: `Color` is an enum type, not a value
+  --> tests/errors/statements_and_patterns.al:43:20
+   |
+43 |     let d: Color = Color;
+   |                    ^^^^^
+  = hint: use one of its variants: Color.Red
+
+error[E0308]: pattern of enum `Mood` cannot match a value of type Color
+  --> tests/errors/statements_and_patterns.al:45:9
+   |
+45 |         Mood.Happy => { }
+   |         ^^^^^^^^^^
+  = hint: write Color.Happy
+
+error[E0107]: enum `Color` has no variant `Blue`
+  --> tests/errors/statements_and_patterns.al:49:9
+   |
+49 |         Color.Blue => { }
+   |         ^^^^^^^^^^
+
+error[E0101]: unknown name `abcdef`
+  --> tests/errors/statements_and_patterns.al:54:11
+   |
+54 |     print(abcdef);
+   |           ^^^^^^
+

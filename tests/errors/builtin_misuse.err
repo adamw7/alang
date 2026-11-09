@@ -1,0 +1,123 @@
+error[E0204]: len() takes 1 argument(s) but 0 were given
+  --> tests/errors/builtin_misuse.al:11:18
+   |
+11 |     let a: i64 = len();
+   |                  ^^^^^
+  = hint: signature: len(x) -> i64
+
+error[E0203]: len() needs an array, list or str, found i64
+  --> tests/errors/builtin_misuse.al:12:22
+   |
+12 |     let b: i64 = len(n);
+   |                      ^
+
+error[E0203]: push() needs a list or str, found [i64; 3]
+  --> tests/errors/builtin_misuse.al:13:10
+   |
+13 |     push(mut fixed, 4);
+   |          ^^^^^^^^^
+  = hint: arrays have a fixed length; use list[T; N] for a growable collection
+
+error[E0205]: `frozen` is immutable and cannot be passed as `mut`
+  --> tests/errors/builtin_misuse.al:14:14
+   |
+14 |     push(mut frozen, 4);
+   |              ^^^^^^
+  = hint: declare it with `var` instead of `let`
+
+error[E0204]: push() takes 2 argument(s) but 1 were given
+  --> tests/errors/builtin_misuse.al:15:5
+   |
+15 |     push(mut s);
+   |     ^^^^^^^^^^^
+  = hint: signature: push(mut xs, value)
+
+error[E0207]: clear() modifies its first argument
+  --> tests/errors/builtin_misuse.al:16:11
+   |
+16 |     clear(n);
+   |           ^
+  = hint: write clear(mut n)
+
+error[E0101]: unknown name `missing`
+  --> tests/errors/builtin_misuse.al:17:26
+   |
+17 |     let c: i64 = pop(mut missing);
+   |                          ^^^^^^^
+
+error[E0204]: append() needs at least one value to append
+  --> tests/errors/builtin_misuse.al:18:5
+   |
+18 |     append(mut s);
+   |     ^^^^^^^^^^^^^
+
+error[E0203]: append() needs a str[N] target, found i64
+  --> tests/errors/builtin_misuse.al:19:12
+   |
+19 |     append(mut n, "x");
+   |            ^^^^^
+
+error[E0201]: min() needs two numbers of the same type, found i64 and f64
+  --> tests/errors/builtin_misuse.al:20:18
+   |
+20 |     let d: i64 = min(n, 1.5);
+   |                  ^^^^^^^^^^^
+
+error[E0204]: max() takes 2 argument(s) but 1 were given
+  --> tests/errors/builtin_misuse.al:21:18
+   |
+21 |     let e: i64 = max(1);
+   |                  ^^^^^^
+  = hint: signature: max(a, b) -> T
+
+error[E0203]: abs() needs a signed integer or float, found u8
+  --> tests/errors/builtin_misuse.al:22:21
+   |
+22 |     let f: u8 = abs(u);
+   |                     ^
+
+error[E0101]: unknown name `unknown`
+  --> tests/errors/builtin_misuse.al:23:22
+   |
+23 |     let g: f64 = abs(unknown);
+   |                      ^^^^^^^
+
+error[E0201]: sqrt() needs f32 or f64, found i64
+  --> tests/errors/builtin_misuse.al:24:23
+   |
+24 |     let h: f64 = sqrt(n);
+   |                       ^
+  = hint: convert first: sqrt(f64(x))
+
+error[E0201]: cannot print a call that returns nothing
+  --> tests/errors/builtin_misuse.al:25:11
+   |
+25 |     print(nothing());
+   |           ^^^^^^^^^
+
+error[E0201]: type mismatch: expected i64, found void
+  --> tests/errors/builtin_misuse.al:26:18
+   |
+26 |     let v: i64 = nothing();
+   |                  ^^^^^^^^^
+
+error[E0215]: a call with `mut` arguments must be its own statement or the whole right-hand side of let/var/assignment/return
+  --> tests/errors/builtin_misuse.al:27:11
+   |
+27 |     print(len(mut s));
+   |           ^^^^^^^^^^
+  = hint: store the result first: let value: i64 = len(mut s); then use `value`
+
+error[E0207]: this argument is not modified; remove `mut`
+  --> tests/errors/builtin_misuse.al:27:15
+   |
+27 |     print(len(mut s));
+   |               ^^^^^
+
+error[E0204]: panic() takes 1 argument(s) but 0 were given
+  --> tests/errors/builtin_misuse.al:28:5
+   |
+28 |     panic();
+   |     ^^^^^^^
+  = hint: signature: panic(message)
+

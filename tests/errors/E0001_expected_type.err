@@ -1,0 +1,6 @@
+error[E0001]: unexpected '=', expected one of a type, '[', a name
+ --> tests/errors/E0001_expected_type.al:3:12
+  |
+3 |     let x: = 1;
+  |            ^
+

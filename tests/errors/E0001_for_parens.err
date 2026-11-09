@@ -1,0 +1,7 @@
+error[E0001]: unexpected '(', expected a name
+ --> tests/errors/E0001_for_parens.al:3:9
+  |
+3 |     for (i = 0; i < 3; i += 1) {
+  |         ^
+  = hint: for loops iterate a range or a collection: for i in 0..n { ... } or for x in xs { ... }
+

@@ -1,0 +1,7 @@
+error[E0001]: unexpected '(', expected ';'
+ --> tests/errors/E0001_method_call.al:4:27
+  |
+4 |     let n: i64 = xs[0].abs();
+  |                           ^
+  = hint: there are no methods; call functions with the value as an argument, e.g. len(xs) instead of xs.len()
+
