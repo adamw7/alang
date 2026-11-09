@@ -174,8 +174,15 @@ also has a limit of a few minutes.
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
 plugins and GitHub Actions. The ANTLR tool and runtime are updated together, PIT and its JUnit 5
 plugin together, the Maven plugins in one pull request, and the workflow's actions in another.
-Renovate merges each of its pull requests once every CI check on it has passed, rebasing it onto
-`main` first if it has fallen behind.
+Renovate rebases each of its pull requests onto `main` whenever it falls behind.
+
+The Automerge workflow ([`.github/workflows/automerge.yml`](.github/workflows/automerge.yml))
+runs after each successful CI run. It merges every open pull request whose head commit has passed
+all of its checks, provided that commit already contains `main`, so the commit that lands on `main`
+is always one CI tested. If a green pull request is behind `main`, the workflow first merges
+`main` into it and then merges it once CI passes again. Draft pull requests are left open. For the
+workflow to merge pull requests that change `.github/workflows`, store a token in the
+`AUTOMERGE_TOKEN` secret; the workflow file says which permissions it needs.
 
 ### Mutation testing
 

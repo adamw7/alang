@@ -1,9 +1,10 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
+  "rebaseWhen": "behind-base-branch",
   "packageRules": [
     {
-      "description": "Merge an update once every CI check on its branch has passed. Renovate merges it itself instead of GitHub auto-merge, which waits only for the checks branch protection requires, and first rebases a branch that is behind main so the merged commit is the tested one.",
+      "description": "Merge an update once every CI check on its branch has passed. The Automerge workflow merges it as soon as CI passes; Renovate also merges it during its own runs. rebaseWhen above makes Renovate rebase a branch that is behind main (the runner's own config only rebases conflicted ones), so an update opened while main was red gets a new CI run once main is fixed.",
       "matchPackageNames": ["*"],
       "automerge": true,
       "platformAutomerge": false
