@@ -154,6 +154,12 @@
                spread Checker over every thread; each unit starts a fresh test JVM, so much smaller
                units only add start-up time (50 per unit was 20% slower). -->
           <mutationUnitSize>100</mutationUnitSize>
+          <!-- Some mutants loop forever while allocating. A small heap ends them quickly with
+               MEMORY_ERROR (counted as killed, like a timeout) instead of minutes of garbage
+               collection before the timeout fires. The tests need far less. -->
+          <jvmArgs>
+            <value>-Xmx256m</value>
+          </jvmArgs>
           <!-- A ratchet: the build fails when either score drops below these percentages.
                Raise them as the tests improve. -->
           <mutationThreshold>64</mutationThreshold>

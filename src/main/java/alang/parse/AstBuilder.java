@@ -310,23 +310,29 @@ final class AstBuilder {
     }
 
     private Expr additive(AdditiveContext ctx) {
-        Expr e = multiplicative(ctx.multiplicative(0));
-        for (int i = 1; i < ctx.multiplicative().size(); i++) {
+        // Fetch the operands once: ANTLR's per-index getter scans all of them, so a long chain
+        // would take quadratic time.
+        List<MultiplicativeContext> operands = ctx.multiplicative();
+        Expr e = multiplicative(operands.get(0));
+        for (int i = 1; i < operands.size(); i++) {
             BinOp op = ctx.ops.get(i - 1).getType() == ALangLexer.PLUS ? BinOp.ADD : BinOp.SUB;
-            e = new Binary(spanTo(e.span, ctx.multiplicative(i)), op, e, multiplicative(ctx.multiplicative(i)));
+            MultiplicativeContext next = operands.get(i);
+            e = new Binary(spanTo(e.span, next), op, e, multiplicative(next));
         }
         return e;
     }
 
     private Expr multiplicative(MultiplicativeContext ctx) {
-        Expr e = unary(ctx.unary(0));
-        for (int i = 1; i < ctx.unary().size(); i++) {
+        List<UnaryContext> operands = ctx.unary();
+        Expr e = unary(operands.get(0));
+        for (int i = 1; i < operands.size(); i++) {
             BinOp op = switch (ctx.ops.get(i - 1).getType()) {
                 case ALangLexer.STAR -> BinOp.MUL;
                 case ALangLexer.SLASH -> BinOp.DIV;
                 default -> BinOp.MOD;
             };
-            e = new Binary(spanTo(e.span, ctx.unary(i)), op, e, unary(ctx.unary(i)));
+            UnaryContext next = operands.get(i);
+            e = new Binary(spanTo(e.span, next), op, e, unary(next));
         }
         return e;
     }
