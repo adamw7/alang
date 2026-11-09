@@ -204,11 +204,12 @@ public final class JsonValues {
                     throw fail(path, "expected a boolean");
                 }
                 if (k.isFloat) {
+                    // Round once, straight to the target type: f32 via f64 would round twice.
+                    boolean f32 = k == PrimKind.F32;
                     double d;
-                    if (j instanceof BigInteger bi) d = bi.doubleValue();
-                    else if (j instanceof BigDecimal bd) d = bd.doubleValue();
+                    if (j instanceof BigInteger bi) d = f32 ? bi.floatValue() : bi.doubleValue();
+                    else if (j instanceof BigDecimal bd) d = f32 ? bd.floatValue() : bd.doubleValue();
                     else throw fail(path, "expected a number");
-                    if (k == PrimKind.F32) d = (float) d;
                     // Too large a number rounds to an infinity, which is not the number that was sent.
                     if (Double.isInfinite(d)) throw fail(path, j + " is out of range for " + k.name);
                     return d;
@@ -217,10 +218,21 @@ public final class JsonValues {
                 if (j instanceof BigInteger bi) {
                     v = bi;
                 } else if (j instanceof BigDecimal bd) {
-                    try {
-                        v = bd.toBigIntegerExact();
-                    } catch (ArithmeticException e) {
+                    // Decide from the digit count first: converting a number such as 1e100000000 or
+                    // 1e-100000000 exactly would take minutes for a value no integer type can hold.
+                    long intDigits = (long) bd.precision() - bd.scale();
+                    if (bd.signum() == 0) {
+                        v = BigInteger.ZERO;
+                    } else if (intDigits > 20) {
+                        throw fail(path, bd + " is out of range for " + k.name + " (" + k.min() + ".." + k.max() + ")");
+                    } else if (intDigits <= 0) {
                         throw fail(path, "expected an integer, found " + bd);
+                    } else {
+                        try {
+                            v = bd.toBigIntegerExact();
+                        } catch (ArithmeticException e) {
+                            throw fail(path, "expected an integer, found " + bd);
+                        }
                     }
                 } else {
                     throw fail(path, "expected an integer");

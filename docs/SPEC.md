@@ -44,7 +44,11 @@ truth for syntax; this document describes semantics. Diagnostic codes are listed
 An integer literal adopts the integer or float type that the context expects and is checked
 against that type's range at compile time (`let b: u8 = 300;` is error E0202). With no expected
 type it is `i64` (or `u64` if it only fits there). In a binary operation a literal takes the type
-of the other operand: `x + 1` where `x: u8` adds two `u8`.
+of the other operand: `x + 1` where `x: u8` adds two `u8`; when both operands are literals, a float
+literal makes both floats (`2 + 1.5` is `3.5`). An array literal takes its element type from its
+first element that is not a literal, and `str`/`list` elements widen to the largest capacity
+(`["a", "bbb"]` is a `[str[3]; 2]`). A literal in a float context is rounded once, to nearest-even,
+directly to `f32` or `f64`; one that would round to `inf` is error E0202.
 
 ---
 
