@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'fn', expected a statement or expression
+ --> tests/errors/E0001_nested_fn.al:3:5
+  |
+3 |     fn helper() -> i64 {
+  |     ^^
+  = hint: functions cannot be nested; declare every fn at the top level
+

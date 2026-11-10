@@ -1096,6 +1096,14 @@ public final class Checker {
             case "add", "insert", "append_item", "push_back" -> "use push(mut xs, value)";
             case "exit", "abort", "fail", "error", "throw", "raise" -> "use panic(\"message\")";
             case "range" -> "use a range loop: for i in 0..n { }";
+            case "sort", "sorted", "sort_by" -> "there is no sort builtin; sort a mut list in place with two loops, e.g. an insertion sort";
+            case "contains", "includes", "find", "index_of", "indexOf", "position", "starts_with", "ends_with" ->
+                "there is no " + name + " builtin; loop over the elements and compare: for x in xs { if x == v { ... } }";
+            case "pow", "powf", "powi" -> "there is no pow; for an integer power, multiply in a loop: "
+                + "var r: i64 = 1; for i in 0..n { r *= x; }";
+            case "exp", "log", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "hypot", "cbrt" ->
+                "there is no " + name + ": it rounds differently in different math libraries, so ALang leaves it out; "
+                + "only + - * /, sqrt, floor, ceil, abs, min and max exist";
             default -> {
                 List<String> names = new ArrayList<>(fns.keySet());
                 for (Builtin b : Builtin.values()) names.add(b.name);
@@ -1581,7 +1589,10 @@ public final class Checker {
         }
         if (op.isOrdering()) {
             if (!Type.isNumeric(lt) || !Type.isNumeric(rt)) {
-                diags.error(Code.E0203, b.span, "`" + op.text + "` needs numbers, found " + lt + " and " + rt);
+                String orderHint = lt instanceof Type.Str || rt instanceof Type.Str
+                    ? "strings are compared only with == and !=; to order them, compare byte by byte in a loop (s[i] is a u8)"
+                    : "only numbers are ordered; other values are compared with == and !=, so compare the numbers in them";
+                diags.error(Code.E0203, b.span, "`" + op.text + "` needs numbers, found " + lt + " and " + rt, orderHint);
             } else if (!lt.equals(rt)) {
                 diags.error(Code.E0201, b.span, "cannot compare " + lt + " with " + rt,
                     "convert one side explicitly, e.g. " + lt + "(" + exprText(b.right) + ")");

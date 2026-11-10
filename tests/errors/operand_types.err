@@ -66,6 +66,7 @@ error[E0203]: `<` needs numbers, found str[4] and str[4]
    |
 22 |     let a11: bool = s < s;
    |                     ^^^^^
+  = hint: strings are compared only with == and !=; to order them, compare byte by byte in a loop (s[i] is a u8)
 
 error[E0203]: `+` needs numbers, found str[4] and i64
   --> tests/errors/operand_types.al:23:20

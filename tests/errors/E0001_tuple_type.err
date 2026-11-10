@@ -1,0 +1,7 @@
+error[E0001]: unexpected '(', expected one of a type, '[', a name
+ --> tests/errors/E0001_tuple_type.al:2:33
+  |
+2 | fn min_max(xs: list[i64; 8]) -> (i64, i64) {
+  |                                 ^
+  = hint: there are no tuples; declare a struct with named fields, e.g. struct Pair { a: i64, b: i64 }, and build it with Pair(a: 1, b: 2)
+

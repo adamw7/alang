@@ -673,6 +673,63 @@ class CliTest {
     }
 
     @Test
+    void theStepBudgetStopsAProgramAfterExactlyThatManyStatements() throws IOException {
+        // Only the interpreter counts steps, so R0011 cannot be a tests/run case, which the C backend runs too.
+        Path p = write("spin.al", """
+            /// Counts up until the step budget stops it.
+            tool fn spin() -> i64 {
+                var i: i64 = 0;
+                while true limit 1000 {
+                    print(i);
+                    i += 1;
+                }
+                return i;
+            }
+
+            fn main() {
+                let n: i64 = spin();
+                print(n);
+            }
+
+            test "spins" {
+                assert spin() > 0;
+            }
+            """);
+        // A while costs one step, and one more per iteration. Steps: main's let (1), spin's var (2) and while
+        // (3), then iteration, print, += (4-6, 7-9) and the third iteration (10): its print is step 11.
+        Result r = run("run", p.toString(), "--max-steps", "10");
+        assertEquals(1, r.code(), r.err());
+        assertEquals("0\n1\n", r.out());
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 10 statements exhausted\n --> " + p + ":5:9\n"), r.err());
+        assertEquals(r, run("run", p.toString(), "--max-steps", "10"), "the same budget stops at the same statement");
+
+        r = run("test", p.toString(), "--max-steps", "10");
+        assertEquals(1, r.code(), r.out());
+        assertTrue(r.err().contains("  trap[R0011]: step budget of 10 statements exhausted\n"), r.err());
+
+        // A tool call has no main, so its count is one step ahead: the third print is step 10, its += step 11.
+        r = run("call", p.toString(), "spin", "--max-steps", "10");
+        assertEquals(1, r.code(), r.out());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> error = (Map<String, Object>) ((Map<String, Object>) Json.parse(r.out())).get("error");
+        assertEquals("R0011", error.get("code"));
+        assertEquals("step budget of 10 statements exhausted", error.get("message"));
+        assertEquals(BigInteger.valueOf(6), error.get("line"));
+        assertTrue(r.out().endsWith("\"stdout\": \"0\\n1\\n2\\n\"}\n"), r.out());
+
+        // 0 turns the budget off, so the loop runs into its own limit instead.
+        r = run("run", p.toString(), "--max-steps", "0");
+        assertEquals(1, r.code(), r.err());
+        assertTrue(r.err().startsWith("trap[R0008]: "), r.err());
+
+        // Without --max-steps the documented default applies.
+        Path forever = write("forever.al", "fn main() {\n    while true limit 1000000000 {\n    }\n}\n");
+        r = run("run", forever.toString());
+        assertEquals(1, r.code(), r.err());
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 100000000 statements exhausted\n"), r.err());
+    }
+
+    @Test
     void absOfTheMinimumNamesAbs() throws IOException {
         // The trap used to blame `-`, which the program does not contain.
         Path p = write("abs.al", "fn main() {\n    let x: i64 = -9223372036854775807 - 1;\n    print(abs(x));\n}\n");

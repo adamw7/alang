@@ -1,0 +1,7 @@
+error[E0102]: unknown function `pow`
+ --> tests/errors/E0102_pow.al:3:21
+  |
+3 |     let area: f64 = pow(2.0, 2.0);
+  |                     ^^^
+  = hint: there is no pow; for an integer power, multiply in a loop: var r: i64 = 1; for i in 0..n { r *= x; }
+

@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'import', expected one of end of file, 'fn', 'tool', 'const', 'struct', 'enum', 'test'
+ --> tests/errors/E0001_import.al:2:1
+  |
+2 | import "geometry.al";
+  | ^^^^^^
+  = hint: there are no modules or imports; a program is one file, so declare everything it uses in it
+

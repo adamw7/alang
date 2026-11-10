@@ -1,0 +1,7 @@
+error[E0001]: unexpected '==', expected one of '[', ';', an operator
+ --> tests/errors/E0001_operator_hint_in_expression.al:4:27
+  |
+4 |     let low: bool = x & 1 == 1;
+  |                           ^^
+  = hint: comparisons do not chain and bitwise expressions must be parenthesized before comparing: write a < b and b < c, or (flags & MASK) == 0
+

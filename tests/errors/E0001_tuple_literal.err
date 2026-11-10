@@ -1,0 +1,7 @@
+error[E0001]: unexpected ',', expected a statement or expression
+ --> tests/errors/E0001_tuple_literal.al:3:13
+  |
+3 |     print((1, 2));
+  |             ^
+  = hint: there are no tuples; declare a struct with named fields, e.g. struct Pair { a: i64, b: i64 }, and build it with Pair(a: 1, b: 2)
+
