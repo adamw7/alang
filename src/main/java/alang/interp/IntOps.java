@@ -33,72 +33,47 @@ final class IntOps {
     }
 
     static long add(PrimKind k, long a, long b, Span at) {
-        switch (k) {
-            case I64 -> {
-                long r = a + b;
-                if (((a ^ r) & (b ^ r)) < 0) throw overflow(at, k, "+");
-                return r;
-            }
-            case U64 -> {
-                long r = a + b;
-                if (Long.compareUnsigned(r, a) < 0) throw overflow(at, k, "+");
-                return r;
-            }
-            default -> {
-                return range(k, a + b, at, "+");
-            }
-        }
+        long r = a + b;
+        boolean bad = switch (k) {
+            case I64 -> ((a ^ r) & (b ^ r)) < 0;
+            case U64 -> Long.compareUnsigned(r, a) < 0;
+            default -> r < min(k) || r > max(k);
+        };
+        if (bad) throw overflow(at, k, "+");
+        return r;
     }
 
     static long sub(PrimKind k, long a, long b, Span at) {
-        switch (k) {
-            case I64 -> {
-                long r = a - b;
-                if (((a ^ b) & (a ^ r)) < 0) throw overflow(at, k, "-");
-                return r;
-            }
-            case U64 -> {
-                if (Long.compareUnsigned(a, b) < 0) throw overflow(at, k, "-");
-                return a - b;
-            }
-            default -> {
-                return range(k, a - b, at, "-");
-            }
-        }
+        long r = a - b;
+        boolean bad = switch (k) {
+            case I64 -> ((a ^ b) & (a ^ r)) < 0;
+            case U64 -> Long.compareUnsigned(a, b) < 0;
+            default -> r < min(k) || r > max(k);
+        };
+        if (bad) throw overflow(at, k, "-");
+        return r;
     }
 
     static long mul(PrimKind k, long a, long b, Span at) {
-        switch (k) {
+        long r = a * b;
+        boolean bad = switch (k) {
             case I64 -> {
                 long hi = Math.multiplyHigh(a, b);
-                long lo = a * b;
-                if ((hi != 0 || lo < 0) && (hi != -1 || lo >= 0)) throw overflow(at, k, "*");
-                return lo;
+                yield (hi != 0 || r < 0) && (hi != -1 || r >= 0);
             }
-            case U64 -> {
-                if (Math.unsignedMultiplyHigh(a, b) != 0) throw overflow(at, k, "*");
-                return a * b;
-            }
-            default -> {
-                return range(k, a * b, at, "*");
-            }
-        }
+            case U64 -> Math.unsignedMultiplyHigh(a, b) != 0;
+            default -> r < min(k) || r > max(k);
+        };
+        if (bad) throw overflow(at, k, "*");
+        return r;
     }
 
     static long div(PrimKind k, long a, long b, Span at) {
         if (b == 0) throw new Trap(Code.R0002, at, "division by zero");
-        switch (k) {
-            case I64 -> {
-                if (a == Long.MIN_VALUE && b == -1) throw overflow(at, k, "/");
-                return a / b;
-            }
-            case U64 -> {
-                return Long.divideUnsigned(a, b);
-            }
-            default -> {
-                return range(k, a / b, at, "/");
-            }
-        }
+        if (k == PrimKind.U64) return Long.divideUnsigned(a, b);
+        // range() never fails for i64, whose only overflow is MIN / -1.
+        if (k == PrimKind.I64 && a == Long.MIN_VALUE && b == -1) throw overflow(at, k, "/");
+        return range(k, a / b, at, "/");
     }
 
     static long rem(PrimKind k, long a, long b, Span at) {
@@ -109,10 +84,7 @@ final class IntOps {
     }
 
     static long neg(PrimKind k, long a, Span at) {
-        if (k == PrimKind.I64) {
-            if (a == Long.MIN_VALUE) throw overflow(at, k, "-");
-            return -a;
-        }
+        if (k == PrimKind.I64 && a == Long.MIN_VALUE) throw overflow(at, k, "-");
         return range(k, -a, at, "-");
     }
 

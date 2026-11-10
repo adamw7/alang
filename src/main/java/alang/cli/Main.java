@@ -589,31 +589,20 @@ public final class Main {
         }
         CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
         Interpreter in = new Interpreter(src, captured, maxSteps);
-        Object result;
+        j.put("ok", true);  // set again below, where it keeps its place as the first key
         try {
-            result = in.call(f, args, f.nameSpan);
+            Object result = in.call(f, args, f.nameSpan);
+            j.put("result", f.ret instanceof Type.Void ? null : JsonValues.toJson(result, f.ret));
         } catch (Trap t) {
-            j.put("ok", false);
             j.put("error", trapJson(src, t));
-            putStdout(j, captured);
-            line(out, Json.write(j));
-            return 1;
-        }
-        Object encoded;
-        try {
-            encoded = f.ret instanceof Type.Void ? null : JsonValues.toJson(result, f.ret);
         } catch (JsonValues.EncodeException e) {
-            j.put("ok", false);
             j.put("error", Json.obj("code", "bad_result", "message", e.messageAt("result")));
-            putStdout(j, captured);
-            line(out, Json.write(j));
-            return 1;
         }
-        j.put("ok", true);
-        j.put("result", encoded);
+        boolean ok = !j.containsKey("error");
+        j.put("ok", ok);
         putStdout(j, captured);
         line(out, Json.write(j));
-        return 0;
+        return ok ? 0 : 1;
     }
 
     /**
@@ -731,7 +720,7 @@ public final class Main {
         for (Code c : Code.values()) sb.append("| [").append(c.name()).append("](#").append(c.name().toLowerCase(Locale.ROOT))
             .append(") | ").append(c.title).append(" |\n");
         for (Code c : Code.values()) {
-            sb.append("\n## ").append(c.name()).append("\n\n**").append(c.title).append("**\n\n");
+            sb.append("\n## ").append(c.name()).append("\n\n**").append(c.title).append("**: ");
             sb.append(c.explanation).append("\n\n```\n").append(c.example).append("\n```\n");
         }
         sb.append("\n## Builtin functions\n\n| Signature | Description |\n|-----------|-------------|\n");

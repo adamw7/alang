@@ -251,66 +251,48 @@ public final class Checker {
 
     private Type resolveType(TypeRef ref) {
         return switch (ref) {
-            case PrimRef p -> Type.prim(p.kind);
+            case PrimRef p -> Type.prim(p.kind());
             case StrRef s -> {
-                int cap = constSize(s.cap, "string capacity");
+                int cap = constSize(s.cap(), "string capacity");
                 yield cap < 0 ? Type.ERROR : new Type.Str(cap);
             }
             case ListRef l -> {
-                Type elem = resolveType(l.elem);
-                int cap = constSize(l.cap, "list capacity");
+                Type elem = resolveType(l.elem());
+                int cap = constSize(l.cap(), "list capacity");
                 yield cap < 0 || Type.isError(elem) ? Type.ERROR : new Type.ListT(elem, cap);
             }
             case ArrayRef a -> {
-                Type elem = resolveType(a.elem);
-                int len = constSize(a.len, "array length");
+                Type elem = resolveType(a.elem());
+                int len = constSize(a.len(), "array length");
                 yield len < 0 || Type.isError(elem) ? Type.ERROR : new Type.ArrayT(elem, len);
             }
             case NamedRef n -> {
-                if (structs.containsKey(n.name)) yield new Type.StructT(structs.get(n.name));
-                if (enums.containsKey(n.name)) yield new Type.EnumT(enums.get(n.name));
-                diags.error(Code.E0103, n.span, "unknown type `" + n.name + "`", typeHint(n.name));
+                if (structs.containsKey(n.name())) yield new Type.StructT(structs.get(n.name()));
+                if (enums.containsKey(n.name())) yield new Type.EnumT(enums.get(n.name()));
+                diags.error(Code.E0103, n.span(), "unknown type `" + n.name() + "`", typeHint(n.name()));
                 yield Type.ERROR;
             }
         };
     }
 
     private String typeHint(String name) {
-        switch (name) {
-            case "int", "long", "isize", "usize", "Int", "integer" -> {
-                return "use a sized integer type such as i32 or i64 (len() returns i64)";
-            }
-            case "uint" -> {
-                return "use u32 or u64";
-            }
-            case "float", "double", "number", "Float" -> {
-                return "use f64 (or f32)";
-            }
-            case "string", "String", "text", "char_array" -> {
-                return "strings have a fixed capacity: str[64]";
-            }
-            case "char", "byte" -> {
-                return "use u8 for single bytes; character literals like 'a' are u8-compatible";
-            }
-            case "boolean", "Bool" -> {
-                return "use bool";
-            }
-            case "void", "unit", "None" -> {
-                return "omit the return type for functions that return nothing";
-            }
-            case "Vec", "List", "Array", "vector" -> {
-                return "use list[T; N] (up to N items) or [T; N] (exactly N items)";
-            }
-            case "Option", "Optional", "Result" -> {
-                return "there are no generics; declare an enum, e.g. enum MaybeI32 { None, Some(i32) }";
-            }
+        return switch (name) {
+            case "int", "long", "isize", "usize", "Int", "integer" -> "use a sized integer type such as i32 or i64 (len() returns i64)";
+            case "uint" -> "use u32 or u64";
+            case "float", "double", "number", "Float" -> "use f64 (or f32)";
+            case "string", "String", "text", "char_array" -> "strings have a fixed capacity: str[64]";
+            case "char", "byte" -> "use u8 for single bytes; character literals like 'a' are u8-compatible";
+            case "boolean", "Bool" -> "use bool";
+            case "void", "unit", "None" -> "omit the return type for functions that return nothing";
+            case "Vec", "List", "Array", "vector" -> "use list[T; N] (up to N items) or [T; N] (exactly N items)";
+            case "Option", "Optional", "Result" -> "there are no generics; declare an enum, e.g. enum MaybeI32 { None, Some(i32) }";
             default -> {
                 List<String> names = new ArrayList<>(structs.keySet());
                 names.addAll(enums.keySet());
                 for (PrimKind k : PrimKind.values()) names.add(k.name);
-                return didYouMean(name, names);
+                yield didYouMean(name, names);
             }
-        }
+        };
     }
 
     /** Evaluates a constant size expression; returns -1 after reporting an error. */
@@ -341,17 +323,13 @@ public final class Checker {
 
     private boolean checkRecursiveTypes() {
         boolean found = false;
-        Set<Object> reported = new HashSet<>();
-        for (StructDecl s : structs.values()) {
-            if (contains(new Type.StructT(s), s, new HashSet<>()) && reported.add(s)) {
-                diags.error(Code.E0403, s.span, "struct `" + s.name + "` contains itself and would have infinite size",
-                    "store related items in a fixed-capacity list and refer to them by index");
-                found = true;
-            }
-        }
-        for (EnumDecl e : enums.values()) {
-            if (contains(new Type.EnumT(e), e, new HashSet<>()) && reported.add(e)) {
-                diags.error(Code.E0403, e.span, "enum `" + e.name + "` contains itself and would have infinite size",
+        List<Item> types = new ArrayList<>(structs.values());
+        types.addAll(enums.values());
+        for (Item d : types) {
+            Type t = d instanceof StructDecl s ? new Type.StructT(s) : new Type.EnumT((EnumDecl) d);
+            if (contains(t, d, new HashSet<>())) {
+                diags.error(Code.E0403, d.span, (t instanceof Type.StructT ? "struct" : "enum") + " `" + d.name
+                    + "` contains itself and would have infinite size",
                     "store related items in a fixed-capacity list and refer to them by index");
                 found = true;
             }
@@ -400,21 +378,21 @@ public final class Checker {
         f.ret = f.retRef == null ? Type.VOID : resolveType(f.retRef);
         Set<String> names = new HashSet<>();
         for (Param p : f.params) {
-            Type t = resolveType(p.typeRef);
-            if (!names.add(p.name)) {
-                diags.error(Code.E0105, p.span, "duplicate parameter `" + p.name + "`");
+            Type t = resolveType(p.typeRef());
+            if (!names.add(p.name())) {
+                diags.error(Code.E0105, p.span(), "duplicate parameter `" + p.name() + "`");
             } else {
-                checkNameFree(p.name, p.span);
+                checkNameFree(p.name(), p.span());
             }
-            if (p.name.equals("result") && !f.ensures.isEmpty()) {
-                diags.error(Code.E0105, p.span, "parameter `result` conflicts with `result` in ensures",
+            if (p.name().equals("result") && !f.ensures.isEmpty()) {
+                diags.error(Code.E0105, p.span(), "parameter `result` conflicts with `result` in ensures",
                     "rename the parameter");
             }
-            LocalVar v = new LocalVar(p.name, p.span, t, p.mut, p.mut, f.locals.size());
+            LocalVar v = new LocalVar(p.name(), p.span(), t, p.mut(), p.mut(), f.locals.size());
             f.locals.add(v);
             f.paramVars.add(v);
-            if (f.tool && p.mut) {
-                diags.error(Code.E0601, p.span, "tool functions cannot take `mut` parameters",
+            if (f.tool && p.mut()) {
+                diags.error(Code.E0601, p.span(), "tool functions cannot take `mut` parameters",
                     "tools receive JSON arguments; return the new value instead");
             }
         }
@@ -464,13 +442,8 @@ public final class Checker {
             List<FnDecl> cycle = findCycle(f, state, path);
             if (cycle != null) {
                 found = true;
-                StringBuilder sb = new StringBuilder();
-                for (FnDecl c : cycle) {
-                    if (sb.length() > 0) sb.append(" -> ");
-                    sb.append(c.name);
-                }
-                FnDecl head = cycle.get(0);
-                diags.error(Code.E0401, head.nameSpan, "recursion is not allowed: " + sb,
+                diags.error(Code.E0401, cycle.get(0).nameSpan,
+                    "recursion is not allowed: " + String.join(" -> ", cycle.stream().map(c -> c.name).toList()),
                     "rewrite with a loop; keep pending work in a fixed-capacity list (a stack) if needed");
             }
         }
@@ -550,7 +523,7 @@ public final class Checker {
     /** Checks a block in a new scope; returns true if it never completes normally. */
     private boolean block(Block b) {
         ctx.scopes.push(new HashMap<>());
-        boolean jumps = stmts(b.stmts);
+        boolean jumps = stmts(b.stmts());
         ctx.scopes.pop();
         return jumps;
     }
@@ -569,7 +542,7 @@ public final class Checker {
     }
 
     private boolean stmt(Stmt s) {
-        switch (s) {
+        return switch (s) {
             case Let l -> {
                 Type t = resolveType(l.typeRef);
                 ctx.mutCallAllowed = l.init;
@@ -577,11 +550,11 @@ public final class Checker {
                 ctx.mutCallAllowed = null;
                 requireAssignable(l.init, it, t);
                 l.var = declare(l.name, l.nameSpan, t, l.mutable);
-                return false;
+                yield false;
             }
             case Assign a -> {
                 assign(a);
-                return false;
+                yield false;
             }
             case If i -> {
                 boolean all = i.elseBlock != null;
@@ -589,8 +562,7 @@ public final class Checker {
                     condition(i.conds.get(k), "if");
                     if (!block(i.blocks.get(k))) all = false;
                 }
-                if (i.elseBlock != null && !block(i.elseBlock)) all = false;
-                return all;
+                yield (i.elseBlock == null || block(i.elseBlock)) && all;
             }
             case While w -> {
                 condition(w.cond, "while");
@@ -598,38 +570,38 @@ public final class Checker {
                 if (!Type.isInt(lt) && !Type.isError(lt)) {
                     diags.error(Code.E0201, w.limit.span, "loop limit must be an integer, found " + lt);
                 }
-                ctx.loopDepth++;
-                block(w.body);
-                ctx.loopDepth--;
-                return false;
+                loop(w.body);
+                yield false;
             }
             case For f -> {
                 forLoop(f);
-                return false;
+                yield false;
             }
-            case Match m -> {
-                return match(m);
-            }
+            case Match m -> match(m);
             case Break b -> {
                 if (ctx.loopDepth == 0) diags.error(Code.E0302, b.span, "`break` outside of a loop");
-                return true;
+                yield true;
             }
             case Continue c -> {
                 if (ctx.loopDepth == 0) diags.error(Code.E0302, c.span, "`continue` outside of a loop");
-                return true;
+                yield true;
             }
             case Return r -> {
                 returnStmt(r);
-                return true;
+                yield true;
             }
             case Assert a -> {
                 condition(a.cond, "assert");
-                return false;
+                yield false;
             }
-            case ExprStmt e -> {
-                return exprStmt(e);
-            }
-        }
+            case ExprStmt e -> exprStmt(e);
+        };
+    }
+
+    private void loop(Block body) {
+        ctx.loopDepth++;
+        block(body);
+        ctx.loopDepth--;
     }
 
     private void condition(Expr e, String what) {
@@ -715,9 +687,7 @@ public final class Checker {
         }
         ctx.scopes.push(new HashMap<>());
         f.var = declare(f.name, f.nameSpan, varType, false);
-        ctx.loopDepth++;
-        block(f.body);
-        ctx.loopDepth--;
+        loop(f.body);
         ctx.scopes.pop();
     }
 
@@ -783,7 +753,7 @@ public final class Checker {
                 "match works on enums, integers, bool and str; use if/else for other types");
         }
         for (Arm arm : m.arms) {
-            Pattern p = arm.pattern;
+            Pattern p = arm.pattern();
             if (wildcard) {
                 diags.error(Code.E0307, p.span, "unreachable arm: `_` above already matches everything",
                     "move `_ => { }` to the end");
@@ -822,7 +792,7 @@ public final class Checker {
                     }
                 }
             }
-            if (!block(arm.body)) allJump = false;
+            if (!block(arm.body())) allJump = false;
             ctx.scopes.pop();
         }
         if (!wildcard && supported && !Type.isError(t)) {
@@ -887,9 +857,7 @@ public final class Checker {
     }
 
     private static List<String> variantNames(EnumDecl d) {
-        List<String> out = new ArrayList<>();
-        for (Variant v : d.variants) out.add(v.name);
-        return out;
+        return d.variants.stream().map(v -> v.name).toList();
     }
 
     // =================================================================== expressions
@@ -905,80 +873,57 @@ public final class Checker {
     }
 
     private Type exprInner(Expr e, Type expected) {
-        switch (e) {
-            case IntLit i -> {
-                if (expected != null && Type.isInt(expected)) {
-                    if (!Type.kind(expected).fits(i.value)) {
-                        diags.error(Code.E0202, i.span, "literal " + i.value + " does not fit in " + expected,
-                            expected + " holds " + Type.kind(expected).min() + ".." + Type.kind(expected).max());
-                    }
-                    return expected;
-                }
-                if (expected != null && Type.isFloat(expected)) {
-                    floatLiteralRange(i, i.floatValue(Type.kind(expected)), expected);
-                    return expected;
-                }
-                if (PrimKind.I64.fits(i.value)) return Type.I64;
-                if (PrimKind.U64.fits(i.value)) return Type.U64;
-                diags.error(Code.E0202, i.span, "literal " + i.value + " does not fit in any integer type");
-                return Type.ERROR;
-            }
+        return switch (e) {
+            case IntLit i -> intLit(i, expected);
             case FloatLit f -> {
                 Type t = expected != null && Type.kind(expected) == PrimKind.F32 ? Type.F32 : Type.F64;
                 floatLiteralRange(f, f.valueAs(Type.kind(t)), t);
-                return t;
+                yield t;
             }
-            case StrLit s -> {
-                return new Type.Str(s.value.length);
+            case StrLit s -> new Type.Str(s.value.length);
+            case BoolLit b -> Type.BOOL;
+            case Name n -> name(n);
+            case FieldAccess f -> fieldAccess(f);
+            case Index ix -> index(ix);
+            case Call c -> call(c);
+            case VariantCall v -> variantCall(v);
+            case StructLit s -> structLit(s);
+            case Convert c -> convert(c);
+            case Unary u -> unary(u, expected);
+            case Binary b -> binary(b, expected);
+            case ArrayLit a -> arrayLit(a, expected);
+            case Repeat r -> repeat(r, expected);
+        };
+    }
+
+    private Type intLit(IntLit i, Type expected) {
+        if (expected != null && Type.isInt(expected)) {
+            if (!Type.kind(expected).fits(i.value)) {
+                diags.error(Code.E0202, i.span, "literal " + i.value + " does not fit in " + expected,
+                    expected + " holds " + Type.kind(expected).min() + ".." + Type.kind(expected).max());
             }
-            case BoolLit b -> {
-                return Type.BOOL;
-            }
-            case Name n -> {
-                return name(n);
-            }
-            case FieldAccess f -> {
-                return fieldAccess(f);
-            }
-            case Index ix -> {
-                Type tt = expr(ix.target, null);
-                Type it = expr(ix.index, Type.I64);
-                if (!Type.isInt(it) && !Type.isError(it)) {
-                    diags.error(Code.E0212, ix.index.span, "index must be an integer, found " + it);
-                }
-                if (Type.isError(tt)) return Type.ERROR;
-                Type elem = Type.elementOf(tt);
-                if (elem == null) {
-                    diags.error(Code.E0212, ix.target.span, "cannot index a value of type " + tt);
-                    return Type.ERROR;
-                }
-                return elem;
-            }
-            case Call c -> {
-                return call(c);
-            }
-            case VariantCall v -> {
-                return variantCall(v);
-            }
-            case StructLit s -> {
-                return structLit(s);
-            }
-            case Convert c -> {
-                return convert(c);
-            }
-            case Unary u -> {
-                return unary(u, expected);
-            }
-            case Binary b -> {
-                return binary(b, expected);
-            }
-            case ArrayLit a -> {
-                return arrayLit(a, expected);
-            }
-            case Repeat r -> {
-                return repeat(r, expected);
-            }
+            return expected;
         }
+        if (expected != null && Type.isFloat(expected)) {
+            floatLiteralRange(i, i.floatValue(Type.kind(expected)), expected);
+            return expected;
+        }
+        if (PrimKind.I64.fits(i.value)) return Type.I64;
+        if (PrimKind.U64.fits(i.value)) return Type.U64;
+        diags.error(Code.E0202, i.span, "literal " + i.value + " does not fit in any integer type");
+        return Type.ERROR;
+    }
+
+    private Type index(Index ix) {
+        Type tt = expr(ix.target, null);
+        Type it = expr(ix.index, Type.I64);
+        if (!Type.isInt(it) && !Type.isError(it)) {
+            diags.error(Code.E0212, ix.index.span, "index must be an integer, found " + it);
+        }
+        if (Type.isError(tt)) return Type.ERROR;
+        Type elem = Type.elementOf(tt);
+        if (elem == null) diags.error(Code.E0212, ix.target.span, "cannot index a value of type " + tt);
+        return elem == null ? Type.ERROR : elem;
     }
 
     /** A literal too large for its float type would silently become inf; integer literals get E0202 too. */
@@ -1055,10 +1000,8 @@ public final class Checker {
         if (t instanceof Type.StructT st) {
             int idx = st.decl().fieldIndex(f.name);
             if (idx < 0) {
-                List<String> names = new ArrayList<>();
-                for (Field fd : st.decl().fields) names.add(fd.name);
                 diags.error(Code.E0106, f.nameSpan, "struct `" + st.decl().name + "` has no field `" + f.name + "`",
-                    didYouMean(f.name, names));
+                    didYouMean(f.name, st.decl().fieldNames()));
                 return Type.ERROR;
             }
             f.fieldIndex = idx;
@@ -1077,9 +1020,7 @@ public final class Checker {
     }
 
     private static String joinTypes(List<Type> ts) {
-        List<String> out = new ArrayList<>();
-        for (Type t : ts) out.add(t.toString());
-        return String.join(", ", out);
+        return String.join(", ", ts.stream().map(Type::toString).toList());
     }
 
     // ------------------------------------------------------------------ calls
@@ -1095,13 +1036,10 @@ public final class Checker {
         }
         FnDecl f = fns.get(c.name);
         if (f == null) {
-            for (Arg a : c.args) expr(a.expr, null);
+            for (Arg a : c.args) expr(a.expr(), null);
             if (structs.containsKey(c.name)) {
-                StructDecl s = structs.get(c.name);
-                List<String> parts = new ArrayList<>();
-                for (Field fd : s.fields) parts.add(fd.name + ": ...");
                 diags.error(Code.E0213, c.span, "struct values need named fields",
-                    "write " + s.name + "(" + String.join(", ", parts) + ")");
+                    "write " + c.name + "(" + String.join(": ..., ", structs.get(c.name).fieldNames()) + ": ...)");
             } else if (enums.containsKey(c.name)) {
                 diags.error(Code.E0201, c.nameSpan, "`" + c.name + "` is an enum type; build a variant instead",
                     "write " + c.name + "." + enums.get(c.name).variants.get(0).name);
@@ -1117,31 +1055,31 @@ public final class Checker {
         if (c.args.size() != f.params.size()) {
             diags.error(Code.E0204, c.span, "`" + f.name + "` takes " + f.params.size() + " argument(s) but "
                 + c.args.size() + " were given", "signature: " + signatureText(f));
-            for (Arg a : c.args) expr(a.expr, null);
+            for (Arg a : c.args) expr(a.expr(), null);
             return f.ret;
         }
         for (int i = 0; i < c.args.size(); i++) {
             Arg a = c.args.get(i);
             LocalVar p = f.paramVars.get(i);
             if (p.byRef) {
-                if (!a.mut) {
-                    expr(a.expr, p.type);
-                    diags.error(Code.E0207, a.span, "parameter `" + p.name + "` of `" + f.name + "` is `mut`",
-                        "pass a variable by reference: mut " + exprText(a.expr));
+                if (!a.mut()) {
+                    expr(a.expr(), p.type);
+                    diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is `mut`",
+                        "pass a variable by reference: mut " + exprText(a.expr()));
                     continue;
                 }
-                Type at = mutPlace(a.expr);
+                Type at = mutPlace(a.expr());
                 if (!Type.isError(at) && !Type.isError(p.type) && !at.equals(p.type)) {
-                    diags.error(Code.E0207, a.span, "`mut` argument must have exactly type " + p.type + ", found " + at,
+                    diags.error(Code.E0207, a.span(), "`mut` argument must have exactly type " + p.type + ", found " + at,
                         "`mut` parameters cannot convert or widen; declare the variable as " + p.type);
                 }
             } else {
-                if (a.mut) {
-                    diags.error(Code.E0207, a.span, "parameter `" + p.name + "` of `" + f.name + "` is not `mut`",
+                if (a.mut()) {
+                    diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is not `mut`",
                         "remove `mut`; the value is passed read-only");
                 }
-                Type at = expr(a.expr, p.type);
-                requireAssignable(a.expr, at, p.type);
+                Type at = expr(a.expr(), p.type);
+                requireAssignable(a.expr(), at, p.type);
             }
         }
         checkAliasing(c.args);
@@ -1234,12 +1172,12 @@ public final class Checker {
     private void checkAliasing(List<Arg> args) {
         for (int i = 0; i < args.size(); i++) {
             Arg a = args.get(i);
-            if (!a.mut) continue;
-            Name root = rootName(a.expr);
+            if (!a.mut()) continue;
+            Name root = rootName(a.expr());
             if (root == null || root.local == null) continue;
             for (int j = 0; j < args.size(); j++) {
-                if (j != i && mentions(args.get(j).expr, root.local)) {
-                    diags.error(Code.E0208, args.get(j).span, "`" + root.name + "` is passed as `mut` and also used in "
+                if (j != i && mentions(args.get(j).expr(), root.local)) {
+                    diags.error(Code.E0208, args.get(j).span(), "`" + root.name + "` is passed as `mut` and also used in "
                         + "another argument of the same call",
                         "copy the value into a separate variable first, then pass the copy");
                     return;
@@ -1253,9 +1191,9 @@ public final class Checker {
             case Name n -> n.local == v;
             case FieldAccess f -> mentions(f.target, v);
             case Index i -> mentions(i.target, v) || mentions(i.index, v);
-            case Call c -> c.args.stream().anyMatch(a -> mentions(a.expr, v));
-            case VariantCall c -> c.args.stream().anyMatch(a -> mentions(a.expr, v));
-            case StructLit s -> s.fields.stream().anyMatch(f -> mentions(f.value, v));
+            case Call c -> c.args.stream().anyMatch(a -> mentions(a.expr(), v));
+            case VariantCall c -> c.args.stream().anyMatch(a -> mentions(a.expr(), v));
+            case StructLit s -> s.fields.stream().anyMatch(f -> mentions(f.value(), v));
             case Convert c -> mentions(c.arg, v);
             case Unary u -> mentions(u.operand, v);
             case Binary b -> mentions(b.left, v) || mentions(b.right, v);
@@ -1276,10 +1214,10 @@ public final class Checker {
                 if (!arity(c, 1)) return Type.I64;
                 Arg a = args.get(0);
                 noMut(a);
-                Type t = expr(a.expr, null);
+                Type t = expr(a.expr(), null);
                 boolean ok = b == Builtin.LEN ? Type.elementOf(t) != null : (t instanceof Type.ListT || t instanceof Type.Str);
                 if (!ok && !Type.isError(t)) {
-                    diags.error(Code.E0203, a.span, b.name + "() needs " + (b == Builtin.LEN ? "an array, list or str" : "a list or str")
+                    diags.error(Code.E0203, a.span(), b.name + "() needs " + (b == Builtin.LEN ? "an array, list or str" : "a list or str")
                         + ", found " + t);
                 }
                 return Type.I64;
@@ -1290,8 +1228,8 @@ public final class Checker {
                 Arg v = args.get(1);
                 noMut(v);
                 Type elem = Type.isError(t) ? null : Type.elementOf(t);
-                Type vt = expr(v.expr, elem);
-                if (elem != null) requireAssignable(v.expr, vt, elem);
+                Type vt = expr(v.expr(), elem);
+                if (elem != null) requireAssignable(v.expr(), vt, elem);
                 return Type.VOID;
             }
             case POP -> {
@@ -1311,14 +1249,14 @@ public final class Checker {
                     return Type.VOID;
                 }
                 Arg target = args.get(0);
-                if (!target.mut) {
-                    expr(target.expr, null);
-                    diags.error(Code.E0207, target.span, "append() modifies its first argument",
-                        "write append(mut " + exprText(target.expr) + ", ...)");
+                if (!target.mut()) {
+                    expr(target.expr(), null);
+                    diags.error(Code.E0207, target.span(), "append() modifies its first argument",
+                        "write append(mut " + exprText(target.expr()) + ", ...)");
                 } else {
-                    Type t = mutPlace(target.expr);
+                    Type t = mutPlace(target.expr());
                     if (!(t instanceof Type.Str) && !Type.isError(t)) {
-                        diags.error(Code.E0203, target.span, "append() needs a str[N] target, found " + t,
+                        diags.error(Code.E0203, target.span(), "append() needs a str[N] target, found " + t,
                             t instanceof Type.ListT ? "use push(mut xs, value) for lists" : null);
                     }
                 }
@@ -1331,10 +1269,10 @@ public final class Checker {
             case ABS -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 noMut(args.get(0));
-                Type t = expr(args.get(0).expr, null);
+                Type t = expr(args.get(0).expr(), null);
                 if (Type.isError(t)) return t;
                 if (!Type.isNumeric(t) || !Type.kind(t).signed) {
-                    diags.error(Code.E0203, args.get(0).span, "abs() needs a signed integer or float, found " + t);
+                    diags.error(Code.E0203, args.get(0).span(), "abs() needs a signed integer or float, found " + t);
                     return Type.ERROR;
                 }
                 return t;
@@ -1343,7 +1281,7 @@ public final class Checker {
                 if (!arity(c, 2)) return Type.ERROR;
                 noMut(args.get(0));
                 noMut(args.get(1));
-                Type[] ts = sameTypeOperands(args.get(0).expr, args.get(1).expr, null);
+                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), null);
                 if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
                 if (!Type.isNumeric(ts[0]) || !ts[0].equals(ts[1])) {
                     diags.error(Code.E0201, c.span, b.name + "() needs two numbers of the same type, found "
@@ -1355,10 +1293,10 @@ public final class Checker {
             case SQRT, FLOOR, CEIL -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 noMut(args.get(0));
-                Type t = expr(args.get(0).expr, Type.F64);
+                Type t = expr(args.get(0).expr(), Type.F64);
                 if (Type.isError(t)) return t;
                 if (!Type.isFloat(t)) {
-                    diags.error(Code.E0201, args.get(0).span, b.name + "() needs f32 or f64, found " + t,
+                    diags.error(Code.E0201, args.get(0).span(), b.name + "() needs f32 or f64, found " + t,
                         "convert first: " + b.name + "(f64(x))");
                     return Type.ERROR;
                 }
@@ -1367,9 +1305,9 @@ public final class Checker {
             case PANIC -> {
                 if (!arity(c, 1)) return Type.VOID;
                 noMut(args.get(0));
-                Type t = expr(args.get(0).expr, null);
+                Type t = expr(args.get(0).expr(), null);
                 if (!(t instanceof Type.Str) && !Type.isError(t)) {
-                    diags.error(Code.E0201, args.get(0).span, "panic() needs a string message, found " + t);
+                    diags.error(Code.E0201, args.get(0).span(), "panic() needs a string message, found " + t);
                 }
                 return Type.VOID;
             }
@@ -1379,13 +1317,13 @@ public final class Checker {
 
     private void printable(Arg a) {
         noMut(a);
-        if (a.expr instanceof IntLit lit && lit.isChar) {
-            diags.warning(Code.W0303, a.span, "character literal " + exprText(a.expr) + " is the number " + lit.value
-                + " and prints as digits", "to add the character to a str use push(mut s, " + exprText(a.expr) + ")");
+        if (a.expr() instanceof IntLit lit && lit.isChar) {
+            diags.warning(Code.W0303, a.span(), "character literal " + exprText(a.expr()) + " is the number " + lit.value
+                + " and prints as digits", "to add the character to a str use push(mut s, " + exprText(a.expr()) + ")");
         }
-        Type t = expr(a.expr, null);
+        Type t = expr(a.expr(), null);
         if (t instanceof Type.Void) {
-            diags.error(Code.E0201, a.span, "cannot print a call that returns nothing");
+            diags.error(Code.E0201, a.span(), "cannot print a call that returns nothing");
         }
     }
 
@@ -1394,25 +1332,25 @@ public final class Checker {
         Builtin b = c.builtin;
         diags.error(Code.E0204, c.span, b.name + "() takes " + n + " argument(s) but " + c.args.size() + " were given",
             "signature: " + b.signature);
-        for (Arg a : c.args) expr(a.expr, null);
+        for (Arg a : c.args) expr(a.expr(), null);
         return false;
     }
 
     private void noMut(Arg a) {
-        if (a.mut) diags.error(Code.E0207, a.span, "this argument is not modified; remove `mut`");
+        if (a.mut()) diags.error(Code.E0207, a.span(), "this argument is not modified; remove `mut`");
     }
 
     /** First argument of push/pop/clear: `mut` list or str. */
     private Type collectionArg(Call c, Arg a) {
-        if (!a.mut) {
-            Type t = expr(a.expr, null);
-            diags.error(Code.E0207, a.span, c.name + "() modifies its first argument",
-                "write " + c.name + "(mut " + exprText(a.expr) + (c.builtin == Builtin.PUSH ? ", value)" : ")"));
+        if (!a.mut()) {
+            Type t = expr(a.expr(), null);
+            diags.error(Code.E0207, a.span(), c.name + "() modifies its first argument",
+                "write " + c.name + "(mut " + exprText(a.expr()) + (c.builtin == Builtin.PUSH ? ", value)" : ")"));
             return t instanceof Type.ListT || t instanceof Type.Str ? t : Type.ERROR;
         }
-        Type t = mutPlace(a.expr);
+        Type t = mutPlace(a.expr());
         if (!(t instanceof Type.ListT) && !(t instanceof Type.Str) && !Type.isError(t)) {
-            diags.error(Code.E0203, a.span, c.name + "() needs a list or str, found " + t,
+            diags.error(Code.E0203, a.span(), c.name + "() needs a list or str, found " + t,
                 t instanceof Type.ArrayT ? "arrays have a fixed length; use list[T; N] for a growable collection" : null);
             return Type.ERROR;
         }
@@ -1422,7 +1360,7 @@ public final class Checker {
     private Type variantCall(VariantCall v) {
         EnumDecl d = enums.get(v.enumName);
         if (d == null) {
-            for (Arg a : v.args) expr(a.expr, null);
+            for (Arg a : v.args) expr(a.expr(), null);
             if (lookupLocal(v.enumName) != null || consts.containsKey(v.enumName)) {
                 String args = v.args.isEmpty() ? "" : ", ...";
                 diags.error(Code.E0102, v.span, "there are no methods: `" + v.enumName + "." + v.variantName + "(...)` is not valid",
@@ -1436,14 +1374,14 @@ public final class Checker {
         v.enumDecl = d;
         Variant variant = d.variant(v.variantName);
         if (variant == null) {
-            for (Arg a : v.args) expr(a.expr, null);
+            for (Arg a : v.args) expr(a.expr(), null);
             diags.error(Code.E0107, v.span, "enum `" + d.name + "` has no variant `" + v.variantName + "`",
                 didYouMean(v.variantName, variantNames(d)));
             return Type.ERROR;
         }
         v.variant = variant;
         if (v.args.size() != variant.payload.size()) {
-            for (Arg a : v.args) expr(a.expr, null);
+            for (Arg a : v.args) expr(a.expr(), null);
             String hint = variant.payload.isEmpty() ? "write " + d.name + "." + variant.name + " without parentheses"
                 : "write " + d.name + "." + variant.name + "(" + joinTypes(variant.payload) + ")";
             diags.error(Code.E0204, v.span, d.name + "." + variant.name + " takes " + variant.payload.size()
@@ -1454,8 +1392,8 @@ public final class Checker {
             Arg a = v.args.get(i);
             noMut(a);
             Type pt = variant.payload.get(i);
-            Type at = expr(a.expr, pt);
-            requireAssignable(a.expr, at, pt);
+            Type at = expr(a.expr(), pt);
+            requireAssignable(a.expr(), at, pt);
         }
         return new Type.EnumT(d);
     }
@@ -1463,7 +1401,7 @@ public final class Checker {
     private Type structLit(StructLit s) {
         StructDecl d = structs.get(s.name);
         if (d == null) {
-            for (FieldInit f : s.fields) expr(f.value, null);
+            for (FieldInit f : s.fields) expr(f.value(), null);
             if (fns.containsKey(s.name) || Builtin.byName(s.name) != null) {
                 diags.error(Code.E0213, s.span, "`" + s.name + "` is a function; named arguments are only used to build structs",
                     "pass arguments by position: " + s.name + "(a, b)");
@@ -1478,22 +1416,20 @@ public final class Checker {
         java.util.Arrays.fill(order, -1);
         for (int i = 0; i < s.fields.size(); i++) {
             FieldInit fi = s.fields.get(i);
-            int idx = d.fieldIndex(fi.name);
+            int idx = d.fieldIndex(fi.name());
             if (idx < 0) {
-                List<String> names = new ArrayList<>();
-                for (Field f : d.fields) names.add(f.name);
-                diags.error(Code.E0106, fi.span, "struct `" + d.name + "` has no field `" + fi.name + "`",
-                    didYouMean(fi.name, names));
-                expr(fi.value, null);
+                diags.error(Code.E0106, fi.span(), "struct `" + d.name + "` has no field `" + fi.name() + "`",
+                    didYouMean(fi.name(), d.fieldNames()));
+                expr(fi.value(), null);
                 continue;
             }
             if (order[idx] >= 0) {
-                diags.error(Code.E0213, fi.span, "field `" + fi.name + "` is given twice");
+                diags.error(Code.E0213, fi.span(), "field `" + fi.name() + "` is given twice");
             }
             order[idx] = i;
             Type ft = d.fields.get(idx).type;
-            Type vt = expr(fi.value, ft);
-            requireAssignable(fi.value, vt, ft);
+            Type vt = expr(fi.value(), ft);
+            requireAssignable(fi.value(), vt, ft);
         }
         List<String> missing = new ArrayList<>();
         for (int i = 0; i < order.length; i++) {
@@ -1803,11 +1739,11 @@ public final class Checker {
             case FieldAccess f -> f.variant != null || isConst(f.target);
             case Index i -> isConst(i.target) && isConst(i.index);
             case Call c -> c.builtin != null && switch (c.builtin) {
-                case LEN, CAP, ABS, MIN, MAX, SQRT, FLOOR, CEIL -> c.args.stream().allMatch(a -> isConst(a.expr));
+                case LEN, CAP, ABS, MIN, MAX, SQRT, FLOOR, CEIL -> c.args.stream().allMatch(a -> isConst(a.expr()));
                 default -> false;
             };
-            case VariantCall v -> v.args.stream().allMatch(a -> isConst(a.expr));
-            case StructLit s -> s.fields.stream().allMatch(f -> isConst(f.value));
+            case VariantCall v -> v.args.stream().allMatch(a -> isConst(a.expr()));
+            case StructLit s -> s.fields.stream().allMatch(f -> isConst(f.value()));
             case Convert c -> isConst(c.arg);
             case Unary u -> isConst(u.operand);
             case Binary b -> isConst(b.left) && isConst(b.right);

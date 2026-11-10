@@ -126,22 +126,22 @@ final class SyntaxErrorListener extends BaseErrorListener {
     private static String hint(Token tok, Token prev, Token prev2, IntervalSet expected) {
         int t = tok.getType();
         int p = prev == null ? -1 : prev.getType();
-        switch (t) {
-            case ALangLexer.AMPAMP:
-                return "use the keyword `and` instead of `&&`";
-            case ALangLexer.PIPEPIPE:
-                return "use the keyword `or` instead of `||`";
-            case ALangLexer.BANG:
-                return "use the keyword `not` for negation (`!=` is still the inequality operator)";
-            case ALangLexer.COLONCOLON:
-                return "enum variants are accessed with a dot: Color.Red, Shape.Circle(1.0)";
-            case ALangLexer.PLUSPLUS:
-                return "there is no ++ operator; write `x += 1;`";
-            case ALangLexer.QUESTION:
-                return "there is no `?:` or `?` operator; use if/else or match";
-            default:
-                break;
-        }
+        String foreign = switch (t) {
+            case ALangLexer.AMPAMP -> "use the keyword `and` instead of `&&`";
+            case ALangLexer.PIPEPIPE -> "use the keyword `or` instead of `||`";
+            case ALangLexer.BANG -> "use the keyword `not` for negation (`!=` is still the inequality operator)";
+            case ALangLexer.COLONCOLON -> "enum variants are accessed with a dot: Color.Red, Shape.Circle(1.0)";
+            case ALangLexer.PLUSPLUS -> "there is no ++ operator; write `x += 1;`";
+            case ALangLexer.QUESTION -> "there is no `?:` or `?` operator; use if/else or match";
+            case ALangLexer.IDENT -> switch (tok.getText()) {
+                case "elif", "elsif", "elseif" -> "use `else if`";
+                case "loop" -> "use `while true limit N { ... }` or `for i in 0..n { ... }`";
+                case "def", "func", "function" -> "functions are declared with `fn name(x: i32) -> i32 { ... }`";
+                default -> null;
+            };
+            default -> null;
+        };
+        if (foreign != null) return foreign;
         if (t == ALangLexer.ERROR_CHAR) {
             String s = tok.getText();
             if (s.equals("#")) return "comments start with //";
@@ -173,21 +173,6 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (expected != null && expected.contains(ALangLexer.COLON)
             && (t == ALangLexer.COMMA || t == ALangLexer.RPAREN) && p == ALangLexer.IDENT) {
             return "parameters need explicit types: fn f(x: i32, ys: mut list[i32; 8])";
-        }
-        if (t == ALangLexer.IDENT) {
-            switch (tok.getText()) {
-                case "elif", "elsif", "elseif" -> {
-                    return "use `else if`";
-                }
-                case "loop" -> {
-                    return "use `while true limit N { ... }` or `for i in 0..n { ... }`";
-                }
-                case "def", "func", "function" -> {
-                    return "functions are declared with `fn name(x: i32) -> i32 { ... }`";
-                }
-                default -> {
-                }
-            }
         }
         if (isBinaryOperator(t) && prev != null) {
             if (t == ALangLexer.AND || t == ALangLexer.OR) {

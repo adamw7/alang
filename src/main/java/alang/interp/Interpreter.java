@@ -141,7 +141,7 @@ public final class Interpreter {
 
     public void runTest(TestDecl t) {
         try {
-            Object[] slots = new Object[t.frameSlots()];
+            Object[] slots = new Object[t.locals.size()];
             callStack.push(new CallSite("test \"" + t.name + "\"", t.span));
             execBlock(t.body, slots);
             callStack.pop();
@@ -187,7 +187,7 @@ public final class Interpreter {
     // =================================================================== functions
 
     private Object invoke(FnDecl f, Object[] args, Span site) {
-        Object[] slots = new Object[f.frameSlots()];
+        Object[] slots = new Object[f.locals.size()];
         System.arraycopy(args, 0, slots, 0, args.length);
         callStack.push(new CallSite("fn " + f.name, site));
         for (Expr r : f.requires) {
@@ -219,7 +219,7 @@ public final class Interpreter {
     // =================================================================== statements
 
     private int execBlock(Block b, Object[] slots) {
-        for (Stmt s : b.stmts) {
+        for (Stmt s : b.stmts()) {
             int r = exec(s, slots);
             if (r != NORMAL) return r;
         }
@@ -228,49 +228,39 @@ public final class Interpreter {
 
     private int exec(Stmt s, Object[] slots) {
         step(s.span);
-        switch (s) {
+        return switch (s) {
             case Let l -> {
                 slots[l.var.slot] = Values.coerce(owned(l.init, slots), l.var.type);
-                return NORMAL;
+                yield NORMAL;
             }
             case Assign a -> {
                 assign(a, slots);
-                return NORMAL;
+                yield NORMAL;
             }
             case If i -> {
                 for (int k = 0; k < i.conds.size(); k++) {
-                    if ((Boolean) eval(i.conds.get(k), slots)) return execBlock(i.blocks.get(k), slots);
+                    if ((Boolean) eval(i.conds.get(k), slots)) yield execBlock(i.blocks.get(k), slots);
                 }
-                return i.elseBlock != null ? execBlock(i.elseBlock, slots) : NORMAL;
+                yield i.elseBlock != null ? execBlock(i.elseBlock, slots) : NORMAL;
             }
-            case While w -> {
-                return whileLoop(w, slots);
-            }
-            case For f -> {
-                return f.isRange() ? rangeLoop(f, slots) : eachLoop(f, slots);
-            }
-            case Match m -> {
-                return match(m, slots);
-            }
-            case Break b -> {
-                return BREAK;
-            }
-            case Continue c -> {
-                return CONTINUE;
-            }
+            case While w -> whileLoop(w, slots);
+            case For f -> f.isRange() ? rangeLoop(f, slots) : eachLoop(f, slots);
+            case Match m -> match(m, slots);
+            case Break b -> BREAK;
+            case Continue c -> CONTINUE;
             case Return r -> {
                 retVal = r.value == null ? null : owned(r.value, slots);
-                return RETURN;
+                yield RETURN;
             }
             case Assert a -> {
                 assertStmt(a, slots);
-                return NORMAL;
+                yield NORMAL;
             }
             case ExprStmt e -> {
                 eval(e.expr, slots);
-                return NORMAL;
+                yield NORMAL;
             }
-        }
+        };
     }
 
     private void assign(Assign a, Object[] slots) {
@@ -321,28 +311,11 @@ public final class Interpreter {
     private int eachLoop(For f, Object[] slots) {
         // The collection is evaluated once and iterated as a snapshot.
         Object coll = owned(f.from, slots);
-        Object[] items;
-        int n;
-        StrV str = null;
-        switch (coll) {
-            case ArrV a -> {
-                items = a.items;
-                n = items.length;
-            }
-            case ListV l -> {
-                items = l.items;
-                n = l.len;
-            }
-            case StrV s -> {
-                items = null;
-                str = s;
-                n = s.len;
-            }
-            default -> throw new IllegalStateException();
-        }
+        Object[] items = coll instanceof ArrV a ? a.items : coll instanceof ListV l ? l.items : null;
+        int n = length(coll);
         for (int i = 0; i < n; i++) {
             step(f.span);
-            slots[f.var.slot] = str != null ? (Object) (long) (str.b[i] & 0xFF) : items[i];
+            slots[f.var.slot] = items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF);
             int r = execBlock(f.body, slots);
             if (r == BREAK) break;
             if (r == RETURN) return r;
@@ -353,36 +326,30 @@ public final class Interpreter {
     private int match(Match m, Object[] slots) {
         Object v = eval(m.subject, slots);
         for (Arm arm : m.arms) {
-            if (matches(arm.pattern, v, slots)) return execBlock(arm.body, slots);
+            if (matches(arm.pattern(), v, slots)) return execBlock(arm.body(), slots);
         }
         throw new IllegalStateException("non-exhaustive match passed the checker");
     }
 
     private boolean matches(Pattern p, Object v, Object[] slots) {
-        switch (p) {
-            case WildPat w -> {
-                return true;
-            }
+        return switch (p) {
+            case WildPat w -> true;
             case VariantPat vp -> {
                 EnumV e = (EnumV) v;
-                if (e.tag != vp.variant.index) return false;
+                if (e.tag != vp.variant.index) yield false;
                 for (int i = 0; i < vp.vars.size(); i++) {
                     LocalVar lv = vp.vars.get(i);
                     if (lv != null) slots[lv.slot] = e.payload[i];
                 }
-                return true;
+                yield true;
             }
-            case IntPat ip -> {
-                return ((Long) v) == ip.value.longValue();
-            }
+            case IntPat ip -> ((Long) v) == ip.value.longValue();
             case StrPat sp -> {
                 StrV s = (StrV) v;
-                return s.len == sp.value.length && Arrays.equals(s.b, 0, s.len, sp.value, 0, sp.value.length);
+                yield s.len == sp.value.length && Arrays.equals(s.b, 0, s.len, sp.value, 0, sp.value.length);
             }
-            case BoolPat bp -> {
-                return (Boolean) v == bp.value;
-            }
-        }
+            case BoolPat bp -> (Boolean) v == bp.value;
+        };
     }
 
     private void assertStmt(Assert a, Object[] slots) {
@@ -466,13 +433,17 @@ public final class Interpreter {
         }
     }
 
-    private Ref elementRef(Object container, long i, PrimKind ik, Span at) {
-        int len = switch (container) {
+    private static int length(Object container) {
+        return switch (container) {
             case ArrV a -> a.items.length;
             case ListV l -> l.len;
             case StrV s -> s.len;
             default -> throw new IllegalStateException();
         };
+    }
+
+    private Ref elementRef(Object container, long i, PrimKind ik, Span at) {
+        int len = length(container);
         if ((ik == PrimKind.U64 ? Long.compareUnsigned(i, len) >= 0 : (i < 0 || i >= len))) {
             throw new Trap(Code.R0003, at, "index " + IntOps.toString(ik, i) + " is out of bounds for length " + len);
         }
@@ -485,72 +456,52 @@ public final class Interpreter {
 
     // =================================================================== expressions
 
-    private static boolean isPlace(Expr e) {
-        return e instanceof Name || e instanceof Index || (e instanceof FieldAccess f && f.variant == null);
-    }
 
     /** Evaluates an expression to a value that the caller may store (aggregates are copied). */
     private Object owned(Expr e, Object[] slots) {
         Object v = eval(e, slots);
-        return isPlace(e) && Type.isAggregate(e.type) ? Values.copy(v) : v;
+        return e.isPlace() && Type.isAggregate(e.type) ? Values.copy(v) : v;
     }
 
     private Object eval(Expr e, Object[] slots) {
-        switch (e) {
-            case IntLit i -> {
-                if (Type.isFloat(i.type)) return i.floatValue(Type.kind(i.type));
-                return i.value.longValue();
-            }
-            case FloatLit f -> {
-                return f.valueAs(Type.kind(f.type));
-            }
-            case StrLit s -> {
-                return new StrV(s.value.clone(), s.value.length);
-            }
-            case BoolLit b -> {
-                return b.value;
-            }
+        return switch (e) {
+            case IntLit i -> Type.isFloat(i.type) ? (Object) i.floatValue(Type.kind(i.type)) : (Object) i.value.longValue();
+            case FloatLit f -> f.valueAs(Type.kind(f.type));
+            case StrLit s -> new StrV(s.value.clone(), s.value.length);
+            case BoolLit b -> b.value;
             case Name n -> {
-                if (n.local != null) {
-                    Object v = slots[n.local.slot];
-                    return n.local.byRef ? ((Ref) v).get() : v;
-                }
-                return n.constant.value;
+                if (n.local == null) yield n.constant.value;
+                Object v = slots[n.local.slot];
+                yield n.local.byRef ? ((Ref) v).get() : v;
             }
-            case FieldAccess f -> {
-                if (f.variant != null) return new EnumV(f.variant.index, new Object[0]);
-                return ((StructV) eval(f.target, slots)).fields[f.fieldIndex];
-            }
+            case FieldAccess f -> f.variant != null ? new EnumV(f.variant.index, new Object[0])
+                : ((StructV) eval(f.target, slots)).fields[f.fieldIndex];
             case Index ix -> {
                 Object container = eval(ix.target, slots);
                 long i = (Long) eval(ix.index, slots);
-                return elementRef(container, i, Type.kind(ix.index.type), ix.span).get();
+                yield elementRef(container, i, Type.kind(ix.index.type), ix.span).get();
             }
-            case Call c -> {
-                return c.builtin != null ? builtin(c, slots) : callUser(c, slots);
-            }
+            case Call c -> c.builtin != null ? builtin(c, slots) : callUser(c, slots);
             case VariantCall v -> {
                 Object[] payload = new Object[v.args.size()];
                 for (int i = 0; i < payload.length; i++) {
-                    payload[i] = Values.coerce(owned(v.args.get(i).expr, slots), v.variant.payload.get(i));
+                    payload[i] = Values.coerce(owned(v.args.get(i).expr(), slots), v.variant.payload.get(i));
                 }
-                return new EnumV(v.variant.index, payload);
+                yield new EnumV(v.variant.index, payload);
             }
             case StructLit s -> {
                 Object[] given = new Object[s.fields.size()];
-                for (int i = 0; i < given.length; i++) given[i] = owned(s.fields.get(i).value, slots);
+                for (int i = 0; i < given.length; i++) given[i] = owned(s.fields.get(i).value(), slots);
                 Object[] fields = new Object[s.decl.fields.size()];
                 for (int i = 0; i < fields.length; i++) {
                     fields[i] = Values.coerce(given[s.order[i]], s.decl.fields.get(i).type);
                 }
-                return new StructV(fields);
+                yield new StructV(fields);
             }
-            case Convert c -> {
-                return convert(c, eval(c.arg, slots));
-            }
+            case Convert c -> convert(c, eval(c.arg, slots));
             case Unary u -> {
                 Object v = eval(u.operand, slots);
-                return switch (u.op) {
+                yield switch (u.op) {
                     case NOT -> !(Boolean) v;
                     // Explicit boxing: a plain ?: would promote the long branch to double.
                     case NEG -> Type.isFloat(u.type) ? (Object) round(-(Double) v, u.type)
@@ -558,17 +509,12 @@ public final class Interpreter {
                     case BNOT -> IntOps.bnot(Type.kind(u.type), (Long) v);
                 };
             }
-            case Binary b -> {
-                return binary(b, slots);
-            }
+            case Binary b -> binary(b, slots);
             case ArrayLit a -> {
                 Type elem = Type.elementOf(a.type);
                 Object[] vals = new Object[a.elems.size()];
                 for (int i = 0; i < vals.length; i++) vals[i] = Values.coerce(owned(a.elems.get(i), slots), elem);
-                if (a.type instanceof Type.ListT l) {
-                    return new ListV(Arrays.copyOf(vals, l.cap()), vals.length);
-                }
-                return new ArrV(vals);
+                yield a.type instanceof Type.ListT l ? new ListV(Arrays.copyOf(vals, l.cap()), vals.length) : new ArrV(vals);
             }
             case Repeat r -> {
                 Type elem = Type.elementOf(r.type);
@@ -576,10 +522,9 @@ public final class Interpreter {
                 int cap = r.type instanceof Type.ListT l ? l.cap() : r.n;
                 Object[] items = new Object[cap];
                 for (int i = 0; i < r.n; i++) items[i] = i == 0 ? v : Values.copy(v);
-                if (r.type instanceof Type.ListT) return new ListV(items, r.n);
-                return new ArrV(items);
+                yield r.type instanceof Type.ListT ? new ListV(items, r.n) : new ArrV(items);
             }
-        }
+        };
     }
 
     private static double round(double d, Type t) {
@@ -591,14 +536,8 @@ public final class Interpreter {
         Object[] args = new Object[f.params.size()];
         for (int i = 0; i < args.length; i++) {
             LocalVar p = f.paramVars.get(i);
-            Expr a = c.args.get(i).expr;
-            if (p.byRef) {
-                args[i] = ref(a, slots);
-            } else {
-                Object v = eval(a, slots);
-                Object co = Values.coerce(v, p.type);
-                args[i] = co;
-            }
+            Expr a = c.args.get(i).expr();
+            args[i] = p.byRef ? ref(a, slots) : Values.coerce(eval(a, slots), p.type);
         }
         return invoke(f, args, c.span);
     }
@@ -614,11 +553,7 @@ public final class Interpreter {
 
     private boolean compare(Binary b, Object l, Object r) {
         Type t = b.left.type;
-        if (b.op.isEquality()) {
-            boolean eq = Values.equal(l, r, t);
-            return b.op == BinOp.EQ ? eq : !eq;
-        }
-        int c;
+        if (b.op.isEquality()) return Values.equal(l, r, t) == (b.op == BinOp.EQ);
         if (Type.isFloat(t)) {
             double x = (Double) l;
             double y = (Double) r;
@@ -629,7 +564,7 @@ public final class Interpreter {
                 default -> x >= y;
             };
         }
-        c = IntOps.compare(Type.kind(t), (Long) l, (Long) r);
+        int c = IntOps.compare(Type.kind(t), (Long) l, (Long) r);
         return switch (b.op) {
             case LT -> c < 0;
             case LE -> c <= 0;
@@ -672,10 +607,7 @@ public final class Interpreter {
         PrimKind from = Type.kind(c.arg.type);
         PrimKind to = c.target;
         if (from == to) return v;
-        if (from == PrimKind.BOOL) {
-            long n = (Boolean) v ? 1 : 0;
-            return n;
-        }
+        if (from == PrimKind.BOOL) return (Boolean) v ? 1L : 0L;
         if (from.isFloat) {
             double d = (Double) v;
             if (to == PrimKind.F64) return d;
@@ -696,28 +628,23 @@ public final class Interpreter {
             case PRINT -> {
                 // Every argument is evaluated before anything is written, so a trap prints nothing.
                 Object[] values = new Object[args.size()];
-                for (int i = 0; i < values.length; i++) values[i] = eval(args.get(i).expr, slots);
-                for (int i = 0; i < values.length; i++) Format.format(printSink, values[i], args.get(i).expr.type, false);
+                for (int i = 0; i < values.length; i++) values[i] = eval(args.get(i).expr(), slots);
+                for (int i = 0; i < values.length; i++) Format.format(printSink, values[i], args.get(i).expr().type, false);
                 printSink.write('\n');
                 printSink.drain();
                 return null;
             }
             case LEN -> {
-                return switch (eval(args.get(0).expr, slots)) {
-                    case ArrV a -> (long) a.items.length;
-                    case ListV l -> (long) l.len;
-                    case StrV s -> (long) s.len;
-                    default -> throw new IllegalStateException();
-                };
+                return (long) length(eval(args.get(0).expr(), slots));
             }
             case CAP -> {
-                Type t = args.get(0).expr.type;
+                Type t = args.get(0).expr().type;
                 return (long) (t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap());
             }
             case PUSH -> {
-                Object container = ref(args.get(0).expr, slots).get();
-                Type elem = Type.elementOf(args.get(0).expr.type);
-                Object v = Values.coerce(owned(args.get(1).expr, slots), elem);
+                Object container = ref(args.get(0).expr(), slots).get();
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                Object v = Values.coerce(owned(args.get(1).expr(), slots), elem);
                 if (container instanceof ListV l) {
                     if (l.len == l.items.length) {
                         throw new Trap(Code.R0004, c.span, "push to a full list (capacity " + l.items.length + ")");
@@ -733,7 +660,7 @@ public final class Interpreter {
                 return null;
             }
             case POP -> {
-                Object container = ref(args.get(0).expr, slots).get();
+                Object container = ref(args.get(0).expr(), slots).get();
                 if (container instanceof ListV l) {
                     if (l.len == 0) throw new Trap(Code.R0012, c.span, "pop from an empty list");
                     Object v = l.items[--l.len];
@@ -745,7 +672,7 @@ public final class Interpreter {
                 return (long) (s.b[--s.len] & 0xFF);
             }
             case CLEAR -> {
-                Object container = ref(args.get(0).expr, slots).get();
+                Object container = ref(args.get(0).expr(), slots).get();
                 if (container instanceof ListV l) {
                     Arrays.fill(l.items, null);
                     l.len = 0;
@@ -755,14 +682,14 @@ public final class Interpreter {
                 return null;
             }
             case APPEND -> {
-                Ref target = ref(args.get(0).expr, slots);
+                Ref target = ref(args.get(0).expr(), slots);
                 Object[] values = new Object[args.size()];
-                for (int i = 1; i < values.length; i++) values[i] = eval(args.get(i).expr, slots);
+                for (int i = 1; i < values.length; i++) values[i] = eval(args.get(i).expr(), slots);
                 StrV s = (StrV) target.get();
                 for (int i = 1; i < values.length; i++) {
                     // The text goes straight into the spare capacity; only its length is kept beyond that.
                     StrSink part = new StrSink(s.b, s.len);
-                    Format.format(part, values[i], args.get(i).expr.type, false);
+                    Format.format(part, values[i], args.get(i).expr().type, false);
                     if (part.count > s.b.length - s.len) {
                         throw new Trap(Code.R0004, c.span, "append exceeds str capacity " + s.b.length
                             + " (length " + s.len + ", appending " + part.count + " bytes)");
@@ -772,26 +699,22 @@ public final class Interpreter {
                 return null;
             }
             case ABS -> {
-                Object v = eval(args.get(0).expr, slots);
+                Object v = eval(args.get(0).expr(), slots);
                 Type t = c.type;
                 if (Type.isFloat(t)) return Math.abs((Double) v);
                 return IntOps.abs(Type.kind(t), (Long) v, c.span);
             }
             case MIN, MAX -> {
-                Object a = eval(args.get(0).expr, slots);
-                Object b = eval(args.get(1).expr, slots);
-                Type t = c.type;
-                boolean bSmaller;
-                if (Type.isFloat(t)) bSmaller = (Double) b < (Double) a;
-                else bSmaller = IntOps.compare(Type.kind(t), (Long) b, (Long) a) < 0;
-                boolean bLarger;
-                if (Type.isFloat(t)) bLarger = (Double) b > (Double) a;
-                else bLarger = IntOps.compare(Type.kind(t), (Long) b, (Long) a) > 0;
-                if (c.builtin == Builtin.MIN) return bSmaller ? b : a;
-                return bLarger ? b : a;
+                Object a = eval(args.get(0).expr(), slots);
+                Object b = eval(args.get(1).expr(), slots);
+                // b < a and b > a, so that a NaN operand gives a, as in the C backend.
+                boolean min = c.builtin == Builtin.MIN;
+                boolean takeB = Type.isFloat(c.type) ? (min ? (Double) b < (Double) a : (Double) b > (Double) a)
+                    : Integer.signum(IntOps.compare(Type.kind(c.type), (Long) b, (Long) a)) == (min ? -1 : 1);
+                return takeB ? b : a;
             }
             case SQRT, FLOOR, CEIL -> {
-                double d = (Double) eval(args.get(0).expr, slots);
+                double d = (Double) eval(args.get(0).expr(), slots);
                 double r = switch (c.builtin) {
                     case SQRT -> Math.sqrt(d);
                     case FLOOR -> Math.floor(d);
@@ -800,7 +723,7 @@ public final class Interpreter {
                 return round(r, c.type);
             }
             case PANIC -> {
-                StrV s = (StrV) eval(args.get(0).expr, slots);
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
                 ByteArrayOutputStream msg = new ByteArrayOutputStream();
                 msg.writeBytes(utf8("panic: "));
                 msg.write(s.b, 0, s.len);

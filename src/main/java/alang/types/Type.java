@@ -83,19 +83,7 @@ public sealed interface Type {
     Type ERROR = new Error();
 
     static Type prim(PrimKind k) {
-        return switch (k) {
-            case BOOL -> BOOL;
-            case I8 -> I8;
-            case I16 -> I16;
-            case I32 -> I32;
-            case I64 -> I64;
-            case U8 -> U8;
-            case U16 -> U16;
-            case U32 -> U32;
-            case U64 -> U64;
-            case F32 -> F32;
-            case F64 -> F64;
-        };
+        return new Prim(k);
     }
 
     static boolean isInt(Type t) {
