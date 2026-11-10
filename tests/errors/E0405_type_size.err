@@ -1,0 +1,14 @@
+error[E0405]: string capacity needs up to 8796101410816 bytes to compute, counting the constants; the budget is 8388608 bytes
+ --> tests/errors/E0405_type_size.al:6:16
+  |
+6 |     let s: str[len([[0; 1048576]; 1048576])] = "";
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = hint: compute it from smaller values, or use an integer literal or a `const`; --max-stack sets the budget
+
+error[E0405]: repeat count needs up to 8796101410816 bytes to compute, counting the constants; the budget is 8388608 bytes
+ --> tests/errors/E0405_type_size.al:7:28
+  |
+7 |     let xs: [i64; 2] = [0; len([[0; 1048576]; 1048576])];
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = hint: compute it from smaller values, or use an integer literal or a `const`; --max-stack sets the budget
+

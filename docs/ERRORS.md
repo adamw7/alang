@@ -376,7 +376,7 @@ let x: i64 = a + 1 + ... + 1;       // and 100 more: ok
 
 ## E0405
 
-**constant too large**: Constants are evaluated while the program is checked and stay in memory for the whole run. Together they may hold at most the memory budget: 8 MiB (8388608 bytes) unless --max-stack sets another, 0 for none. Each constant counts its own size, the values its initializer builds on the way, and the constants checked before it. Make the constant smaller, or build the data at run time in a function.
+**constant too large**: Constants are evaluated while the program is checked and stay in memory for the whole run. Together they may hold at most the memory budget: 8 MiB (8388608 bytes) unless --max-stack sets another, 0 for none. Each constant counts its own size, the values its initializer builds on the way, and the constants checked before it. The capacities, array lengths and repeat counts in types and `[v; n]` are computed while checking too, and what they build counts the same way. Make the constant smaller, or build the data at run time in a function.
 
 ```
 const TABLE: [[i64; 1024]; 1024] = [[0; 1024]; 1024];  // 8 MiB, plus 8 MiB to build it: error

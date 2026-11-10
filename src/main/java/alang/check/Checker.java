@@ -309,6 +309,15 @@ public final class Checker {
                 "use an integer literal or a `const`, e.g. const N: i64 = 16;");
             return -1;
         }
+        // Evaluated now, in this process, like a constant: what the expression builds on the way must fit the
+        // same budget, or str[len([[0; 1048576]; 1048576])] would exhaust the memory of the checker itself.
+        long need = Layout.add(staticBytes, Temporaries.expr(e));
+        if (maxStack > 0 && need > maxStack) {
+            diags.error(Code.E0405, e.span, what + " needs up to " + need + " bytes to compute, counting the constants; "
+                    + "the budget is " + maxStack + " bytes",
+                "compute it from smaller values, or use an integer literal or a `const`; --max-stack sets the budget");
+            return -1;
+        }
         Object v = evalConst(e);
         if (v == null) return -1;
         long n = (Long) v;
