@@ -253,7 +253,8 @@ order:
   parameters by address, so they are not copied either.
 - Capacities are part of the type: `push` past capacity traps (R0004); nothing reallocates.
 - Nesting is limited to 128 levels (E0404), counted on the source before anything else runs: each
-  bracket and each chained operator counts one level, and a function, constant or type adds the levels
+  bracket and each chained operator (`.field` and `[index]` included) counts one level, and a function,
+  constant or type adds the levels
   of every function, constant and type it uses. The toolchain recurses over the program, so a fixed
   limit, not the machine's stack size, decides whether a program can be checked, run or compiled.
 

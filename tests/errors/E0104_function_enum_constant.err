@@ -1,0 +1,14 @@
+error[E0104]: function `Color` has the same name as an enum
+  --> tests/errors/E0104_function_enum_constant.al:10:4
+   |
+10 | fn Color() -> i64 {
+   |    ^^^^^
+  = hint: names are unique across functions, types and constants; rename one of them
+
+error[E0104]: function `area` has the same name as a constant
+  --> tests/errors/E0104_function_enum_constant.al:14:4
+   |
+14 | fn area() -> i64 {
+   |    ^^^^
+  = hint: names are unique across functions, types and constants; rename one of them
+

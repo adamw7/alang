@@ -962,10 +962,13 @@ public final class CGen {
             case Unary u -> {
                 String v = lower(u.operand);
                 PrimKind k = Type.kind(u.type);
+                // Each result goes into a temporary, so a chain such as `not not ... not b` stays flat in C:
+                // nested as an expression it took two parentheses per `not`, and a contract of 128 of them
+                // went past the 256 levels that clang accepts.
                 yield switch (u.op) {
-                    case NOT -> "(!(" + v + "))";
-                    case NEG -> k.isFloat ? "((" + cPrim(k) + ")-(" + v + "))" : tmp(u.type, "al_neg_" + k.name + "(" + v + ", " + loc(u.span) + ")");
-                    case BNOT -> "al_bnot_" + k.name + "(" + v + ")";
+                    case NOT -> tmp(u.type, "!(" + v + ")");
+                    case NEG -> tmp(u.type, k.isFloat ? "(" + cPrim(k) + ")-(" + v + ")" : "al_neg_" + k.name + "(" + v + ", " + loc(u.span) + ")");
+                    case BNOT -> tmp(u.type, "al_bnot_" + k.name + "(" + v + ")");
                 };
             }
             case Binary b -> binary(b);
@@ -1105,18 +1108,20 @@ public final class CGen {
         String v = lower(c.arg);
         if (from == to) return v;
         String at = loc(c.span);
-        if (from == PrimKind.BOOL) return "((" + cPrim(to) + ")((" + v + ") ? 1 : 0))";
+        // Every conversion goes into a temporary, so nested conversions stay flat in C (see Unary in lower).
+        Type t = Type.prim(to);
+        if (from == PrimKind.BOOL) return tmp(t, "(" + cPrim(to) + ")((" + v + ") ? 1 : 0)");
         if (from.isFloat) {
-            if (to == PrimKind.F64) return "((double)(" + v + "))";
-            if (to == PrimKind.F32) return "((float)(" + v + "))";
-            return tmp(Type.prim(to), "al_from_f_" + to.name + "((double)(" + v + "), " + at + ")");
+            if (to == PrimKind.F64) return tmp(t, "(double)(" + v + ")");
+            if (to == PrimKind.F32) return tmp(t, "(float)(" + v + ")");
+            return tmp(t, "al_from_f_" + to.name + "((double)(" + v + "), " + at + ")");
         }
         if (to.isFloat) {
-            if (from == PrimKind.U64) return (to == PrimKind.F64 ? "al_u64_to_f64(" : "al_u64_to_f32(") + v + ")";
-            return "((" + cPrim(to) + ")(int64_t)(" + v + "))";
+            if (from == PrimKind.U64) return tmp(t, (to == PrimKind.F64 ? "al_u64_to_f64(" : "al_u64_to_f32(") + v + ")");
+            return tmp(t, "(" + cPrim(to) + ")(int64_t)(" + v + ")");
         }
         String carrier = from.signed ? "al_from_s_" + to.name + "((int64_t)(" : "al_from_u_" + to.name + "((uint64_t)(";
-        return tmp(Type.prim(to), carrier + v + "), " + at + ")");
+        return tmp(t, carrier + v + "), " + at + ")");
     }
 
     private String builtin(Call c) {

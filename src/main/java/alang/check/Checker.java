@@ -146,10 +146,18 @@ public final class Checker {
                 diags.error(Code.E0104, c.span, "constant `" + c.name + "` has the same name as a type");
             }
         }
+        // Items share one namespace (SPEC §3), even where the syntax would tell them apart: Color() and Color.Red.
         for (FnDecl f : fns.values()) {
             if (structs.containsKey(f.name)) {
                 diags.error(Code.E0104, f.nameSpan, "function `" + f.name + "` has the same name as a struct",
                     "struct literals and calls share syntax; rename one of them");
+            } else if (enums.containsKey(f.name)) {
+                diags.error(Code.E0104, f.nameSpan, "function `" + f.name + "` has the same name as an enum",
+                    "names are unique across functions, types and constants; rename one of them");
+            }
+            if (consts.containsKey(f.name)) {
+                diags.error(Code.E0104, f.nameSpan, "function `" + f.name + "` has the same name as a constant",
+                    "names are unique across functions, types and constants; rename one of them");
             }
         }
     }
@@ -307,6 +315,15 @@ public final class Checker {
         if (!isConst(e)) {
             diags.error(Code.E0209, e.span, what + " must be a compile-time constant",
                 "use an integer literal or a `const`, e.g. const N: i64 = 16;");
+            return -1;
+        }
+        // Evaluated now, in this process, like a constant: what the expression builds on the way must fit the
+        // same budget, or str[len([[0; 1048576]; 1048576])] would exhaust the memory of the checker itself.
+        long need = Layout.add(staticBytes, Temporaries.expr(e));
+        if (maxStack > 0 && need > maxStack) {
+            diags.error(Code.E0405, e.span, what + " needs up to " + need + " bytes to compute, counting the constants; "
+                    + "the budget is " + maxStack + " bytes",
+                "compute it from smaller values, or use an integer literal or a `const`; --max-stack sets the budget");
             return -1;
         }
         Object v = evalConst(e);
@@ -1519,6 +1536,11 @@ public final class Checker {
         };
     }
 
+    /** An array literal, [a, b] or [v; n], which can also build a list of the type its context expects. */
+    private static boolean isArrayLiteral(Expr e) {
+        return e instanceof ArrayLit || e instanceof Repeat;
+    }
+
     /** True if an untyped expression contains a float literal, so that it must be a float. */
     private static boolean hasFloatLiteral(Expr e) {
         return switch (e) {
@@ -1532,13 +1554,15 @@ public final class Checker {
     /**
      * Checks two operands that should share a type, typing literals from the other side. When both
      * sides are literals and nothing else gives the type, a float literal decides it, so that
-     * {@code 2 + 1.5} types like {@code 1.5 + 2}.
+     * {@code 2 + 1.5} types like {@code 1.5 + 2}. An array literal takes its type from the other side
+     * too, so that {@code [1, 2] == xs} types like {@code xs == [1, 2]} when {@code xs} is a list.
      */
     private Type[] sameTypeOperands(Expr l, Expr r, Type hint) {
         Type lt;
         Type rt;
         boolean rightFirst = isUntyped(l)
-            && (!isUntyped(r) || hint == null && !hasFloatLiteral(l) && hasFloatLiteral(r));
+            && (!isUntyped(r) || hint == null && !hasFloatLiteral(l) && hasFloatLiteral(r))
+            || isArrayLiteral(l) && !isArrayLiteral(r) && !isUntyped(r);
         if (rightFirst) {
             rt = expr(r, hint);
             lt = expr(l, Type.isError(rt) ? hint : rt);
