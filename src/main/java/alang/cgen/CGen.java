@@ -695,7 +695,7 @@ public final class CGen {
                 emit("(void)" + cName(l.var) + ";");
             }
             case Assign a -> assign(a);
-            case If i -> ifChain(i, 0);
+            case If i -> ifStmt(i);
             case While w -> whileLoop(w);
             case For f -> {
                 if (f.isRange()) rangeLoop(f);
@@ -738,23 +738,40 @@ public final class CGen {
         emit(target + " = " + arith(a.op, Type.kind(t), Type.kind(a.value.type), target, vt, a.span) + ";");
     }
 
-    private void ifChain(If i, int k) {
-        open("{");
-        String c = lower(i.conds.get(k));
-        emit("if (" + c + ") {");
-        nested(i.blocks.get(k));
-        if (k + 1 < i.conds.size()) {
-            open("} else {");
-            ifChain(i, k + 1);
+    /**
+     * Each condition is lowered right before its test, since lowering emits the statements that compute
+     * it. The branches of an else-if chain follow one another, and a branch that is taken jumps past the
+     * rest: nesting each branch in the `else` of the one before made this method recurse once per branch,
+     * which overflowed the stack for a long chain, and made the C one level deeper per branch, past the
+     * 256 brackets clang accepts.
+     */
+    private void ifStmt(If i) {
+        int n = i.conds.size();
+        // A single condition takes a plain `else`; only a chain needs somewhere to jump to.
+        String end = n > 1 ? "al_endif" + ++tmpCount : null;
+        for (int k = 0; k < n; k++) {
+            boolean last = k == n - 1;
+            open("{");
+            String c = lower(i.conds.get(k));
+            open("if (" + c + ") {");
+            block(i.blocks.get(k));
+            if (end != null && (!last || i.elseBlock != null)) emit("goto " + end + ";");
+            if (end == null && i.elseBlock != null) {
+                close("} else {");
+                indent++;
+                block(i.elseBlock);
+            }
             close("}");
-        } else if (i.elseBlock != null) {
-            emit("} else {");
-            nested(i.elseBlock);
-            emit("}");
-        } else {
-            emit("}");
+            close("}");
         }
-        close("}");
+        if (end != null) {
+            if (i.elseBlock != null) {
+                emit("{");
+                nested(i.elseBlock);
+                emit("}");
+            }
+            emit(end + ":;");
+        }
     }
 
     private void whileLoop(While w) {
@@ -777,9 +794,9 @@ public final class CGen {
         emit("al_trap_end(&al_e, " + w.span.line() + ", " + w.span.col() + ");");
         close("}");
         emit(count + "++;");
-        emit("{");
-        nested(w.body);
-        emit("}");
+        // The body goes straight into the loop: a block of its own made each while loop three brackets
+        // deep in C, so loops nested within the nesting limit went past the 256 that clang accepts.
+        block(w.body);
         close("}");
         close("}");
     }
@@ -823,7 +840,9 @@ public final class CGen {
         // where it is: in its variable, or in the temporary its expression already built. Copying it would
         // take stack the checker does not count.
         String s = Type.isAggregate(t) ? lower(m.subject) : tmp(t, lower(m.subject));
-        boolean first = true;
+        // As in an if statement, the arms follow one another and the one that matches jumps past the rest:
+        // compilers parse an else-if chain recursively, and clang crashed on a match with 10 000 arms.
+        String end = null;
         for (int k = 0; k < m.arms.size(); k++) {
             Arm arm = m.arms.get(k);
             boolean last = k == m.arms.size() - 1;
@@ -838,13 +857,13 @@ public final class CGen {
                 }
             };
             // Matches are exhaustive, so the final arm needs no test.
-            if (last || cond == null) {
-                emit(first ? "{" : "} else {");
+            boolean tested = !last && cond != null;
+            if (tested) {
+                if (end == null) end = "al_endmatch" + ++tmpCount;
+                open("if (" + cond + ") {");
             } else {
-                emit((first ? "if (" : "} else if (") + cond + ") {");
+                open("{");
             }
-            first = false;
-            indent++;
             if (arm.pattern() instanceof VariantPat v) {
                 for (int i = 0; i < v.vars.size(); i++) {
                     LocalVar lv = v.vars.get(i);
@@ -855,10 +874,11 @@ public final class CGen {
                 }
             }
             block(arm.body());
-            indent--;
-            if (cond == null) break;
+            if (tested) emit("goto " + end + ";");
+            close("}");
+            if (!tested) break;
         }
-        emit("}");
+        if (end != null) emit(end + ":;");
         close("}");
     }
 
