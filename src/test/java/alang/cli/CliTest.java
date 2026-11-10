@@ -778,6 +778,20 @@ class CliTest {
     }
 
     @Test
+    void testOutputKeepsCarriageReturnsInTrapMessages() throws IOException {
+        // The trap is indented line by line, and only '\n' ends a line: String.indent also broke lines at the
+        // '\r' of a str value, so `alang test` showed a message that `alang run` does not.
+        Path p = write("cr.al", """
+            test "cr" {
+                panic("a\\rb");
+            }
+            """);
+        Result r = run("test", p.toString());
+        assertEquals(1, r.code());
+        assertTrue(r.err().contains("  trap[R0010]: panic: a\rb\n"), r.err());
+    }
+
+    @Test
     void truncatedOutputNeverEndsInHalfACharacter() {
         // "a", "é" and "€" are 1, 2 and 3 bytes long; a cap that cuts a character drops all of it.
         byte[] text = "a\u00e9\u20ac".getBytes(StandardCharsets.UTF_8);

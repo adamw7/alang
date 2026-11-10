@@ -473,10 +473,7 @@ public final class Main {
                         }
                         if (captured.truncated()) line(err, "    " + truncationNote(captured));
                     }
-                    // Indented line by line; ISO-8859-1 maps each byte to one char and back, so the bytes of
-                    // the message survive even where they are not UTF-8.
-                    err.writeBytes(new String(renderTrapBytes(src, trap), StandardCharsets.ISO_8859_1).indent(2)
-                        .getBytes(StandardCharsets.ISO_8859_1));
+                    err.writeBytes(indented(renderTrapBytes(src, trap)));
                 }
             }
         }
@@ -491,6 +488,25 @@ public final class Main {
             line(out, (passed + failed) + " test(s): " + passed + " passed, " + failed + " failed");
         }
         return failed == 0 ? 0 : 1;
+    }
+
+    /**
+     * Each line of {@code text} indented by two spaces, byte for byte, so the bytes of str values in a trap
+     * message survive even where they are not UTF-8. Only '\n' ends a line: String.indent also broke lines
+     * at a '\r', so panic("a\rb") showed a line break that `alang run` does not.
+     */
+    static byte[] indented(byte[] text) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(text.length + 64);
+        boolean lineStart = true;
+        for (byte b : text) {
+            if (lineStart) {
+                out.write(' ');
+                out.write(' ');
+            }
+            out.write(b);
+            lineStart = b == '\n';
+        }
+        return out.toByteArray();
     }
 
     // =================================================================== tools
