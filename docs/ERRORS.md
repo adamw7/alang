@@ -69,9 +69,7 @@ Codes are never reused for a different meaning.
 
 ## E0001
 
-**syntax error**
-
-The source does not match the ALang grammar (grammar/ALang.g4). The hint usually names the fix.
+**syntax error**: The source does not match the ALang grammar (grammar/ALang.g4). The hint usually names the fix.
 
 ```
 let x: i32 = 1 + 2 * 3;   // ok
@@ -80,9 +78,7 @@ if (a && b) { }          // error: use `and`, parentheses are optional
 
 ## E0101
 
-**unknown name**
-
-A variable or constant is used but was never declared in scope.
+**unknown name**: A variable or constant is used but was never declared in scope.
 
 ```
 let y: i32 = x + 1;  // error if no `x` is in scope
@@ -90,9 +86,7 @@ let y: i32 = x + 1;  // error if no `x` is in scope
 
 ## E0102
 
-**unknown function**
-
-A call names a function, struct or builtin that does not exist.
+**unknown function**: A call names a function, struct or builtin that does not exist.
 
 ```
 let n: i64 = length(xs);  // error: the builtin is `len`
@@ -100,9 +94,7 @@ let n: i64 = length(xs);  // error: the builtin is `len`
 
 ## E0103
 
-**unknown type**
-
-A type name is not a primitive type and no struct or enum with that name exists.
+**unknown type**: A type name is not a primitive type and no struct or enum with that name exists.
 
 ```
 let p: Pointt = Point(x: 1, y: 2);  // typo
@@ -110,9 +102,7 @@ let p: Pointt = Point(x: 1, y: 2);  // typo
 
 ## E0104
 
-**duplicate declaration**
-
-Two top-level items (functions, structs, enums, constants) share a name, or a struct/enum declares the same field/variant twice.
+**duplicate declaration**: Two top-level items (functions, structs, enums, constants) share a name, or a struct/enum declares the same field/variant twice.
 
 ```
 fn f() { }
@@ -121,9 +111,7 @@ fn f() { }  // error
 
 ## E0105
 
-**name already in use**
-
-ALang has no shadowing: a local name cannot reuse the name of another local in the same function, a parameter, a constant or a type.
+**name already in use**: ALang has no shadowing: a local name cannot reuse the name of another local in the same function, a parameter, a constant or a type.
 
 ```
 let x: i32 = 1;
@@ -132,9 +120,7 @@ if c { let x: i32 = 2; }  // error: pick a new name
 
 ## E0106
 
-**unknown field**
-
-The struct type has no field with this name, or a struct literal names a field that does not exist.
+**unknown field**: The struct type has no field with this name, or a struct literal names a field that does not exist.
 
 ```
 struct P { x: i32 }
@@ -143,9 +129,7 @@ let v: i32 = p.y;  // error
 
 ## E0107
 
-**unknown enum variant**
-
-The enum has no variant with this name.
+**unknown enum variant**: The enum has no variant with this name.
 
 ```
 enum Color { Red, Green }
@@ -154,9 +138,7 @@ let c: Color = Color.Blue;  // error
 
 ## E0108
 
-**reserved name**
-
-The name is reserved for a builtin function and cannot be used for a declaration.
+**reserved name**: The name is reserved for a builtin function and cannot be used for a declaration.
 
 ```
 fn print() { }  // error: `print` is a builtin
@@ -164,9 +146,7 @@ fn print() { }  // error: `print` is a builtin
 
 ## E0201
 
-**type mismatch**
-
-A value of one type is used where another type is required. ALang never converts implicitly; convert explicitly with a conversion call such as i64(x) or f64(n).
+**type mismatch**: A value of one type is used where another type is required. ALang never converts implicitly; convert explicitly with a conversion call such as i64(x) or f64(n).
 
 ```
 let a: i32 = 1;
@@ -176,9 +156,7 @@ let c: i64 = i64(a);  // ok
 
 ## E0202
 
-**literal out of range**
-
-An integer literal does not fit the type it is used as.
+**literal out of range**: An integer literal does not fit the type it is used as.
 
 ```
 let b: u8 = 300;  // error: u8 holds 0..255
@@ -186,9 +164,7 @@ let b: u8 = 300;  // error: u8 holds 0..255
 
 ## E0203
 
-**invalid operand**
-
-The operator is not defined for the operand type(s), e.g. `+` on bool, `<` on structs, `%` on floats, or `-` on unsigned integers.
+**invalid operand**: The operator is not defined for the operand type(s), e.g. `+` on bool, `<` on structs, `%` on floats, or `-` on unsigned integers.
 
 ```
 let s: bool = true + false;  // error
@@ -196,9 +172,7 @@ let s: bool = true + false;  // error
 
 ## E0204
 
-**wrong number of arguments**
-
-A call passes more or fewer arguments than the function, variant or builtin accepts.
+**wrong number of arguments**: A call passes more or fewer arguments than the function, variant or builtin accepts.
 
 ```
 fn f(a: i32) { }
@@ -207,9 +181,7 @@ f(1, 2);  // error
 
 ## E0205
 
-**cannot assign to immutable value**
-
-Only `var` locals and `mut` parameters can be modified. `let` locals, plain parameters and constants are read-only.
+**cannot assign to immutable value**: Only `var` locals and `mut` parameters can be modified. `let` locals, plain parameters and constants are read-only.
 
 ```
 let x: i32 = 1;
@@ -218,9 +190,7 @@ x = 2;  // error: declare with `var x: i32 = 1;`
 
 ## E0206
 
-**invalid assignment target**
-
-The left side of an assignment must be a variable, field or element of a variable.
+**invalid assignment target**: The left side of an assignment must be a variable, field or element of a variable.
 
 ```
 Color.Red = Color.Green;  // error
@@ -228,9 +198,7 @@ Color.Red = Color.Green;  // error
 
 ## E0207
 
-**mut argument mismatch**
-
-A `mut` parameter must receive `mut place` at the call site, with exactly the parameter's type; a plain parameter must not be marked `mut`.
+**mut argument mismatch**: A `mut` parameter must receive `mut place` at the call site, with exactly the parameter's type; a plain parameter must not be marked `mut`.
 
 ```
 fn inc(x: mut i32) { x += 1; }
@@ -240,9 +208,7 @@ inc(n);      // error: write `mut n`
 
 ## E0208
 
-**aliased mut argument**
-
-A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access.
+**aliased mut argument**: A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access.
 
 ```
 append(mut s, s);  // error: copy first: let t: str[16] = s; append(mut s, t);
@@ -250,9 +216,7 @@ append(mut s, s);  // error: copy first: let t: str[16] = s; append(mut s, t);
 
 ## E0209
 
-**not a constant expression**
-
-Constants, array sizes, capacities and repeat counts must be computable at compile time: literals, other constants, operators, conversions and literals of structs, enums and arrays. Function calls are not allowed.
+**not a constant expression**: Constants, array sizes, capacities and repeat counts must be computable at compile time: literals, other constants, operators, conversions and literals of structs, enums and arrays. Function calls are not allowed.
 
 ```
 const N: i32 = f();  // error
@@ -260,9 +224,7 @@ const N: i32 = f();  // error
 
 ## E0210
 
-**invalid size**
-
-Array lengths and str/list capacities must be integer constants between 1 and 1048576.
+**invalid size**: Array lengths and str/list capacities must be integer constants between 1 and 1048576.
 
 ```
 let a: [i32; 0] = [];  // error
@@ -270,9 +232,7 @@ let a: [i32; 0] = [];  // error
 
 ## E0211
 
-**condition must be bool**
-
-Conditions of `if`, `while`, `assert`, `requires`, `ensures` and operands of and/or/not must have type bool. There is no truthiness.
+**condition must be bool**: Conditions of `if`, `while`, `assert`, `requires`, `ensures` and operands of and/or/not must have type bool. There is no truthiness.
 
 ```
 if n { }       // error
@@ -281,9 +241,7 @@ if n != 0 { }  // ok
 
 ## E0212
 
-**cannot index**
-
-Only arrays, lists and strings can be indexed, and the index must be an integer.
+**cannot index**: Only arrays, lists and strings can be indexed, and the index must be an integer.
 
 ```
 let p: Point = ...;
@@ -292,9 +250,7 @@ let v: i32 = p[0];  // error
 
 ## E0213
 
-**bad struct literal**
-
-A struct literal must name every field exactly once: Point(x: 1, y: 2).
+**bad struct literal**: A struct literal must name every field exactly once: Point(x: 1, y: 2).
 
 ```
 let p: Point = Point(x: 1);  // error: missing field `y`
@@ -302,9 +258,7 @@ let p: Point = Point(x: 1);  // error: missing field `y`
 
 ## E0214
 
-**invalid conversion**
-
-Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers. Nothing converts to bool: compare instead (x != 0).
+**invalid conversion**: Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers. Nothing converts to bool: compare instead (x != 0).
 
 ```
 let b: bool = bool(1);  // error: write 1 != 0
@@ -312,9 +266,7 @@ let b: bool = bool(1);  // error: write 1 != 0
 
 ## E0215
 
-**mut call not allowed here**
-
-A call that passes a `mut` argument must be a statement on its own, or the whole right-hand side of a let/var/assignment. This keeps evaluation order obvious.
+**mut call not allowed here**: A call that passes a `mut` argument must be a statement on its own, or the whole right-hand side of a let/var/assignment. This keeps evaluation order obvious.
 
 ```
 print(pop(mut xs));          // error
@@ -324,9 +276,7 @@ print(top);
 
 ## E0216
 
-**type cannot be inferred**
-
-The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list.
+**type cannot be inferred**: The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list.
 
 ```
 print([]);  // error
@@ -334,9 +284,7 @@ print([]);  // error
 
 ## E0301
 
-**missing return**
-
-A function with a return type must return a value on every path. Loops are not considered to always return.
+**missing return**: A function with a return type must return a value on every path. Loops are not considered to always return.
 
 ```
 fn sign(x: i32) -> i32 { if x > 0 { return 1; } }  // error: add a final return
@@ -344,9 +292,7 @@ fn sign(x: i32) -> i32 { if x > 0 { return 1; } }  // error: add a final return
 
 ## E0302
 
-**break/continue outside loop**
-
-`break` and `continue` can only be used inside `while` or `for` loops.
+**break/continue outside loop**: `break` and `continue` can only be used inside `while` or `for` loops.
 
 ```
 fn f() { break; }  // error
@@ -354,9 +300,7 @@ fn f() { break; }  // error
 
 ## E0303
 
-**bad return**
-
-A function without a return type cannot return a value, and a function with one must return a value.
+**bad return**: A function without a return type cannot return a value, and a function with one must return a value.
 
 ```
 fn f() { return 1; }  // error
@@ -364,9 +308,7 @@ fn f() { return 1; }  // error
 
 ## E0305
 
-**statement has no effect**
-
-Only calls can be used as expression statements.
+**statement has no effect**: Only calls can be used as expression statements.
 
 ```
 x + 1;  // error: did you mean x += 1;
@@ -374,9 +316,7 @@ x + 1;  // error: did you mean x += 1;
 
 ## E0306
 
-**non-exhaustive match**
-
-A match must cover every enum variant (or both bool values), or end with a `_ => { }` arm. Matches on integers and strings always need `_`.
+**non-exhaustive match**: A match must cover every enum variant (or both bool values), or end with a `_ => { }` arm. Matches on integers and strings always need `_`.
 
 ```
 match c { Color.Red => { } }  // error: Color.Green not covered
@@ -384,9 +324,7 @@ match c { Color.Red => { } }  // error: Color.Green not covered
 
 ## E0307
 
-**unreachable or duplicate match arm**
-
-A pattern is listed twice, or appears after `_`.
+**unreachable or duplicate match arm**: A pattern is listed twice, or appears after `_`.
 
 ```
 match n { _ => { } 1 => { } }  // error
@@ -394,9 +332,7 @@ match n { _ => { } 1 => { } }  // error
 
 ## E0308
 
-**pattern mismatch**
-
-The pattern does not fit the type of the matched value, or binds the wrong number of payload values.
+**pattern mismatch**: The pattern does not fit the type of the matched value, or binds the wrong number of payload values.
 
 ```
 match shape { Shape.Circle => { } }  // error: write Shape.Circle(r) or Shape.Circle(_)
@@ -404,9 +340,7 @@ match shape { Shape.Circle => { } }  // error: write Shape.Circle(r) or Shape.Ci
 
 ## E0401
 
-**recursion is not allowed**
-
-ALang forbids recursion (direct or indirect) so that every program has a stack bound known at compile time and always terminates. Rewrite the algorithm with a loop and an explicit, fixed-capacity work list.
+**recursion is not allowed**: ALang forbids recursion (direct or indirect) so that every program has a stack bound known at compile time and always terminates. Rewrite the algorithm with a loop and an explicit, fixed-capacity work list.
 
 ```
 fn fact(n: u64) -> u64 { return n * fact(n - 1); }  // error
@@ -414,9 +348,7 @@ fn fact(n: u64) -> u64 { return n * fact(n - 1); }  // error
 
 ## E0402
 
-**stack bound exceeded**
-
-The worst-case stack usage computed by the checker exceeds the memory budget: 8 MiB (8388608 bytes) unless --max-stack sets another, 0 for none. The figure for an entry point (main, a tool or a test) counts the parameters, locals, return values and aggregate temporaries of its deepest chain of calls; `alang check --memory` lists it per function. The budget keeps a checked program within the memory of the interpreter and of the default C stack. Reduce capacities, or pass large values as `mut` parameters instead of copying them.
+**stack bound exceeded**: The worst-case stack usage computed by the checker exceeds the memory budget: 8 MiB (8388608 bytes) unless --max-stack sets another, 0 for none. The figure for an entry point (main, a tool or a test) counts the parameters, locals, return values and aggregate temporaries of its deepest chain of calls; `alang check --memory` lists it per function. The budget keeps a checked program within the memory of the interpreter and of the default C stack. Reduce capacities, or pass large values as `mut` parameters instead of copying them.
 
 ```
 fn main() {
@@ -426,9 +358,7 @@ fn main() {
 
 ## E0403
 
-**recursive type**
-
-A struct or enum contains itself (directly or through other types). Without pointers this would have infinite size. Use indexes into a fixed-capacity list instead.
+**recursive type**: A struct or enum contains itself (directly or through other types). Without pointers this would have infinite size. Use indexes into a fixed-capacity list instead.
 
 ```
 struct Node { next: Node }  // error
@@ -436,9 +366,7 @@ struct Node { next: Node }  // error
 
 ## E0404
 
-**nested too deeply**
-
-A program may nest at most 128 levels deep. Each bracket and each operator chained in an expression counts one level, and a function, constant or type adds the levels of every function, constant and type it uses. The limit is the same on every machine: the toolchain recurses over the program, and without it the machine's stack size would decide whether a deeply nested program can be checked or run. Split deep expressions with intermediate `let` bindings and shorten long chains of declarations that use each other.
+**nested too deeply**: A program may nest at most 128 levels deep. Each bracket and each operator chained in an expression counts one level, and a function, constant or type adds the levels of every function, constant and type it uses. The limit is the same on every machine: the toolchain recurses over the program, and without it the machine's stack size would decide whether a deeply nested program can be checked or run. Split deep expressions with intermediate `let` bindings and shorten long chains of declarations that use each other.
 
 ```
 let x: i64 = 1 + 1 + 1 + ... + 1;  // 200 chained `+`: error
@@ -448,9 +376,7 @@ let x: i64 = a + 1 + ... + 1;       // and 100 more: ok
 
 ## E0405
 
-**constant too large**
-
-Constants are evaluated while the program is checked and stay in memory for the whole run. Together they may hold at most the memory budget: 8 MiB (8388608 bytes) unless --max-stack sets another, 0 for none. Each constant counts its own size, the values its initializer builds on the way, and the constants checked before it. Make the constant smaller, or build the data at run time in a function.
+**constant too large**: Constants are evaluated while the program is checked and stay in memory for the whole run. Together they may hold at most the memory budget: 8 MiB (8388608 bytes) unless --max-stack sets another, 0 for none. Each constant counts its own size, the values its initializer builds on the way, and the constants checked before it. Make the constant smaller, or build the data at run time in a function.
 
 ```
 const TABLE: [[i64; 1024]; 1024] = [[0; 1024]; 1024];  // 8 MiB, plus 8 MiB to build it: error
@@ -458,9 +384,7 @@ const TABLE: [[i64; 1024]; 1024] = [[0; 1024]; 1024];  // 8 MiB, plus 8 MiB to b
 
 ## E0501
 
-**misplaced `result`**
-
-`result` refers to the return value and can only be used inside `ensures` of a function that returns a value.
+**misplaced `result`**: `result` refers to the return value and can only be used inside `ensures` of a function that returns a value.
 
 ```
 fn f(x: i32) -> i32 ensures result > x { return x + 1; }
@@ -468,9 +392,7 @@ fn f(x: i32) -> i32 ensures result > x { return x + 1; }
 
 ## E0601
 
-**invalid tool signature**
-
-Tool functions are called with JSON arguments, so they cannot take `mut` parameters.
+**invalid tool signature**: Tool functions are called with JSON arguments, so they cannot take `mut` parameters.
 
 ```
 tool fn f(x: mut i32) { }  // error
@@ -478,9 +400,7 @@ tool fn f(x: mut i32) { }  // error
 
 ## E0602
 
-**invalid main**
-
-`fn main()` takes no parameters and returns nothing.
+**invalid main**: `fn main()` takes no parameters and returns nothing.
 
 ```
 fn main() { print("hello"); }
@@ -488,9 +408,7 @@ fn main() { print("hello"); }
 
 ## W0301
 
-**unreachable code**
-
-The statement can never run because every path before it returns, breaks, continues or panics.
+**unreachable code**: The statement can never run because every path before it returns, breaks, continues or panics.
 
 ```
 return 1;
@@ -499,9 +417,7 @@ print("never");  // warning
 
 ## W0302
 
-**unused result**
-
-A call's return value is discarded. If this is intended, it is fine; otherwise store it.
+**unused result**: A call's return value is discarded. If this is intended, it is fine; otherwise store it.
 
 ```
 compute(x);  // warning: compute returns i32
@@ -509,9 +425,7 @@ compute(x);  // warning: compute returns i32
 
 ## W0303
 
-**character literal printed as a number**
-
-Character literals such as 'a' are u8 integers, so print() and append() write their decimal value (97). To add the character itself to a str, use push(mut s, 'a').
+**character literal printed as a number**: Character literals such as 'a' are u8 integers, so print() and append() write their decimal value (97). To add the character itself to a str, use push(mut s, 'a').
 
 ```
 append(mut s, 'a');  // appends "97"
@@ -520,9 +434,7 @@ push(mut s, 'a');    // appends "a"
 
 ## R0001
 
-**integer overflow**
-
-An arithmetic result does not fit its type. ALang never wraps silently. Use a wider type, or check before computing.
+**integer overflow**: An arithmetic result does not fit its type. ALang never wraps silently. Use a wider type, or check before computing.
 
 ```
 let x: u8 = 200;
@@ -531,9 +443,7 @@ let y: u8 = x + x;  // trap
 
 ## R0002
 
-**division by zero**
-
-Integer division or remainder by zero.
+**division by zero**: Integer division or remainder by zero.
 
 ```
 let z: i32 = 1 / n;  // trap when n == 0
@@ -541,9 +451,7 @@ let z: i32 = 1 / n;  // trap when n == 0
 
 ## R0003
 
-**index out of bounds**
-
-An index is negative or not smaller than the length of the array, list or string.
+**index out of bounds**: An index is negative or not smaller than the length of the array, list or string.
 
 ```
 let a: [i32; 3] = [1, 2, 3];
@@ -552,9 +460,7 @@ let x: i32 = a[3];  // trap
 
 ## R0004
 
-**capacity exceeded**
-
-A push/append does not fit in the list or string capacity. Capacities are part of the type: list[T; N], str[N].
+**capacity exceeded**: A push/append does not fit in the list or string capacity. Capacities are part of the type: list[T; N], str[N].
 
 ```
 var s: str[4] = "abc";
@@ -563,9 +469,7 @@ append(mut s, "de");  // trap
 
 ## R0005
 
-**assertion failed**
-
-An `assert` condition evaluated to false.
+**assertion failed**: An `assert` condition evaluated to false.
 
 ```
 assert 1 + 1 == 3;  // trap
@@ -573,9 +477,7 @@ assert 1 + 1 == 3;  // trap
 
 ## R0006
 
-**precondition failed**
-
-A `requires` clause was false when the function was called. The caller is at fault.
+**precondition failed**: A `requires` clause was false when the function was called. The caller is at fault.
 
 ```
 fn sqrt_int(x: i64) -> i64 requires x >= 0 { ... }
@@ -583,9 +485,7 @@ fn sqrt_int(x: i64) -> i64 requires x >= 0 { ... }
 
 ## R0007
 
-**postcondition failed**
-
-An `ensures` clause was false when the function returned. The function is at fault.
+**postcondition failed**: An `ensures` clause was false when the function returned. The function is at fault.
 
 ```
 fn abs1(x: i32) -> i32 ensures result >= 0 { return x; }
@@ -593,9 +493,7 @@ fn abs1(x: i32) -> i32 ensures result >= 0 { return x; }
 
 ## R0008
 
-**loop limit exceeded**
-
-A `while` loop ran more iterations than its `limit`. Either the limit is too small or the loop does not make progress.
+**loop limit exceeded**: A `while` loop ran more iterations than its `limit`. Either the limit is too small or the loop does not make progress.
 
 ```
 while true limit 10 { }  // trap after 10 iterations
@@ -603,9 +501,7 @@ while true limit 10 { }  // trap after 10 iterations
 
 ## R0009
 
-**conversion out of range**
-
-A numeric conversion such as u8(x) or i32(f) received a value that the target type cannot represent (or NaN).
+**conversion out of range**: A numeric conversion such as u8(x) or i32(f) received a value that the target type cannot represent (or NaN).
 
 ```
 let b: u8 = u8(-1);  // trap
@@ -613,9 +509,7 @@ let b: u8 = u8(-1);  // trap
 
 ## R0010
 
-**panic**
-
-The program called panic(message).
+**panic**: The program called panic(message).
 
 ```
 panic("unreachable state");
@@ -623,9 +517,7 @@ panic("unreachable state");
 
 ## R0011
 
-**step budget exhausted**
-
-The interpreter executed more statements than allowed by --max-steps. Raise the budget or reduce the work.
+**step budget exhausted**: The interpreter executed more statements than allowed by --max-steps. Raise the budget or reduce the work.
 
 ```
 alang run long.al --max-steps 1000000000
@@ -633,9 +525,7 @@ alang run long.al --max-steps 1000000000
 
 ## R0012
 
-**invalid shift or empty pop**
-
-A shift amount is negative or not smaller than the bit width, or pop() was called on an empty list/string.
+**invalid shift or empty pop**: A shift amount is negative or not smaller than the bit width, or pop() was called on an empty list/string.
 
 ```
 let x: u32 = 1 << 32;  // trap

@@ -720,7 +720,7 @@ public final class Main {
         for (Code c : Code.values()) sb.append("| [").append(c.name()).append("](#").append(c.name().toLowerCase(Locale.ROOT))
             .append(") | ").append(c.title).append(" |\n");
         for (Code c : Code.values()) {
-            sb.append("\n## ").append(c.name()).append("\n\n**").append(c.title).append("**\n\n");
+            sb.append("\n## ").append(c.name()).append("\n\n**").append(c.title).append("**: ");
             sb.append(c.explanation).append("\n\n```\n").append(c.example).append("\n```\n");
         }
         sb.append("\n## Builtin functions\n\n| Signature | Description |\n|-----------|-------------|\n");

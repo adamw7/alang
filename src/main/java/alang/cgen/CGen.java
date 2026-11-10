@@ -121,9 +121,10 @@ public final class CGen {
 
     /*
      * Checked arithmetic for every integer width; all traps match the interpreter's messages. In the
-     * templates, $T is the type, $N its ALang name, $W the 64-bit type of its signedness and $U the unsigned
-     * type of its width. A line tagged [tag] is kept only for the kinds that have the tag, one tagged [!tag]
-     * only for the others: s (signed), u (unsigned), i64, u64, narrow (8 to 32 bits).
+     * templates, $T is the type, $N its ALang name, $W the 64-bit type of its signedness, $U the unsigned
+     * type of its width, $MIN and $MAX its limits, and [$LO, $HI) the doubles that truncate into its range.
+     * A line tagged [tag] is kept only for the kinds that have the tag, one tagged [!tag] only for the
+     * others: s (signed), u (unsigned), i64, u64, narrow (8 to 32 bits).
      */
     private static final String ARITH_I64 = """
         static int64_t al_add_i64(int64_t a, int64_t b, int line, int col) {

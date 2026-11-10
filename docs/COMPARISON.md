@@ -1,21 +1,21 @@
 # ALang compared with other languages
 
-ALang is not trying to beat Python, Rust or Go at what they are for. It is built for a job those
-languages were not designed for: **code that an AI agent writes and that someone then runs
-without reading it first.** For that job you want four answers before the code runs:
+ALang does not try to beat Python, Rust or Go at what they are for. It is built for **code that an AI
+agent writes and someone runs without reading it first**, where four questions matter before the code
+runs:
 
 1. Will it finish?
 2. How much memory can it use?
 3. Will it give the same answer next time, on another machine?
-4. When it is wrong, will it say so, and say how to fix it?
+4. When it is wrong, will it say so, and how to fix it?
 
-For mainstream languages the honest answer to most of these is "it depends". In ALang the
-compiler enforces a rule for each one. This page shows the difference with small programs you can run yourself.
+For mainstream languages the honest answer is mostly "it depends". In ALang the compiler enforces a rule
+for each. This page shows the difference with small programs you can run.
 
-> Every ALang program on this page compiles and passes its tests, and every ALang diagnostic and
-> trap shown is the toolchain's exact output. `DocsTest` checks both on every build. Output from
-> other languages was recorded on x86-64 Linux with Python 3.13, Node.js 22, Go 1.24, Rust 1.97,
-> GCC 13.3, Clang 18 and Java 21.
+> Every ALang program here compiles and passes its tests, and every ALang diagnostic and trap shown is
+> the toolchain's exact output; `DocsTest` checks both on every build. Output from other languages was
+> recorded on x86-64 Linux with Python 3.13, Node.js 22, Go 1.24, Rust 1.97, GCC 13.3, Clang 18 and
+> Java 21.
 
 ## At a glance
 
@@ -31,13 +31,10 @@ compiler enforces a rule for each one. This page shows the difference with small
 | Can reach files, network, clock | no | yes | yes | yes | yes | yes |
 | Tool schema for an agent | generated from the signature | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand |
 
-The sections below show each row in action.
-
 ## 1. Arithmetic never goes wrong quietly
 
-Computing a midpoint as `(lo + hi) / 2` is a classic bug. It sat in the JDK's
-`Arrays.binarySearch` for about nine years before Joshua Bloch reported it in 2006. Here it is in
-ALang:
+Computing a midpoint as `(lo + hi) / 2` is a classic bug: it sat in the JDK's `Arrays.binarySearch` for
+about nine years before Joshua Bloch reported it in 2006. In ALang:
 
 ```alang-traps midpoint.al
 fn midpoint(lo: i32, hi: i32) -> i32 {
@@ -60,7 +57,7 @@ trap[R0001]: integer overflow: result of `+` does not fit in i32
   = hint: An arithmetic result does not fit its type. ALang never wraps silently. Use a wider type, or check before computing.
 ```
 
-The same function with 32-bit integers in other languages:
+The same function with 32-bit integers elsewhere:
 
 | Language | `midpoint(2000000000, 2100000000)` |
 |----------|------------------------------------|
@@ -71,12 +68,10 @@ The same function with 32-bit integers in other languages:
 | Rust, debug build | panics with `attempt to add with overflow` |
 | **ALang** | **trap R0001 at `midpoint.al:2:13`, on every run, in the interpreter and in compiled C** |
 
-JavaScript and Python get this case right, but they have their own problems. JavaScript numbers are
-doubles, so `9007199254740993` silently becomes `9007199254740992`. Python integers never overflow,
-so a single expression can grow until it uses all available memory.
-
-An agent reading the ALang trap knows the operator, the line, the column and the call path, and
-the hint tells it the fix. Here the fix is a wider type:
+JavaScript and Python get this case right, with problems of their own: JavaScript numbers are doubles,
+so `9007199254740993` silently becomes `9007199254740992`, and a Python integer can grow until it uses
+all memory. The trap names the operator, line, column and call path, and the hint names the fix, here a
+wider type:
 
 ```alang
 fn midpoint(lo: i32, hi: i32) -> i32 {
@@ -89,7 +84,7 @@ test "midpoint of large values" {
 }
 ```
 
-The program compiled to C traps the same way, with the same code, message and location:
+Compiled to C, the program traps the same way, with the same code, message and location:
 
 ```
 $ bin/alang build midpoint.al -o midpoint.c && cc -std=c99 -O2 midpoint.c -lm -o midpoint && ./midpoint
@@ -97,14 +92,13 @@ trap[R0001]: integer overflow: result of `+` does not fit in i32
   --> midpoint.al:2:13
 ```
 
-Out-of-range indexes (R0003), division by zero (R0002), lossy conversions such as `u8(300)`
-(R0009) and invalid shifts (R0012) work the same way: there is no undefined behavior, no silent
-wraparound, and Python's `xs[i - 1]` with `i == 0` cannot quietly read the last element.
+Out-of-range indexes (R0003), division by zero (R0002), lossy conversions such as `u8(300)` (R0009) and
+invalid shifts (R0012) work the same way: no undefined behavior, no silent wraparound, and no Python-style
+`xs[i - 1]` quietly reading the last element when `i == 0`.
 
 ## 2. The same answer on every run and every machine
 
-**Iteration order.** In Python, the order of a `set` of strings changes from one process to the
-next:
+**Iteration order.** In Python, the order of a `set` of strings changes from one process to the next:
 
 ```
 $ python3 -c 'print(list({"apple", "banana", "cherry", "date"}))'   # three runs
@@ -113,12 +107,12 @@ $ python3 -c 'print(list({"apple", "banana", "cherry", "date"}))'   # three runs
 ['banana', 'cherry', 'apple', 'date']
 ```
 
-Go randomizes map iteration on purpose, and Rust's `HashMap` is seeded randomly. A test that
-passes on one run fails on the next. ALang has no hash-ordered collections: lists keep
-their order, and `for x in xs` iterates over a snapshot.
+Go randomizes map iteration on purpose, and Rust seeds `HashMap` randomly, so a test that passes once
+can fail the next time. ALang has no hash-ordered collections: lists keep their order, and `for x in xs`
+iterates a snapshot.
 
-**Floating point.** The same C source, compiled by the same compiler, gives two answers depending
-on a target flag, because the compiler may fuse `a * b + c` into one fused multiply-add instruction:
+**Floating point.** The same C source and compiler give two answers depending on a target flag, because
+the compiler may fuse `a * b + c` into one multiply-add instruction:
 
 ```c
 #include <stdio.h>
@@ -139,10 +133,9 @@ $ gcc -O2 -march=haswell fma.c && ./a.out
 5.55112e-17
 ```
 
-In ALang, `a * b + c` always rounds twice. The C backend turns contraction off and refuses to
-compile with `-ffast-math` or x87 excess precision. The test suite compares the C output byte for
-byte with the interpreter under gcc and clang at `-O0` to `-O3`, including with
-`-ffp-contract=fast` forced on the command line.
+In ALang `a * b + c` always rounds twice: the C backend turns contraction off and refuses `-ffast-math`
+and x87 excess precision, and the tests compare its output byte for byte with the interpreter under gcc
+and clang at `-O0` to `-O3`, even with `-ffp-contract=fast` forced on.
 
 ```alang
 fn mul_add(a: f64, b: f64, c: f64) -> f64 {
@@ -154,25 +147,21 @@ test "a * b + c rounds twice on every compiler and CPU" {
 }
 ```
 
-`sin`, `exp` and `pow` are left out on purpose: their last bits differ between math libraries.
-ALang only has operations that IEEE 754 requires to be correctly rounded, so every platform
-produces the same bits.
+`sin`, `exp` and `pow` are left out on purpose: their last bits differ between math libraries. ALang has
+only the operations IEEE 754 requires to be correctly rounded, so every platform gets the same bits.
 
-**Locale.** `String.format("%.2f", 3.14159)` prints `3.14` in Java, or `3,14` when the JVM runs
-with a German locale. C's `printf` behaves the same way after `setlocale`. ALang formats every
-number itself, and the test suite runs every program under `de-DE`, `tr-TR` and locales with
-Arabic and Devanagari digits, and checks that the output is identical every time.
+**Locale.** Java's `String.format("%.2f", 3.14159)` prints `3,14` under a German locale, and C's `printf`
+does the same after `setlocale`. ALang formats numbers itself, and the tests run every program under
+`de-DE`, `tr-TR` and locales with Arabic and Devanagari digits, checking the output never changes.
 
-**No hidden inputs.** ALang has no clock, no random numbers, no environment variables, no threads
-and no I/O except `print`. A program's output depends only on its source code and its tool
-arguments. If a task needs randomness, take a seed as an argument.
+**No hidden inputs.** No clock, random numbers, environment, threads or I/O except `print`: output
+depends only on the source and the tool arguments. A task that needs randomness takes a seed argument.
 
 ## 3. Programs that always finish
 
-Recursion is the usual way an agent's program runs out of stack. In Python that happens at run
-time (`RecursionError` at a depth of about 1000). In C, Rust and Go the program crashes, at a depth
-that depends on the stack size, the frame size and the optimization level. In ALang it is a
-compile error:
+Recursion is the usual way an agent's program runs out of stack: a `RecursionError` at depth ~1000 in
+Python, a crash at a depth that depends on stack size, frame size and optimization level in C, Rust and
+Go. In ALang it is a compile error:
 
 ```alang-rejected fact.al
 fn fact(n: u64) -> u64 {
@@ -206,8 +195,7 @@ test "20! fits in u64" {
 }
 ```
 
-A `while` loop is the other way a program runs forever. Every `while` in ALang has to say how many
-iterations it may run:
+The other way to run forever is a `while` loop, so every `while` states how many iterations it may run:
 
 ```alang-rejected collatz.al
 fn collatz_steps(start: u64) -> i64 {
@@ -256,16 +244,15 @@ test "27 takes 111 steps" {
 }
 ```
 
-If the limit is too small, the loop traps with R0008 instead of hanging, and `3 * n + 1` traps
-with R0001 instead of wrapping. On top of that, the interpreter counts executed statements
-(`--max-steps`), so even a long program stops after exactly the same amount of work on every run.
-The budget counts work, not seconds.
+A limit that is too small traps with R0008 instead of hanging, and `3 * n + 1` traps with R0001 instead
+of wrapping. The interpreter also counts executed statements (`--max-steps`), so a long program stops
+after exactly the same amount of work, not time, on every run.
 
 ## 4. Memory you can read before running
 
-Every ALang type has a size known at compile time (`str[64]`, `list[Item; 16]`, `[f64; 3]`), there
-is no heap, and there is no recursion. So the checker can compute a worst-case bound on the memory of
-every entry point, counting its variables and the temporary values its statements build:
+Every type has a compile-time size (`str[64]`, `list[Item; 16]`, `[f64; 3]`), and there is no heap and
+no recursion, so the checker bounds the memory of every entry point, counting its variables and the
+temporaries its statements build:
 
 ```
 $ bin/alang check examples/maze_bfs.al --memory
@@ -278,16 +265,15 @@ memory: heap 0 B, static 96 B, worst-case stack 2810 B
   test "finds the shortest path"                      0         2694  (entry)
 ```
 
-A program whose bound exceeds the budget does not compile (E0402, or E0405 for constants). The
-budget is 8 MiB unless `--max-stack` sets another: `--max-stack 1024` suits embedded targets or a
-host that gives each tool call a fixed budget. In Python, JavaScript, Go and Java,
-memory use is only known after the program runs. In C and Rust a stack overflow or failed
-allocation shows up at run time, and bounding memory takes external analysis tools.
+A program over the budget does not compile (E0402, or E0405 for constants). The budget is 8 MiB unless
+`--max-stack` sets another: `--max-stack 1024` suits embedded targets or a host that gives each tool call
+a fixed budget. In Python, JavaScript, Go and Java memory use is known only after running; in C and Rust a
+stack overflow or failed allocation shows up at run time, and bounding memory takes external tools.
 
 ## 5. No aliasing surprises
 
-In ALang, assignment, parameters, return values and fields all copy. Two variables never share
-storage. A classic Python trap shows why that matters:
+Assignment, parameters, return values and fields all copy; two variables never share storage. A classic
+Python trap shows why that matters:
 
 ```
 $ python3 -c 'grid = [[0] * 3] * 3; grid[0][0] = 1; print(grid)'
@@ -312,8 +298,8 @@ test "rows are independent values" {
 }
 ```
 
-When a function does need to change its caller's data, both sides say so with `mut`, so a reader
-sees every mutation at the call site:
+A function that changes its caller's data says so with `mut`, and so does the call, so every mutation is
+visible at the call site:
 
 ```alang
 fn add_tax(price_cents: mut i64, rate_percent: i64) {
@@ -329,15 +315,14 @@ test "only arguments marked mut change" {
 }
 ```
 
-`mut` references cannot be stored or returned, so they can never dangle. That is the guarantee
-Rust's references give, without lifetimes or a borrow checker to satisfy. A variable passed as
-`mut` cannot appear twice in the same call (`append(mut s, s)` is E0208), and a call with a `mut`
-argument is its own statement (E0215), so the order of side effects is always visible in the code.
+`mut` references cannot be stored or returned, so they never dangle: Rust's guarantee, without lifetimes
+or a borrow checker. A variable passed as `mut` cannot appear twice in a call (`append(mut s, s)` is
+E0208), and a call with a `mut` argument is its own statement (E0215), so the order of side effects is
+always visible.
 
 ## 6. One way to write it, and errors that say which way
 
-Operator precedence is a common source of bugs that look correct. In C and JavaScript,
-`flags & MASK == 0` means `flags & (MASK == 0)`:
+Precedence bugs look correct. In C and JavaScript, `flags & MASK == 0` means `flags & (MASK == 0)`:
 
 ```
 $ node -e 'const MASK = 4; const isClear = (f) => f & MASK == 0; console.log(isClear(2))'
@@ -346,8 +331,8 @@ $ node -e 'const x = 50; console.log(0 < x < 10)'
 true
 ```
 
-JavaScript runs both without complaint. C has the same rules, and GCC warns about them only when
-`-Wall` is on. ALang keeps ordinary arithmetic precedence and refuses to guess everywhere else:
+JavaScript runs both without complaint, and GCC warns about the C version only with `-Wall`. ALang keeps
+arithmetic precedence and refuses to guess elsewhere:
 
 ```alang-rejected flags.al
 const MASK: u32 = 4;
@@ -379,8 +364,8 @@ test "bit 2" {
 }
 ```
 
-Agents learn mostly from Python, JavaScript, Rust and C, and carry those habits over. ALang
-recognizes the common ones and answers with the ALang spelling:
+Agents learn mostly from Python, JavaScript, Rust and C, and carry those habits over. ALang answers the
+common ones with the ALang spelling:
 
 | An agent writes | ALang answers |
 |-----------------|---------------|
@@ -399,71 +384,17 @@ recognizes the common ones and answers with the ALang spelling:
 | a function that can fall off the end | E0301: add `return <i64>;` at the end of the function |
 | an inner `let x` that reuses a name | E0105: ALang has no shadowing; choose a new name |
 
-Every diagnostic has a stable code (`alang explain E0306`) and is also available as JSON, so an
-agent never has to parse prose:
-
-```
-$ bin/alang check oops.al --json
-{
-  "ok": false,
-  "file": "oops.al",
-  "errors": 1,
-  "warnings": 0,
-  "diagnostics": [
-    {
-      "severity": "error",
-      "code": "E0208",
-      "title": "aliased mut argument",
-      "message": "`s` is passed as `mut` and also used in another argument of the same call",
-      "file": "oops.al",
-      "line": 3,
-      "column": 19,
-      "length": 1,
-      "source_line": "    append(mut s, s);",
-      "hint": "copy the value into a separate variable first, then pass the copy"
-    }
-  ],
-  "memory": null
-}
-```
-
-Rust has the best diagnostics among mainstream languages, with stable codes and JSON output, and
-ALang follows the same model. The difference is in scope: ALang's language is small enough that
-every error has a single concrete fix, and the hints are written for the mistakes agents actually
-make.
+Every diagnostic has a stable code (`alang explain E0306`) and comes as JSON with `--json`, so an agent
+never parses prose. Rust has the best diagnostics among mainstream languages, with stable codes and JSON
+too; ALang's difference is scope: the language is small enough that every error has one concrete fix, and
+the hints target the mistakes agents actually make.
 
 ## 7. Built for agent tool use
 
-In most languages, giving an agent a tool takes three separate pieces: the function, a JSON Schema
-for its arguments written by hand (or generated with Pydantic, Zod or schemars), and a sandbox
-with time and memory limits so the code can run safely. In ALang the signature is the schema, and
-the language is the sandbox:
-
-```alang
-/// Splits a bill evenly; the remainder goes to the first payers.
-tool fn split_bill(total_cents: i64, people: i64) -> list[i64; 16]
-    requires total_cents >= 0
-    requires people > 0 and people <= 16
-{
-    var shares: list[i64; 16] = [];
-    for i in 0..people {
-        var share: i64 = total_cents / people;
-        if i < total_cents % people {
-            share += 1;
-        }
-        push(mut shares, share);
-    }
-    return shares;
-}
-
-test "shares add up to the total" {
-    var sum: i64 = 0;
-    for s in split_bill(1001, 4) {
-        sum += s;
-    }
-    assert sum == 1001;
-}
-```
+Giving an agent a tool usually takes three pieces: the function, a JSON Schema for its arguments (by
+hand, or with Pydantic, Zod or schemars), and a sandbox with time and memory limits. In ALang the
+signature is the schema and the language is the sandbox. With the `split_bill` tool from the
+[README](../README.md):
 
 ```
 $ bin/alang tools bill.al            # name, description (from ///) and input_schema
@@ -475,29 +406,24 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 0}'
 {"ok": false, "error": {"code": "R0006", "title": "precondition failed", "message": "precondition of `split_bill` failed: requires people > 0 and people <= 16", ...}}
 ```
 
-Arguments are validated against the parameter types before the call. A broken precondition is
-reported against the caller, and a broken `ensures` against the function, so the agent knows which
-side to fix. A trap comes back as JSON instead of crashing the host.
+Arguments are validated against the parameter types before the call. A broken `requires` is reported
+against the caller and a broken `ensures` against the function, so the agent knows which side to fix, and
+a trap comes back as JSON instead of crashing the host.
 
-**Why not sandbox Python instead?** A container, a WebAssembly runtime or a seccomp profile limits
-the damage. It does not make the program terminate, so you get a timeout instead of an answer. It
-does not make the program deterministic, so a flaky result stays flaky. And it does not tell the
-agent what went wrong in terms it can act on. ALang gives its guarantees before the code runs,
-without a sandbox, and its failures carry a code, a location and a fix.
+**Why not sandbox Python?** A container, WebAssembly runtime or seccomp profile limits the damage, but it
+does not make the program terminate (you get a timeout, not an answer), does not make it deterministic,
+and does not tell the agent what went wrong in terms it can act on. ALang gives its guarantees before the
+code runs, and its failures carry a code, a location and a fix.
 
 ## 8. Its closest relatives
 
-ALang is not the first language to give up power for guarantees. It borrows from several:
-
-- **Starlark** (Bazel's configuration language) is deterministic and hermetic, and Bazel's dialect
-  forbids recursion and `while` loops. But it is dynamically typed, its values live on a
-  garbage-collected heap, and type errors only show up at run time.
-- **eBPF** proves at load time that kernel programs terminate and access memory safely. But it is
-  a bytecode for kernel hooks, not a language to write tools in.
-- **NASA/JPL's "Power of 10" rules** for safety-critical C (Holzmann, 2006) ask programmers to
-  avoid recursion, bound every loop and avoid dynamic allocation. In C these are guidelines,
-  enforced by external checkers on top of a language that still has undefined behavior. In ALang
-  most of them are part of the language:
+- **Starlark** (Bazel's configuration language) is deterministic and hermetic, and Bazel's dialect forbids
+  recursion and `while`. But it is dynamically typed, its values live on a garbage-collected heap, and
+  type errors show up only at run time.
+- **eBPF** proves at load time that kernel programs terminate and access memory safely, but it is a
+  bytecode for kernel hooks, not a language to write tools in.
+- **NASA/JPL's "Power of 10" rules** for safety-critical C (Holzmann, 2006) are guidelines enforced by
+  external checkers on a language that still has undefined behavior. In ALang most are the language:
 
 | Power of 10 rule | In ALang |
 |------------------|----------|
@@ -512,27 +438,23 @@ ALang is not the first language to give up power for guarantees. It borrows from
 
 ## 9. What you give up
 
-These guarantees have costs, and they are deliberate:
-
-- **Fixed capacities.** You choose `str[64]` or `list[Item; 16]` up front, and going past the
-  capacity traps (R0004).
-- **No recursion.** Tree and graph algorithms use an explicit work list (see
+- **Fixed capacities:** you choose `str[64]` or `list[Item; 16]` up front, and going past it traps (R0004).
+- **No recursion:** tree and graph algorithms use an explicit work list (see
   [AGENTS.md](../AGENTS.md#patterns)).
-- **No I/O beyond `print`.** The host reads files and calls the network, then passes the data to a
+- **No I/O beyond `print`:** the host reads files and calls the network, then passes the data to a
   `tool fn`.
-- **A small language.** Version 0.1 has no modules, generics, slices or standard library beyond
-  the builtins, and no `sin`, `exp` or `pow`.
-- **No ecosystem.** There are no packages to install, and no packages to vet.
+- **A small language:** version 0.1 has no modules, generics, slices, standard library beyond the
+  builtins, or `sin`, `exp` and `pow`.
+- **No ecosystem:** no packages to install, and none to vet.
 
-Use Python, Go or Rust to build applications, talk to the outside world and reuse libraries. Use
-ALang for the self-contained computations an agent writes and calls on its own: parsing, scoring,
-validating, planning, pricing and other business rules. These have to be correct, repeatable and
-safe to run the first time.
+Use Python, Go or Rust to build applications, talk to the outside world and reuse libraries. Use ALang
+for the self-contained computations an agent writes and calls on its own (parsing, scoring, validating,
+planning, pricing and other business rules), which have to be correct, repeatable and safe to run the
+first time.
 
 ## 10. Measuring it
 
-The sections above show what ALang guarantees. They do not show that models write better tools in
-it: that is an empirical question, and models have seen far more Python than ALang. The benchmark in
-[bench/](../bench) measures it: a model writes the same 20 tools in both languages, gets the same
-feedback, and the results are graded on hidden cases, counting how often a tool that passed its
-examples still returns wrong values without any error.
+Whether models actually write better tools in ALang, having seen far more Python, is an empirical
+question. The [benchmark](../bench) has a model write the same 20 tools in both languages with the same
+feedback, grades them on hidden cases, and counts how often a tool that passed its examples still
+returns wrong values without any error.

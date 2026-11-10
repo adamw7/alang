@@ -1,9 +1,9 @@
 # Writing ALang: a guide for AI agents
 
-ALang is built for you. It is small, explicit and strict, and every mistake comes back as a coded
-diagnostic with a concrete fix. Read this page once; it covers everything you need. The full
-rules are in [docs/SPEC.md](docs/SPEC.md), the grammar in [grammar/ALang.g4](grammar/ALang.g4),
-every error code in [docs/ERRORS.md](docs/ERRORS.md).
+ALang is built for you: small, explicit and strict, and every mistake comes back as a coded diagnostic
+with a concrete fix. This page covers everything you need; the full rules are in
+[docs/SPEC.md](docs/SPEC.md), the grammar in [grammar/ALang.g4](grammar/ALang.g4), every error code in
+[docs/ERRORS.md](docs/ERRORS.md).
 
 ## The loop
 
@@ -14,8 +14,8 @@ bin/alang run   prog.al           # 3. run fn main()
 bin/alang explain E0215           #    explain any code
 ```
 
-Fix the **first** diagnostic first, using its `hint`. Re-run `check` after every edit. Results are
-deterministic: if a test fails once, it fails every time, identically.
+Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. Results are
+deterministic: a test that fails once fails every time, identically.
 
 ## A complete program
 
@@ -105,25 +105,19 @@ test "counts repeated words" {
 
 ## Translating habits from other languages
 
+The rules above cover structs, enums, logic, conversions, `while`, methods, `mut` and recursion. Also:
+
 | You might write | Write in ALang |
 |-----------------|----------------|
 | `let x = 5;` / `x := 5` | `let x: i64 = 5;` |
 | `int`, `usize`, `String`, `Vec<T>` | `i32`/`i64`, `i64`, `str[N]`, `list[T; N]` |
 | `Option<T>`, `null` | `enum MaybeT { None, Some(T) }` |
-| `Point { x: 1, y: 2 }` | `Point(x: 1, y: 2)` |
-| `Color::Red`, `Color.RED` | `Color.Red` |
-| `a && !b \|\| c` | `(a and not b) or c` |
-| `x as i64`, `(long) x` | `i64(x)` |
 | `i++` | `i += 1;` |
 | `for (i = 0; i < n; i++)` | `for i in 0..n { }` |
-| `while (cond)` | `while cond limit 1000 { }` |
 | `loop { }` | `while true limit 1000 { ... break; }` |
-| `xs.len()`, `s.push_str("a")` | `len(xs)`, `append(mut s, "a")` |
-| `format!("{} {}", a, b)` | `var s: str[64] = ""; append(mut s, a, " ", b);` |
+| `s.push_str("a")`, `format!("{} {}", a, b)` | `append(mut s, "a")`, `var s: str[64] = ""; append(mut s, a, " ", b);` |
 | `println!("{}", x)` | `print(x);` |
 | `throw` / `raise` | return an enum, or `panic("message")` |
-| `fn f(v: &mut Vec<i32>)` | `fn f(v: mut list[i32; 16])`, called as `f(mut v)` |
-| recursion | a loop plus a `list[T; N]` work stack |
 | `if x { }` with `x: i32` | `if x != 0 { }` |
 
 ## Patterns
@@ -212,25 +206,24 @@ bin/alang call prog.al word_counts '{"text": "a b a"}'
 # {"ok": true, "result": [{"word": "a", "count": 2}, {"word": "b", "count": 1}], "stdout": ""}
 ```
 
-JSON mapping: integers/floats/bools as JSON numbers/booleans, `str[N]` as a string,
-arrays and lists as JSON arrays, structs as objects (all fields required), enum variants as
-`"Name"` or `{"Name": [payload...]}`. Tools cannot take `mut` parameters. A trap inside a tool
-returns `{"ok": false, "error": {"code": "R....", ...}}` instead of crashing the caller. JSON has no
-NaN or infinity, so a float result holding one fails with `bad_result`: check for it in the tool. A
-`str` result must be UTF-8 text for the same reason; return raw bytes as a `list[u8; N]`.
-Pass `-` instead of the JSON to read the arguments from stdin.
+JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string, arrays and lists as
+arrays, structs as objects (all fields required), enum variants as `"Name"` or `{"Name": [payload...]}`.
+Tools cannot take `mut` parameters. A trap inside a tool returns `{"ok": false, "error": {"code":
+"R....", ...}}` instead of crashing the caller. JSON has no NaN or infinity, so a float result holding one
+fails with `bad_result` (check for it in the tool); a `str` result must be UTF-8 text, so return raw
+bytes as a `list[u8; N]`. Pass `-` instead of the JSON to read the arguments from stdin.
 
-Tools are safe to run even when you wrote them minutes ago: no file, network, clock or random
-access, no heap, bounded loops, no recursion, and a deterministic step budget.
+Tools are safe to run minutes after you wrote them: no file, network, clock or random access, no heap,
+bounded loops, no recursion, and a deterministic step budget.
 
 ## Determinism checklist
 
-You get these for free; do not try to work around them:
+You get these for free; do not work around them:
 
-- Same input, same output, same trap — on every run, machine, compiler and locale.
-- No time, randomness, environment, threads or I/O other than `print`. If a task needs a "random"
-  value, take a seed as a tool argument and compute deterministically from it.
-- Float results are bit-exact across the interpreter and the C backend: only `+ - * /`, `sqrt`,
-  `floor`, `ceil`, `abs`, `min`, `max` and conversions exist (no `sin`/`exp`/`pow`).
-- `print` of floats shows 6 decimals at most (`0.1 + 0.2` prints `0.3`); compare floats in tests with
-  a tolerance, e.g. `assert abs(x - 0.3) < 0.000001;`.
+- Same input, same output, same trap, on every run, machine, compiler and locale.
+- No time, randomness, environment, threads or I/O other than `print`. For a "random" value, take a seed
+  as a tool argument and compute from it.
+- Floats are bit-exact across the interpreter and the C backend: only `+ - * /`, `sqrt`, `floor`, `ceil`,
+  `abs`, `min`, `max` and conversions exist (no `sin`/`exp`/`pow`).
+- `print` shows floats with at most 6 decimals (`0.1 + 0.2` prints `0.3`); compare floats in tests with a
+  tolerance, e.g. `assert abs(x - 0.3) < 0.000001;`.
