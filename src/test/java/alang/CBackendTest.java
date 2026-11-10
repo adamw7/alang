@@ -168,6 +168,8 @@ class CBackendTest {
             {"else_if_chain.al", chain.toString()},
             {"match_arms.al", arms.toString()},
             {"nested_loops.al", nestedLoops(127)},
+            {"deep_not_contract.al", "fn main()\n    requires " + "not ".repeat(128) + "true\n{\n    print(\"ok\");\n}\n"},
+            {"deep_conversion_contract.al", "fn main()\n    requires " + conversions(128) + " > 0.0\n{\n    print(\"ok\");\n}\n"},
         };
         return Stream.of(programs).map(t -> Harness.dynamicTest(t[0], COMPILE_AND_RUN_TIMEOUT, () -> {
             List<String[]> ccs = compilers();
@@ -181,6 +183,17 @@ class CBackendTest {
                 assertTrue(deeper.diags().renderText().startsWith("error[E0404]: "), deeper.diags().renderText());
             }
         }));
+    }
+
+    /**
+     * {@code depth} nested conversions ending in an f64: i64(true), then f64, then f32 and f64 in turn. A
+     * contract is read before the function's brace, so it may nest all 128 levels; the C used to take two
+     * parentheses per conversion (three for the bool), as it did per `not`, past the 256 that clang accepts.
+     */
+    private static String conversions(int depth) {
+        String e = "f64(i64(true))";
+        for (int i = 2; i < depth; i++) e = (i % 2 == 0 ? "f32(" : "f64(") + e + ")";
+        return e;
     }
 
     /** {@code depth} while loops, each in the body of the one before. */
