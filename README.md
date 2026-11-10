@@ -162,8 +162,10 @@ bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on JDK 21 with gcc
 and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
-packaged jar, runs the benchmark self-test on Linux, runs a 3000-mutation fuzzing campaign, and
-runs mutation testing, uploading the report as the `pit-report` artifact.
+packaged jar, runs the benchmark self-test on Linux, and runs a 3000-mutation fuzzing campaign.
+Mutation testing is too slow for every push: it runs every Saturday on `main`
+([`.github/workflows/mutation.yml`](.github/workflows/mutation.yml), or on demand from the Actions
+tab) and uploads the report as the `pit-report` artifact.
 
 Every test has a time limit, so a hang fails fast instead of stalling CI. A test fails after 10 s,
 even if it never checks for interrupts
@@ -174,9 +176,10 @@ also has a limit of a few minutes.
 
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
 plugins and GitHub Actions. The ANTLR tool and runtime are updated together, PIT and its JUnit 5
-plugin together, the Maven plugins in one pull request, and the workflow's actions in another.
+plugin together, the Maven plugins in one pull request, and the workflows' actions in another.
 Renovate merges each of its pull requests once every CI check on it has passed, rebasing it onto
-`main` first if it has fallen behind.
+`main` first if it has fallen behind. Mutation testing is not one of those checks, so a PIT update
+is first exercised by the next Saturday run.
 
 ### Mutation testing
 
