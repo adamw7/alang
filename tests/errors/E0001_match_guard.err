@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'if', expected '=>'
+ --> tests/errors/E0001_match_guard.al:4:11
+  |
+4 |         _ if x < 0 => { return -1; }
+  |           ^^
+  = hint: there are no match guards; use an if/else if chain, or test the condition inside the arm: _ => { if x > 2 { ... } }
+

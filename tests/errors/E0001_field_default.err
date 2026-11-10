@@ -1,0 +1,7 @@
+error[E0001]: unexpected '=', expected '}' or ','
+ --> tests/errors/E0001_field_default.al:3:18
+  |
+3 |     retries: i64 = 3,
+  |                  ^
+  = hint: struct fields have no default values; give every field when building the value: Config(field: value, ...)
+

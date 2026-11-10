@@ -1,0 +1,7 @@
+error[E0001]: unexpected '=', expected '}' or ','
+ --> tests/errors/E0001_enum_value.al:3:9
+  |
+3 |     Low = 1,
+  |         ^
+  = hint: enum variants have no numeric values; when you need a number, map each variant to it with a match
+

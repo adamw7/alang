@@ -70,7 +70,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         } else {
             message = msg;
         }
-        String hint = hint(tok, prev, prev2, expected);
+        String hint = hint(ts, tok, prev, prev2, expected);
         diags.error(Code.E0001, new Span(tok.getLine(), tok.getCharPositionInLine() + 1, len), message, hint);
     }
 
@@ -123,7 +123,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         return "one of " + String.join(", ", names);
     }
 
-    private static String hint(Token tok, Token prev, Token prev2, IntervalSet expected) {
+    private static String hint(TokenStream ts, Token tok, Token prev, Token prev2, IntervalSet expected) {
         int t = tok.getType();
         int p = prev == null ? -1 : prev.getType();
         String foreign = switch (t) {
@@ -152,6 +152,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (t == ALangLexer.STAR && p == ALangLexer.SLASH) {
             return "block comments are not supported; start each comment line with //";
         }
+        String missing = missingFeature(ts, tok, p, expected);
+        if (missing != null) return missing;
         if (t == ALangLexer.LPAREN && p == ALangLexer.IDENT && prev2 != null && prev2.getType() == ALangLexer.DOT) {
             return "there are no methods; call functions with the value as an argument, e.g. len(xs) instead of xs.len()";
         }
@@ -174,7 +176,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
             && (t == ALangLexer.COMMA || t == ALangLexer.RPAREN) && p == ALangLexer.IDENT) {
             return "parameters need explicit types: fn f(x: i32, ys: mut list[i32; 8])";
         }
-        if (isBinaryOperator(t) && prev != null) {
+        // Only where an operator could follow: elsewhere (`fn id<T>`, `1 | 2 =>`) it is not about precedence.
+        if (isBinaryOperator(t) && prev != null && expectsOperator(expected)) {
             if (t == ALangLexer.AND || t == ALangLexer.OR) {
                 return "`and` and `or` cannot be mixed without parentheses: (a and b) or c";
             }
@@ -193,6 +196,165 @@ final class SyntaxErrorListener extends BaseErrorListener {
             return "add `;` at the end of the previous statement";
         }
         return null;
+    }
+
+    private static final String TUPLES = "there are no tuples; declare a struct with named fields, "
+        + "e.g. struct Pair { a: i64, b: i64 }, and build it with Pair(a: 1, b: 2)";
+
+    /** Constructs common in other languages that ALang leaves out, each with the ALang way to write it. */
+    private static String missingFeature(TokenStream ts, Token tok, int p, IntervalSet expected) {
+        if (expected == null) return null;
+        int t = tok.getType();
+        String word = tok.getText();
+        if (expected.contains(ALangLexer.STRUCT)) {
+            // Where a top-level declaration may start.
+            if (t == ALangLexer.LET || t == ALangLexer.VAR || t == ALangLexer.IDENT && word.equals("static")) {
+                return "there are no global variables; use `const NAME: T = value;` for a fixed value, "
+                    + "and pass changing state to functions as a `mut` parameter";
+            }
+            if (t == ALangLexer.IDENT && switch (word) {
+                case "import", "use", "include", "require", "from", "package", "module", "mod" -> true;
+                default -> false;
+            }) {
+                return "there are no modules or imports; a program is one file, so declare everything it uses in it";
+            }
+        }
+        if (t == ALangLexer.LT && p == ALangLexer.IDENT && !expectsOperator(expected)) {
+            return "there are no generics; write a function or type for each element type, "
+                + "e.g. fn max_i64(a: i64, b: i64) -> i64, and use list[T; N] instead of Vec<T>";
+        }
+        if (expected.contains(ALangLexer.FAT_ARROW)) {
+            // After a pattern, where `=>` should come.
+            if (t == ALangLexer.PIPE) {
+                return "a match arm has exactly one pattern; write one arm per value: 1 => { ... } 2 => { ... }";
+            }
+            if (t == ALangLexer.DOTDOT) {
+                return "there are no range patterns; use an if/else if chain instead: if 1 <= x and x < 5 { ... }";
+            }
+        }
+        if (t == ALangLexer.IF && arrowAhead(ts, tok)) {
+            return "there are no match guards; use an if/else if chain, or test the condition inside the arm: "
+                + "_ => { if x > 2 { ... } }";
+        }
+        if ((t == ALangLexer.IF || t == ALangLexer.MATCH) && expected.contains(ALangLexer.INT_LIT)
+            && !expected.contains(ALangLexer.LET)) {
+            // Where an expression must start.
+            return t == ALangLexer.IF
+                ? "`if` is a statement, not an expression; declare the variable first and assign it in every "
+                    + "branch: var x: i64 = 0; if c { x = 1; } else { x = 2; }"
+                : "`match` is a statement, not an expression; declare the variable first and assign it in every "
+                    + "arm: var x: i64 = 0; match c { ... => { x = 1; } }";
+        }
+        if (t == ALangLexer.FN) {
+            if (expected.contains(ALangLexer.LET)) {
+                return "functions cannot be nested; declare every fn at the top level";
+            }
+            if (expected.contains(ALangLexer.I64)) {
+                return "there are no function types or closures; call functions by name, and choose between "
+                    + "behaviors with an enum and match";
+            }
+        }
+        if (t == ALangLexer.LPAREN && expected.contains(ALangLexer.I64) && !expected.contains(ALangLexer.INT_LIT)) {
+            return TUPLES; // where a type must start
+        }
+        if (t == ALangLexer.COMMA) {
+            // A comma inside parentheses that do not belong to a call, constructor, pattern or declaration.
+            Token open = opener(ts, tok);
+            if (open != null && open.getType() == ALangLexer.LPAREN) {
+                Token before = previous(ts, open);
+                if (before == null || !isNameLike(before.getType())) return TUPLES;
+            }
+        }
+        if (t == ALangLexer.DOTDOT) {
+            Token open = opener(ts, tok);
+            if (open != null && open.getType() == ALangLexer.LBRACK) {
+                return "there are no slices or range values; copy the part you need in a loop: "
+                    + "for i in a..b { push(mut part, xs[i]); }";
+            }
+        }
+        if (t == ALangLexer.IDENT && (word.equals("step") || word.equals("by")) && expected.contains(ALangLexer.LBRACE)
+            && inForHeader(ts, tok)) {
+            return "ranges always count up by 1; compute other sequences from the loop variable: "
+                + "for k in 0..5 { let i: i64 = k * 2; }";
+        }
+        if (t == ALangLexer.ASSIGN && expected.contains(ALangLexer.COMMA) && expected.contains(ALangLexer.RBRACE)) {
+            // `=` in a struct's fields or an enum's variants.
+            Token open = opener(ts, tok);
+            Token name = open == null ? null : previous(ts, open);
+            Token keyword = name == null ? null : previous(ts, name);
+            if (keyword != null && keyword.getType() == ALangLexer.STRUCT) {
+                return "struct fields have no default values; give every field when building the value: "
+                    + name.getText() + "(field: value, ...)";
+            }
+            if (keyword != null && keyword.getType() == ALangLexer.ENUM) {
+                return "enum variants have no numeric values; when you need a number, map each variant to it with a match";
+            }
+        }
+        return null;
+    }
+
+    /** The innermost bracket, parenthesis or brace still open at {@code tok}, or null. */
+    private static Token opener(TokenStream ts, Token tok) {
+        int depth = 0;
+        for (int i = tok.getTokenIndex() - 1; i >= 0; i--) {
+            Token t = ts.get(i);
+            if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+            switch (t.getType()) {
+                case ALangLexer.RPAREN, ALangLexer.RBRACK, ALangLexer.RBRACE -> depth++;
+                case ALangLexer.LPAREN, ALangLexer.LBRACK, ALangLexer.LBRACE -> {
+                    if (depth == 0) return t;
+                    depth--;
+                }
+                default -> { }
+            }
+        }
+        return null;
+    }
+
+    /** Whether a `=>` follows {@code tok} before the next block or statement: {@code tok} is in a match arm's pattern. */
+    private static boolean arrowAhead(TokenStream ts, Token tok) {
+        for (int i = tok.getTokenIndex() + 1; i < ts.size(); i++) {
+            switch (ts.get(i).getType()) {
+                case ALangLexer.FAT_ARROW -> {
+                    return true;
+                }
+                case ALangLexer.LBRACE, ALangLexer.RBRACE, ALangLexer.SEMI, Token.EOF -> {
+                    return false;
+                }
+                default -> { }
+            }
+        }
+        return false;
+    }
+
+    /** Whether {@code tok} is between `for` and the loop's `{`. */
+    private static boolean inForHeader(TokenStream ts, Token tok) {
+        for (int i = tok.getTokenIndex() - 1; i >= 0; i--) {
+            switch (ts.get(i).getType()) {
+                case ALangLexer.FOR -> {
+                    return true;
+                }
+                case ALangLexer.LBRACE, ALangLexer.RBRACE, ALangLexer.SEMI -> {
+                    return false;
+                }
+                default -> { }
+            }
+        }
+        return false;
+    }
+
+    /** Tokens that can come right before the `(` of a call, constructor, pattern or declaration. */
+    private static boolean isNameLike(int t) {
+        return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
+            || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+    }
+
+    private static boolean expectsOperator(IntervalSet expected) {
+        if (expected == null) return false;
+        for (int t : expected.toList()) {
+            if (isBinaryOperator(t)) return true;
+        }
+        return false;
     }
 
     private static boolean isBinaryOperator(int t) {

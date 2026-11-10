@@ -103,7 +103,8 @@ error[E0215]: a call with `mut` arguments must be its own statement or the whole
 
 With `--json`, each diagnostic has `code`, `title`, `message`, `file`, `line`, `column`, `length`,
 `source_line` and `hint`. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`,
-`xs.len()`, `let x = 5`, `while` without a limit, `null`, ...) are answered with the ALang spelling.
+`xs.len()`, `let x = 5`, `while` without a limit, `null`, generics, imports, tuples, slices, `if` as an
+expression, match guards, `sort`, `pow`, ...) are answered with the ALang spelling.
 See [docs/ERRORS.md](docs/ERRORS.md).
 
 ## Documentation

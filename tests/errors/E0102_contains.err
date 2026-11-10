@@ -1,0 +1,7 @@
+error[E0102]: unknown function `contains`
+ --> tests/errors/E0102_contains.al:4:23
+  |
+4 |     let found: bool = contains(xs, 2);
+  |                       ^^^^^^^^
+  = hint: there is no contains builtin; loop over the elements and compare: for x in xs { if x == v { ... } }
+

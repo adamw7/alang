@@ -1,0 +1,7 @@
+error[E0001]: unexpected '..', expected '=>'
+ --> tests/errors/E0001_range_pattern.al:4:11
+  |
+4 |         90..101 => { return 'A'; }
+  |           ^^
+  = hint: there are no range patterns; use an if/else if chain instead: if 1 <= x and x < 5 { ... }
+

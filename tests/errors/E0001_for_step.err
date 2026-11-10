@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'step', expected '{'
+ --> tests/errors/E0001_for_step.al:3:20
+  |
+3 |     for i in 0..10 step 2 {
+  |                    ^^^^
+  = hint: ranges always count up by 1; compute other sequences from the loop variable: for k in 0..5 { let i: i64 = k * 2; }
+
