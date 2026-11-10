@@ -24,7 +24,7 @@
       "groupName": "Maven plugins"
     },
     {
-      "description": "Update the CI workflow's actions in one pull request.",
+      "description": "Update the workflows' actions in one pull request.",
       "matchManagers": ["github-actions"],
       "groupName": "GitHub Actions"
     }
