@@ -270,12 +270,12 @@ every entry point, counting its variables and the temporary values its statement
 ```
 $ bin/alang check examples/maze_bfs.al --memory
 ok: examples/maze_bfs.al: 3 function(s), 1 test(s), 0 warning(s)
-memory: heap 0 B, static 96 B, worst-case stack 2234 B
+memory: heap 0 B, static 96 B, worst-case stack 2810 B
   routine                                     frame (B)    stack (B)
-  fn find                                            61           61
-  fn shortest_path                                 2089         2150
-  fn main                                            84         2234  (entry)
-  test "finds the shortest path"                      0         2150  (entry)
+  fn find                                            77           77
+  fn shortest_path                                 2617         2694
+  fn main                                           116         2810  (entry)
+  test "finds the shortest path"                      0         2694  (entry)
 ```
 
 A program whose bound exceeds the budget does not compile (E0402, or E0405 for constants). The

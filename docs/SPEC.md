@@ -304,9 +304,11 @@ order:
 - Because recursion is forbidden, the call graph is a DAG, so the worst-case stack depth is
   computable: `stack(f) = frame(f) + max(stack(g) for g called by f)`. A frame counts the
   parameters (aggregates and `mut` parameters by address), the locals, the return value and the
-  aggregate temporaries its largest statement can hold at once (literals, call results, copies,
-  and the snapshot of a `for x in xs` loop), so the figure is an upper bound. `alang check` prints
-  it and `alang check --memory` prints it per function.
+  aggregate temporaries of all its statements (literals, call results, copies, and the snapshot of
+  a `for x in xs` loop), so the figure is an upper bound. Temporaries of different statements are
+  added up because the C backend gives each its own variable, and a C compiler need not reuse a
+  dead variable's stack slot. `alang check` prints it and `alang check --memory` prints it per
+  function.
 - Every command checks the program against a **memory budget**, 8 MiB (8 388 608 bytes) unless
   `--max-stack BYTES` sets another (`0`: no limit). An entry point (`main`, a tool or a test) whose
   worst-case stack exceeds it is error E0402. Constants are evaluated while checking, so they are
@@ -402,7 +404,7 @@ more, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are adde
 | `bool` | boolean |
 | integers | integer, range-checked (`minimum`/`maximum` in the schema) |
 | floats | number; NaN and infinities have none, so a result holding one fails with `bad_result`, and an argument too large for the type is rejected |
-| `str[N]` | string of at most N UTF-8 bytes |
+| `str[N]` | string of at most N UTF-8 bytes; a result that is not UTF-8 text has none and fails with `bad_result` |
 | `[T; N]` | array of exactly N items |
 | `list[T; N]` | array of at most N items |
 | struct | object with every field required, no extra fields |

@@ -5,34 +5,35 @@ import alang.ast.Builtin;
 import alang.types.Type;
 
 /**
- * An upper bound on the aggregate temporaries a routine holds at once, which {@link MemoryReport}
- * adds to its frame. Without them the bound missed memory a program really uses:
+ * An upper bound on the aggregate temporaries a routine builds, which {@link MemoryReport} adds to its
+ * frame. Without them the bound missed memory a program really uses:
  * {@code print([[0; 1048576]; 1048576][0][0])} declares no variable at all, but builds 8 TiB.
  *
- * <p>A statement holds every aggregate value its expressions build until it ends: literals, call
- * results, copies of variables that are stored somewhere, and widened copies (a {@code str[8]} stored
- * as a {@code str[16]}). Nested blocks run one statement at a time, so a block needs as much as its
- * largest statement; a {@code for x in xs} loop also keeps its snapshot of {@code xs} for the whole
- * body. Scalars are not counted, and a value the statement then stores counts both as the temporary
- * and as the variable, so the figure errs on the high side.
+ * <p>Every aggregate value an expression builds counts: literals, call results, copies of variables that
+ * are stored somewhere, and widened copies (a {@code str[8]} stored as a {@code str[16]}); so does the
+ * snapshot of a {@code for x in xs} loop. The temporaries of all statements are added up, not just those
+ * of the largest one: the C backend gives each temporary its own variable, and a C compiler need not
+ * reuse a variable's stack slot for another once it is dead (clang -O0 never does), so they can all be
+ * on the stack at once. Scalars are not counted, and a value a statement then stores counts both as the
+ * temporary and as the variable, so the figure errs on the high side.
  */
 final class Temporaries {
     private Temporaries() {}
 
-    /** The routine's body, preconditions and postconditions; they never run at the same time. */
+    /** The routine's body, preconditions and postconditions. */
     static long of(Routine r) {
-        long max = block(r.body, r);
+        long sum = block(r.body, r);
         if (r instanceof FnDecl f) {
-            for (Expr e : f.requires) max = Math.max(max, expr(e));
-            for (Expr e : f.ensures) max = Math.max(max, expr(e));
+            for (Expr e : f.requires) sum = Layout.add(sum, expr(e));
+            for (Expr e : f.ensures) sum = Layout.add(sum, expr(e));
         }
-        return max;
+        return sum;
     }
 
     private static long block(Block b, Routine r) {
-        long max = 0;
-        for (Stmt s : b.stmts) max = Math.max(max, stmt(s, r));
-        return max;
+        long sum = 0;
+        for (Stmt s : b.stmts) sum = Layout.add(sum, stmt(s, r));
+        return sum;
     }
 
     private static long stmt(Stmt s, Routine r) {
@@ -43,23 +44,22 @@ final class Temporaries {
                 yield a.op == null ? Layout.add(t, stored(a.value, a.target.type)) : t;
             }
             case If i -> {
-                long max = i.elseBlock != null ? block(i.elseBlock, r) : 0;
-                for (Expr c : i.conds) max = Math.max(max, expr(c));
-                for (Block b : i.blocks) max = Math.max(max, block(b, r));
-                yield max;
+                long sum = i.elseBlock != null ? block(i.elseBlock, r) : 0;
+                for (Expr c : i.conds) sum = Layout.add(sum, expr(c));
+                for (Block b : i.blocks) sum = Layout.add(sum, block(b, r));
+                yield sum;
             }
-            case While w -> Math.max(Math.max(expr(w.cond), expr(w.limit)), block(w.body, r));
+            case While w -> Layout.add(Layout.add(expr(w.cond), expr(w.limit)), block(w.body, r));
             case For f -> {
-                if (f.isRange()) yield Math.max(Layout.add(expr(f.from), expr(f.to)), block(f.body, r));
+                if (f.isRange()) yield Layout.add(Layout.add(expr(f.from), expr(f.to)), block(f.body, r));
                 // The snapshot of the collection lives as long as the loop: the value itself when the
                 // collection is built by an expression (counted there), a copy when it is a variable.
                 long snapshot = Layout.add(expr(f.from), isPlace(f.from) ? Layout.size(f.from.type) : 0);
                 yield Layout.add(snapshot, block(f.body, r));
             }
             case Match m -> {
-                // Bindings refer into the subject, so it lives until the arm ends.
                 long arms = 0;
-                for (Arm a : m.arms) arms = Math.max(arms, block(a.body, r));
+                for (Arm a : m.arms) arms = Layout.add(arms, block(a.body, r));
                 yield Layout.add(expr(m.subject), arms);
             }
             case Return ret -> {

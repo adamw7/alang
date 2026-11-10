@@ -12,8 +12,10 @@ import alang.interp.Values.StrV;
 import alang.interp.Values.StructV;
 import alang.types.PrimKind;
 import alang.types.Type;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
@@ -178,11 +180,8 @@ public final class Interpreter {
     }
 
     private String text(Span s) {
-        if (source == null) return "?";
-        String line = source.line(s.line());
-        int start = Math.max(0, s.col() - 1);
-        int end = Math.min(line.length(), start + s.length());
-        return start < end ? line.substring(start, end) : "?";
+        String t = source == null ? "" : source.text(s);
+        return t.isEmpty() ? "?" : t;
     }
 
     // =================================================================== functions
@@ -203,8 +202,14 @@ public final class Interpreter {
         if (f.resultVar != null) slots[f.resultVar.slot] = result;
         for (Expr e : f.ensures) {
             if (!(Boolean) eval(e, slots)) {
-                String detail = f.resultVar != null ? " (result = " + Format.toText(result, f.ret) + ")" : "";
-                throw new Trap(Code.R0007, e.span, "postcondition of `" + f.name + "` failed: ensures " + text(e.span) + detail);
+                ByteArrayOutputStream msg = new ByteArrayOutputStream();
+                msg.writeBytes(utf8("postcondition of `" + f.name + "` failed: ensures " + text(e.span)));
+                if (f.resultVar != null) {
+                    msg.writeBytes(utf8(" (result = "));
+                    msg.writeBytes(Format.toBytes(result, f.ret));
+                    msg.writeBytes(utf8(")"));
+                }
+                throw new Trap(Code.R0007, e.span, msg.toByteArray());
             }
         }
         callStack.pop();
@@ -382,22 +387,35 @@ public final class Interpreter {
 
     private void assertStmt(Assert a, Object[] slots) {
         Expr c = a.cond;
-        String detail = "";
-        boolean ok;
         if (c instanceof Binary b && (b.op.isEquality() || b.op.isOrdering())) {
             Object l = eval(b.left, slots);
             Object r = eval(b.right, slots);
-            ok = compare(b, l, r);
-            if (!ok) {
-                detail = " (left: " + Format.toText(l, b.left.type) + ", right: " + Format.toText(r, b.right.type) + ")";
-            }
-        } else {
-            ok = (Boolean) eval(c, slots);
+            if (compare(b, l, r)) return;
+            ByteArrayOutputStream msg = assertMessage(a);
+            msg.writeBytes(utf8(" (left: "));
+            msg.writeBytes(Format.toBytes(l, b.left.type));
+            msg.writeBytes(utf8(", right: "));
+            msg.writeBytes(Format.toBytes(r, b.right.type));
+            msg.writeBytes(utf8(")"));
+            throw new Trap(Code.R0005, a.span, msg.toByteArray());
         }
-        if (!ok) {
-            String msg = a.message != null ? a.message + ": " : "";
-            throw new Trap(Code.R0005, a.span, "assertion failed: " + msg + text(c.span) + detail);
+        if (!(Boolean) eval(c, slots)) throw new Trap(Code.R0005, a.span, assertMessage(a).toByteArray());
+    }
+
+    /** "assertion failed: ", the message's bytes if there is one, and the condition's source text. */
+    private ByteArrayOutputStream assertMessage(Assert a) {
+        ByteArrayOutputStream msg = new ByteArrayOutputStream();
+        msg.writeBytes(utf8("assertion failed: "));
+        if (a.message != null) {
+            msg.writeBytes(a.message);
+            msg.writeBytes(utf8(": "));
         }
+        msg.writeBytes(utf8(text(a.cond.span)));
+        return msg;
+    }
+
+    private static byte[] utf8(String s) {
+        return s.getBytes(StandardCharsets.UTF_8);
     }
 
     // =================================================================== places
@@ -783,7 +801,10 @@ public final class Interpreter {
             }
             case PANIC -> {
                 StrV s = (StrV) eval(args.get(0).expr, slots);
-                throw new Trap(Code.R0010, c.span, "panic: " + new String(s.b, 0, s.len, java.nio.charset.StandardCharsets.UTF_8));
+                ByteArrayOutputStream msg = new ByteArrayOutputStream();
+                msg.writeBytes(utf8("panic: "));
+                msg.write(s.b, 0, s.len);
+                throw new Trap(Code.R0010, c.span, msg.toByteArray());
             }
         }
         throw new IllegalStateException();

@@ -4,6 +4,7 @@ import alang.ast.Ast;
 import alang.ast.Ast.*;
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Source;
 import alang.diag.Span;
 import alang.parser.ALangLexer;
 import alang.parser.ALangParser;
@@ -31,7 +32,7 @@ final class AstBuilder {
     // ------------------------------------------------------------------ spans
 
     static Span span(Token t) {
-        return new Span(t.getLine(), t.getCharPositionInLine() + 1, Math.max(1, t.getText().length()));
+        return new Span(t.getLine(), t.getCharPositionInLine() + 1, Math.max(1, Source.columns(t.getText())));
     }
 
     static Span span(ParserRuleContext ctx) {
@@ -41,7 +42,7 @@ final class AstBuilder {
         if (stop != null && stop.getLine() == start.getLine() && stop.getStopIndex() >= start.getStartIndex()) {
             len = stop.getStopIndex() - start.getStartIndex() + 1;
         } else if (start.getText() != null) {
-            len = Math.max(1, start.getText().length());
+            len = Math.max(1, Source.columns(start.getText()));
         }
         return new Span(start.getLine(), start.getCharPositionInLine() + 1, len);
     }
@@ -199,8 +200,7 @@ final class AstBuilder {
         }
         if (ctx.assertStmt() != null) {
             AssertStmtContext a = ctx.assertStmt();
-            String msg = a.STRING_LIT() == null ? null
-                : new String(unescape(a.STRING_LIT().getSymbol()), StandardCharsets.UTF_8);
+            byte[] msg = a.STRING_LIT() == null ? null : unescape(a.STRING_LIT().getSymbol());
             return new Assert(sp, expr(a.expression()), msg);
         }
         return new ExprStmt(sp, expr(ctx.exprStmt().expression()));
@@ -340,7 +340,7 @@ final class AstBuilder {
     private static Span spanTo(Span start, ParserRuleContext end) {
         Token stop = end.getStop();
         if (stop.getLine() != start.line()) return start;
-        int len = stop.getCharPositionInLine() + stop.getText().length() - (start.col() - 1);
+        int len = stop.getCharPositionInLine() + Source.columns(stop.getText()) - (start.col() - 1);
         return new Span(start.line(), start.col(), Math.max(1, len));
     }
 

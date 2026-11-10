@@ -462,7 +462,11 @@ public final class CGen {
             && !from.equals(to);
     }
 
-    /** Converts lvalue {@code x} of type {@code from} to {@code to} (str/list widening). */
+    /**
+     * Converts lvalue {@code x} of type {@code from} to {@code to} (str/list widening), into a new temporary.
+     * The helper writes through a pointer: one that returned the widened value would hold a second copy of
+     * it in its own frame, which the checker's stack bound does not count.
+     */
     private String coerce(String x, Type from, Type to) {
         if (!needsCoerce(from, to)) return x;
         String name = "al_cv_" + mangle(to) + "_" + mangle(from);
@@ -470,12 +474,15 @@ public final class CGen {
             String tt = ct(to);
             String ft = ct(from);
             String arr = to instanceof Type.Str ? "b" : "v";
-            helpers.append("static ").append(tt).append(' ').append(name).append("(const ").append(ft).append(" *x) {\n")
-                .append("    ").append(tt).append(" r = {0};\n    uint32_t i;\n    r.len = x->len;\n")
-                .append("    for (i = 0; i < x->len; i++) r.").append(arr).append("[i] = x->").append(arr).append("[i];\n")
-                .append("    return r;\n}\n\n");
+            helpers.append("static void ").append(name).append("(").append(tt).append(" *r, const ").append(ft).append(" *x) {\n")
+                .append("    uint32_t i;\n    r->len = x->len;\n")
+                .append("    for (i = 0; i < x->len; i++) r->").append(arr).append("[i] = x->").append(arr).append("[i];\n")
+                .append("}\n\n");
         }
-        return name + "(&(" + x + "))";
+        String t = "t" + ++tmpCount;
+        emit(ct(to) + " " + t + " = {0};");
+        emit(name + "(&" + t + ", &(" + x + "));");
+        return t;
     }
 
     // =================================================================== constants and literals
@@ -613,7 +620,7 @@ public final class CGen {
             emit("{");
             indent++;
             String c = lower(r);
-            emit("if (!(" + c + ")) al_trap(\"R0006\", " + cString(utf8("precondition of `" + f.name + "` failed: requires " + text(r.span)))
+            emit("if (!(" + c + ")) AL_TRAP(\"R0006\", " + cString(utf8("precondition of `" + f.name + "` failed: requires " + text(r.span)))
                 + ", al_call_line, al_call_col);");
             indent--;
             emit("}");
@@ -807,7 +814,9 @@ public final class CGen {
         Type ct = f.from.type;
         emit("{");
         indent++;
-        String coll = tmp(ct, lower(f.from));
+        // The snapshot: a variable is copied, since the body may change it; any other value already is a
+        // temporary of its own.
+        String coll = isPlace(f.from) ? tmp(ct, lower(f.from)) : lower(f.from);
         String i = "t" + ++tmpCount;
         String n = ct instanceof Type.ArrayT a ? a.len() + "u" : coll + ".len";
         String elem = ct instanceof Type.Str ? coll + ".b[" + i + "]" : coll + ".v[" + i + "]";
@@ -827,7 +836,9 @@ public final class CGen {
         Type t = m.subject.type;
         emit("{");
         indent++;
-        String s = tmp(t, lower(m.subject));
+        // Every arm test and binding reads the subject before any arm body runs, so a variable can be read
+        // in place; copying it would take stack the checker does not count.
+        String s = Type.isAggregate(t) && isPlace(m.subject) ? lower(m.subject) : tmp(t, lower(m.subject));
         boolean first = true;
         for (int k = 0; k < m.arms.size(); k++) {
             Arm arm = m.arms.get(k);
@@ -870,7 +881,14 @@ public final class CGen {
 
     private void assertStmt(Assert a) {
         Expr c = a.cond;
-        String prefix = "assertion failed: " + (a.message != null ? a.message + ": " : "") + text(c.span);
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        bytes.writeBytes(utf8("assertion failed: "));
+        if (a.message != null) {
+            bytes.writeBytes(a.message);
+            bytes.writeBytes(utf8(": "));
+        }
+        bytes.writeBytes(utf8(text(c.span)));
+        String prefix = cString(bytes.toByteArray());
         if (c instanceof Binary b && (b.op.isEquality() || b.op.isOrdering())) {
             String l = lowerLvalue(b.left);
             String r = lowerLvalue(b.right);
@@ -878,7 +896,7 @@ public final class CGen {
             emit("if (!(" + ok + ")) {");
             indent++;
             emit("al_out al_e = al_trap_begin(\"R0005\");");
-            emit("AL_PUTS(&al_e, " + cString(utf8(prefix)) + ");");
+            emit("AL_PUTS(&al_e, " + prefix + ");");
             emit("AL_PUTS(&al_e, \" (left: \");");
             emit(fmtStmt(b.left.type, "&al_e", l, "1"));
             emit("AL_PUTS(&al_e, \", right: \");");
@@ -890,7 +908,7 @@ public final class CGen {
             return;
         }
         String v = lower(c);
-        emit("if (!(" + v + ")) al_trap(\"R0005\", " + cString(utf8(prefix)) + ", " + a.span.line() + ", " + a.span.col() + ");");
+        emit("if (!(" + v + ")) AL_TRAP(\"R0005\", " + prefix + ", " + a.span.line() + ", " + a.span.col() + ");");
     }
 
     // =================================================================== expressions
@@ -985,8 +1003,8 @@ public final class CGen {
             case Repeat r -> {
                 Type elem = Type.elementOf(r.type);
                 String v = coerce(lower(r.value), r.value.type, elem);
-                String val = "t" + ++tmpCount;
-                emit(ct(elem) + " " + val + " = " + v + ";");
+                // An aggregate is already in a variable or temporary that nothing changes during the fill.
+                String val = Type.isAggregate(elem) ? v : tmp(elem, v);
                 String t = "t" + ++tmpCount;
                 emit(ct(r.type) + " " + t + " = {0};");
                 String i = "t" + ++tmpCount;
@@ -998,6 +1016,11 @@ public final class CGen {
                 return t;
             }
         }
+    }
+
+    /** Places evaluate to the storage they name; everything else builds a new value. */
+    private static boolean isPlace(Expr e) {
+        return e instanceof Name || e instanceof Index || (e instanceof FieldAccess f && f.variant == null);
     }
 
     /** Like {@link #lower} but guarantees an lvalue (needed to take addresses or format). */
@@ -1033,9 +1056,7 @@ public final class CGen {
             if (p.byRef) {
                 args.add("&(" + lower(a) + ")");
             } else if (Type.isAggregate(p.type)) {
-                String v = lower(a);
-                if (needsCoerce(a.type, p.type)) v = tmp(p.type, coerce(v, a.type, p.type));
-                args.add("&(" + v + ")");
+                args.add("&(" + coerce(lower(a), a.type, p.type) + ")");
             } else {
                 args.add(lower(a));
             }
@@ -1160,10 +1181,11 @@ public final class CGen {
                 String place = lower(args.get(0).expr);
                 Type elem = Type.elementOf(t);
                 String v = coerce(lower(args.get(1).expr), args.get(1).expr.type, elem);
-                String vt = tmp(elem, v);
+                // The value cannot refer to the target (E0208), so an aggregate is stored from where it is.
+                String vt = Type.isAggregate(elem) ? v : tmp(elem, v);
                 int cap = t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap();
                 String kind = t instanceof Type.Str ? "str" : "list";
-                emit("if ((" + place + ").len >= " + cap + "u) al_trap(\"R0004\", \"push to a full " + kind + " (capacity " + cap + ")\", " + at + ");");
+                emit("if ((" + place + ").len >= " + cap + "u) AL_TRAP(\"R0004\", \"push to a full " + kind + " (capacity " + cap + ")\", " + at + ");");
                 emit("(" + place + ")." + (t instanceof Type.Str ? "b" : "v") + "[(" + place + ").len++] = " + vt + ";");
                 return null;
             }
@@ -1171,7 +1193,7 @@ public final class CGen {
                 Type t = args.get(0).expr.type;
                 String place = lower(args.get(0).expr);
                 String kind = t instanceof Type.Str ? "str" : "list";
-                emit("if ((" + place + ").len == 0) al_trap(\"R0012\", \"pop from an empty " + kind + "\", " + at + ");");
+                emit("if ((" + place + ").len == 0) AL_TRAP(\"R0012\", \"pop from an empty " + kind + "\", " + at + ");");
                 return tmp(Type.elementOf(t), "(" + place + ")." + (t instanceof Type.Str ? "b" : "v") + "[--(" + place + ").len]");
             }
             case CLEAR -> {
@@ -1251,10 +1273,8 @@ public final class CGen {
     // =================================================================== text helpers
 
     private String text(Span s) {
-        String line = source.line(s.line());
-        int start = Math.max(0, s.col() - 1);
-        int end = Math.min(line.length(), start + s.length());
-        return start < end ? line.substring(start, end) : "?";
+        String t = source.text(s);
+        return t.isEmpty() ? "?" : t;
     }
 
     private static byte[] utf8(String s) {

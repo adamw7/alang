@@ -3,7 +3,10 @@ package alang.diag;
 import java.util.ArrayList;
 import java.util.List;
 
-/** The text of one ALang source file. */
+/**
+ * The text of one ALang source file. Columns and lengths of a {@link Span} count Unicode code points, as
+ * the lexer does, not the UTF-16 chars of a Java string: an emoji is one column.
+ */
 public final class Source {
     public final String path;
     public final String text;
@@ -29,5 +32,37 @@ public final class Source {
     /** Returns the given 1-based line, or "" if out of range. */
     public String line(int n) {
         return n >= 1 && n <= lines.size() ? lines.get(n - 1) : "";
+    }
+
+    /** The source text a span covers (as much of it as its line has), or "" for none. */
+    public String text(Span s) {
+        String line = line(s.line());
+        int start = index(line, Math.max(0, s.col() - 1));
+        int end = index(line, Math.max(0, s.col() - 1) + Math.max(0, s.length()));
+        return line.substring(start, end);
+    }
+
+    /**
+     * The marker line under a span: blanks up to its column, keeping the tabs of the source line so that
+     * the carets line up with it, then one caret per column (at least one).
+     */
+    public String caret(Span s) {
+        int[] cps = line(s.line()).codePoints().toArray();
+        int col = Math.max(1, s.col());
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < col - 1 && i < cps.length; i++) sb.append(cps[i] == '\t' ? '\t' : ' ');
+        int len = Math.max(1, Math.min(s.length(), cps.length - col + 1));
+        return sb.append("^".repeat(len)).toString();
+    }
+
+    /** The UTF-16 index of the code point at {@code column} (0-based), or the line's end. */
+    private static int index(String line, int column) {
+        int n = line.codePointCount(0, line.length());
+        return column >= n ? line.length() : line.offsetByCodePoints(0, column);
+    }
+
+    /** The length of a token's text in columns (code points). */
+    public static int columns(String text) {
+        return text.codePointCount(0, text.length());
     }
 }

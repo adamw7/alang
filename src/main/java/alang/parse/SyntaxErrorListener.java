@@ -2,6 +2,7 @@ package alang.parse;
 
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Source;
 import alang.diag.Span;
 import alang.parser.ALangLexer;
 import alang.parser.ALangParser;
@@ -50,12 +51,12 @@ final class SyntaxErrorListener extends BaseErrorListener {
         String text = tok.getType() == Token.EOF ? "end of file"
             : tok.getType() == ALangLexer.ERROR_CHAR ? "character `" + tok.getText() + "`"
             : "'" + tok.getText() + "'";
-        int len = tok.getType() == Token.EOF ? 1 : Math.max(1, tok.getText().length());
+        int len = tok.getType() == Token.EOF ? 1 : Math.max(1, Source.columns(tok.getText()));
 
         // A missing semicolon is reported at the end of the previous line, where it belongs.
         if (expected != null && expected.contains(ALangLexer.SEMI) && prev != null
             && (tok.getLine() > prev.getLine() || tok.getType() == Token.EOF) && tok.getType() != ALangLexer.SEMI) {
-            Span at = new Span(prev.getLine(), prev.getCharPositionInLine() + 1, Math.max(1, prev.getText().length()));
+            Span at = new Span(prev.getLine(), prev.getCharPositionInLine() + 1, Math.max(1, Source.columns(prev.getText())));
             diags.error(Code.E0001, at, "missing ';' after '" + prev.getText() + "'",
                 "every statement and const declaration ends with `;`");
             return;

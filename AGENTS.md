@@ -216,7 +216,8 @@ JSON mapping: integers/floats/bools as JSON numbers/booleans, `str[N]` as a stri
 arrays and lists as JSON arrays, structs as objects (all fields required), enum variants as
 `"Name"` or `{"Name": [payload...]}`. Tools cannot take `mut` parameters. A trap inside a tool
 returns `{"ok": false, "error": {"code": "R....", ...}}` instead of crashing the caller. JSON has no
-NaN or infinity, so a float result holding one fails with `bad_result`: check for it in the tool.
+NaN or infinity, so a float result holding one fails with `bad_result`: check for it in the tool. A
+`str` result must be UTF-8 text for the same reason; return raw bytes as a `list[u8; N]`.
 Pass `-` instead of the JSON to read the arguments from stdin.
 
 Tools are safe to run even when you wrote them minutes ago: no file, network, clock or random
