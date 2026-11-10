@@ -1,10 +1,9 @@
 package alang.interp;
 
-import alang.ast.Ast.Field;
-import alang.ast.Ast.Variant;
-import alang.types.PrimKind;
 import alang.types.Type;
 import java.util.Arrays;
+import java.util.List;
+import java.util.function.IntFunction;
 
 /**
  * Runtime representation of ALang values inside the reference interpreter.
@@ -64,28 +63,21 @@ public final class Values {
 
     /** A deep copy; primitives are immutable and returned as is. */
     public static Object copy(Object v) {
-        if (v instanceof StrV s) return new StrV(s.b.clone(), s.len);
-        if (v instanceof ListV l) {
-            Object[] items = new Object[l.items.length];
-            for (int i = 0; i < l.len; i++) items[i] = copy(l.items[i]);
-            return new ListV(items, l.len);
-        }
-        if (v instanceof ArrV a) {
-            Object[] items = new Object[a.items.length];
-            for (int i = 0; i < items.length; i++) items[i] = copy(a.items[i]);
-            return new ArrV(items);
-        }
-        if (v instanceof StructV s) {
-            Object[] f = new Object[s.fields.length];
-            for (int i = 0; i < f.length; i++) f[i] = copy(s.fields[i]);
-            return new StructV(f);
-        }
-        if (v instanceof EnumV e) {
-            Object[] p = new Object[e.payload.length];
-            for (int i = 0; i < p.length; i++) p[i] = copy(e.payload[i]);
-            return new EnumV(e.tag, p);
-        }
-        return v;
+        return switch (v) {
+            case StrV s -> new StrV(s.b.clone(), s.len);
+            case ListV l -> new ListV(copy(l.items, l.len), l.len);
+            case ArrV a -> new ArrV(copy(a.items, a.items.length));
+            case StructV s -> new StructV(copy(s.fields, s.fields.length));
+            case EnumV e -> new EnumV(e.tag, copy(e.payload, e.payload.length));
+            default -> v;
+        };
+    }
+
+    /** A copy of {@code items} with deep copies of its first {@code n} elements, and nothing after them. */
+    private static Object[] copy(Object[] items, int n) {
+        Object[] out = new Object[items.length];
+        for (int i = 0; i < n; i++) out[i] = copy(items[i]);
+        return out;
     }
 
     /** Adjusts the storage capacity of a str/list value to the target type (widening). */
@@ -99,83 +91,34 @@ public final class Values {
         return v;
     }
 
-    /** A zero value of the given type (used for JSON decoding scaffolding). */
-    public static Object zero(Type t) {
-        return switch (t) {
-            case Type.Prim p -> p.kind() == PrimKind.BOOL ? Boolean.FALSE : p.kind().isFloat ? (Object) 0.0 : (Object) 0L;
-            case Type.Str s -> new StrV(new byte[s.cap()], 0);
-            case Type.ListT l -> new ListV(new Object[l.cap()], 0);
-            case Type.ArrayT a -> {
-                Object[] items = new Object[a.len()];
-                for (int i = 0; i < items.length; i++) items[i] = zero(a.elem());
-                yield new ArrV(items);
-            }
-            case Type.StructT s -> {
-                Object[] f = new Object[s.decl().fields.size()];
-                for (int i = 0; i < f.length; i++) f[i] = zero(s.decl().fields.get(i).type);
-                yield new StructV(f);
-            }
-            case Type.EnumT e -> {
-                Variant v = e.decl().variants.get(0);
-                Object[] p = new Object[v.payload.size()];
-                for (int i = 0; i < p.length; i++) p[i] = zero(v.payload.get(i));
-                yield new EnumV(0, p);
-            }
-            default -> null;
-        };
-    }
-
     public static boolean equal(Object a, Object b, Type t) {
-        switch (t) {
-            case Type.Prim p -> {
-                if (p.kind().isFloat) return ((Double) a).doubleValue() == ((Double) b).doubleValue();
-                return a.equals(b);
-            }
+        return switch (t) {
+            case Type.Prim p -> p.kind().isFloat ? ((Double) a).doubleValue() == ((Double) b).doubleValue() : a.equals(b);
             case Type.Str s -> {
                 StrV x = (StrV) a;
                 StrV y = (StrV) b;
-                return x.len == y.len && Arrays.equals(x.b, 0, x.len, y.b, 0, y.len);
+                yield x.len == y.len && Arrays.equals(x.b, 0, x.len, y.b, 0, y.len);
             }
-            case Type.ListT l -> {
-                ListV x = (ListV) a;
-                ListV y = (ListV) b;
-                if (x.len != y.len) return false;
-                for (int i = 0; i < x.len; i++) {
-                    if (!equal(x.items[i], y.items[i], l.elem())) return false;
-                }
-                return true;
-            }
-            case Type.ArrayT at -> {
-                ArrV x = (ArrV) a;
-                ArrV y = (ArrV) b;
-                for (int i = 0; i < x.items.length; i++) {
-                    if (!equal(x.items[i], y.items[i], at.elem())) return false;
-                }
-                return true;
-            }
-            case Type.StructT st -> {
-                StructV x = (StructV) a;
-                StructV y = (StructV) b;
-                int i = 0;
-                for (Field f : st.decl().fields) {
-                    if (!equal(x.fields[i], y.fields[i], f.type)) return false;
-                    i++;
-                }
-                return true;
-            }
+            case Type.ListT l -> ((ListV) a).len == ((ListV) b).len
+                && allEqual(((ListV) a).items, ((ListV) b).items, ((ListV) a).len, i -> l.elem());
+            case Type.ArrayT at -> allEqual(((ArrV) a).items, ((ArrV) b).items, ((ArrV) a).items.length, i -> at.elem());
+            case Type.StructT st -> allEqual(((StructV) a).fields, ((StructV) b).fields, st.decl().fields.size(),
+                i -> st.decl().fields.get(i).type);
             case Type.EnumT et -> {
                 EnumV x = (EnumV) a;
                 EnumV y = (EnumV) b;
-                if (x.tag != y.tag) return false;
-                Variant v = et.decl().variants.get(x.tag);
-                for (int i = 0; i < v.payload.size(); i++) {
-                    if (!equal(x.payload[i], y.payload[i], v.payload.get(i))) return false;
-                }
-                return true;
+                List<Type> payload = et.decl().variants.get(x.tag).payload;
+                yield x.tag == y.tag && allEqual(x.payload, y.payload, payload.size(), payload::get);
             }
-            default -> {
-                return false;
-            }
+            default -> false;
+        };
+    }
+
+    /** Whether the first {@code n} elements are equal, element {@code i} having type {@code type(i)}. */
+    private static boolean allEqual(Object[] x, Object[] y, int n, IntFunction<Type> type) {
+        for (int i = 0; i < n; i++) {
+            if (!equal(x[i], y[i], type.apply(i))) return false;
         }
+        return true;
     }
 }

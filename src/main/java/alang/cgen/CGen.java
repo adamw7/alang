@@ -22,7 +22,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.UnaryOperator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Compiles a checked ALang program to a single, self-contained C99 file.
@@ -112,154 +113,159 @@ public final class CGen {
 
     // =================================================================== integer helpers
 
-    private static final PrimKind[] INTS = {
-        PrimKind.I8, PrimKind.I16, PrimKind.I32, PrimKind.I64, PrimKind.U8, PrimKind.U16, PrimKind.U32, PrimKind.U64};
-
     static String cPrim(PrimKind k) {
-        return switch (k) {
-            case BOOL -> "bool";
-            case I8 -> "int8_t";
-            case I16 -> "int16_t";
-            case I32 -> "int32_t";
-            case I64 -> "int64_t";
-            case U8 -> "uint8_t";
-            case U16 -> "uint16_t";
-            case U32 -> "uint32_t";
-            case U64 -> "uint64_t";
-            case F32 -> "float";
-            case F64 -> "double";
-        };
+        if (k == PrimKind.BOOL) return "bool";
+        if (k.isFloat) return k == PrimKind.F32 ? "float" : "double";
+        return (k.signed ? "int" : "uint") + k.bits + "_t";
     }
 
-    private static String cMin(PrimKind k) {
-        return k.signed ? "INT" + k.bits + "_MIN" : "0";
-    }
+    /*
+     * Checked arithmetic for every integer width; all traps match the interpreter's messages. In the
+     * templates, $T is the type, $N its ALang name, $W the 64-bit type of its signedness and $U the unsigned
+     * type of its width. A line tagged [tag] is kept only for the kinds that have the tag, one tagged [!tag]
+     * only for the others: s (signed), u (unsigned), i64, u64, narrow (8 to 32 bits).
+     */
+    private static final String ARITH_I64 = """
+        static int64_t al_add_i64(int64_t a, int64_t b, int line, int col) {
+            if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) al_overflow("+", "i64", line, col);
+            return a + b;
+        }
+        static int64_t al_sub_i64(int64_t a, int64_t b, int line, int col) {
+            if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) al_overflow("-", "i64", line, col);
+            return a - b;
+        }
+        static int64_t al_mul_i64(int64_t a, int64_t b, int line, int col) {
+            int bad;
+            if (a > 0) bad = b > 0 ? a > INT64_MAX / b : b < INT64_MIN / a;
+            else bad = b > 0 ? a < INT64_MIN / b : (a != 0 && b < INT64_MAX / a);
+            if (bad) al_overflow("*", "i64", line, col);
+            return a * b;
+        }
+        """;
 
-    private static String cMax(PrimKind k) {
-        return (k.signed ? "INT" : "UINT") + k.bits + "_MAX";
-    }
+    private static final String ARITH_U64 = """
+        static uint64_t al_add_u64(uint64_t a, uint64_t b, int line, int col) {
+            if (a + b < a) al_overflow("+", "u64", line, col);
+            return a + b;
+        }
+        static uint64_t al_sub_u64(uint64_t a, uint64_t b, int line, int col) {
+            if (a < b) al_overflow("-", "u64", line, col);
+            return a - b;
+        }
+        static uint64_t al_mul_u64(uint64_t a, uint64_t b, int line, int col) {
+            if (a != 0 && b > UINT64_MAX / a) al_overflow("*", "u64", line, col);
+            return a * b;
+        }
+        """;
 
-    /** Checked arithmetic for every integer width; all traps match the interpreter's messages. */
+    /** The narrow types compute in 64 bits, then check the range. */
+    private static final String ARITH_NARROW = """
+        static $T al_add_$N($T a, $T b, int line, int col) {
+            $W r = ($W)a + ($W)b;
+        [s]    if (r < $MIN || r > $MAX) al_overflow("+", "$N", line, col);
+        [u]    if (r > $MAX) al_overflow("+", "$N", line, col);
+            return ($T)r;
+        }
+        static $T al_mul_$N($T a, $T b, int line, int col) {
+            $W r = ($W)a * ($W)b;
+        [s]    if (r < $MIN || r > $MAX) al_overflow("*", "$N", line, col);
+        [u]    if (r > $MAX) al_overflow("*", "$N", line, col);
+            return ($T)r;
+        }
+        static $T al_sub_$N($T a, $T b, int line, int col) {
+            int64_t r = (int64_t)a - (int64_t)b;
+            if (r < $MIN || r > $MAX) al_overflow("-", "$N", line, col);
+            return ($T)r;
+        }
+        """;
+
+    private static final String DIV_REM = """
+        static $T al_div_$N($T a, $T b, int line, int col) {
+            if (b == 0) al_div_zero("division by zero", line, col);
+        [s]    if (a == $MIN && b == -1) al_overflow("/", "$N", line, col);
+            return ($T)(a / b);
+        }
+        static $T al_rem_$N($T a, $T b, int line, int col) {
+            if (b == 0) al_div_zero("remainder by zero", line, col);
+        [s]    if (b == -1) return 0;
+            return ($T)(a % b);
+        }
+        """;
+
+    /** al_wrap reinterprets two's complement without implementation-defined conversions. */
+    private static final String BITS_SIGNED = """
+        static $T al_neg_$N($T a, int line, int col) {
+            if (a == $MIN) al_overflow("-", "$N", line, col);
+            return ($T)-a;
+        }
+        static $T al_abs_$N($T a, int line, int col) {
+            if (a == $MIN) al_overflow("abs", "$N", line, col);
+            return a < 0 ? ($T)-a : a;
+        }
+        static $T al_bnot_$N($T a) {
+            return a < 0 ? ($T)-(a + 1) : ($T)(-a - 1);
+        }
+        static $T al_wrap_$N($U v) {
+            return v <= ($U)$MAX ? ($T)v : ($T)(-($T)($U)~v - 1);
+        }
+        static $T al_shl_$N($T a, int s) {
+            return al_wrap_$N(($U)(($U)a << s));
+        }
+        static $T al_shr_$N($T a, int s) {
+            return a < 0 ? ($T)~($T)(($T)~a >> s) : ($T)(a >> s);
+        }
+        """;
+
+    private static final String BITS_UNSIGNED = """
+        static $T al_bnot_$N($T a) {
+            return ($T)~a;
+        }
+        static $T al_shl_$N($T a, int s) {
+            return ($T)(($T)a << s);
+        }
+        static $T al_shr_$N($T a, int s) {
+            return ($T)(a >> s);
+        }
+        """;
+
+    /** Range-checked conversions into the type from a signed or unsigned 64-bit carrier, and from a double. */
+    private static final String CONVERT = """
+        static $T al_from_s_$N(int64_t v, int line, int col) {
+        [u64]    if (v < 0) al_range_trap_s(v, "$N", line, col);
+        [narrow]    if (v < $MIN || v > $MAX) al_range_trap_s(v, "$N", line, col);
+        [i64]    (void)line;
+        [i64]    (void)col;
+            return ($T)v;
+        }
+        static $T al_from_u_$N(uint64_t v, int line, int col) {
+        [!u64]    if (v > (uint64_t)$MAX) al_range_trap_u(v, "$N", line, col);
+        [u64]    (void)line;
+        [u64]    (void)col;
+            return ($T)v;
+        }
+        static $T al_from_f_$N(double d, int line, int col) {
+            return ($T)al_f2i_check(d, $LO, $HI, "$N", line, col);
+        }
+        """;
+
+    private static final Pattern TAGGED_LINE = Pattern.compile("(?m)^\\[(!?)(\\w+)\\](.*\\n)");
+
     private static String intHelpers() {
         StringBuilder sb = new StringBuilder("\n/* ---------------------------------------------------------------- checked integers */\n\n");
-        for (PrimKind k : INTS) {
-            String t = cPrim(k);
-            String n = k.name;
-            String sig = "(" + t + " a, " + t + " b, int line, int col)";
-            UnaryOperator<String> ovf = op -> "al_overflow(\"" + op + "\", \"" + n + "\", line, col)";
-            if (k == PrimKind.I64) {
-                sb.append("static int64_t al_add_i64").append(sig).append(" {\n")
-                    .append("    if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) ").append(ovf.apply("+")).append(";\n")
-                    .append("    return a + b;\n}\n");
-                sb.append("static int64_t al_sub_i64").append(sig).append(" {\n")
-                    .append("    if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b)) ").append(ovf.apply("-")).append(";\n")
-                    .append("    return a - b;\n}\n");
-                sb.append("static int64_t al_mul_i64").append(sig).append(" {\n")
-                    .append("    int bad;\n")
-                    .append("    if (a > 0) bad = b > 0 ? a > INT64_MAX / b : b < INT64_MIN / a;\n")
-                    .append("    else bad = b > 0 ? a < INT64_MIN / b : (a != 0 && b < INT64_MAX / a);\n")
-                    .append("    if (bad) ").append(ovf.apply("*")).append(";\n")
-                    .append("    return a * b;\n}\n");
-            } else if (k == PrimKind.U64) {
-                sb.append("static uint64_t al_add_u64").append(sig).append(" {\n")
-                    .append("    if (a + b < a) ").append(ovf.apply("+")).append(";\n    return a + b;\n}\n");
-                sb.append("static uint64_t al_sub_u64").append(sig).append(" {\n")
-                    .append("    if (a < b) ").append(ovf.apply("-")).append(";\n    return a - b;\n}\n");
-                sb.append("static uint64_t al_mul_u64").append(sig).append(" {\n")
-                    .append("    if (a != 0 && b > UINT64_MAX / a) ").append(ovf.apply("*")).append(";\n    return a * b;\n}\n");
-            } else {
-                String w = k.signed ? "int64_t" : "uint64_t";
-                for (String[] op : new String[][] {{"add", "+"}, {"mul", "*"}}) {
-                    sb.append("static ").append(t).append(" al_").append(op[0]).append('_').append(n).append(sig).append(" {\n")
-                        .append("    ").append(w).append(" r = (").append(w).append(")a ").append(op[1]).append(" (").append(w).append(")b;\n")
-                        .append("    if (").append(k.signed ? "r < " + cMin(k) + " || " : "").append("r > ").append(cMax(k)).append(") ")
-                        .append(ovf.apply(op[1])).append(";\n")
-                        .append("    return (").append(t).append(")r;\n}\n");
-                }
-                sb.append("static ").append(t).append(" al_sub_").append(n).append(sig).append(" {\n")
-                    .append("    int64_t r = (int64_t)a - (int64_t)b;\n")
-                    .append("    if (r < ").append(cMin(k)).append(" || r > ").append(cMax(k)).append(") ").append(ovf.apply("-")).append(";\n")
-                    .append("    return (").append(t).append(")r;\n}\n");
-            }
-            // division and remainder
-            sb.append("static ").append(t).append(" al_div_").append(n).append(sig).append(" {\n")
-                .append("    if (b == 0) al_div_zero(\"division by zero\", line, col);\n");
-            if (k.signed) sb.append("    if (a == ").append(cMin(k)).append(" && b == -1) ").append(ovf.apply("/")).append(";\n");
-            sb.append("    return (").append(t).append(")(a / b);\n}\n");
-            sb.append("static ").append(t).append(" al_rem_").append(n).append(sig).append(" {\n")
-                .append("    if (b == 0) al_div_zero(\"remainder by zero\", line, col);\n");
-            if (k.signed) sb.append("    if (b == -1) return 0;\n");
-            sb.append("    return (").append(t).append(")(a % b);\n}\n");
-            String u = cPrim(unsignedOf(k));
-            if (k.signed) {
-                sb.append("static ").append(t).append(" al_neg_").append(n).append("(").append(t).append(" a, int line, int col) {\n")
-                    .append("    if (a == ").append(cMin(k)).append(") ").append(ovf.apply("-")).append(";\n")
-                    .append("    return (").append(t).append(")-a;\n}\n");
-                sb.append("static ").append(t).append(" al_abs_").append(n).append("(").append(t).append(" a, int line, int col) {\n")
-                    .append("    if (a == ").append(cMin(k)).append(") ").append(ovf.apply("abs")).append(";\n")
-                    .append("    return a < 0 ? (").append(t).append(")-a : a;\n}\n");
-                sb.append("static ").append(t).append(" al_bnot_").append(n).append("(").append(t).append(" a) {\n")
-                    .append("    return a < 0 ? (").append(t).append(")-(a + 1) : (").append(t).append(")(-a - 1);\n}\n");
-                // two's complement reinterpretation without implementation-defined conversions
-                sb.append("static ").append(t).append(" al_wrap_").append(n).append("(").append(u).append(" v) {\n")
-                    .append("    return v <= (").append(u).append(")").append(cMax(k)).append(" ? (").append(t).append(")v : (")
-                    .append(t).append(")(-(").append(t).append(")(").append(u).append(")~v - 1);\n}\n");
-                sb.append("static ").append(t).append(" al_shl_").append(n).append("(").append(t).append(" a, int s) {\n")
-                    .append("    return al_wrap_").append(n).append("((").append(u).append(")((").append(u).append(")a << s));\n}\n");
-                sb.append("static ").append(t).append(" al_shr_").append(n).append("(").append(t).append(" a, int s) {\n")
-                    .append("    return a < 0 ? (").append(t).append(")~(").append(t).append(")((").append(t).append(")~a >> s) : (")
-                    .append(t).append(")(a >> s);\n}\n");
-            } else {
-                sb.append("static ").append(t).append(" al_bnot_").append(n).append("(").append(t).append(" a) {\n")
-                    .append("    return (").append(t).append(")~a;\n}\n");
-                sb.append("static ").append(t).append(" al_shl_").append(n).append("(").append(t).append(" a, int s) {\n")
-                    .append("    return (").append(t).append(")((").append(t).append(")a << s);\n}\n");
-                sb.append("static ").append(t).append(" al_shr_").append(n).append("(").append(t).append(" a, int s) {\n")
-                    .append("    return (").append(t).append(")(a >> s);\n}\n");
-            }
-            // range-checked conversions into this type from a signed / unsigned 64-bit carrier
-            sb.append("static ").append(t).append(" al_from_s_").append(n).append("(int64_t v, int line, int col) {\n");
-            if (k == PrimKind.U64) {
-                sb.append("    if (v < 0) al_range_trap_s(v, \"").append(n).append("\", line, col);\n");
-            } else if (k != PrimKind.I64) {
-                sb.append("    if (v < ").append(cMin(k)).append(" || v > ").append(cMax(k)).append(") al_range_trap_s(v, \"").append(n).append("\", line, col);\n");
-            } else {
-                sb.append("    (void)line;\n    (void)col;\n");
-            }
-            sb.append("    return (").append(t).append(")v;\n}\n");
-            sb.append("static ").append(t).append(" al_from_u_").append(n).append("(uint64_t v, int line, int col) {\n");
-            if (k != PrimKind.U64) {
-                sb.append("    if (v > (uint64_t)").append(cMax(k)).append(") al_range_trap_u(v, \"").append(n).append("\", line, col);\n");
-            } else {
-                sb.append("    (void)line;\n    (void)col;\n");
-            }
-            sb.append("    return (").append(t).append(")v;\n}\n");
-            String lo;
-            String hi;
-            if (k == PrimKind.I64) {
-                lo = "-9223372036854775808.0";
-                hi = "9223372036854775808.0";
-            } else if (k == PrimKind.U64) {
-                lo = "0.0";
-                hi = "18446744073709551616.0";
-            } else {
-                lo = k.min() + ".0";
-                hi = k.max().add(BigInteger.ONE) + ".0";
-            }
-            sb.append("static ").append(t).append(" al_from_f_").append(n).append("(double d, int line, int col) {\n")
-                .append("    return (").append(t).append(")al_f2i_check(d, ").append(lo).append(", ").append(hi)
-                .append(", \"").append(n).append("\", line, col);\n}\n");
+        for (PrimKind k : PrimKind.values()) {
+            if (!k.isInt()) continue;
+            Set<String> tags = Set.of(k.signed ? "s" : "u", k.bits == 64 ? k.name : "narrow");
+            String code = (k == PrimKind.I64 ? ARITH_I64 : k == PrimKind.U64 ? ARITH_U64 : ARITH_NARROW) + DIV_REM
+                + (k.signed ? BITS_SIGNED : BITS_UNSIGNED) + CONVERT;
+            code = TAGGED_LINE.matcher(code).replaceAll(m ->
+                tags.contains(m.group(2)) == m.group(1).isEmpty() ? Matcher.quoteReplacement(m.group(3)) : "");
+            sb.append(code.replace("$T", cPrim(k)).replace("$N", k.name).replace("$U", "uint" + k.bits + "_t")
+                .replace("$W", k.signed ? "int64_t" : "uint64_t")
+                .replace("$MIN", k.signed ? "INT" + k.bits + "_MIN" : "0")
+                .replace("$MAX", (k.signed ? "INT" : "UINT") + k.bits + "_MAX")
+                .replace("$LO", k.min() + ".0").replace("$HI", k.max().add(BigInteger.ONE) + ".0"));
         }
         return sb.toString();
-    }
-
-    private static PrimKind unsignedOf(PrimKind k) {
-        return switch (k.bits) {
-            case 8 -> PrimKind.U8;
-            case 16 -> PrimKind.U16;
-            case 32 -> PrimKind.U32;
-            default -> PrimKind.U64;
-        };
     }
 
     // =================================================================== types
@@ -342,31 +348,17 @@ public final class CGen {
         String ty = ct(t);
         StringBuilder sb = new StringBuilder();
         switch (t) {
-            case Type.ArrayT a -> {
-                String elem = fmtStmt(a.elem(), "o", "x->v[i]", "1");
-                sb.append("static void ").append(name).append("(al_out *o, const ").append(ty).append(" *x) {\n")
-                    .append("    uint32_t i;\n    AL_PUTS(o, \"[\");\n")
-                    .append("    for (i = 0; i < ").append(a.len()).append("; i++) {\n")
-                    .append("        if (i > 0) AL_PUTS(o, \", \");\n        ").append(elem).append("\n    }\n")
-                    .append("    AL_PUTS(o, \"]\");\n}\n\n");
-            }
-            case Type.ListT l -> {
-                String elem = fmtStmt(l.elem(), "o", "x->v[i]", "1");
-                sb.append("static void ").append(name).append("(al_out *o, const ").append(ty).append(" *x) {\n")
-                    .append("    uint32_t i;\n    AL_PUTS(o, \"[\");\n")
-                    .append("    for (i = 0; i < x->len; i++) {\n")
-                    .append("        if (i > 0) AL_PUTS(o, \", \");\n        ").append(elem).append("\n    }\n")
-                    .append("    AL_PUTS(o, \"]\");\n}\n\n");
-            }
+            case Type.ArrayT a -> sequenceFmt(sb, name, ty, a.elem(), String.valueOf(a.len()));
+            case Type.ListT l -> sequenceFmt(sb, name, ty, l.elem(), "x->len");
             case Type.StructT s -> {
                 List<String> parts = new ArrayList<>();
                 for (Field f : s.decl().fields) parts.add(fmtStmt(f.type, "o", "x->f_" + f.name, "1"));
                 sb.append("static void ").append(name).append("(al_out *o, const ").append(ty).append(" *x) {\n")
-                    .append("    AL_PUTS(o, ").append(cString(ascii(s.decl().name + "("))).append(");\n");
+                    .append("    AL_PUTS(o, ").append(cString(utf8(s.decl().name + "("))).append(");\n");
                 int i = 0;
                 for (Field f : s.decl().fields) {
                     String label = (i > 0 ? ", " : "") + f.name + ": ";
-                    sb.append("    AL_PUTS(o, ").append(cString(ascii(label))).append(");\n");
+                    sb.append("    AL_PUTS(o, ").append(cString(utf8(label))).append(");\n");
                     sb.append("    ").append(parts.get(i)).append('\n');
                     i++;
                 }
@@ -377,7 +369,7 @@ public final class CGen {
                 for (Variant v : e.decl().variants) {
                     StringBuilder arm = new StringBuilder();
                     arm.append("    ").append(arms.isEmpty() ? "if" : "else if").append(" (x->tag == ").append(v.index).append("u) {\n");
-                    arm.append("        AL_PUTS(o, ").append(cString(ascii(e.decl().name + "." + v.name + (v.payload.isEmpty() ? "" : "(")))).append(");\n");
+                    arm.append("        AL_PUTS(o, ").append(cString(utf8(e.decl().name + "." + v.name + (v.payload.isEmpty() ? "" : "(")))).append(");\n");
                     for (int i = 0; i < v.payload.size(); i++) {
                         if (i > 0) arm.append("        AL_PUTS(o, \", \");\n");
                         arm.append("        ").append(fmtStmt(v.payload.get(i), "o", "x->u.v_" + v.name + ".p" + i, "1")).append('\n');
@@ -394,6 +386,15 @@ public final class CGen {
         }
         helpers.append(sb);
         return name;
+    }
+
+    /** The formatter of an array or list: its first {@code n} elements, as [a, b, c]. */
+    private void sequenceFmt(StringBuilder sb, String name, String ty, Type elem, String n) {
+        sb.append("static void ").append(name).append("(al_out *o, const ").append(ty).append(" *x) {\n")
+            .append("    uint32_t i;\n    AL_PUTS(o, \"[\");\n")
+            .append("    for (i = 0; i < ").append(n).append("; i++) {\n")
+            .append("        if (i > 0) AL_PUTS(o, \", \");\n        ").append(fmtStmt(elem, "o", "x->v[i]", "1")).append("\n    }\n")
+            .append("    AL_PUTS(o, \"]\");\n}\n\n");
     }
 
     /** A C boolean expression comparing two lvalues of type {@code t} (str/list capacities may differ). */
@@ -479,8 +480,7 @@ public final class CGen {
                 .append("    for (i = 0; i < x->len; i++) r->").append(arr).append("[i] = x->").append(arr).append("[i];\n")
                 .append("}\n\n");
         }
-        String t = "t" + ++tmpCount;
-        emit(ct(to) + " " + t + " = {0};");
+        String t = tmp(to, "{0}");
         emit(name + "(&" + t + ", &(" + x + "));");
         return t;
     }
@@ -495,46 +495,41 @@ public final class CGen {
 
     /** A C initializer for a compile-time value. */
     private String init(Object v, Type t) {
-        switch (t) {
-            case Type.Prim p -> {
-                return primLiteral(v, p.kind());
-            }
+        return switch (t) {
+            case Type.Prim p -> primLiteral(v, p.kind());
             case Type.Str s -> {
                 StrV sv = (StrV) v;
                 StringBuilder sb = new StringBuilder("{").append(sv.len).append("u, {");
                 if (sv.len == 0) sb.append('0');
                 for (int i = 0; i < sv.len; i++) sb.append(i > 0 ? ", " : "").append(sv.b[i] & 0xFF);
-                return sb.append("}}").toString();
+                yield sb.append("}}").toString();
             }
             case Type.ArrayT a -> {
-                ArrV av = (ArrV) v;
                 List<String> parts = new ArrayList<>();
-                for (Object o : av.items) parts.add(init(o, a.elem()));
-                return "{{" + String.join(", ", parts) + "}}";
+                for (Object o : ((ArrV) v).items) parts.add(init(o, a.elem()));
+                yield "{{" + String.join(", ", parts) + "}}";
             }
             case Type.ListT l -> {
                 ListV lv = (ListV) v;
-                if (lv.len == 0) return "{0}";
                 List<String> parts = new ArrayList<>();
                 for (int i = 0; i < lv.len; i++) parts.add(init(lv.items[i], l.elem()));
-                return "{" + lv.len + "u, {" + String.join(", ", parts) + "}}";
+                yield lv.len == 0 ? "{0}" : "{" + lv.len + "u, {" + String.join(", ", parts) + "}}";
             }
             case Type.StructT s -> {
-                StructV sv = (StructV) v;
                 List<String> parts = new ArrayList<>();
-                for (int i = 0; i < s.decl().fields.size(); i++) parts.add(init(sv.fields[i], s.decl().fields.get(i).type));
-                return "{" + String.join(", ", parts) + "}";
+                for (int i = 0; i < s.decl().fields.size(); i++) parts.add(init(((StructV) v).fields[i], s.decl().fields.get(i).type));
+                yield "{" + String.join(", ", parts) + "}";
             }
             case Type.EnumT e -> {
                 EnumV ev = (EnumV) v;
                 Variant var = e.decl().variants.get(ev.tag);
-                if (var.payload.isEmpty()) return "{.tag = " + ev.tag + "u}";
                 List<String> parts = new ArrayList<>();
                 for (int i = 0; i < var.payload.size(); i++) parts.add(init(ev.payload[i], var.payload.get(i)));
-                return "{.tag = " + ev.tag + "u, .u = {.v_" + var.name + " = {" + String.join(", ", parts) + "}}}";
+                yield var.payload.isEmpty() ? "{.tag = " + ev.tag + "u}"
+                    : "{.tag = " + ev.tag + "u, .u = {.v_" + var.name + " = {" + String.join(", ", parts) + "}}}";
             }
             default -> throw new IllegalStateException();
-        }
+        };
     }
 
     private static String primLiteral(Object v, PrimKind k) {
@@ -617,24 +612,20 @@ public final class CGen {
             emit(ct(f.resultVar.type) + " " + cName(f.resultVar) + " = " + zero(f.resultVar.type) + ";");
         }
         for (Expr r : f.requires) {
-            emit("{");
-            indent++;
+            open("{");
             String c = lower(r);
             emit("if (!(" + c + ")) AL_TRAP(\"R0006\", " + cString(utf8("precondition of `" + f.name + "` failed: requires " + text(r.span)))
                 + ", al_call_line, al_call_col);");
-            indent--;
-            emit("}");
+            close("}");
         }
         block(f.body);
         if (exitLabel) {
             emit("goto al_exit;");
             out.append("al_exit:;\n");
             for (Expr e : f.ensures) {
-                emit("{");
-                indent++;
+                open("{");
                 String c = lower(e);
-                emit("if (!(" + c + ")) {");
-                indent++;
+                open("if (!(" + c + ")) {");
                 emit("al_out al_e = al_trap_begin(\"R0007\");");
                 emit("AL_PUTS(&al_e, " + cString(utf8("postcondition of `" + f.name + "` failed: ensures " + text(e.span))) + ");");
                 if (f.resultVar != null) {
@@ -643,10 +634,8 @@ public final class CGen {
                     emit("AL_PUTS(&al_e, \")\");");
                 }
                 emit("al_trap_end(&al_e, " + e.span.line() + ", " + e.span.col() + ");");
-                indent--;
-                emit("}");
-                indent--;
-                emit("}");
+                close("}");
+                close("}");
             }
             if (f.resultVar != null) emit("return " + cName(f.resultVar) + ";");
         } else if (!(f.ret instanceof Type.Void)) {
@@ -667,6 +656,18 @@ public final class CGen {
         out.append("    ".repeat(indent)).append(line).append('\n');
     }
 
+    /** Emits a line that opens a block, and indents what follows. */
+    private void open(String line) {
+        emit(line);
+        indent++;
+    }
+
+    /** Ends the indentation, and emits a line that closes the block. */
+    private void close(String line) {
+        indent--;
+        emit(line);
+    }
+
     private String tmp(Type t, String init) {
         String name = "t" + ++tmpCount;
         emit(ct(t) + " " + name + " = " + init + ";");
@@ -676,7 +677,7 @@ public final class CGen {
     // =================================================================== statements
 
     private void block(Block b) {
-        for (Stmt s : b.stmts) stmt(s);
+        for (Stmt s : b.stmts()) stmt(s);
     }
 
     private void nested(Block b) {
@@ -737,17 +738,14 @@ public final class CGen {
     }
 
     private void ifChain(If i, int k) {
-        emit("{");
-        indent++;
+        open("{");
         String c = lower(i.conds.get(k));
         emit("if (" + c + ") {");
         nested(i.blocks.get(k));
         if (k + 1 < i.conds.size()) {
-            emit("} else {");
-            indent++;
+            open("} else {");
             ifChain(i, k + 1);
-            indent--;
-            emit("}");
+            close("}");
         } else if (i.elseBlock != null) {
             emit("} else {");
             nested(i.elseBlock);
@@ -755,95 +753,79 @@ public final class CGen {
         } else {
             emit("}");
         }
-        indent--;
-        emit("}");
+        close("}");
     }
 
     private void whileLoop(While w) {
         PrimKind lk = Type.kind(w.limit.type);
         boolean unsigned = !lk.signed;
         String carrier = unsigned ? "uint64_t" : "int64_t";
-        emit("{");
-        indent++;
+        open("{");
         String lim = "t" + ++tmpCount;
         emit(carrier + " " + lim + " = (" + carrier + ")(" + lower(w.limit) + ");");
         String count = "t" + ++tmpCount;
         emit(carrier + " " + count + " = 0;");
-        emit("for (;;) {");
-        indent++;
+        open("for (;;) {");
         String c = lower(w.cond);
         emit("if (!(" + c + ")) break;");
-        emit("if (" + count + " >= " + lim + ") {");
-        indent++;
+        open("if (" + count + " >= " + lim + ") {");
         emit("al_out al_e = al_trap_begin(\"R0008\");");
         emit("AL_PUTS(&al_e, \"while loop exceeded its limit of \");");
         emit((unsigned ? "al_fmt_u64(&al_e, " : "al_fmt_i64(&al_e, ") + lim + ");");
         emit("AL_PUTS(&al_e, \" iterations\");");
         emit("al_trap_end(&al_e, " + w.span.line() + ", " + w.span.col() + ");");
-        indent--;
-        emit("}");
+        close("}");
         emit(count + "++;");
         emit("{");
         nested(w.body);
         emit("}");
-        indent--;
-        emit("}");
-        indent--;
-        emit("}");
+        close("}");
+        close("}");
     }
 
     private void rangeLoop(For f) {
         String t = ct(f.var.type);
-        emit("{");
-        indent++;
+        open("{");
         String from = tmp(f.var.type, lower(f.from));
         String to = tmp(f.var.type, lower(f.to));
         String i = "t" + ++tmpCount;
-        emit("for (" + t + " " + i + " = " + from + "; " + i + " < " + to + "; " + i + "++) {");
-        indent++;
+        open("for (" + t + " " + i + " = " + from + "; " + i + " < " + to + "; " + i + "++) {");
         emit(t + " " + cName(f.var) + " = " + i + ";");
         emit("(void)" + cName(f.var) + ";");
         block(f.body);
-        indent--;
-        emit("}");
-        indent--;
-        emit("}");
+        close("}");
+        close("}");
     }
 
     private void eachLoop(For f) {
         Type ct = f.from.type;
-        emit("{");
-        indent++;
+        open("{");
         // The snapshot: a variable is copied, since the body may change it; any other value already is a
         // temporary of its own.
-        String coll = isPlace(f.from) ? tmp(ct, lower(f.from)) : lower(f.from);
+        String coll = f.from.isPlace() ? tmp(ct, lower(f.from)) : lower(f.from);
         String i = "t" + ++tmpCount;
         String n = ct instanceof Type.ArrayT a ? a.len() + "u" : coll + ".len";
         String elem = ct instanceof Type.Str ? coll + ".b[" + i + "]" : coll + ".v[" + i + "]";
         emit("uint32_t " + i + ";");
-        emit("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
-        indent++;
+        open("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
         emit(ct(f.var.type) + " " + cName(f.var) + " = " + elem + ";");
         emit("(void)" + cName(f.var) + ";");
         block(f.body);
-        indent--;
-        emit("}");
-        indent--;
-        emit("}");
+        close("}");
+        close("}");
     }
 
     private void match(Match m) {
         Type t = m.subject.type;
-        emit("{");
-        indent++;
+        open("{");
         // Every arm test and binding reads the subject before any arm body runs, so a variable can be read
         // in place; copying it would take stack the checker does not count.
-        String s = Type.isAggregate(t) && isPlace(m.subject) ? lower(m.subject) : tmp(t, lower(m.subject));
+        String s = Type.isAggregate(t) && m.subject.isPlace() ? lower(m.subject) : tmp(t, lower(m.subject));
         boolean first = true;
         for (int k = 0; k < m.arms.size(); k++) {
             Arm arm = m.arms.get(k);
             boolean last = k == m.arms.size() - 1;
-            String cond = switch (arm.pattern) {
+            String cond = switch (arm.pattern()) {
                 case WildPat w -> null;
                 case VariantPat v -> s + ".tag == " + v.variant.index + "u";
                 case IntPat ip -> s + " == " + intLiteral(ip.value.longValue(), Type.kind(t));
@@ -861,7 +843,7 @@ public final class CGen {
             }
             first = false;
             indent++;
-            if (arm.pattern instanceof VariantPat v) {
+            if (arm.pattern() instanceof VariantPat v) {
                 for (int i = 0; i < v.vars.size(); i++) {
                     LocalVar lv = v.vars.get(i);
                     if (lv != null) {
@@ -870,13 +852,12 @@ public final class CGen {
                     }
                 }
             }
-            block(arm.body);
+            block(arm.body());
             indent--;
             if (cond == null) break;
         }
         emit("}");
-        indent--;
-        emit("}");
+        close("}");
     }
 
     private void assertStmt(Assert a) {
@@ -893,8 +874,7 @@ public final class CGen {
             String l = lowerLvalue(b.left);
             String r = lowerLvalue(b.right);
             String ok = compare(b, l, r);
-            emit("if (!(" + ok + ")) {");
-            indent++;
+            open("if (!(" + ok + ")) {");
             emit("al_out al_e = al_trap_begin(\"R0005\");");
             emit("AL_PUTS(&al_e, " + prefix + ");");
             emit("AL_PUTS(&al_e, \" (left: \");");
@@ -903,8 +883,7 @@ public final class CGen {
             emit(fmtStmt(b.right.type, "&al_e", r, "1"));
             emit("AL_PUTS(&al_e, \")\");");
             emit("al_trap_end(&al_e, " + a.span.line() + ", " + a.span.col() + ");");
-            indent--;
-            emit("}");
+            close("}");
             return;
         }
         String v = lower(c);
@@ -915,112 +894,83 @@ public final class CGen {
 
     /** Lowers an expression; aggregates always come back as lvalues. Returns null for void calls. */
     private String lower(Expr e) {
-        switch (e) {
-            case IntLit i -> {
-                if (Type.isFloat(i.type)) return floatLiteral(i.floatValue(Type.kind(i.type)), Type.kind(i.type));
-                return intLiteral(i.value.longValue(), Type.kind(i.type));
-            }
-            case FloatLit f -> {
-                return floatLiteral(f.valueAs(Type.kind(f.type)), Type.kind(f.type));
-            }
-            case StrLit s -> {
-                return strLiteral(s.value);
-            }
-            case BoolLit b -> {
-                return b.value ? "true" : "false";
-            }
-            case Name n -> {
-                if (n.local != null) return varRef(n.local);
-                return "al_c_" + n.constant.name;
-            }
+        return switch (e) {
+            case IntLit i -> Type.isFloat(i.type) ? floatLiteral(i.floatValue(Type.kind(i.type)), Type.kind(i.type))
+                : intLiteral(i.value.longValue(), Type.kind(i.type));
+            case FloatLit f -> floatLiteral(f.valueAs(Type.kind(f.type)), Type.kind(f.type));
+            case StrLit s -> strLiteral(s.value);
+            case BoolLit b -> b.value ? "true" : "false";
+            case Name n -> n.local != null ? varRef(n.local) : "al_c_" + n.constant.name;
             case FieldAccess f -> {
-                if (f.variant != null) {
-                    String t = "t" + ++tmpCount;
-                    emit(ct(f.type) + " " + t + " = {0};");
-                    emit(t + ".tag = " + f.variant.index + "u;");
-                    return t;
+                if (f.variant == null) {
+                    StructDecl d = ((Type.StructT) f.target.type).decl();
+                    yield "(" + lower(f.target) + ").f_" + d.fields.get(f.fieldIndex).name;
                 }
-                StructDecl d = ((Type.StructT) f.target.type).decl();
-                return "(" + lower(f.target) + ").f_" + d.fields.get(f.fieldIndex).name;
+                String t = tmp(f.type, "{0}");
+                emit(t + ".tag = " + f.variant.index + "u;");
+                yield t;
             }
-            case Index ix -> {
-                return index(ix);
-            }
-            case Call c -> {
-                return c.builtin != null ? builtin(c) : call(c);
-            }
+            case Index ix -> index(ix);
+            case Call c -> c.builtin != null ? builtin(c) : call(c);
             case VariantCall v -> {
                 List<String> vals = new ArrayList<>();
                 for (int i = 0; i < v.args.size(); i++) {
-                    Expr a = v.args.get(i).expr;
+                    Expr a = v.args.get(i).expr();
                     vals.add(coerce(lower(a), a.type, v.variant.payload.get(i)));
                 }
-                String t = "t" + ++tmpCount;
-                emit(ct(v.type) + " " + t + " = {0};");
+                String t = tmp(v.type, "{0}");
                 emit(t + ".tag = " + v.variant.index + "u;");
                 for (int i = 0; i < vals.size(); i++) emit(t + ".u.v_" + v.variant.name + ".p" + i + " = " + vals.get(i) + ";");
-                return t;
+                yield t;
             }
             case StructLit s -> {
                 String[] given = new String[s.fields.size()];
                 for (int i = 0; i < given.length; i++) {
                     FieldInit fi = s.fields.get(i);
-                    Type ft = s.decl.fields.get(s.decl.fieldIndex(fi.name)).type;
-                    given[i] = coerce(lower(fi.value), fi.value.type, ft);
+                    Type ft = s.decl.fields.get(s.decl.fieldIndex(fi.name())).type;
+                    given[i] = coerce(lower(fi.value()), fi.value().type, ft);
                 }
-                String t = "t" + ++tmpCount;
-                emit(ct(s.type) + " " + t + " = {0};");
+                String t = tmp(s.type, "{0}");
                 for (int i = 0; i < s.decl.fields.size(); i++) {
                     emit(t + ".f_" + s.decl.fields.get(i).name + " = " + given[s.order[i]] + ";");
                 }
-                return t;
+                yield t;
             }
-            case Convert c -> {
-                return convert(c);
-            }
+            case Convert c -> convert(c);
             case Unary u -> {
                 String v = lower(u.operand);
                 PrimKind k = Type.kind(u.type);
-                return switch (u.op) {
+                yield switch (u.op) {
                     case NOT -> "(!(" + v + "))";
                     case NEG -> k.isFloat ? "((" + cPrim(k) + ")-(" + v + "))" : tmp(u.type, "al_neg_" + k.name + "(" + v + ", " + loc(u.span) + ")");
                     case BNOT -> "al_bnot_" + k.name + "(" + v + ")";
                 };
             }
-            case Binary b -> {
-                return binary(b);
-            }
+            case Binary b -> binary(b);
             case ArrayLit a -> {
                 Type elem = Type.elementOf(a.type);
                 List<String> vals = new ArrayList<>();
                 for (Expr x : a.elems) vals.add(coerce(lower(x), x.type, elem));
-                String t = "t" + ++tmpCount;
-                emit(ct(a.type) + " " + t + " = {0};");
+                String t = tmp(a.type, "{0}");
                 for (int i = 0; i < vals.size(); i++) emit(t + ".v[" + i + "] = " + vals.get(i) + ";");
                 if (a.type instanceof Type.ListT) emit(t + ".len = " + vals.size() + "u;");
-                return t;
+                yield t;
             }
             case Repeat r -> {
                 Type elem = Type.elementOf(r.type);
                 String v = coerce(lower(r.value), r.value.type, elem);
                 // An aggregate is already in a variable or temporary that nothing changes during the fill.
                 String val = Type.isAggregate(elem) ? v : tmp(elem, v);
-                String t = "t" + ++tmpCount;
-                emit(ct(r.type) + " " + t + " = {0};");
+                String t = tmp(r.type, "{0}");
                 String i = "t" + ++tmpCount;
                 emit("{");
                 emit("    uint32_t " + i + ";");
                 emit("    for (" + i + " = 0; " + i + " < " + r.n + "u; " + i + "++) " + t + ".v[" + i + "] = " + val + ";");
                 emit("}");
                 if (r.type instanceof Type.ListT) emit(t + ".len = " + r.n + "u;");
-                return t;
+                yield t;
             }
-        }
-    }
-
-    /** Places evaluate to the storage they name; everything else builds a new value. */
-    private static boolean isPlace(Expr e) {
-        return e instanceof Name || e instanceof Index || (e instanceof FieldAccess f && f.variant == null);
+        };
     }
 
     /** Like {@link #lower} but guarantees an lvalue (needed to take addresses or format). */
@@ -1052,7 +1002,7 @@ public final class CGen {
         List<String> args = new ArrayList<>();
         for (int i = 0; i < c.args.size(); i++) {
             LocalVar p = f.paramVars.get(i);
-            Expr a = c.args.get(i).expr;
+            Expr a = c.args.get(i).expr();
             if (p.byRef) {
                 args.add("&(" + lower(a) + ")");
             } else if (Type.isAggregate(p.type)) {
@@ -1078,12 +1028,10 @@ public final class CGen {
             String l = lower(b.left);
             String t = "t" + ++tmpCount;
             emit("bool " + t + " = " + l + ";");
-            emit("if (" + (b.op == BinOp.AND ? t : "!" + t) + ") {");
-            indent++;
+            open("if (" + (b.op == BinOp.AND ? t : "!" + t) + ") {");
             String r = lower(b.right);
             emit(t + " = " + r + ";");
-            indent--;
-            emit("}");
+            close("}");
             return t;
         }
         if (b.op.isEquality() || b.op.isOrdering()) {
@@ -1155,32 +1103,30 @@ public final class CGen {
         switch (c.builtin) {
             case PRINT -> {
                 List<String> vals = new ArrayList<>();
-                for (Arg a : args) vals.add(lowerLvalue(a.expr));
-                emit("{");
-                indent++;
+                for (Arg a : args) vals.add(lowerLvalue(a.expr()));
+                open("{");
                 emit("al_out al_o = al_stdout_sink();");
-                for (int i = 0; i < vals.size(); i++) emit(fmtStmt(args.get(i).expr.type, "&al_o", vals.get(i), "0"));
+                for (int i = 0; i < vals.size(); i++) emit(fmtStmt(args.get(i).expr().type, "&al_o", vals.get(i), "0"));
                 emit("AL_PUTS(&al_o, \"\\n\");");
-                indent--;
-                emit("}");
+                close("}");
                 return null;
             }
             case LEN -> {
-                Type t = args.get(0).expr.type;
-                String v = lower(args.get(0).expr);
+                Type t = args.get(0).expr().type;
+                String v = lower(args.get(0).expr());
                 if (t instanceof Type.ArrayT a) return "INT64_C(" + a.len() + ")";
                 return "((int64_t)(" + v + ").len)";
             }
             case CAP -> {
-                Type t = args.get(0).expr.type;
-                lower(args.get(0).expr);
+                Type t = args.get(0).expr().type;
+                lower(args.get(0).expr());
                 return "INT64_C(" + (t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap()) + ")";
             }
             case PUSH -> {
-                Type t = args.get(0).expr.type;
-                String place = lower(args.get(0).expr);
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
                 Type elem = Type.elementOf(t);
-                String v = coerce(lower(args.get(1).expr), args.get(1).expr.type, elem);
+                String v = coerce(lower(args.get(1).expr()), args.get(1).expr().type, elem);
                 // The value cannot refer to the target (E0208), so an aggregate is stored from where it is.
                 String vt = Type.isAggregate(elem) ? v : tmp(elem, v);
                 int cap = t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap();
@@ -1190,35 +1136,32 @@ public final class CGen {
                 return null;
             }
             case POP -> {
-                Type t = args.get(0).expr.type;
-                String place = lower(args.get(0).expr);
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
                 String kind = t instanceof Type.Str ? "str" : "list";
                 emit("if ((" + place + ").len == 0) AL_TRAP(\"R0012\", \"pop from an empty " + kind + "\", " + at + ");");
                 return tmp(Type.elementOf(t), "(" + place + ")." + (t instanceof Type.Str ? "b" : "v") + "[--(" + place + ").len]");
             }
             case CLEAR -> {
-                String place = lower(args.get(0).expr);
+                String place = lower(args.get(0).expr());
                 emit("(" + place + ").len = 0;");
                 return null;
             }
             case APPEND -> {
-                Type st = args.get(0).expr.type;
+                Type st = args.get(0).expr().type;
                 int cap = ((Type.Str) st).cap();
-                String place = lower(args.get(0).expr);
+                String place = lower(args.get(0).expr());
                 List<String> vals = new ArrayList<>();
-                for (int i = 1; i < args.size(); i++) vals.add(lowerLvalue(args.get(i).expr));
-                emit("{");
-                indent++;
+                for (int i = 1; i < args.size(); i++) vals.add(lowerLvalue(args.get(i).expr()));
+                open("{");
                 String sp = "t" + ++tmpCount;
                 emit(ct(st) + " *" + sp + " = &(" + place + ");");
                 for (int i = 0; i < vals.size(); i++) {
-                    emit("{");
-                    indent++;
+                    open("{");
                     emit("uint32_t al_before = " + sp + "->len;");
                     emit("al_out al_o = {0, " + sp + "->b, " + cap + "u, " + sp + "->len};");
-                    emit(fmtStmt(args.get(i + 1).expr.type, "&al_o", vals.get(i), "0"));
-                    emit("if (al_o.len > " + cap + "u) {");
-                    indent++;
+                    emit(fmtStmt(args.get(i + 1).expr().type, "&al_o", vals.get(i), "0"));
+                    open("if (al_o.len > " + cap + "u) {");
                     emit("al_out al_e = al_trap_begin(\"R0004\");");
                     emit("AL_PUTS(&al_e, \"append exceeds str capacity " + cap + " (length \");");
                     emit("al_fmt_u64(&al_e, al_before);");
@@ -1226,44 +1169,39 @@ public final class CGen {
                     emit("al_fmt_u64(&al_e, al_o.len - al_before);");
                     emit("AL_PUTS(&al_e, \" bytes)\");");
                     emit("al_trap_end(&al_e, " + at + ");");
-                    indent--;
-                    emit("}");
+                    close("}");
                     emit(sp + "->len = al_o.len;");
-                    indent--;
-                    emit("}");
+                    close("}");
                 }
-                indent--;
-                emit("}");
+                close("}");
                 return null;
             }
             case ABS -> {
                 PrimKind k = Type.kind(c.type);
-                String v = tmp(c.type, lower(args.get(0).expr));
+                String v = tmp(c.type, lower(args.get(0).expr()));
                 if (k.isFloat) return "((" + cPrim(k) + ")fabs(" + v + "))";
                 return tmp(c.type, "al_abs_" + k.name + "(" + v + ", " + at + ")");
             }
             case MIN, MAX -> {
-                String a = tmp(c.type, lower(args.get(0).expr));
-                String b = tmp(c.type, lower(args.get(1).expr));
+                String a = tmp(c.type, lower(args.get(0).expr()));
+                String b = tmp(c.type, lower(args.get(1).expr()));
                 String op = c.builtin == Builtin.MIN ? "<" : ">";
                 return "(" + b + " " + op + " " + a + " ? " + b + " : " + a + ")";
             }
             case SQRT, FLOOR, CEIL -> {
                 PrimKind k = Type.kind(c.type);
-                String v = lower(args.get(0).expr);
+                String v = lower(args.get(0).expr());
                 String name = c.builtin.name + (k == PrimKind.F32 ? "f" : "");
                 return "((" + cPrim(k) + ")" + name + "(" + v + "))";
             }
             case PANIC -> {
-                String v = lowerLvalue(args.get(0).expr);
-                emit("{");
-                indent++;
+                String v = lowerLvalue(args.get(0).expr());
+                open("{");
                 emit("al_out al_e = al_trap_begin(\"R0010\");");
                 emit("AL_PUTS(&al_e, \"panic: \");");
                 emit("al_fmt_str(&al_e, (" + v + ").b, (" + v + ").len, 0);");
                 emit("al_trap_end(&al_e, " + at + ");");
-                indent--;
-                emit("}");
+                close("}");
                 return null;
             }
         }
@@ -1278,10 +1216,6 @@ public final class CGen {
     }
 
     private static byte[] utf8(String s) {
-        return s.getBytes(StandardCharsets.UTF_8);
-    }
-
-    private static byte[] ascii(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
     }
 

@@ -84,10 +84,11 @@ public final class Ast {
         }
 
         public int fieldIndex(String name) {
-            for (int i = 0; i < fields.size(); i++) {
-                if (fields.get(i).name.equals(name)) return i;
-            }
-            return -1;
+            return fieldNames().indexOf(name);
+        }
+
+        public List<String> fieldNames() {
+            return fields.stream().map(f -> f.name).toList();
         }
     }
 
@@ -119,13 +120,6 @@ public final class Ast {
             }
             return null;
         }
-
-        public boolean hasPayloads() {
-            for (Variant v : variants) {
-                if (!v.payloadRefs.isEmpty()) return true;
-            }
-            return false;
-        }
     }
 
     public static final class Variant {
@@ -154,10 +148,6 @@ public final class Ast {
         Routine(Span span, String name, Block body) {
             super(span, name);
             this.body = body;
-        }
-
-        public int frameSlots() {
-            return locals.size();
         }
     }
 
@@ -190,19 +180,7 @@ public final class Ast {
         }
     }
 
-    public static final class Param {
-        public final Span span;
-        public final String name;
-        public final boolean mut;
-        public final TypeRef typeRef;
-
-        public Param(Span span, String name, boolean mut, TypeRef typeRef) {
-            this.span = span;
-            this.name = name;
-            this.mut = mut;
-            this.typeRef = typeRef;
-        }
-    }
+    public record Param(Span span, String name, boolean mut, TypeRef typeRef) {}
 
     /** A local variable, parameter, loop variable, match binding, or `result`. */
     public static final class LocalVar {
@@ -226,74 +204,23 @@ public final class Ast {
 
     // =================================================================== types
 
-    public abstract static sealed class TypeRef {
-        public final Span span;
-
-        TypeRef(Span span) {
-            this.span = span;
-        }
+    public sealed interface TypeRef {
+        Span span();
     }
 
-    public static final class PrimRef extends TypeRef {
-        public final PrimKind kind;
+    public record PrimRef(Span span, PrimKind kind) implements TypeRef {}
 
-        public PrimRef(Span span, PrimKind kind) {
-            super(span);
-            this.kind = kind;
-        }
-    }
+    public record StrRef(Span span, Expr cap) implements TypeRef {}
 
-    public static final class StrRef extends TypeRef {
-        public final Expr cap;
+    public record ListRef(Span span, TypeRef elem, Expr cap) implements TypeRef {}
 
-        public StrRef(Span span, Expr cap) {
-            super(span);
-            this.cap = cap;
-        }
-    }
+    public record ArrayRef(Span span, TypeRef elem, Expr len) implements TypeRef {}
 
-    public static final class ListRef extends TypeRef {
-        public final TypeRef elem;
-        public final Expr cap;
-
-        public ListRef(Span span, TypeRef elem, Expr cap) {
-            super(span);
-            this.elem = elem;
-            this.cap = cap;
-        }
-    }
-
-    public static final class ArrayRef extends TypeRef {
-        public final TypeRef elem;
-        public final Expr len;
-
-        public ArrayRef(Span span, TypeRef elem, Expr len) {
-            super(span);
-            this.elem = elem;
-            this.len = len;
-        }
-    }
-
-    public static final class NamedRef extends TypeRef {
-        public final String name;
-
-        public NamedRef(Span span, String name) {
-            super(span);
-            this.name = name;
-        }
-    }
+    public record NamedRef(Span span, String name) implements TypeRef {}
 
     // =================================================================== statements
 
-    public static final class Block {
-        public final Span span;
-        public final List<Stmt> stmts;
-
-        public Block(Span span, List<Stmt> stmts) {
-            this.span = span;
-            this.stmts = stmts;
-        }
-    }
+    public record Block(Span span, List<Stmt> stmts) {}
 
     public abstract static sealed class Stmt {
         public final Span span;
@@ -395,15 +322,7 @@ public final class Ast {
         }
     }
 
-    public static final class Arm {
-        public final Pattern pattern;
-        public final Block body;
-
-        public Arm(Pattern pattern, Block body) {
-            this.pattern = pattern;
-            this.body = body;
-        }
-    }
+    public record Arm(Pattern pattern, Block body) {}
 
     public static final class Break extends Stmt {
         public Break(Span span) {
@@ -566,6 +485,11 @@ public final class Ast {
         Expr(Span span) {
             this.span = span;
         }
+
+        /** Places evaluate to the storage they name; everything else builds a new value. */
+        public boolean isPlace() {
+            return this instanceof Name || this instanceof Index || (this instanceof FieldAccess f && f.variant == null);
+        }
     }
 
     /** Integer or character literal. */
@@ -662,17 +586,7 @@ public final class Ast {
         }
     }
 
-    public static final class Arg {
-        public final Span span;
-        public final boolean mut;
-        public final Expr expr;
-
-        public Arg(Span span, boolean mut, Expr expr) {
-            this.span = span;
-            this.mut = mut;
-            this.expr = expr;
-        }
-    }
+    public record Arg(Span span, boolean mut, Expr expr) {}
 
     /** A call of a user function or builtin. */
     public static final class Call extends Expr {
@@ -690,10 +604,7 @@ public final class Ast {
         }
 
         public boolean hasMutArg() {
-            for (Arg a : args) {
-                if (a.mut) return true;
-            }
-            return false;
+            return args.stream().anyMatch(Arg::mut);
         }
     }
 
@@ -713,17 +624,7 @@ public final class Ast {
         }
     }
 
-    public static final class FieldInit {
-        public final Span span;
-        public final String name;
-        public final Expr value;
-
-        public FieldInit(Span span, String name, Expr value) {
-            this.span = span;
-            this.name = name;
-            this.value = value;
-        }
-    }
+    public record FieldInit(Span span, String name, Expr value) {}
 
     /** `Point(x: 1, y: 2)`. */
     public static final class StructLit extends Expr {

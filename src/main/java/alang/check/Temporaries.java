@@ -32,7 +32,7 @@ final class Temporaries {
 
     private static long block(Block b, Routine r) {
         long sum = 0;
-        for (Stmt s : b.stmts) sum = Layout.add(sum, stmt(s, r));
+        for (Stmt s : b.stmts()) sum = Layout.add(sum, stmt(s, r));
         return sum;
     }
 
@@ -54,12 +54,12 @@ final class Temporaries {
                 if (f.isRange()) yield Layout.add(Layout.add(expr(f.from), expr(f.to)), block(f.body, r));
                 // The snapshot of the collection lives as long as the loop: the value itself when the
                 // collection is built by an expression (counted there), a copy when it is a variable.
-                long snapshot = Layout.add(expr(f.from), isPlace(f.from) ? Layout.size(f.from.type) : 0);
+                long snapshot = Layout.add(expr(f.from), f.from.isPlace() ? Layout.size(f.from.type) : 0);
                 yield Layout.add(snapshot, block(f.body, r));
             }
             case Match m -> {
                 long arms = 0;
-                for (Arm a : m.arms) arms = Layout.add(arms, block(a.body, r));
+                for (Arm a : m.arms) arms = Layout.add(arms, block(a.body(), r));
                 yield Layout.add(expr(m.subject), arms);
             }
             case Return ret -> {
@@ -76,7 +76,7 @@ final class Temporaries {
 
     /** The aggregates that evaluating {@code e} builds, all of which may be alive at once. */
     static long expr(Expr e) {
-        long own = Type.isAggregate(e.type) && !isPlace(e) ? Layout.size(e.type) : 0;
+        long own = Type.isAggregate(e.type) && !e.isPlace() ? Layout.size(e.type) : 0;
         long inner = switch (e) {
             case IntLit i -> 0;
             case FloatLit f -> 0;
@@ -89,7 +89,7 @@ final class Temporaries {
             case VariantCall v -> {
                 long t = 0;
                 for (int i = 0; i < v.args.size(); i++) {
-                    Expr a = v.args.get(i).expr;
+                    Expr a = v.args.get(i).expr();
                     t = Layout.add(t, Layout.add(expr(a), stored(a, v.variant.payload.get(i))));
                 }
                 yield t;
@@ -97,8 +97,8 @@ final class Temporaries {
             case StructLit s -> {
                 long t = 0;
                 for (FieldInit f : s.fields) {
-                    Type to = s.decl.fields.get(s.decl.fieldIndex(f.name)).type;
-                    t = Layout.add(t, Layout.add(expr(f.value), stored(f.value, to)));
+                    Type to = s.decl.fields.get(s.decl.fieldIndex(f.name())).type;
+                    t = Layout.add(t, Layout.add(expr(f.value()), stored(f.value(), to)));
                 }
                 yield t;
             }
@@ -118,17 +118,17 @@ final class Temporaries {
 
     private static long call(Call c) {
         long t = 0;
-        for (Arg a : c.args) t = Layout.add(t, expr(a.expr));
+        for (Arg a : c.args) t = Layout.add(t, expr(a.expr()));
         if (c.fn != null) {
             // A read-only argument is passed as it is, unless it has to be widened to the parameter's type.
             for (int i = 0; i < c.args.size(); i++) {
                 LocalVar p = c.fn.paramVars.get(i);
-                Type given = c.args.get(i).expr.type;
+                Type given = c.args.get(i).expr().type;
                 if (!p.byRef && Type.isAggregate(p.type) && !given.equals(p.type)) t = Layout.add(t, Layout.size(p.type));
             }
         } else if (c.builtin == Builtin.PUSH) {
-            Expr v = c.args.get(1).expr;
-            t = Layout.add(t, stored(v, Type.elementOf(c.args.get(0).expr.type)));
+            Expr v = c.args.get(1).expr();
+            t = Layout.add(t, stored(v, Type.elementOf(c.args.get(0).expr().type)));
         }
         return t;
     }
@@ -140,12 +140,8 @@ final class Temporaries {
      */
     private static long stored(Expr e, Type to) {
         if (!Type.isAggregate(e.type)) return 0;
-        long t = isPlace(e) ? Layout.size(e.type) : 0;
+        long t = e.isPlace() ? Layout.size(e.type) : 0;
         return e.type.equals(to) ? t : Layout.add(t, Layout.size(to));
     }
 
-    /** Places evaluate to the storage they name; everything else builds a new value. */
-    private static boolean isPlace(Expr e) {
-        return e instanceof Name || e instanceof Index || (e instanceof FieldAccess f && f.variant == null);
-    }
 }
