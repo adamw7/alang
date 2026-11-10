@@ -819,9 +819,10 @@ public final class CGen {
     private void match(Match m) {
         Type t = m.subject.type;
         open("{");
-        // Every arm test and binding reads the subject before any arm body runs, so a variable can be read
-        // in place; copying it would take stack the checker does not count.
-        String s = Type.isAggregate(t) && m.subject.isPlace() ? lower(m.subject) : tmp(t, lower(m.subject));
+        // Every arm test and binding reads the subject before any arm body runs, so an aggregate is read
+        // where it is: in its variable, or in the temporary its expression already built. Copying it would
+        // take stack the checker does not count.
+        String s = Type.isAggregate(t) ? lower(m.subject) : tmp(t, lower(m.subject));
         boolean first = true;
         for (int k = 0; k < m.arms.size(); k++) {
             Arm arm = m.arms.get(k);
