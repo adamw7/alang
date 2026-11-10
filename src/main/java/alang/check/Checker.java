@@ -748,7 +748,10 @@ public final class Checker {
             }
             return false;
         }
-        expr(e, null);
+        Type t = expr(e, null);
+        // `xs.push(1);` and `show(n: 1);` are calls written the wrong way. Their own error already says how
+        // to write them, and "only function calls can be used as statements" would mislead.
+        if ((e instanceof VariantCall || e instanceof StructLit) && Type.isError(t)) return false;
         String hint = "only function calls can be used as statements";
         if (e instanceof Binary b && b.op == BinOp.EQ) hint = "did you mean assignment `=` instead of `==`?";
         else if (e instanceof Binary b && b.op.isArith()) hint = "did you mean a compound assignment like x " + b.op.text + "= ...?";
@@ -1382,14 +1385,23 @@ public final class Checker {
         return t;
     }
 
+    /** Whether `name(...)` takes its first argument as `mut`: push, pop, clear, append, or a function declared so. */
+    private boolean modifiesFirstArgument(String name) {
+        Builtin b = Builtin.byName(name);
+        if (b != null) return b == Builtin.PUSH || b == Builtin.POP || b == Builtin.CLEAR || b == Builtin.APPEND;
+        FnDecl f = fns.get(name);
+        return f != null && !f.params.isEmpty() && f.params.get(0).mut();
+    }
+
     private Type variantCall(VariantCall v) {
         EnumDecl d = enums.get(v.enumName);
         if (d == null) {
             for (Arg a : v.args) expr(a.expr(), null);
             if (lookupLocal(v.enumName) != null || consts.containsKey(v.enumName)) {
                 String args = v.args.isEmpty() ? "" : ", ...";
+                String mut = modifiesFirstArgument(v.variantName) ? "mut " : "";
                 diags.error(Code.E0102, v.span, "there are no methods: `" + v.enumName + "." + v.variantName + "(...)` is not valid",
-                    "pass the value as the first argument: " + v.variantName + "(" + v.enumName + args + ")");
+                    "pass the value as the first argument: " + v.variantName + "(" + mut + v.enumName + args + ")");
             } else {
                 diags.error(Code.E0103, v.span, "unknown enum `" + v.enumName + "`",
                     didYouMean(v.enumName, new ArrayList<>(enums.keySet())));

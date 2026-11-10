@@ -1,0 +1,42 @@
+error[E0102]: there are no methods: `xs.push(...)` is not valid
+  --> tests/errors/E0102_method_mut.al:11:5
+   |
+11 |     xs.push(1);
+   |     ^^^^^^^^^^
+  = hint: pass the value as the first argument: push(mut xs, ...)
+
+error[E0102]: there are no methods: `xs.grow(...)` is not valid
+  --> tests/errors/E0102_method_mut.al:12:5
+   |
+12 |     xs.grow(2);
+   |     ^^^^^^^^^^
+  = hint: pass the value as the first argument: grow(mut xs, ...)
+
+error[E0102]: there are no methods: `xs.pop(...)` is not valid
+  --> tests/errors/E0102_method_mut.al:13:20
+   |
+13 |     let top: i64 = xs.pop();
+   |                    ^^^^^^^^
+  = hint: pass the value as the first argument: pop(mut xs)
+
+error[E0102]: there are no methods: `xs.clear(...)` is not valid
+  --> tests/errors/E0102_method_mut.al:14:5
+   |
+14 |     xs.clear();
+   |     ^^^^^^^^^^
+  = hint: pass the value as the first argument: clear(mut xs)
+
+error[E0102]: there are no methods: `s.append(...)` is not valid
+  --> tests/errors/E0102_method_mut.al:15:5
+   |
+15 |     s.append("x");
+   |     ^^^^^^^^^^^^^
+  = hint: pass the value as the first argument: append(mut s, ...)
+
+error[E0102]: there are no methods: `xs.len(...)` is not valid
+  --> tests/errors/E0102_method_mut.al:16:11
+   |
+16 |     print(xs.len(), top);
+   |           ^^^^^^^^
+  = hint: pass the value as the first argument: len(xs)
+

@@ -1,4 +1,4 @@
-// expect: E0101 E0102 E0103 E0106 E0107 E0201 E0204 E0207 E0213 E0305
+// expect: E0101 E0102 E0103 E0106 E0107 E0201 E0204 E0207 E0213
 // Calls, struct literals, variants and fields used wrongly; calls_and_literals.err pins every message and hint.
 struct Point {
     x: i64,
