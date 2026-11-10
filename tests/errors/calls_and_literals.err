@@ -33,13 +33,6 @@ error[E0213]: `show` is a function; named arguments are only used to build struc
    |     ^^^^^^^^^^
   = hint: pass arguments by position: show(a, b)
 
-error[E0305]: this expression has no effect
-  --> tests/errors/calls_and_literals.al:28:5
-   |
-28 |     show(n: 1);
-   |     ^^^^^^^^^^
-  = hint: only function calls can be used as statements
-
 error[E0213]: struct values need named fields
   --> tests/errors/calls_and_literals.al:29:20
    |
