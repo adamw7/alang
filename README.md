@@ -128,6 +128,7 @@ The test suite does not just claim determinism, it checks it:
 - [bench/](bench) — a benchmark: do models write more correct tools in ALang or in Python?
 - [docs/SPEC.md](docs/SPEC.md) — the language specification
 - [docs/ERRORS.md](docs/ERRORS.md) — every diagnostic and trap code (generated)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — C4 diagrams: system context, containers, the toolchain's components, a tool call
 - [grammar/ALang.g4](grammar/ALang.g4) — the grammar
 - [examples/](examples) — complete programs, each with tests
 

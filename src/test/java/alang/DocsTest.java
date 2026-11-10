@@ -10,8 +10,13 @@ import alang.cli.Frontend;
 import alang.cli.Main;
 import alang.diag.Source;
 import alang.interp.Trap;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -21,7 +26,8 @@ import org.junit.jupiter.api.TestFactory;
 
 /**
  * Keeps the documentation honest: code in the docs compiles, diagnostics and traps shown in the docs
- * match the toolchain's output, and the error catalog is current.
+ * match the toolchain's output, the error catalog is current, and the architecture diagram shows
+ * every package.
  */
 class DocsTest {
     private static final Pattern BLOCK = Pattern.compile("```alang\\n(.*?)```", Pattern.DOTALL);
@@ -29,6 +35,8 @@ class DocsTest {
     private static final Pattern FAILING = Pattern.compile("```alang-(rejected|traps) (\\S+)\\n(.*?)```", Pattern.DOTALL);
     /** The toolchain output shown for it, in the ```text block right after. */
     private static final Pattern OUTPUT = Pattern.compile("\\s*```text\\n(.*?)```", Pattern.DOTALL);
+    /** A component box in docs/ARCHITECTURE.md: [Component: alang.ast, alang.types]. */
+    private static final Pattern COMPONENT = Pattern.compile("\\[Component: ([^\\]]*)\\]");
 
     @TestFactory
     Stream<DynamicTest> codeBlocksCompileAndPass() {
@@ -89,6 +97,25 @@ class DocsTest {
     void errorCatalogIsGenerated() {
         assertEquals(Main.errorsMarkdown(), Harness.read(Harness.ROOT.resolve("docs/ERRORS.md")),
             "docs/ERRORS.md is stale; run: bin/alang explain markdown > docs/ERRORS.md");
+    }
+
+    @Test
+    void componentDiagramShowsEveryPackage() throws IOException {
+        Set<String> packages = new TreeSet<>();
+        packages.add("alang.parser"); // generated from grammar/ALang.g4 into target/
+        try (Stream<Path> dirs = Files.list(Harness.ROOT.resolve("src/main/java/alang"))) {
+            dirs.filter(Files::isDirectory).forEach(d -> packages.add("alang." + d.getFileName()));
+        }
+        Set<String> drawn = new TreeSet<>();
+        Matcher m = COMPONENT.matcher(Harness.read(Harness.ROOT.resolve("docs/ARCHITECTURE.md")));
+        while (m.find()) {
+            for (String part : m.group(1).split(", ")) {
+                if (part.startsWith("alang.")) drawn.add(part);
+            }
+        }
+        assertEquals(packages, drawn, "docs/ARCHITECTURE.md: the component diagram must show exactly the "
+            + "toolchain's packages; draw a new package as a [Component: alang.name] box, in the layer "
+            + "ArchitectureTest puts it in");
     }
 
     @Test
