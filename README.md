@@ -159,10 +159,11 @@ mvn test-compile pitest:mutationCoverage      # mutation testing of the toolchai
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on JDK 21 with gcc
-and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
-packaged jar, runs the benchmark self-test on Linux, runs a 3000-mutation fuzzing campaign, and
-runs mutation testing, uploading the report as the `pit-report` artifact.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every pull request and every
+push to `main`. It runs `mvn verify` on JDK 21 with gcc and clang on Linux and macOS, smoke-tests
+the `bin/alang` commands against the packaged jar, runs the benchmark self-test on Linux, runs a
+3000-mutation fuzzing campaign, and runs mutation testing, uploading the report as the
+`pit-report` artifact.
 
 Every test has a time limit, so a hang fails fast instead of stalling CI. A test fails after 10 s,
 even if it never checks for interrupts
@@ -176,13 +177,15 @@ plugins and GitHub Actions. The ANTLR tool and runtime are updated together, PIT
 plugin together, the Maven plugins in one pull request, and the workflow's actions in another.
 Renovate rebases each of its pull requests onto `main` whenever it falls behind.
 
-The Automerge workflow ([`.github/workflows/automerge.yml`](.github/workflows/automerge.yml))
-runs after each successful CI run. It merges every open pull request whose head commit has passed
-all of its checks, provided that commit already contains `main`, so the commit that lands on `main`
-is always one CI tested. If a green pull request is behind `main`, the workflow first merges
-`main` into it and then merges it once CI passes again. Draft pull requests are left open. For the
-workflow to merge pull requests that change `.github/workflows`, store a token in the
-`AUTOMERGE_TOKEN` secret; the workflow file says which permissions it needs.
+### Merging
+
+[`.github/workflows/automerge.yml`](.github/workflows/automerge.yml) (ported from
+`adamw7/buy_agent`) wakes when CI finishes on a pull request, and squash-merges it once the latest
+run of each workflow in its `REQUIRED` list has succeeded on the head commit. Forks, drafts and
+pull requests labelled `no-automerge` are left alone. One touching `.github/workflows/` merges
+only when the `AUTOMERGE_TOKEN` secret (a token with the `workflows` scope) is set; without it,
+the merge is made with the workflow's own token and followed by a dispatched CI run on `main`,
+since a merge made with that token starts no workflow.
 
 ### Mutation testing
 

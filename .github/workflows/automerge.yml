@@ -1,121 +1,101 @@
 name: Automerge
 
-# Merges each open pull request once every check on its head commit has passed. The commit that
-# lands on main is always one that CI tested: if a green pull request is behind main, main is
-# merged into it first, and the pull request is merged once CI passes on the result. Pull requests
-# from forks and draft pull requests are left alone, so to keep one open, mark it as a draft.
-#
-# GitHub does not let the workflow's own token merge a change to .github/workflows, and pushes made
-# with that token do not start CI. Store a token in the AUTOMERGE_TOKEN secret so that every pull
-# request can be merged and CI starts on its own. Use a fine-grained token for this repository with
-# read and write access to Contents, Pull requests and Workflows. Without that secret, this
-# workflow uses its own token. It then starts CI itself after each push, and when it cannot merge a
-# pull request that changes a workflow, it leaves it open with a warning.
+# Ported from adamw7/buy_agent (its ADR-0086, "Merge a pull request once its head is green").
 
 on:
+  # The workflow that runs on a pull request; this one decides once it ends.
+  # workflow_run runs main's copy of this file, never the branch's.
   workflow_run:
     workflows: [CI]
     types: [completed]
-  workflow_dispatch:
-
-permissions:
-  actions: write # start CI after a push made with the workflow's own token
-  contents: write
-  pull-requests: write
-  checks: read
-  statuses: read
 
 concurrency:
-  # One run at a time. Each run goes over every open pull request, so when a newer run replaces one
-  # that is still waiting here, no pull request is missed.
-  group: automerge
+  # Per commit and never cancelled: two triggers of one head wait their turn, and
+  # the second finds the pull request merged.
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  automerge:
-    name: Merge green pull requests
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+  merge:
+    name: Merge on green
+    # Only a branch of this repository: a fork's author cannot push here, so must
+    # not be able to merge here either.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+      # Reading the head's runs, and dispatching CI on main after a merge.
+      actions: write
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      # Every workflow that must be green on the head, by file.
+      REQUIRED: ci.yml
+      # A token able to merge a change to .github/workflows/, which GITHUB_TOKEN
+      # never is, and whose merge starts ci.yml on main itself. Optional.
+      MERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+
     steps:
-      - name: Merge green pull requests
-        timeout-minutes: 8
+      - name: Merge the pull request whose head this is
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN || github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          pr="$(gh pr list --state open --limit 100 \
+            --json number,headRefOid,isDraft,isCrossRepository,labels \
+            --jq "map(select(.headRefOid == \"$SHA\" and (.isCrossRepository | not)))
+                  | first // empty")"
+          if [ -z "$pr" ]; then
+            echo "No open pull request has $SHA as its head; nothing to merge."
+            exit 0
+          fi
+          number="$(jq -r .number <<<"$pr")"
+
+          if [ "$(jq -r .isDraft <<<"$pr")" = true ]; then
+            echo "#$number is a draft; it merges once marked ready and green again."
+            exit 0
+          fi
+          if jq -e '.labels | any(.name == "no-automerge")' <<<"$pr" >/dev/null; then
+            echo "#$number is labelled no-automerge; leaving it to a person."
+            exit 0
+          fi
+
+          # The latest run of each required workflow on this commit, not just the one
+          # that woke this job: another may still be running, or have failed.
+          runs="$(gh api \
+            "repos/$GH_REPO/actions/runs?head_sha=$SHA&event=pull_request&per_page=100" \
+            --jq .workflow_runs)"
+          for workflow in $REQUIRED; do
+            conclusion="$(jq -r --arg path ".github/workflows/$workflow" \
+              'map(select(.path == $path)) | sort_by(.created_at) | last
+               | .conclusion // "pending"' <<<"$runs")"
+            if [ "$conclusion" != success ]; then
+              echo "$workflow is $conclusion on $SHA; #$number waits for it."
+              exit 0
+            fi
+          done
+
+          # --match-head-commit refuses if a push landed after these runs.
+          gh pr merge "$number" --squash --match-head-commit "$SHA"
+          echo "Merged #$number at $SHA."
+          echo "MERGED=1" >>"$GITHUB_ENV"
+
+      # A merge made with GITHUB_TOKEN starts no workflow, so main's new commit would
+      # have no CI run. Dispatch is the one event that token may start.
+      - name: Run CI on main
+        if: env.MERGED == '1' && env.MERGE_TOKEN == ''
         env:
           GH_TOKEN: ${{ github.token }}
-          MERGE_TOKEN: ${{ secrets.AUTOMERGE_TOKEN || github.token }}
-          OWN_TOKEN: ${{ secrets.AUTOMERGE_TOKEN == '' }}
-          REPO: ${{ github.repository }}
-          BASE: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-
-          # True when the commit has at least one check run or status and each one has passed.
-          # Only the latest run of each check counts, and this job's own check run is ignored.
-          passed() {
-            local checks statuses
-            checks=$(gh api "repos/$REPO/commits/$1/check-runs?per_page=100" --jq '[.check_runs[]
-              | select(.name != "Merge green pull requests")
-              | .status == "completed"
-                and (.conclusion == "success" or .conclusion == "neutral" or .conclusion == "skipped")]')
-            statuses=$(gh api "repos/$REPO/commits/$1/status" --jq '[.statuses[] | .state == "success"]')
-            jq -en --argjson c "$checks" --argjson s "$statuses" '$c + $s | length > 0 and all' > /dev/null
-          }
-
-          # A push made with the workflow's own token does not start CI, so start it on the
-          # branch once GitHub has finished merging main into it.
-          start_ci() { # number, old head, branch
-            local head=$2
-            for _ in $(seq 30); do
-              head=$(gh api "repos/$REPO/pulls/$1" --jq .head.sha)
-              if [ "$head" != "$2" ]; then
-                break
-              fi
-              sleep 2
-            done
-            if [ "$head" = "$2" ]; then
-              echo "::warning::#$1: $3 still points at $2 a minute after merging $BASE into it; CI was not started"
-            else
-              gh workflow run ci.yml --repo "$REPO" --ref "$3"
-            fi
-          }
-
-          base_sha=$(gh api "repos/$REPO/commits/$BASE" --jq .sha)
-          prs=$(gh api "repos/$REPO/pulls?state=open&base=$BASE&sort=created&direction=asc&per_page=100" \
-            --jq ".[] | select(.draft | not) | select(.head.repo.full_name == \"$REPO\")
-              | \"\(.number) \(.head.sha) \(.head.ref)\"")
-          merged=0
-          while read -r number sha ref <&3; do
-            if [ -z "$number" ]; then
-              continue
-            fi
-            if ! passed "$sha"; then
-              echo "#$number: not every check on $sha has passed"
-              continue
-            fi
-            behind=$(gh api "repos/$REPO/compare/$base_sha...$sha" --jq .behind_by)
-            if [ "$behind" -gt 0 ]; then
-              echo "#$number: green, but $behind commit(s) behind $BASE: merging $BASE into $ref for CI to test"
-              if ! GH_TOKEN=$MERGE_TOKEN gh api -X PUT "repos/$REPO/pulls/$number/update-branch" \
-                -f expected_head_sha="$sha" > /dev/null; then
-                echo "::warning::#$number: could not merge $BASE into $ref; merge it by hand"
-              elif [ "$OWN_TOKEN" = true ]; then
-                start_ci "$number" "$sha" "$ref"
-              fi
-              continue
-            fi
-            echo "#$number: every check on $sha has passed and it contains $BASE: merging"
-            if merge_sha=$(GH_TOKEN=$MERGE_TOKEN gh api -X PUT "repos/$REPO/pulls/$number/merge" \
-              -f sha="$sha" -f merge_method=merge --jq .sha); then
-              base_sha=$merge_sha
-              merged=$((merged + 1))
-            elif [ "$OWN_TOKEN" = true ]; then
-              echo "::warning::#$number: GitHub refused the merge. If the pull request changes .github/workflows, store a token in the AUTOMERGE_TOKEN secret (see automerge.yml)"
-            else
-              echo "::warning::#$number: GitHub refused the merge"
-            fi
-          done 3<<< "$prs"
-
-          # A merge made with the workflow's own token does not start CI on the base branch either.
-          if [ "$merged" -gt 0 ] && [ "$OWN_TOKEN" = true ]; then
-            gh workflow run ci.yml --repo "$REPO" --ref "$BASE"
-          fi
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run ci.yml --ref main

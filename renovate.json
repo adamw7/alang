@@ -4,7 +4,7 @@
   "rebaseWhen": "behind-base-branch",
   "packageRules": [
     {
-      "description": "Merge an update once every CI check on its branch has passed. The Automerge workflow merges it as soon as CI passes; Renovate also merges it during its own runs. rebaseWhen above makes Renovate rebase a branch that is behind main (the runner's own config only rebases conflicted ones), so an update opened while main was red gets a new CI run once main is fixed.",
+      "description": "Merge an update once CI on it has passed: the Automerge workflow merges it when CI finishes, and Renovate during its own runs. rebaseWhen above rebases a branch that falls behind main (the runner's config rebases only conflicted ones), so an update opened while main was red is tested again once main is fixed.",
       "matchPackageNames": ["*"],
       "automerge": true,
       "platformAutomerge": false
