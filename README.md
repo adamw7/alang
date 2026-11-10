@@ -101,8 +101,9 @@ error[E0215]: a call with `mut` arguments must be its own statement or the whole
   = hint: store the result first: let value: i32 = pop(mut stack); then use `value`
 ```
 
-With `--json`, each diagnostic has `code`, `title`, `message`, `file`, `line`, `column`, `length`,
-`source_line` and `hint`. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`,
+With `--json`, the report is one line of JSON that names the source `file` once, and each diagnostic
+has `severity`, `code`, `title`, `message`, `line`, `column`, `length`, `source_line` and `hint`. A trap
+gives its `line`, `column` and `source_line` the same way. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`,
 `xs.len()`, `let x = 5`, `while` without a limit, `null`, generics, imports, tuples, slices, `if` as an
 expression, match guards, `sort`, `pow`, ...) are answered with the ALang spelling.
 See [docs/ERRORS.md](docs/ERRORS.md).

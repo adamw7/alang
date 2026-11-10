@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -43,6 +44,14 @@ class CliTest {
         Path p = dir.resolve(name);
         Files.writeString(p, text, StandardCharsets.UTF_8);
         return p;
+    }
+
+    /**
+     * A report as the CLI prints it, from the same JSON written readably: one line, a space after each
+     * comma and colon, the keys in the same order.
+     */
+    private static String oneLine(String json) {
+        return Json.write(Json.parse(json)) + "\n";
     }
 
     /** "é" in UTF-8 as printf octal escapes, so the bytes do not depend on this JVM's charset. */
@@ -158,7 +167,7 @@ class CliTest {
             """);
         Result r = run("check", p.toString(), "--json");
         assertEquals(0, r.code(), r.err());
-        assertEquals("""
+        assertEquals(oneLine("""
             {
               "ok": true,
               "file": "FILE",
@@ -197,7 +206,7 @@ class CliTest {
                 ]
               }
             }
-            """, r.out().replace(p.toString(), "FILE"));
+            """), r.out().replace(p.toString(), "FILE"));
         assertEquals("", r.err());
     }
 
@@ -207,7 +216,7 @@ class CliTest {
         Path p = write("bad.al", "fn main() {\n\tlet s: str[4] = \"abcde\";\n    print(nope);\n    return;\n    print(1);\n}\n");
         Result r = run("check", p.toString(), "--json");
         assertEquals(1, r.code(), r.err());
-        assertEquals("""
+        assertEquals(oneLine("""
             {
               "ok": false,
               "file": "FILE",
@@ -219,7 +228,6 @@ class CliTest {
                   "code": "E0201",
                   "title": "type mismatch",
                   "message": "type mismatch: expected str[4], found str[5]",
-                  "file": "FILE",
                   "line": 2,
                   "column": 18,
                   "length": 7,
@@ -231,7 +239,6 @@ class CliTest {
                   "code": "E0101",
                   "title": "unknown name",
                   "message": "unknown name `nope`",
-                  "file": "FILE",
                   "line": 3,
                   "column": 11,
                   "length": 4,
@@ -243,7 +250,6 @@ class CliTest {
                   "code": "W0301",
                   "title": "unreachable code",
                   "message": "unreachable statement",
-                  "file": "FILE",
                   "line": 5,
                   "column": 5,
                   "length": 9,
@@ -253,8 +259,73 @@ class CliTest {
               ],
               "memory": null
             }
-            """, r.out().replace(p.toString(), "FILE"));
+            """), r.out().replace(p.toString(), "FILE"));
         assertEquals("", r.err());
+    }
+
+    /**
+     * Every JSON report is one line. `run`, `test` and `tools` name the file once at the top level, as
+     * `check` does: a diagnostic or a trap does not repeat it. `call`, whose caller passed the file, does
+     * not name it at all.
+     */
+    @Test
+    void reportsNameTheFileOnce() throws IOException {
+        Path p = write("trap.al", """
+            /// The item at an index.
+            tool fn at(i: i64) -> i64 {
+                let xs: [i64; 2] = [1, 2];
+                return xs[i];
+            }
+
+            fn main() {
+                print(at(5));
+            }
+
+            test "past the end" {
+                assert at(5) == 0;
+            }
+            """);
+        Result r = run("run", p.toString(), "--json");
+        assertEquals(1, r.code(), r.err());
+        Map<?, ?> j = reportOn(p, r, 1);
+        assertEquals("R0003", ((Map<?, ?>) j.get("trap")).get("code"), r.out());
+        assertEquals(BigInteger.valueOf(4), ((Map<?, ?>) j.get("trap")).get("line"), r.out());
+
+        r = run("test", p.toString(), "--json");
+        assertEquals(1, r.code(), r.err());
+        j = reportOn(p, r, 1);
+        Map<?, ?> test = (Map<?, ?>) ((List<?>) j.get("tests")).get(0);
+        assertEquals("R0003", ((Map<?, ?>) test.get("trap")).get("code"), r.out());
+
+        r = run("call", p.toString(), "at", "{\"i\": 5}");
+        assertEquals(1, r.code(), r.err());
+        j = reportOn(p, r, 0);
+        assertEquals("R0003", ((Map<?, ?>) j.get("error")).get("code"), r.out());
+
+        Path bad = write("bad.al", "tool fn f() -> i64 {\n    return true;\n}\n\nfn main() {\n}\n");
+        for (String cmd : List.of("check", "run", "test", "tools")) {
+            r = run(cmd, bad.toString(), "--json");
+            assertEquals(1, r.code(), cmd + ": " + r.err());
+            j = reportOn(bad, r, 1);
+            Map<?, ?> diag = (Map<?, ?>) ((List<?>) j.get("diagnostics")).get(0);
+            assertEquals("E0201", diag.get("code"), r.out());
+            assertEquals(BigInteger.valueOf(2), diag.get("line"), r.out());
+        }
+        r = run("call", bad.toString(), "f");
+        assertEquals(1, r.code(), r.err());
+        j = reportOn(bad, r, 0);
+        assertEquals(1, ((List<?>) j.get("diagnostics")).size(), r.out());
+    }
+
+    /** The report in {@code r.out()}: one line, naming the file {@code p} at the top level {@code times} times (0 or 1) and nowhere else. */
+    private static Map<?, ?> reportOn(Path p, Result r, int times) {
+        assertTrue(r.out().endsWith("\n") && r.out().indexOf('\n') == r.out().length() - 1, r.out());
+        assertEquals(times, r.out().split("\"file\": ", -1).length - 1, r.out());
+        assertEquals(times, r.out().split(Pattern.quote(Json.write(p.toString())), -1).length - 1, r.out());
+        Map<?, ?> j = (Map<?, ?>) Json.parse(r.out());
+        assertEquals(times == 1 ? p.toString() : null, j.get("file"), r.out());
+        assertEquals("", r.err());
+        return j;
     }
 
     @Test
@@ -566,12 +637,12 @@ class CliTest {
         // A missing file used to be reported as text on stderr even with --json, and by `call`.
         Result r = run("check", "missing.al", "--json");
         assertEquals(2, r.code(), r.err());
-        assertEquals("{\n  \"ok\": false,\n  \"error\": \"file not found: missing.al\"\n}\n", r.out());
+        assertEquals("{\"ok\": false, \"error\": \"file not found: missing.al\"}\n", r.out());
         assertEquals("", r.err());
         // An error found before --json is reached.
         r = run("run", "missing.al", "--max-steps", "many", "--json");
         assertEquals(2, r.code(), r.err());
-        assertEquals("{\n  \"ok\": false,\n  \"error\": \"expected a number: For input string: \\\"many\\\"\"\n}\n", r.out());
+        assertEquals("{\"ok\": false, \"error\": \"expected a number: For input string: \\\"many\\\"\"}\n", r.out());
         // `--filter --json` filters on the text "--json"; it does not ask for JSON.
         r = run("test", "missing.al", "--filter", "--json");
         assertEquals(2, r.code());

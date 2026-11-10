@@ -92,13 +92,16 @@ public final class Diagnostics {
         return out;
     }
 
+    /**
+     * One diagnostic as JSON. It does not repeat the file: every diagnostic is in the one source file,
+     * which the report around it names once.
+     */
     public static Map<String, Object> toJson(Source source, Diagnostic d) {
         return Json.obj(
             "severity", d.isError() ? "error" : "warning",
             "code", d.code().name(),
             "title", d.code().title,
             "message", d.message(),
-            "file", source.path,
             "line", d.span().line(),
             "column", d.span().col(),
             "length", d.span().length(),
