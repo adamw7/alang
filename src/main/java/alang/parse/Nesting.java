@@ -22,7 +22,9 @@ import org.antlr.v4.runtime.Token;
  * <ul>
  *   <li>Inside a declaration, each open bracket counts 1, and so does each operator of the
  *       expression being read at each open bracket ({@code a + b + c} nests like
- *       {@code (a + b) + c}). A {@code ;}, a {@code ,} or a block ends an expression.
+ *       {@code (a + b) + c}). A field access {@code .f} and an index {@code [i]} count as operators:
+ *       {@code x[0][0][0]} nests like {@code x.a.b.c}, though no two of its brackets are open at
+ *       once. A {@code ;}, a {@code ,} or a block ends an expression.
  *   <li>A declaration weighs its deepest point (at least 1), plus the weight of the heaviest chain
  *       of declarations it names: the functions it calls and the constants and types it uses.
  *       Names are matched as plain identifiers, which can only overestimate.
@@ -82,6 +84,12 @@ final class Nesting {
                     if (type == ALangLexer.LBRACE) {  // a block starts after its condition
                         depth -= ops[open];
                         ops[open] = 0;
+                    }
+                    if (type == ALangLexer.LBRACK && i > 0 && endsValue(tokens.get(i - 1).getType())) {
+                        // An index chains like `.`: x[0][0][0] nests as deeply as x.a.b.c, although each
+                        // of its brackets closes before the next one opens.
+                        ops[open]++;
+                        depth++;
                     }
                     if (++open == ops.length) ops = Arrays.copyOf(ops, ops.length * 2);
                     ops[open] = 0;
@@ -144,6 +152,15 @@ final class Nesting {
                  ALangLexer.TILDE, ALangLexer.NOT, ALangLexer.AND, ALangLexer.OR, ALangLexer.EQ,
                  ALangLexer.NEQ, ALangLexer.LT, ALangLexer.LE, ALangLexer.GT, ALangLexer.GE,
                  ALangLexer.DOT -> true;
+            default -> false;
+        };
+    }
+
+    /** Can a token of this type end a value, so that a `[` after it indexes the value? */
+    private static boolean endsValue(int type) {
+        return isIdentifier(type) || switch (type) {
+            case ALangLexer.RPAREN, ALangLexer.RBRACK, ALangLexer.INT_LIT, ALangLexer.FLOAT_LIT, ALangLexer.STRING_LIT,
+                 ALangLexer.CHAR_LIT, ALangLexer.TRUE, ALangLexer.FALSE -> true;
             default -> false;
         };
     }

@@ -366,7 +366,7 @@ struct Node { next: Node }  // error
 
 ## E0404
 
-**nested too deeply**: A program may nest at most 128 levels deep. Each bracket and each operator chained in an expression counts one level, and a function, constant or type adds the levels of every function, constant and type it uses. The limit is the same on every machine: the toolchain recurses over the program, and without it the machine's stack size would decide whether a deeply nested program can be checked or run. Split deep expressions with intermediate `let` bindings and shorten long chains of declarations that use each other.
+**nested too deeply**: A program may nest at most 128 levels deep. Each bracket and each operator chained in an expression (a field access `.f` and an index `[i]` included) counts one level, and a function, constant or type adds the levels of every function, constant and type it uses. The limit is the same on every machine: the toolchain recurses over the program, and without it the machine's stack size would decide whether a deeply nested program can be checked or run. Split deep expressions with intermediate `let` bindings and shorten long chains of declarations that use each other.
 
 ```
 let x: i64 = 1 + 1 + 1 + ... + 1;  // 200 chained `+`: error
