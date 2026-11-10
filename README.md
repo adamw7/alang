@@ -101,11 +101,37 @@ error[E0215]: a call with `mut` arguments must be its own statement or the whole
   = hint: store the result first: let value: i32 = pop(mut stack); then use `value`
 ```
 
-With `--json`, each diagnostic has `code`, `title`, `message`, `file`, `line`, `column`, `length`,
-`source_line` and `hint`. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`,
+With `--json`, the report is one line of JSON that names the source `file` once, and each diagnostic
+has `severity`, `code`, `title`, `message`, `line`, `column`, `length`, `source_line` and `hint`. A trap
+gives its `line`, `column` and `source_line` the same way. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`,
 `xs.len()`, `let x = 5`, `while` without a limit, `null`, generics, imports, tuples, slices, `if` as an
 expression, match guards, `sort`, `pow`, ...) are answered with the ALang spelling.
 See [docs/ERRORS.md](docs/ERRORS.md).
+
+## Tool results in a prompt
+
+`alang call` prints JSON, and a harness should keep reading `ok`, `result` and `error.code` from it. For
+the copy it shows a model, [`harness/toon.py`](harness/toon.py) turns the JSON into
+[TOON](https://github.com/toon-format/spec): the same data with indentation instead of braces, less
+quoting, and a list of structs as a table that names the fields once.
+
+```
+$ bin/alang call words.al word_counts '{"text": "the cat saw the dog"}'
+{"ok": true, "result": [{"word": "the", "count": 2}, {"word": "cat", "count": 1}, {"word": "saw", "count": 1}, {"word": "dog", "count": 1}], "stdout": ""}
+$ bin/alang call words.al word_counts '{"text": "the cat saw the dog"}' | python3 harness/toon.py
+ok: true
+result[4]{word,count}:
+  the,2
+  cat,1
+  saw,1
+  dog,1
+stdout: ""
+```
+
+It saves the most on long lists of structs. On a small or nested result, compact JSON costs about the
+same, so measure before switching a harness over. `--delimiter tab` saves a little more; from Python,
+`from toon import encode`. It needs only the standard library, and its output is the reference encoder's
+(TOON spec v4.4), except that integers past 2^53 stay exact.
 
 ## Documentation
 
@@ -115,6 +141,7 @@ See [docs/ERRORS.md](docs/ERRORS.md).
 - [docs/ERRORS.md](docs/ERRORS.md): every diagnostic and trap code (generated)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): C4 diagrams of the system, the toolchain and a tool call
 - [bench/](bench): do models write more correct tools in ALang or in Python?
+- [harness/toon.py](harness/toon.py): tool results as TOON for a model's prompt
 - [examples/](examples): complete programs, each with tests
 
 `src/main/java/alang/` holds the toolchain, one package per component (see the architecture);
@@ -129,12 +156,13 @@ mvn verify                                    # every test: conformance, docs, d
 mvn test -Dalang.fuzz=3000                    # a longer fuzzing campaign
 mvn test-compile pitest:mutationCoverage      # mutation testing (minutes; report in target/pit-reports)
 python3 bench/bench.py selftest               # the benchmark's tasks, grader and feedback loop, offline
+python3 harness/test_toon.py                  # the JSON-to-TOON converter
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` with gcc and clang on
-Linux and macOS, smoke-tests `bin/alang` against the packaged jar, and runs the benchmark self-test and a
-3000-mutation fuzzing campaign. Every test, CI step and job has a time limit, so a hang fails fast.
+Linux and macOS, smoke-tests `bin/alang` against the packaged jar, and runs the TOON converter's tests,
+the benchmark self-test and a 3000-mutation fuzzing campaign. Every test, CI step and job has a time limit, so a hang fails fast.
 Mutation testing is too slow for every push: it runs every Saturday on `main`
 ([`.github/workflows/mutation.yml`](.github/workflows/mutation.yml), or on demand from the Actions tab),
 uploads the `pit-report` artifact, and fails when the mutation score drops below 74% or the test

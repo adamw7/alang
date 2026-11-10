@@ -18,19 +18,17 @@ public final class Json {
 
     // ------------------------------------------------------------------ writing
 
+    /**
+     * The value as JSON on one line, with a space after each comma and colon: every --json report and
+     * tool call result is printed this way, so an agent pays no tokens for indentation.
+     */
     public static String write(Object value) {
         StringBuilder sb = new StringBuilder();
-        write(sb, value, -1, 0);
+        write(sb, value);
         return sb.toString();
     }
 
-    public static String pretty(Object value) {
-        StringBuilder sb = new StringBuilder();
-        write(sb, value, 2, 0);
-        return sb.toString();
-    }
-
-    private static void write(StringBuilder sb, Object v, int indent, int depth) {
+    private static void write(StringBuilder sb, Object v) {
         if (v == null) {
             sb.append("null");
         } else if (v instanceof Boolean || v instanceof BigInteger || v instanceof Integer || v instanceof Long) {
@@ -51,44 +49,26 @@ public final class Json {
         } else if (v instanceof String s) {
             quote(sb, s);
         } else if (v instanceof List<?> list) {
-            if (list.isEmpty()) {
-                sb.append("[]");
-                return;
-            }
             sb.append('[');
             for (int i = 0; i < list.size(); i++) {
-                if (i > 0) sb.append(indent >= 0 ? "," : ", ");
-                newline(sb, indent, depth + 1);
-                write(sb, list.get(i), indent, depth + 1);
+                if (i > 0) sb.append(", ");
+                write(sb, list.get(i));
             }
-            newline(sb, indent, depth);
             sb.append(']');
         } else if (v instanceof Map<?, ?> map) {
-            if (map.isEmpty()) {
-                sb.append("{}");
-                return;
-            }
             sb.append('{');
             boolean first = true;
             for (Map.Entry<?, ?> e : map.entrySet()) {
-                if (!first) sb.append(indent >= 0 ? "," : ", ");
+                if (!first) sb.append(", ");
                 first = false;
-                newline(sb, indent, depth + 1);
                 quote(sb, String.valueOf(e.getKey()));
                 sb.append(": ");
-                write(sb, e.getValue(), indent, depth + 1);
+                write(sb, e.getValue());
             }
-            newline(sb, indent, depth);
             sb.append('}');
         } else {
             throw new IllegalArgumentException("not a JSON value: " + v.getClass());
         }
-    }
-
-    private static void newline(StringBuilder sb, int indent, int depth) {
-        if (indent < 0) return;
-        sb.append('\n');
-        sb.append(" ".repeat(indent * depth));
     }
 
     private static final char[] HEX = "0123456789abcdef".toCharArray();

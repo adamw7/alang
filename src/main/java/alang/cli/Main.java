@@ -219,7 +219,7 @@ public final class Main {
         } else if (cmd.equals("call")) {
             line(out, Json.write(Json.obj("ok", false, "error", Json.obj("code", "usage_error", "message", message))));
         } else {
-            line(out, Json.pretty(Json.obj("ok", false, "error", message)));
+            line(out, Json.write(Json.obj("ok", false, "error", message)));
         }
         return 2;
     }
@@ -299,7 +299,7 @@ public final class Main {
         MemoryReport mem = r.ok() ? r.check().memory() : null;
         if (json) {
             j.put("memory", mem == null ? null : mem.toJson());
-            line(out, Json.pretty(j));
+            line(out, Json.write(j));
             return r.ok() ? 0 : 1;
         }
         if (!r.ok()) {
@@ -328,6 +328,7 @@ public final class Main {
         Frontend.Result r = compile(src);
         Map<String, Object> j = new LinkedHashMap<>();
         j.put("ok", false);
+        j.put("file", src.path);
         if (!report(r, j)) {
             return failCompile(r, j);
         }
@@ -337,7 +338,7 @@ public final class Main {
             if (json) {
                 j.put("ok", false);
                 j.put("error", msg);
-                line(out, Json.pretty(j));
+                line(out, Json.write(j));
             } else {
                 line(err, "alang: " + msg);
             }
@@ -358,7 +359,7 @@ public final class Main {
             putStdout(j, captured);
             j.put("trap", trap == null ? null : trapJson(src, trap));
             j.put("steps", in.steps());
-            line(out, Json.pretty(j));
+            line(out, Json.write(j));
         } else if (trap != null) {
             err.writeBytes(renderTrapBytes(src, trap));
         }
@@ -368,15 +369,19 @@ public final class Main {
     private int failCompile(Frontend.Result r, Map<String, Object> j) {
         if (json) {
             j.put("ok", false);
-            line(out, Json.pretty(j));
+            line(out, Json.write(j));
         } else {
             line(err, "check failed: " + r.diags().errorCount() + " error(s)");
         }
         return 1;
     }
 
+    /**
+     * A trap as JSON. Its line and column are in the file given on the command line, which `run` and
+     * `test` name once at the top level; `call` leaves it out, as the caller passed it.
+     */
     static Map<String, Object> trapJson(Source src, Trap t) {
-        return Json.obj("code", t.code.name(), "title", t.code.title, "message", t.getMessage(), "file", src.path,
+        return Json.obj("code", t.code.name(), "title", t.code.title, "message", t.getMessage(),
             "line", t.span.line(), "column", t.span.col(), "source_line", src.line(t.span.line()),
             "trace", t.trace, "hint", t.code.explanation);
     }
@@ -418,6 +423,7 @@ public final class Main {
         Frontend.Result r = compile(src);
         Map<String, Object> j = new LinkedHashMap<>();
         j.put("ok", false);
+        j.put("file", src.path);
         if (!report(r, j)) return failCompile(r, j);
         List<TestDecl> selected = new ArrayList<>();
         List<String> names = new ArrayList<>();
@@ -434,7 +440,7 @@ public final class Main {
                 j.put("passed", 0);
                 j.put("failed", 0);
                 j.put("tests", List.of());
-                line(out, Json.pretty(j));
+                line(out, Json.write(j));
             } else {
                 line(err, "alang: " + msg);
             }
@@ -482,7 +488,7 @@ public final class Main {
             j.put("passed", passed);
             j.put("failed", failed);
             j.put("tests", results);
-            line(out, Json.pretty(j));
+            line(out, Json.write(j));
         } else {
             line(out, "");
             line(out, (passed + failed) + " test(s): " + passed + " passed, " + failed + " failed");
@@ -515,13 +521,14 @@ public final class Main {
         Frontend.Result r = compile(src);
         Map<String, Object> j = new LinkedHashMap<>();
         j.put("ok", false);
+        j.put("file", src.path);
         if (!report(r, j)) return failCompile(r, j);
         List<Object> list = new ArrayList<>();
         for (FnDecl f : r.program().itemsOf(FnDecl.class)) {
             if (!f.tool) continue;
             list.add(toolSchema(f));
         }
-        line(out, Json.pretty(list));
+        line(out, Json.write(list));
         return 0;
     }
 
