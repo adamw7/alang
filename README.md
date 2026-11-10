@@ -160,10 +160,11 @@ mvn test-compile pitest:mutationCoverage      # mutation testing of the toolchai
 bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` on JDK 21 with gcc
-and clang on Linux and macOS, smoke-tests the `bin/alang` commands against the
-packaged jar, runs the benchmark self-test on Linux, runs a 3000-mutation fuzzing campaign, and
-runs mutation testing, uploading the report as the `pit-report` artifact.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every pull request and every
+push to `main`. It runs `mvn verify` on JDK 21 with gcc and clang on Linux and macOS, smoke-tests
+the `bin/alang` commands against the packaged jar, runs the benchmark self-test on Linux, runs a
+3000-mutation fuzzing campaign, and runs mutation testing, uploading the report as the
+`pit-report` artifact.
 
 Every test has a time limit, so a hang fails fast instead of stalling CI. A test fails after 10 s,
 even if it never checks for interrupts
@@ -175,8 +176,17 @@ also has a limit of a few minutes.
 Renovate ([`renovate.json`](renovate.json)) opens pull requests for Maven dependencies, Maven
 plugins and GitHub Actions. The ANTLR tool and runtime are updated together, PIT and its JUnit 5
 plugin together, the Maven plugins in one pull request, and the workflow's actions in another.
-Renovate merges each of its pull requests once every CI check on it has passed, rebasing it onto
-`main` first if it has fallen behind.
+Renovate rebases each of its pull requests onto `main` whenever it falls behind.
+
+### Merging
+
+[`.github/workflows/automerge.yml`](.github/workflows/automerge.yml) (ported from
+`adamw7/buy_agent`) wakes when CI finishes on a pull request, and squash-merges it once the latest
+run of each workflow in its `REQUIRED` list has succeeded on the head commit. Forks, drafts and
+pull requests labelled `no-automerge` are left alone. One touching `.github/workflows/` merges
+only when the `AUTOMERGE_TOKEN` secret (a token with the `workflows` scope) is set; without it,
+the merge is made with the workflow's own token and followed by a dispatched CI run on `main`,
+since a merge made with that token starts no workflow.
 
 ### Mutation testing
 

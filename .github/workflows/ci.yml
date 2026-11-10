@@ -1,7 +1,11 @@
 name: CI
 
 on:
+  # A pull request's run is the one the Automerge workflow waits for (automerge.yml);
+  # main's runs check what was merged.
   push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
