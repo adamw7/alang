@@ -146,10 +146,18 @@ public final class Checker {
                 diags.error(Code.E0104, c.span, "constant `" + c.name + "` has the same name as a type");
             }
         }
+        // Items share one namespace (SPEC §3), even where the syntax would tell them apart: Color() and Color.Red.
         for (FnDecl f : fns.values()) {
             if (structs.containsKey(f.name)) {
                 diags.error(Code.E0104, f.nameSpan, "function `" + f.name + "` has the same name as a struct",
                     "struct literals and calls share syntax; rename one of them");
+            } else if (enums.containsKey(f.name)) {
+                diags.error(Code.E0104, f.nameSpan, "function `" + f.name + "` has the same name as an enum",
+                    "names are unique across functions, types and constants; rename one of them");
+            }
+            if (consts.containsKey(f.name)) {
+                diags.error(Code.E0104, f.nameSpan, "function `" + f.name + "` has the same name as a constant",
+                    "names are unique across functions, types and constants; rename one of them");
             }
         }
     }
