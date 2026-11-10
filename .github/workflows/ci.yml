@@ -104,6 +104,14 @@ jobs:
           LC_ALL=C bin/alang call "$out/size.al" size '{"text": "é"}' > "$out/size.json"
           grep -q '"result": 2' "$out/size.json"
 
+      - name: TOON converter
+        # harness/toon.py shows `alang call` results to a model as TOON; standard library only.
+        timeout-minutes: 2
+        run: |
+          python3 harness/test_toon.py
+          bin/alang call examples/text_tools.al most_common_letter '{"text": "hello"}' | python3 harness/toon.py > "$RUNNER_TEMP/call.toon"
+          printf 'ok: true\nresult:\n  letter: l\n  count: 2\nstdout: ""\n' | diff -u - "$RUNNER_TEMP/call.toon"
+
       - name: Benchmark self-test
         # The benchmark's reference solutions must keep passing as the language changes (no API calls).
         if: runner.os == 'Linux'
