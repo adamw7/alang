@@ -9,8 +9,9 @@ import java.util.Map;
 
 /**
  * A tiny JSON reader/writer without dependencies.
- * Values are: null, Boolean, BigInteger, BigDecimal, Double (non-finite only when writing),
- * String, List&lt;Object&gt;, Map&lt;String,Object&gt; (insertion ordered).
+ * Values are: null, Boolean, BigInteger, BigDecimal, Double (read only for a negative zero such as
+ * -0.0, which BigDecimal cannot hold; non-finite only when writing), String, List&lt;Object&gt;,
+ * Map&lt;String,Object&gt; (insertion ordered).
  */
 public final class Json {
     private Json() {}
@@ -39,6 +40,9 @@ public final class Json {
         } else if (v instanceof Double d) {
             if (d.isNaN() || d.isInfinite()) {
                 sb.append("null");
+            } else if (d == 0) {
+                // The long below would drop the sign of -0.0.
+                sb.append(Math.copySign(1.0, d) < 0 ? "-0.0" : "0.0");
             } else if (d == Math.rint(d) && Math.abs(d) < 1e15) {
                 sb.append((long) (double) d).append(".0");
             } else {
@@ -321,7 +325,8 @@ public final class Json {
         /** A number exactly as JSON spells it: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? */
         Object number() {
             int start = pos;
-            if (peek() == '-') pos++;
+            boolean negative = peek() == '-';
+            if (negative) pos++;
             if (peek() == '0') {
                 pos++;
                 if (isDigit(peek())) throw error("bad number: leading zeros are not allowed");
@@ -342,7 +347,11 @@ public final class Json {
             }
             String t = s.substring(start, pos);
             try {
-                return isFloat ? new BigDecimal(t) : new BigInteger(t);
+                if (!isFloat) return new BigInteger(t);
+                BigDecimal d = new BigDecimal(t);
+                // BigDecimal has no negative zero, so a float argument of -0.0 would arrive as 0.0. (An integer
+                // has none either: -0 is the integer 0.)
+                return negative && d.signum() == 0 ? (Object) (-0.0) : d;
             } catch (NumberFormatException ex) {
                 // An exponent beyond the range of int; no ALang type holds such a number.
                 throw error("bad number '" + t + "'");

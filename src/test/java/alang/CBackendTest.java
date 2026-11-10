@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import alang.cgen.CGen;
+import alang.check.Checker;
 import alang.cli.Frontend;
+import alang.diag.Source;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -85,6 +87,44 @@ class CBackendTest {
         return r;
     }
 
+    /**
+     * Builds the C for a checked program with each compiler, runs each build, and checks it behaves exactly
+     * like the interpreter. Returns the directory that holds prog.c.
+     */
+    private static Path buildEachAndCompare(Frontend.Result r, List<String[]> ccs) throws IOException, InterruptedException {
+        Harness.Run expected = Harness.runMain(r);
+        Path dir = Files.createTempDirectory("alang-c");
+        Path c = dir.resolve("prog.c");
+        Files.writeString(c, CGen.generate(r.program()), StandardCharsets.UTF_8);
+        for (String[] cc : ccs) {
+            List<String> cmd = new ArrayList<>(List.of(cc));
+            cmd.addAll(List.of("-o", "prog", "prog.c", "-lm"));
+            Proc build = exec(dir, cmd.toArray(new String[0]));
+            assertEquals(0, build.exit(), () -> String.join(" ", cc) + ":\n" + build.stderr());
+            Proc run = exec(dir, dir.resolve("prog").toString());
+            String who = String.join(" ", cc) + " on " + r.diags().source().path;
+            assertEquals(expected.stdout(), run.stdout(), "stdout differs: " + who);
+            if (expected.trap() == null) {
+                assertEquals(0, run.exit(), who + "\n" + run.stderr());
+                assertEquals("", run.stderr(), who);
+            } else {
+                assertEquals(1, run.exit(), who);
+                // Byte for byte: the message holds the bytes of str values, which need not be UTF-8.
+                byte[] message = expected.trap().messageBytes();
+                byte[] head = ("trap[" + expected.trap().code + "]: ").getBytes(StandardCharsets.UTF_8);
+                byte[] line = new byte[head.length + message.length + 1];
+                System.arraycopy(head, 0, line, 0, head.length);
+                System.arraycopy(message, 0, line, head.length, message.length);
+                line[line.length - 1] = '\n';
+                byte[] got = Arrays.copyOf(run.stderrBytes(), Math.min(line.length, run.stderrBytes().length));
+                assertArrayEquals(line, got, () -> who + "\n" + run.stderr());
+                String where = r.diags().source().path + ":" + expected.trap().span.line() + ":" + expected.trap().span.col();
+                assertTrue(run.stderr().contains("--> " + where), who + "\n" + run.stderr());
+            }
+        }
+        return dir;
+    }
+
     @TestFactory
     Stream<DynamicTest> differential() {
         List<Path> files = new ArrayList<>(Harness.files("tests/run", ".al"));
@@ -94,36 +134,7 @@ class CBackendTest {
             assumeTrue(!ccs.isEmpty(), "no C compiler available");
             Frontend.Result r = Harness.compile(p);
             assertTrue(r.ok(), () -> r.diags().renderText());
-            Harness.Run expected = Harness.runMain(r);
-            Path dir = Files.createTempDirectory("alang-c");
-            Path c = dir.resolve("prog.c");
-            Files.writeString(c, CGen.generate(r.program()), StandardCharsets.UTF_8);
-            for (String[] cc : ccs) {
-                List<String> cmd = new ArrayList<>(List.of(cc));
-                cmd.addAll(List.of("-o", "prog", "prog.c", "-lm"));
-                Proc build = exec(dir, cmd.toArray(new String[0]));
-                assertEquals(0, build.exit(), () -> String.join(" ", cc) + ":\n" + build.stderr());
-                Proc run = exec(dir, dir.resolve("prog").toString());
-                String who = String.join(" ", cc) + " on " + p;
-                assertEquals(expected.stdout(), run.stdout(), "stdout differs: " + who);
-                if (expected.trap() == null) {
-                    assertEquals(0, run.exit(), who + "\n" + run.stderr());
-                    assertEquals("", run.stderr(), who);
-                } else {
-                    assertEquals(1, run.exit(), who);
-                    // Byte for byte: the message holds the bytes of str values, which need not be UTF-8.
-                    byte[] message = expected.trap().messageBytes();
-                    byte[] head = ("trap[" + expected.trap().code + "]: ").getBytes(StandardCharsets.UTF_8);
-                    byte[] line = new byte[head.length + message.length + 1];
-                    System.arraycopy(head, 0, line, 0, head.length);
-                    System.arraycopy(message, 0, line, head.length, message.length);
-                    line[line.length - 1] = '\n';
-                    byte[] got = Arrays.copyOf(run.stderrBytes(), Math.min(line.length, run.stderrBytes().length));
-                    assertArrayEquals(line, got, () -> who + "\n" + run.stderr());
-                    String where = r.diags().source().path + ":" + expected.trap().span.line() + ":" + expected.trap().span.col();
-                    assertTrue(run.stderr().contains("--> " + where), who + "\n" + run.stderr());
-                }
-            }
+            Path dir = buildEachAndCompare(r, ccs);
             if (available("nm") && available("gcc")) {
                 assertEquals(0, exec(dir, "gcc", "-std=c99", "-O2", "-c", "prog.c", "-o", "prog.o").exit());
                 Proc nm = exec(dir, "nm", "-u", "prog.o");
@@ -133,6 +144,49 @@ class CBackendTest {
                 }
             }
         }));
+    }
+
+    /**
+     * Every program the checker accepts must compile, however long its chains and however deep it nests
+     * within the limit. An else-if chain used to nest each branch in the `else` of the one before: the C
+     * backend recursed once per branch (a StackOverflowError at a few thousand), and the C went a bracket
+     * deeper per branch, past the 256 that clang accepts at about 130 branches. Each while loop took three
+     * brackets, so clang rejected loops nested 90 deep, and it crashed on a match with 10 000 arms, which
+     * became an else-if chain that it parses recursively.
+     */
+    @TestFactory
+    Stream<DynamicTest> longChainsAndDeepNesting() {
+        StringBuilder chain = new StringBuilder("fn main() {\n    let x: i64 = 4999;\n    if x == 0 {\n        print(0);\n");
+        for (int i = 1; i < 5000; i++) {
+            chain.append("    } else if x == ").append(i).append(" {\n        print(").append(i).append(");\n");
+        }
+        chain.append("    } else {\n        print(-1);\n    }\n}\n");
+        StringBuilder arms = new StringBuilder("fn main() {\n    let x: i64 = 9999;\n    match x {\n");
+        for (int i = 0; i < 10000; i++) arms.append("        ").append(i).append(" => { print(").append(i).append("); }\n");
+        arms.append("        _ => { print(-1); }\n    }\n}\n");
+        String[][] programs = {
+            {"else_if_chain.al", chain.toString()},
+            {"match_arms.al", arms.toString()},
+            {"nested_loops.al", nestedLoops(127)},
+        };
+        return Stream.of(programs).map(t -> Harness.dynamicTest(t[0], COMPILE_AND_RUN_TIMEOUT, () -> {
+            List<String[]> ccs = compilers();
+            assumeTrue(!ccs.isEmpty(), "no C compiler available");
+            Frontend.Result r = Frontend.compile(new Source(t[0], t[1]), Checker.DEFAULT_MAX_STACK);
+            assertTrue(r.ok(), () -> r.diags().renderText());
+            buildEachAndCompare(r, ccs);
+            if (t[0].equals("nested_loops.al")) {
+                // One more level is past the nesting limit, so 127 is as deep as loops get.
+                Frontend.Result deeper = Frontend.compile(new Source(t[0], nestedLoops(128)), Checker.DEFAULT_MAX_STACK);
+                assertTrue(deeper.diags().renderText().startsWith("error[E0404]: "), deeper.diags().renderText());
+            }
+        }));
+    }
+
+    /** {@code depth} while loops, each in the body of the one before. */
+    private static String nestedLoops(int depth) {
+        return "fn main() {\n    var c: i64 = 0;\n" + "while c < 1 limit 2 {\n".repeat(depth) + "c += 1;\n"
+            + "}\n".repeat(depth) + "print(c);\n}\n";
     }
 
     /**

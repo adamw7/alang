@@ -327,6 +327,23 @@ class CliTest {
     }
 
     @Test
+    void negativeZeroKeepsItsSignInToolCalls() throws IOException {
+        // BigDecimal and BigInteger have no negative zero, so a result of -0.0 came back as 0.0 and an
+        // argument of -0.0 arrived as 0.0, although print tells them apart.
+        Path p = write("t.al", "/// Negates.\ntool fn neg(d: f64) -> f64 { print(d); return -d; }\n"
+            + "/// Negates.\ntool fn neg32(d: f32) -> f32 { return -d; }\n"
+            + "/// Identity.\ntool fn id(x: i64) -> i64 { return x; }\n");
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\"}\n", run("call", p.toString(), "neg", "{\"d\": 0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\"}\n", run("call", p.toString(), "neg", "{\"d\": -0.0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\"}\n", run("call", p.toString(), "neg", "{\"d\": -0e5}").out());
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"\"}\n", run("call", p.toString(), "neg32", "{\"d\": 0.0}").out());
+        // Written as an integer, -0 is the integer 0 (as jsonIsReadStrictly expects), and an integer
+        // parameter takes -0.0 as 0.
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\"}\n", run("call", p.toString(), "neg", "{\"d\": -0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0, \"stdout\": \"\"}\n", run("call", p.toString(), "id", "{\"x\": -0.0}").out());
+    }
+
+    @Test
     void integerArgumentsWithHugeExponentsAreRejectedQuickly() throws IOException {
         // Converting these exactly used to run for minutes.
         Path p = write("t.al", "/// Identity.\ntool fn id(x: i64) -> i64 { return x; }\n");

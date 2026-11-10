@@ -139,6 +139,8 @@ public final class JsonValues {
                             + " has no JSON representation; JSON has no NaN or infinity, so check for them in the tool "
                             + "and return an enum instead");
                     }
+                    // BigDecimal has no negative zero, so a zero stays a double, which Json writes as -0.0 or 0.0.
+                    if (d == 0) yield d;
                     // The shortest decimal that reads back as the same f32, as print shows it: 0.1, not
                     // the 0.10000000149011612 that the widened double would print.
                     yield new BigDecimal(k == PrimKind.F32 ? Float.toString((float) d) : Double.toString(d));
@@ -235,7 +237,9 @@ public final class JsonValues {
                     // Round once, straight to the target type: f32 via f64 would round twice.
                     boolean f32 = k == PrimKind.F32;
                     double d;
-                    if (j instanceof BigInteger bi) d = f32 ? bi.floatValue() : bi.doubleValue();
+                    // Json.parse returns a Double only for a negative zero such as -0.0.
+                    if (j instanceof Double negativeZero) d = negativeZero;
+                    else if (j instanceof BigInteger bi) d = f32 ? bi.floatValue() : bi.doubleValue();
                     else if (j instanceof BigDecimal bd) d = f32 ? bd.floatValue() : bd.doubleValue();
                     else throw fail(path, "expected a number");
                     // Too large a number rounds to an infinity, which is not the number that was sent.
@@ -243,7 +247,10 @@ public final class JsonValues {
                     return d;
                 }
                 BigInteger v;
-                if (j instanceof BigInteger bi) {
+                if (j instanceof Double) {
+                    // A negative zero such as -0.0: as an integer, simply 0.
+                    v = BigInteger.ZERO;
+                } else if (j instanceof BigInteger bi) {
                     v = bi;
                 } else if (j instanceof BigDecimal bd) {
                     // Decide from the digit count first: converting a number such as 1e100000000 or
