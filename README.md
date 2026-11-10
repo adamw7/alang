@@ -132,11 +132,14 @@ bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` with gcc and clang on
-Linux and macOS, smoke-tests `bin/alang` against the packaged jar, runs the benchmark self-test, a
-3000-mutation fuzzing campaign and mutation testing. Every test, CI step and job has a time limit, so a
-hang fails fast. Mutation testing fails when the mutation score drops below 74% or the test strength
-below 85%; [`pom.xml`](pom.xml) explains what is mutated and why. Renovate keeps the Maven
-dependencies, plugins and GitHub Actions current and merges its pull requests once CI passes.
+Linux and macOS, smoke-tests `bin/alang` against the packaged jar, and runs the benchmark self-test and a
+3000-mutation fuzzing campaign. Every test, CI step and job has a time limit, so a hang fails fast.
+Mutation testing is too slow for every push: it runs every Saturday on `main`
+([`.github/workflows/mutation.yml`](.github/workflows/mutation.yml), or on demand from the Actions tab),
+uploads the `pit-report` artifact, and fails when the mutation score drops below 74% or the test
+strength below 85%; [`pom.xml`](pom.xml) explains what is mutated and why. Renovate keeps the Maven
+dependencies, plugins and GitHub Actions current and merges its pull requests once CI passes;
+mutation testing is not part of that, so a PIT update is first exercised by the next Saturday run.
 
 ## Status
 
