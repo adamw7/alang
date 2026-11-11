@@ -199,7 +199,9 @@ fn main() {
 ## Writing tools for agents
 
 Mark a function `tool fn` and document it with `///`. A `///` line above a parameter, a struct field or
-an enum variant describes it in the tool's schema, so the calling model knows what to pass. Then:
+an enum variant describes it in the tool's schema, so the calling model knows what to pass. State limits
+as `requires` clauses: the description lists them, and simple ones such as
+`requires people > 0 and people <= 16` become schema bounds (`"minimum": 1, "maximum": 16`). Then:
 
 ```sh
 bin/alang tools prog.al                        # JSON tool definitions (name, description, input_schema)

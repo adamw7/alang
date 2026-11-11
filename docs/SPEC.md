@@ -318,7 +318,18 @@ A `tool fn` can be called with JSON. `alang tools file.al` prints Anthropic-styl
 (`name`, `description` from the `///` comment, `input_schema`). The doc comments of its parameters, and
 of the structs, enums, fields and variants they use, become the `description`s in `input_schema`; a
 documented variant without a payload is listed as a `{"const": "Variant"}` alternative of its own, so it
-can carry one. `alang call file.al name '{"arg": ...}'`
+can carry one.
+
+The description also lists every `requires` clause, the return type and every `ensures` clause, each on a
+line of its own. A `requires` clause that compares a parameter, a field of one, or the `len` of either with
+a constant expression also narrows the schema, so the model sees the limit before it calls:
+`requires people > 0 and people <= 16` gives `"minimum": 1, "maximum": 16`. A bound on the `len` of a
+list sets `minItems`/`maxItems`; on a `str`, whose `len` counts bytes while JSON Schema counts
+characters, an upper bound sets `maxLength` and a lower one only `"minLength": 1`. Other clauses are only
+described. The schema never rejects a call the contract accepts, and the call still checks every clause
+(R0006).
+
+`alang call file.al name '{"arg": ...}'`
 runs one call and prints `{"ok": true, "result": ..., "stdout": "..."}` or
 `{"ok": false, "error": {...}}`. With `-` in place of the JSON the arguments are read from stdin (as
 UTF-8; other bytes are an error); with nothing they are `{}`. `stdout` keeps the first 1 MiB of output;

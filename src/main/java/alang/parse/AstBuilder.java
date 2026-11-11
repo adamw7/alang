@@ -118,12 +118,34 @@ final class AstBuilder {
         }
         List<Expr> requires = new ArrayList<>();
         List<Expr> ensures = new ArrayList<>();
+        List<String> requiresText = new ArrayList<>();
+        List<String> ensuresText = new ArrayList<>();
         for (ContractContext c : f.contract()) {
-            (c.kind.getType() == ALangLexer.REQUIRES ? requires : ensures).add(expr(c.expression()));
+            boolean pre = c.kind.getType() == ALangLexer.REQUIRES;
+            (pre ? requires : ensures).add(expr(c.expression()));
+            (pre ? requiresText : ensuresText).add(oneLine(c.expression()));
         }
         TypeRef ret = f.type() == null ? null : type(f.type());
         return new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null, params, ret,
-            requires, ensures, block(f.block()));
+            requires, ensures, requiresText, ensuresText, block(f.block()));
+    }
+
+    /**
+     * The tokens of {@code ctx} on one line: one space wherever the source has whitespace or a comment
+     * between two tokens, none where they touch, so `len(xs) >\n    0` reads `len(xs) > 0`.
+     */
+    private String oneLine(ParserRuleContext ctx) {
+        StringBuilder sb = new StringBuilder();
+        if (ctx.getStop() == null) return "";
+        Token prev = null;
+        for (int i = ctx.getStart().getTokenIndex(); i <= ctx.getStop().getTokenIndex(); i++) {
+            Token t = tokens.get(i);
+            if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+            if (prev != null && t.getStartIndex() > prev.getStopIndex() + 1) sb.append(' ');
+            sb.append(t.getText());
+            prev = t;
+        }
+        return sb.toString();
     }
 
     // ------------------------------------------------------------------ types

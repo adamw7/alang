@@ -532,19 +532,10 @@ public final class Main {
         return 0;
     }
 
+    /** A tool definition in the shape of the Messages API's `tools`. */
     static Map<String, Object> toolSchema(FnDecl f) {
-        Map<String, Object> props = new LinkedHashMap<>();
-        List<Object> required = new ArrayList<>();
-        for (int i = 0; i < f.paramVars.size(); i++) {
-            LocalVar p = f.paramVars.get(i);
-            props.put(p.name, JsonValues.describe(JsonValues.schema(p.type), f.params.get(i).doc()));
-            required.add(p.name);
-        }
-        String desc = f.doc.isEmpty() ? "Calls the ALang function " + f.name + "." : f.doc;
-        if (!(f.ret instanceof Type.Void)) desc += "\nReturns " + f.ret + ".";
-        return Json.obj("name", f.name, "description", desc,
-            "input_schema", Json.obj("type", "object", "properties", props, "required", required,
-                "additionalProperties", false));
+        return Json.obj("name", f.name, "description", ToolDefinitions.description(f),
+            "input_schema", ToolDefinitions.inputSchema(f));
     }
 
     private int call(Source src) {

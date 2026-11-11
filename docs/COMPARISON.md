@@ -29,7 +29,7 @@ for each. This page shows the difference with small programs you can run.
 | Guaranteed to terminate | yes: no recursion, every `while` has a `limit` | no | no | no | no | no |
 | Same output on every run and machine | guaranteed and tested | no: `set` order changes per process | no: `Math.random`, `Date`, engine-specific math | no: map order is randomized | no: `HashMap` order is randomized | no: undefined behavior, FMA contraction, locale |
 | Can reach files, network, clock | no | yes | yes | yes | yes | yes |
-| Tool schema for an agent | generated from the signature | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand |
+| Tool schema for an agent | generated from the signature, doc comments and contract | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand |
 
 ## 1. Arithmetic never goes wrong quietly
 
@@ -393,8 +393,9 @@ the hints target the mistakes agents actually make.
 
 Giving an agent a tool usually takes three pieces: the function, a JSON Schema for its arguments (by
 hand, or with Pydantic, Zod or schemars), and a sandbox with time and memory limits. In ALang the
-signature is the schema and the language is the sandbox. With the `split_bill` tool from the
-[README](../README.md):
+signature and the contract are the schema, and the language is the sandbox. With the `split_bill` tool
+from the [README](../README.md), whose `requires people > 0 and people <= 16` reaches the schema as
+`"minimum": 1, "maximum": 16`:
 
 ```
 $ bin/alang tools bill.al            # name, description (from ///) and input_schema
