@@ -118,7 +118,7 @@ error[E0214]: cannot convert str[4] to i64
    |
 30 |     let a19: i64 = i64(s);
    |                    ^^^^^^
-  = hint: conversions work between numbers (and from bool to integers)
+  = hint: there is no parsing builtin; build the number digit by digit: var n: i64 = 0; for c in s { n = n * 10 + i64(c - '0'); } (check '0' <= c and c <= '9' first)
 
 error[E0202]: literal 300 does not fit in u8
   --> tests/errors/operand_types.al:31:22

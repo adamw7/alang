@@ -1,0 +1,7 @@
+error[E0001]: unexpected '{', expected a statement or expression
+ --> tests/errors/E0001_brace_value.al:3:30
+  |
+3 |     var seen: list[i64; 8] = {};
+  |                              ^
+  = hint: `{ }` is a block, not a value: an empty list is [], a struct value is Name(field: value, ...), and there are no map or set literals
+

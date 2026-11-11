@@ -22,6 +22,7 @@ agent can call with JSON. CI type-checks every example, runs its tests, compares
 | [stats.al](stats.al) | `f64` statistics and least squares, `sqrt`, float comparisons with a tolerance |
 | [vending_machine.al](vending_machine.al) | A state machine: enum events as JSON input, `mut` state, an `ensures` on a `mut` parameter |
 | [sorting.al](sorting.al) | Merge sort and quicksort without recursion, sortedness as a contract, a seeded pseudo-random generator |
+| [helpers.al](helpers.al) | Library functions other languages build in, to copy: string ordering, split, trim, parse an integer, pow, sort, a list of entries as a map |
 
 ## Try them
 

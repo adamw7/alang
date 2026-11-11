@@ -1,0 +1,7 @@
+error[E0001]: unexpected '<', expected '['
+ --> tests/errors/E0001_list_generic.al:3:17
+  |
+3 |     var xs: list<i64> = [];
+  |                 ^
+  = hint: a list type needs an element type and a capacity: list[i64; 16]
+
