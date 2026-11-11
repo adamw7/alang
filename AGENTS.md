@@ -221,6 +221,9 @@ Tools cannot take `mut` parameters. A trap inside a tool returns `{"ok": false, 
 fails with `bad_result` (check for it in the tool); a `str` result must be UTF-8 text, so return raw
 bytes as a `list[u8; N]`. Pass `-` instead of the JSON to read the arguments from stdin.
 
+To hand the tools to an agent host, run `bin/alang serve prog.al`: an MCP server on stdin and stdout with
+every `tool fn`, its result schema, and the same JSON per call. Restart it after editing the program.
+
 Tools are safe to run minutes after you wrote them: no file, network, clock or random access, no heap,
 bounded loops, no recursion, and a deterministic step budget.
 

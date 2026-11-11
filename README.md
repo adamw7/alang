@@ -82,6 +82,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `alang test FILE [--json] [--filter TEXT] [--max-steps N] [--max-stack B]` | Run all `test "..." { }` blocks; a filter that matches no test fails |
 | `alang tools FILE [--json] [--max-steps N] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema, and input_examples from the tests' calls) |
 | `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B]` | Call a tool with JSON arguments; `-` reads them from stdin, none means `{}` |
+| `alang serve FILE [--max-steps N] [--max-stack B]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout) |
 | `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
 | `alang explain CODE \| --all \| --markdown` | Explain a diagnostic or trap code, or all of them |
 
@@ -107,6 +108,22 @@ gives its `line`, `column` and `source_line` the same way. Habits from other lan
 `xs.len()`, `let x = 5`, `while` without a limit, `null`, generics, imports, tuples, slices, `if` as an
 expression, match guards, `sort`, `pow`, ...) are answered with the ALang spelling.
 See [docs/ERRORS.md](docs/ERRORS.md).
+
+## Tools in an agent host
+
+`alang serve` speaks the [Model Context Protocol](https://modelcontextprotocol.io) over stdin and stdout,
+so any MCP host can use a program's tools without code of its own. In a host's server list (Claude Code's
+`.mcp.json`, for example):
+
+```json
+{"mcpServers": {"bill": {"command": "/path/to/alang/bin/alang", "args": ["serve", "/path/to/bill.al"]}}}
+```
+
+The host sees each `tool fn` with the description and input schema `alang tools` prints, an output schema
+for its result, and annotations that hold for every ALang tool: read-only, not destructive, idempotent,
+closed-world. A call's text is the JSON `alang call` prints, and a call that fails, from bad arguments to
+a trap, comes back as an error result the model can read and fix. The program is checked once, at start:
+restart the server after editing it.
 
 ## Tool results in a prompt
 

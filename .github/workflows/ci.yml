@@ -76,6 +76,9 @@ jobs:
           bin/alang call "$out/one.al" one < "$out/stdin" > "$out/one.json"
           kill "$writer"
           grep -q '"result": 1' "$out/one.json"
+          # `serve`: the same tools over MCP; it stops when stdin ends.
+          printf '%s\n' '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | bin/alang serve examples/text_tools.al > "$out/serve.json"
+          grep -q '"name": "word_count"' "$out/serve.json"
 
           # bin/alang rebuilds the jar after a source change, and only then.
           touch src/main/java/alang/cli/Main.java

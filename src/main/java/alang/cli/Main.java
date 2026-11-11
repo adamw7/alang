@@ -53,6 +53,8 @@ public final class Main {
                                        example arguments from the tests' calls
           call <file.al> <tool> [json] call a tool with a JSON object of arguments (`-`: read it from
                                        stdin; omitted: {}, for a tool without parameters)
+          serve <file.al>              serve the `tool fn` functions to an agent host over MCP: JSON-RPC
+                                       messages, one per line, on stdin and stdout
           build <file.al> [-o out.c]   compile to heap-free C99 (no malloc; stack and static data only)
           explain <CODE>               explain a diagnostic or trap code, e.g. E0201 (or --all, markdown)
           grammar                      print the path of the ANTLR grammar, grammar/ALang.g4
@@ -60,10 +62,10 @@ public final class Main {
 
         options (an option a command does not take is a usage error):
           --json             machine-readable output (check, run, test, tools; call always prints JSON)
-          --max-steps N      interpreter statement budget (run, test, call, tools; default %d,
+          --max-steps N      interpreter statement budget (run, test, call, tools, serve; default %d,
                              0 = unlimited)
           --max-stack BYTES  memory budget: the worst-case stack of each entry point, and the
-                             constants (check, run, test, tools, call, build; default %d = 8 MiB,
+                             constants (check, run, test, tools, call, serve, build; default %d = 8 MiB,
                              0 = unlimited)
           --filter TEXT      only run tests whose name contains TEXT (test)
           --memory           print the per-function memory table (check)
@@ -76,17 +78,18 @@ public final class Main {
      * The options each command takes. Any other option is a usage error: ignoring it would hide the
      * mistake, e.g. `check -o out.c` writing no file.
      */
-    private static final Map<String, Set<String>> OPTIONS = Map.of(
-        "check", Set.of("--json", "--memory", "--max-stack"),
-        "run", Set.of("--json", "--max-steps", "--max-stack"),
-        "test", Set.of("--json", "--filter", "--max-steps", "--max-stack"),
-        "tools", Set.of("--json", "--max-steps", "--max-stack"),
-        "call", Set.of("--json", "--max-steps", "--max-stack"),
-        "build", Set.of("-o", "--max-stack"),
-        "explain", Set.of(),
-        "grammar", Set.of(),
-        "version", Set.of(),
-        "--version", Set.of());
+    private static final Map<String, Set<String>> OPTIONS = Map.ofEntries(
+        Map.entry("check", Set.of("--json", "--memory", "--max-stack")),
+        Map.entry("run", Set.of("--json", "--max-steps", "--max-stack")),
+        Map.entry("test", Set.of("--json", "--filter", "--max-steps", "--max-stack")),
+        Map.entry("tools", Set.of("--json", "--max-steps", "--max-stack")),
+        Map.entry("call", Set.of("--json", "--max-steps", "--max-stack")),
+        Map.entry("serve", Set.of("--max-steps", "--max-stack")),
+        Map.entry("build", Set.of("-o", "--max-stack")),
+        Map.entry("explain", Set.of()),
+        Map.entry("grammar", Set.of()),
+        Map.entry("version", Set.of()),
+        Map.entry("--version", Set.of()));
 
     /** The options that take a value, the next argument. */
     private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--filter", "-o");
@@ -170,6 +173,7 @@ public final class Main {
                 case "test" -> test(file());
                 case "tools" -> tools(file());
                 case "call" -> call(file());
+                case "serve" -> serve(file());
                 case "build" -> build(file());
                 case "explain" -> explain();
                 case "grammar" -> {
@@ -595,7 +599,23 @@ public final class Main {
         } catch (Json.ParseException e) {
             return callError(j, "bad_json", "arguments are not valid JSON: " + e.getMessage());
         }
-        if (!(parsed instanceof Map<?, ?> m)) return callError(j, "bad_arguments", "arguments must be a JSON object");
+        Map<String, Object> report = callTool(src, f, parsed, maxSteps);
+        line(out, Json.write(report));
+        return report.get("ok") == Boolean.TRUE ? 0 : 1;
+    }
+
+    /**
+     * Calls tool {@code f} with {@code arguments}, parsed JSON that should be an object holding each
+     * parameter, and returns the report `alang call` prints: "ok", then "result" or "error", "stdout" and
+     * "steps"; arguments that do not fit the parameters give a bad_arguments error, and no call.
+     */
+    static Map<String, Object> callTool(Source src, FnDecl f, Object arguments, long maxSteps) {
+        Map<String, Object> j = new LinkedHashMap<>();
+        j.put("ok", false);  // set again below, where it keeps its place as the first key
+        if (!(arguments instanceof Map<?, ?> m)) {
+            j.put("error", Json.obj("code", "bad_arguments", "message", "arguments must be a JSON object"));
+            return j;
+        }
         Object[] args = new Object[f.params.size()];
         try {
             for (Object key : m.keySet()) {
@@ -608,11 +628,11 @@ public final class Main {
                 args[i] = JsonValues.fromJson(m.get(p.name), p.type, p.name);
             }
         } catch (JsonValues.DecodeException e) {
-            return callError(j, "bad_arguments", e.getMessage());
+            j.put("error", Json.obj("code", "bad_arguments", "message", e.getMessage()));
+            return j;
         }
         CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
         Interpreter in = new Interpreter(src, captured, maxSteps);
-        j.put("ok", true);  // set again below, where it keeps its place as the first key
         try {
             Object result = in.call(f, args, f.nameSpan);
             j.put("result", f.ret instanceof Type.Void ? null : JsonValues.toJson(result, f.ret));
@@ -621,13 +641,31 @@ public final class Main {
         } catch (JsonValues.EncodeException e) {
             j.put("error", Json.obj("code", "bad_result", "message", e.messageAt("result")));
         }
-        boolean ok = !j.containsKey("error");
-        j.put("ok", ok);
+        j.put("ok", !j.containsKey("error"));
         putStdout(j, captured);
         // The statements the call executed: a deterministic measure of its cost, as `run --json` reports.
         j.put("steps", in.steps());
-        line(out, Json.write(j));
-        return ok ? 0 : 1;
+        return j;
+    }
+
+    /**
+     * Serves the tools over MCP until stdin ends. Stdout carries only protocol messages, so diagnostics,
+     * warnings included, go to stderr, and a program with errors does not start a server at all.
+     */
+    private int serve(Source src) {
+        Frontend.Result r = compile(src);
+        err.print(r.diags().renderText());
+        if (!r.ok()) {
+            line(err, "check failed: " + r.diags().errorCount() + " error(s)");
+            return 1;
+        }
+        try {
+            new McpServer(src, r.program(), maxSteps).serve(System.in, out);
+        } catch (IOException e) {
+            line(err, "alang: cannot read stdin: " + e.getMessage());
+            return 1;
+        }
+        return 0;
     }
 
     /**

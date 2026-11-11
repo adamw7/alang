@@ -20,7 +20,7 @@ flowchart TB
     cc["<b>C compiler</b><br/><i>[Software system]</i><br/><br/>gcc or clang"]
 
     agent -- "Writes .al files; check, test, run<br/>[CLI, --json]" --> alang
-    host -- "tools, call<br/>[CLI, JSON]" --> alang
+    host -- "tools, call, serve<br/>[CLI, JSON, MCP]" --> alang
     dev -- "run, test, build<br/>[CLI]" --> alang
     dev -- "Compiles the generated C99" --> cc
     alang -- "Benchmark prompts<br/>[HTTPS]" --> claude
@@ -58,7 +58,7 @@ flowchart TB
     cc["<b>C compiler</b><br/><i>[Software system]</i>"]
 
     agent -- "check, test, run, explain<br/>[CLI, --json]" --> launcher
-    host -- "tools, call<br/>[argv or stdin]" --> launcher
+    host -- "tools, call<br/>[argv or stdin]; serve<br/>[MCP on stdin and stdout]" --> launcher
     dev -- "run, test, build<br/>[CLI]" --> launcher
     launcher -- "Builds it with Maven if stale;<br/>starts it<br/>[java -jar]" --> toolchain
     bench -- "check, tools, call<br/>[java -jar, subprocess]" --> toolchain
@@ -96,7 +96,7 @@ flowchart TB
     programs[("<b>ALang programs</b><br/><i>[Container: .al files]</i>")]
 
     subgraph jar ["Toolchain [Container]"]
-        cli["<b>CLI</b><br/><i>[Component: alang.cli]</i><br/><br/>Arguments, files and stdin; text or JSON output; exit codes. Frontend runs parse + check"]
+        cli["<b>CLI</b><br/><i>[Component: alang.cli]</i><br/><br/>Arguments, files and stdin; text or JSON output; exit codes; the MCP server of serve. Frontend runs parse + check"]
         parse["<b>Parser</b><br/><i>[Component: alang.parse]</i><br/><br/>Nesting limit, syntax-error hints, parse tree to AST"]
         check["<b>Checker</b><br/><i>[Component: alang.check]</i><br/><br/>Types, names, constants, recursion ban, memory bound"]
         interp["<b>Interpreter</b><br/><i>[Component: alang.interp]</i><br/><br/>Reference semantics, step budget, traps, formatting, JSON mapping"]

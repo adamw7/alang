@@ -485,6 +485,33 @@ class CliTest {
         assertTrue(r.out().contains("\"result\": 1"), r.out());
     }
 
+    /**
+     * `serve` answers on stdout and writes nothing else there: a warning goes to stderr, and a program
+     * with errors starts no server. It stops when stdin ends.
+     */
+    @Test
+    void serveKeepsStdoutForTheProtocol() throws Exception {
+        write("one.al", "fn two() -> i64 {\n    return 2;\n}\n\ntool fn one() -> i64 {\n    two();\n    return 1;\n}\n");
+        String session = "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"initialize\", \"params\": {}}\n"
+            + "{\"jsonrpc\": \"2.0\", \"method\": \"notifications/initialized\"}\n"
+            + "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"tools/call\", \"params\": {\"name\": \"one\"}}\n";
+        Result r = runProcess("C.UTF-8", "serve one.al", session.getBytes(StandardCharsets.UTF_8), false);
+        assertEquals(0, r.code(), r.out() + r.err());
+        String[] lines = r.out().split("\n");
+        assertEquals(2, lines.length, r.out());
+        assertTrue(lines[0].startsWith("{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {\"protocolVersion\": "), lines[0]);
+        assertEquals("{\"jsonrpc\": \"2.0\", \"id\": 2, \"result\": {\"content\": [{\"type\": \"text\", \"text\": "
+            + "\"{\\\"ok\\\": true, \\\"result\\\": 1, \\\"stdout\\\": \\\"\\\", \\\"steps\\\": 3}\"}], "
+            + "\"structuredContent\": {\"result\": 1}, \"isError\": false}}", lines[1]);
+        assertTrue(r.err().startsWith("warning[W0302]: "), r.err());
+
+        write("bad.al", "tool fn bad() -> i64 {\n    return true;\n}\n");
+        r = runProcess("C.UTF-8", "serve bad.al", session.getBytes(StandardCharsets.UTF_8), false);
+        assertEquals(1, r.code(), r.err());
+        assertEquals("", r.out());
+        assertTrue(r.err().startsWith("error[E0201]: ") && r.err().endsWith("check failed: 1 error(s)\n"), r.err());
+    }
+
     @Test
     void dashReadsTheArgumentsFromStdinAsStrictUtf8() throws Exception {
         write("size.al", "tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n");

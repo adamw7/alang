@@ -359,6 +359,18 @@ paired surrogates) and are validated against the parameter types before the call
 duplicate keys are errors. With no I/O, no heap and bounded loops, a tool written by an agent is safe to
 run: it cannot touch the host, cannot exhaust memory, and terminates.
 
+`alang serve file.al` serves the same tools over the Model Context Protocol's stdio transport: JSON-RPC
+2.0 messages, one per line, on stdin and stdout, until stdin ends. It answers `initialize` (protocol
+revisions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05; a client asking for another gets the
+newest), `ping`, `tools/list` and `tools/call`, and ignores notifications. A tool's `inputSchema` and
+description are those of `alang tools`; a tool that returns a value also has an `outputSchema`,
+`{"result": <schema of the return type>}`, and every tool is annotated read-only, not destructive,
+idempotent and closed-world. The text of a call's result is the JSON `alang call` prints; a successful
+call of a tool that returns a value also gives `{"result": value}` as `structuredContent`; and a call that
+fails, from `bad_arguments` to a trap, is a result with `"isError": true`. Only a name that is not a
+`tool fn` is a JSON-RPC error (-32602). The program is checked once, at start: one with errors starts no
+server, and its diagnostics, like any warning, go to stderr, which is the only other output.
+
 ## 11. Runtime errors (traps)
 
 A trap stops the program (or the current test or tool call) and reports a code `R0001`–`R0012`, a
