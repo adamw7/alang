@@ -400,7 +400,7 @@ from the [README](../README.md), whose `requires people > 0 and people <= 16` re
 ```
 $ bin/alang tools bill.al            # name, description (from ///) and input_schema
 $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
-{"ok": true, "result": [334, 333, 333], "stdout": ""}
+{"ok": true, "result": [334, 333, 333], "stdout": "", "steps": 16}
 $ bin/alang call bill.al split_bill '{"total_cents": "1000", "people": 3}'
 {"ok": false, "error": {"code": "bad_arguments", "message": "total_cents: expected an integer"}}
 $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 0}'

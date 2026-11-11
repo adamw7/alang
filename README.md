@@ -43,7 +43,7 @@ test "shares add up to the total" {
 $ bin/alang run bill.al
 [334, 333, 333]
 $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
-{"ok": true, "result": [334, 333, 333], "stdout": ""}
+{"ok": true, "result": [334, 333, 333], "stdout": "", "steps": 16}
 ```
 
 ## Why
@@ -117,7 +117,7 @@ quoting, and a list of structs as a table that names the fields once.
 
 ```
 $ bin/alang call words.al word_counts '{"text": "the cat saw the dog"}'
-{"ok": true, "result": [{"word": "the", "count": 2}, {"word": "cat", "count": 1}, {"word": "saw", "count": 1}, {"word": "dog", "count": 1}], "stdout": ""}
+{"ok": true, "result": [{"word": "the", "count": 2}, {"word": "cat", "count": 1}, {"word": "saw", "count": 1}, {"word": "dog", "count": 1}], "stdout": "", "steps": 105}
 $ bin/alang call words.al word_counts '{"text": "the cat saw the dog"}' | python3 harness/toon.py
 ok: true
 result[4]{word,count}:
@@ -126,6 +126,7 @@ result[4]{word,count}:
   saw,1
   dog,1
 stdout: ""
+steps: 105
 ```
 
 It saves the most on long lists of structs. On a small or nested result, compact JSON costs about the

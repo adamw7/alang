@@ -203,7 +203,7 @@ Mark a function `tool fn` and document it with `///`. Then:
 ```sh
 bin/alang tools prog.al                        # JSON tool definitions (name, description, input_schema, input_examples)
 bin/alang call prog.al word_counts '{"text": "a b a"}'
-# {"ok": true, "result": [{"word": "a", "count": 2}, {"word": "b", "count": 1}], "stdout": ""}
+# {"ok": true, "result": [{"word": "a", "count": 2}, {"word": "b", "count": 1}], "stdout": "", "steps": 41}
 ```
 
 The definitions are all the calling model knows about your tool, so give them something to say:

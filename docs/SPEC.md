@@ -336,10 +336,12 @@ example, so every example passes the contract and therefore fits the schema. A t
 that way has no `input_examples`.
 
 `alang call file.al name '{"arg": ...}'`
-runs one call and prints `{"ok": true, "result": ..., "stdout": "..."}` or
+runs one call and prints `{"ok": true, "result": ..., "stdout": "...", "steps": N}` or
 `{"ok": false, "error": {...}}`. With `-` in place of the JSON the arguments are read from stdin (as
 UTF-8; other bytes are an error); with nothing they are `{}`. `stdout` keeps the first 1 MiB of output;
-past that, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are added.
+past that, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are added. `steps` is the
+number of statements the call executed (as for `--max-steps`), a cost that is the same on every run;
+a call that ran into a trap or `bad_result` reports it too, one refused before it ran does not.
 
 | ALang type | JSON |
 |------------|------|

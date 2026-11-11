@@ -624,6 +624,8 @@ public final class Main {
         boolean ok = !j.containsKey("error");
         j.put("ok", ok);
         putStdout(j, captured);
+        // The statements the call executed: a deterministic measure of its cost, as `run --json` reports.
+        j.put("steps", in.steps());
         line(out, Json.write(j));
         return ok ? 0 : 1;
     }

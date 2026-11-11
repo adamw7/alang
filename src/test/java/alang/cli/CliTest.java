@@ -404,14 +404,14 @@ class CliTest {
         Path p = write("t.al", "/// Negates.\ntool fn neg(d: f64) -> f64 { print(d); return -d; }\n"
             + "/// Negates.\ntool fn neg32(d: f32) -> f32 { return -d; }\n"
             + "/// Identity.\ntool fn id(x: i64) -> i64 { return x; }\n");
-        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\"}\n", run("call", p.toString(), "neg", "{\"d\": 0}").out());
-        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\"}\n", run("call", p.toString(), "neg", "{\"d\": -0.0}").out());
-        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\"}\n", run("call", p.toString(), "neg", "{\"d\": -0e5}").out());
-        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"\"}\n", run("call", p.toString(), "neg32", "{\"d\": 0.0}").out());
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": 0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": -0.0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": -0e5}").out());
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "neg32", "{\"d\": 0.0}").out());
         // Written as an integer, -0 is the integer 0 (as jsonIsReadStrictly expects), and an integer
         // parameter takes -0.0 as 0.
-        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\"}\n", run("call", p.toString(), "neg", "{\"d\": -0}").out());
-        assertEquals("{\"ok\": true, \"result\": 0, \"stdout\": \"\"}\n", run("call", p.toString(), "id", "{\"x\": -0.0}").out());
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": -0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "id", "{\"x\": -0.0}").out());
     }
 
     @Test
@@ -424,9 +424,9 @@ class CliTest {
         Result tiny = run("call", p.toString(), "id", "{\"x\": 1e-100000000}");
         assertEquals(1, tiny.code(), tiny.err());
         assertTrue(tiny.out().contains("\"message\": \"x: expected an integer, found 1E-100000000\""), tiny.out());
-        assertEquals("{\"ok\": true, \"result\": 0, \"stdout\": \"\"}\n", run("call", p.toString(), "id", "{\"x\": 0e-100000000}").out());
-        assertEquals("{\"ok\": true, \"result\": 1, \"stdout\": \"\"}\n", run("call", p.toString(), "id", "{\"x\": 100e-2}").out());
-        assertEquals("{\"ok\": true, \"result\": -9223372036854775808, \"stdout\": \"\"}\n",
+        assertEquals("{\"ok\": true, \"result\": 0, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "id", "{\"x\": 0e-100000000}").out());
+        assertEquals("{\"ok\": true, \"result\": 1, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "id", "{\"x\": 100e-2}").out());
+        assertEquals("{\"ok\": true, \"result\": -9223372036854775808, \"stdout\": \"\", \"steps\": 1}\n",
             run("call", p.toString(), "id", "{\"x\": -9.223372036854775808e18}").out());
     }
 
@@ -434,8 +434,31 @@ class CliTest {
     void f32ArgumentsAreRoundedOnce() throws IOException {
         // Just above halfway between 1 and the next f32: via f64 it would land on the halfway point and round down.
         Path p = write("t.al", "/// Identity.\ntool fn id(x: f32) -> bool { return x != 1.0; }\n");
-        assertEquals("{\"ok\": true, \"result\": true, \"stdout\": \"\"}\n",
+        assertEquals("{\"ok\": true, \"result\": true, \"stdout\": \"\", \"steps\": 1}\n",
             run("call", p.toString(), "id", "{\"x\": 1.00000005960464477539062500000001}").out());
+    }
+
+    /** `steps` is the cost of a call that ran, trap or not; a call refused before it ran has none. */
+    @Test
+    void callsReportTheStepsTheyRan() throws IOException {
+        Path p = write("t.al", """
+            tool fn sum(n: i64) -> i64 {
+                var total: i64 = 0;
+                for i in 0..n {
+                    total += 10 / (3 - i);
+                }
+                return total;
+            }
+            """);
+        // var, for, two iterations of one step each plus the +=, return: 7.
+        assertEquals("{\"ok\": true, \"result\": 8, \"stdout\": \"\", \"steps\": 7}\n",
+            run("call", p.toString(), "sum", "{\"n\": 2}").out());
+        // The fourth iteration divides by zero at its += , the tenth step.
+        Map<?, ?> trap = (Map<?, ?>) Json.parse(run("call", p.toString(), "sum", "{\"n\": 5}").out());
+        assertEquals("R0002", ((Map<?, ?>) trap.get("error")).get("code"), trap.toString());
+        assertEquals(BigInteger.valueOf(10), trap.get("steps"), trap.toString());
+        assertEquals("{\"ok\": false, \"error\": {\"code\": \"bad_arguments\", \"message\": \"n: expected an integer\"}}\n",
+            run("call", p.toString(), "sum", "{\"n\": \"2\"}").out());
     }
 
     @Test
@@ -507,16 +530,16 @@ class CliTest {
             }
             """);
         // The shortest decimal of the f32, not of the double it widens to (0.10000000149011612).
-        assertEquals("{\"ok\": true, \"result\": 0.1, \"stdout\": \"\"}\n", run("call", p.toString(), "tenth").out());
+        assertEquals("{\"ok\": true, \"result\": 0.1, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "tenth").out());
         // Every float result is written as a float, never as an integer: 123456789.0 used to come back as
         // 123456789 (Python's json reads an int) while 1234567.0 came back as 1234567.0.
-        assertEquals("{\"ok\": true, \"result\": [1.0, 123456789.0], \"stdout\": \"\"}\n",
+        assertEquals("{\"ok\": true, \"result\": [1.0, 123456789.0], \"stdout\": \"\", \"steps\": 1}\n",
             run("call", p.toString(), "ratio", "{\"a\": 123456789, \"b\": 1}").out());
-        assertEquals("{\"ok\": true, \"result\": [1.0, 1234567.0], \"stdout\": \"\"}\n",
+        assertEquals("{\"ok\": true, \"result\": [1.0, 1234567.0], \"stdout\": \"\", \"steps\": 1}\n",
             run("call", p.toString(), "ratio", "{\"a\": 1234567, \"b\": 1}").out());
-        assertEquals("{\"ok\": true, \"result\": 16777216.0, \"stdout\": \"\"}\n",
+        assertEquals("{\"ok\": true, \"result\": 16777216.0, \"stdout\": \"\", \"steps\": 1}\n",
             run("call", p.toString(), "narrow", "{\"x\": 16777216}").out());
-        assertEquals("{\"ok\": true, \"result\": 1.0E+16, \"stdout\": \"\"}\n", run("call", p.toString(), "narrow", "{\"x\": 1e16}").out());
+        assertEquals("{\"ok\": true, \"result\": 1.0E+16, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "narrow", "{\"x\": 1e16}").out());
         // NaN and infinities used to come back as null with "ok": true.
         for (String args : new String[] {"{\"a\": 0, \"b\": 0}", "{\"a\": 1, \"b\": 0}"}) {
             Result r = run("call", p.toString(), "ratio", args);
@@ -553,7 +576,7 @@ class CliTest {
         assertTrue(bad.out().startsWith("{\"ok\": false, \"error\": {\"code\": \"bad_result\", \"message\": "
             + "\"result.name: the str value is not UTF-8 text (byte 0xff at offset 2)"), bad.out());
         Result good = run("call", p.toString(), "named", "{\"xs\": [104, 105, 239, 191, 189]}");
-        assertEquals("{\"ok\": true, \"result\": {\"name\": \"hi\uFFFD\"}, \"stdout\": \"\"}\n", good.out());
+        assertEquals("{\"ok\": true, \"result\": {\"name\": \"hi\uFFFD\"}, \"stdout\": \"\", \"steps\": 13}\n", good.out());
     }
 
     @Test
@@ -795,7 +818,7 @@ class CliTest {
         assertEquals("R0011", error.get("code"));
         assertEquals("step budget of 10 statements exhausted", error.get("message"));
         assertEquals(BigInteger.valueOf(6), error.get("line"));
-        assertTrue(r.out().endsWith("\"stdout\": \"0\\n1\\n2\\n\"}\n"), r.out());
+        assertTrue(r.out().endsWith("\"stdout\": \"0\\n1\\n2\\n\", \"steps\": 11}\n"), r.out());
 
         // 0 turns the budget off, so the loop runs into its own limit instead.
         r = run("run", p.toString(), "--max-steps", "0");
