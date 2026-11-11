@@ -749,6 +749,22 @@ class CliTest {
     }
 
     @Test
+    void sourceFilesThatAreNotUtf8SayWhere() throws IOException {
+        // Files.readString only said "cannot read bad.al: Input length = 1".
+        Path p = dir.resolve("bad.al");
+        Files.write(p, new byte[] {'f', 'n', ' ', 'm', (byte) 0xE9, '(', ')', ' ', '{', '}', '\n'});
+        Result r = run("check", p.toString());
+        assertEquals(2, r.code(), r.err());
+        assertEquals("alang: " + p + " is not UTF-8 text (byte 0xe9 at offset 4); save it as UTF-8\n", r.err());
+        // A sequence cut off by the end of the file.
+        Files.write(p, new byte[] {'/', '/', ' ', (byte) 0xC3});
+        r = run("check", p.toString(), "--json");
+        assertEquals(2, r.code(), r.err());
+        assertEquals(Json.write(Json.obj("ok", false, "error", p + " is not UTF-8 text (byte 0xc3 at offset 3); save it as UTF-8"))
+            + "\n", r.out());
+    }
+
+    @Test
     void compileErrorsInToolCommandsAreReportedAsJson() throws IOException {
         Path bad = write("bad.al", "tool fn f() -> i64 {\n    return true;\n}\n");
         // `call` used to report them with the code "E".

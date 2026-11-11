@@ -8,6 +8,7 @@ import alang.parser.ALangLexer;
 import alang.parser.ALangParser;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import org.antlr.v4.runtime.BaseErrorListener;
 import org.antlr.v4.runtime.InputMismatchException;
 import org.antlr.v4.runtime.NoViableAltException;
@@ -49,7 +50,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         Token prev2 = prev == null ? null : previous(ts, prev);
 
         String text = tok.getType() == Token.EOF ? "end of file"
-            : tok.getType() == ALangLexer.ERROR_CHAR ? "character `" + tok.getText() + "`"
+            : tok.getType() == ALangLexer.ERROR_CHAR ? "character " + strayCharacter(tok.getText())
             : "'" + tok.getText() + "'";
         int len = tok.getType() == Token.EOF ? 1 : Math.max(1, Source.columns(tok.getText()));
 
@@ -72,6 +73,24 @@ final class SyntaxErrorListener extends BaseErrorListener {
         }
         String hint = hint(ts, tok, prev, prev2, expected);
         diags.error(Code.E0001, new Span(tok.getLine(), tok.getCharPositionInLine() + 1, len), message, hint);
+    }
+
+    /**
+     * A character the lexer does not know, as a message shows it: in backticks, or by its code point when
+     * it would not show there. A byte order mark, a no-break space or a form feed printed as itself made
+     * "unexpected character ``", which names nothing the reader can find.
+     */
+    private static String strayCharacter(String s) {
+        return invisible(s) ? String.format(Locale.ROOT, "U+%04X", s.codePointAt(0)) : "`" + s + "`";
+    }
+
+    /** Control characters, format characters such as U+FEFF and U+200B, and spaces other than ' '. */
+    private static boolean invisible(String s) {
+        return switch (Character.getType(s.codePointAt(0))) {
+            case Character.CONTROL, Character.FORMAT, Character.SPACE_SEPARATOR, Character.LINE_SEPARATOR,
+                 Character.PARAGRAPH_SEPARATOR -> true;
+            default -> false;
+        };
     }
 
     private static Token previous(TokenStream ts, Token tok) {
@@ -147,6 +166,13 @@ final class SyntaxErrorListener extends BaseErrorListener {
             if (s.equals("#")) return "comments start with //";
             if (s.equals("\"")) return "unterminated string literal; strings must close on the same line (use \\n for newlines)";
             if (s.equals("'")) return "strings use double quotes \"...\"; single quotes are for one-byte character literals like 'a'";
+            if (s.equals("﻿") && tok.getStartIndex() == 0) {
+                return "the file starts with a byte order mark (U+FEFF); save it as UTF-8 without a BOM";
+            }
+            if (invisible(s)) {
+                return strayCharacter(s) + " is an invisible character that is not part of ALang syntax; "
+                    + "delete it, or replace it with a plain space";
+            }
             return "the character '" + s + "' is not part of ALang syntax";
         }
         if (t == ALangLexer.STAR && p == ALangLexer.SLASH) {

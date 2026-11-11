@@ -1,0 +1,7 @@
+error[E0001]: unexpected character U+00A0, expected one of a type, '[', a name
+ --> tests/errors/E0001_invisible_character.al:3:11
+  |
+3 |     let x: i64 = 1;
+  |           ^
+  = hint: U+00A0 is an invisible character that is not part of ALang syntax; delete it, or replace it with a plain space
+
