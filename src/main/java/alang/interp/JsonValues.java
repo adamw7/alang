@@ -143,7 +143,10 @@ public final class JsonValues {
                     if (d == 0) yield d;
                     // The shortest decimal that reads back as the same f32, as print shows it: 0.1, not
                     // the 0.10000000149011612 that the widened double would print.
-                    yield new BigDecimal(k == PrimKind.F32 ? Float.toString((float) d) : Double.toString(d));
+                    BigDecimal shortest = new BigDecimal(k == PrimKind.F32 ? Float.toString((float) d) : Double.toString(d));
+                    // A scale of 0 prints as an integer: 123456789.0 ("1.23456789E8") came back as 123456789,
+                    // which JSON readers such as Python's turn into an int, while 1234567.0 stayed a float.
+                    yield shortest.scale() == 0 ? shortest.setScale(1) : shortest;
                 }
                 yield IntOps.toBig(k, (Long) v);
             }
