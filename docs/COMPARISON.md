@@ -409,7 +409,8 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 0}'
 
 Arguments are validated against the parameter types before the call. A broken `requires` is reported
 against the caller and a broken `ensures` against the function, so the agent knows which side to fix, and
-a trap comes back as JSON instead of crashing the host.
+a trap comes back as JSON instead of crashing the host. `alang serve bill.al` offers the same tools to any
+host that speaks the Model Context Protocol, with no wrapper to write.
 
 **Why not sandbox Python?** A container, WebAssembly runtime or seccomp profile limits the damage, but it
 does not make the program terminate (you get a timeout, not an answer), does not make it deterministic,
