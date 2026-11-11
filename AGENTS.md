@@ -123,6 +123,10 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `throw` / `raise` | return an enum, or `panic("message")` |
 | `if x { }` with `x: i32` | `if x != 0 { }` |
 
+There is no standard library beyond the builtins. [examples/helpers.al](examples/helpers.al) has tested
+versions of what other languages build in, ready to copy: string ordering, `split`, `trim`, `index_of`,
+`parse_i64`, integer `pow`, sorting, and a list of `Entry` structs in place of a map.
+
 ## Patterns
 
 **Optional value**
@@ -217,7 +221,8 @@ The definitions are all the calling model knows about your tool, so give them so
 - Calls in your `test` blocks with literal arguments, such as `word_counts("a b a")`, become
   `input_examples`.
 
-JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string, arrays and lists as
+JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string of at most N UTF-8
+bytes (a non-ASCII character takes 2 to 4, so size N in bytes, not characters), arrays and lists as
 arrays, structs as objects (all fields required), enum variants as `"Name"` or `{"Name": [payload...]}`.
 Tools cannot take `mut` parameters. A trap inside a tool returns `{"ok": false, "error": {"code":
 "R....", ...}}` instead of crashing the caller. JSON has no NaN or infinity, so a float result holding one

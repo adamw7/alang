@@ -180,6 +180,8 @@ same, so measure before switching a harness over. `--delimiter tab` saves a litt
 - [bench/](bench): do models write more correct tools in ALang or in Python?
 - [harness/toon.py](harness/toon.py): tool results as TOON for a model's prompt
 - [examples/](examples): complete programs, each with tests
+- [examples/helpers.al](examples/helpers.al): tested stand-ins for library functions ALang leaves out
+  (sort, split, trim, parse an integer, a map), to copy into a program
 
 `src/main/java/alang/` holds the toolchain, one package per component (see the architecture);
 `tests/run/` has programs with golden output (`.out`) and expected traps (`.trap`), `tests/errors/`
