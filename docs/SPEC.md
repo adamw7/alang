@@ -18,7 +18,8 @@ syntax; this document describes semantics. Diagnostic codes are listed in [ERROR
 
 - Source files are UTF-8, extension `.al`. Statements end with `;`; blocks always use `{ }`.
 - `// ...` comments to the end of the line. `/// ...` is a **doc comment**: it documents the next
-  declaration and becomes the description of a `tool fn`. There are no block comments.
+  declaration, struct field, enum variant or parameter, and tool definitions show it (§10). There are no
+  block comments.
 - Identifiers: `[a-zA-Z_][a-zA-Z0-9_]*`. `_` alone is the wildcard, not a name.
 - Reserved words: `fn let var const struct enum if else while for in match break continue return assert
   requires ensures mut and or not true false bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str list`.
@@ -314,7 +315,10 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
 ## 10. Tools: calling ALang from an agent
 
 A `tool fn` can be called with JSON. `alang tools file.al` prints Anthropic-style tool definitions
-(`name`, `description` from the `///` comment, `input_schema`). `alang call file.al name '{"arg": ...}'`
+(`name`, `description` from the `///` comment, `input_schema`). The doc comments of its parameters, and
+of the structs, enums, fields and variants they use, become the `description`s in `input_schema`; a
+documented variant without a payload is listed as a `{"const": "Variant"}` alternative of its own, so it
+can carry one. `alang call file.al name '{"arg": ...}'`
 runs one call and prints `{"ok": true, "result": ..., "stdout": "..."}` or
 `{"ok": false, "error": {...}}`. With `-` in place of the JSON the arguments are read from stdin (as
 UTF-8; other bytes are an error); with nothing they are `{}`. `stdout` keeps the first 1 MiB of output;

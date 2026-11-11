@@ -82,7 +82,9 @@ final class AstBuilder {
             StructDeclContext s = ctx.structDecl();
             List<Field> fields = new ArrayList<>();
             for (FieldDeclContext f : s.fieldDecl()) {
-                fields.add(new Field(span(f.identifier()), f.identifier().getText(), type(f.type())));
+                Field field = new Field(span(f.identifier()), f.identifier().getText(), type(f.type()));
+                field.doc = docComment(f.getStart());
+                fields.add(field);
             }
             return new StructDecl(span(s.identifier()), s.identifier().getText(), fields);
         }
@@ -92,7 +94,9 @@ final class AstBuilder {
             for (VariantDeclContext v : e.variantDecl()) {
                 List<TypeRef> payload = new ArrayList<>();
                 for (TypeContext t : v.type()) payload.add(type(t));
-                variants.add(new Variant(span(v.identifier()), v.identifier().getText(), variants.size(), payload));
+                Variant variant = new Variant(span(v.identifier()), v.identifier().getText(), variants.size(), payload);
+                variant.doc = docComment(v.getStart());
+                variants.add(variant);
             }
             return new EnumDecl(span(e.identifier()), e.identifier().getText(), variants);
         }
@@ -108,7 +112,8 @@ final class AstBuilder {
         List<Param> params = new ArrayList<>();
         if (f.paramList() != null) {
             for (ParamContext p : f.paramList().param()) {
-                params.add(new Param(span(p.identifier()), p.identifier().getText(), p.MUT() != null, type(p.type())));
+                params.add(new Param(span(p.identifier()), p.identifier().getText(), p.MUT() != null, type(p.type()),
+                    docComment(p.getStart())));
             }
         }
         List<Expr> requires = new ArrayList<>();

@@ -198,7 +198,8 @@ fn main() {
 
 ## Writing tools for agents
 
-Mark a function `tool fn` and document it with `///`. Then:
+Mark a function `tool fn` and document it with `///`. A `///` line above a parameter, a struct field or
+an enum variant describes it in the tool's schema, so the calling model knows what to pass. Then:
 
 ```sh
 bin/alang tools prog.al                        # JSON tool definitions (name, description, input_schema)

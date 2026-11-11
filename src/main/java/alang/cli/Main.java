@@ -535,8 +535,9 @@ public final class Main {
     static Map<String, Object> toolSchema(FnDecl f) {
         Map<String, Object> props = new LinkedHashMap<>();
         List<Object> required = new ArrayList<>();
-        for (LocalVar p : f.paramVars) {
-            props.put(p.name, JsonValues.schema(p.type));
+        for (int i = 0; i < f.paramVars.size(); i++) {
+            LocalVar p = f.paramVars.get(i);
+            props.put(p.name, JsonValues.describe(JsonValues.schema(p.type), f.params.get(i).doc()));
             required.add(p.name);
         }
         String desc = f.doc.isEmpty() ? "Calls the ALang function " + f.name + "." : f.doc;

@@ -97,6 +97,8 @@ public final class Ast {
         public final String name;
         public final TypeRef typeRef;
         public Type type = Type.ERROR;
+        /** Text of the `///` doc comment directly above the field, or "". */
+        public String doc = "";
 
         public Field(Span span, String name, TypeRef typeRef) {
             this.span = span;
@@ -128,6 +130,8 @@ public final class Ast {
         public final int index;
         public final List<TypeRef> payloadRefs;
         public final List<Type> payload = new ArrayList<>();
+        /** Text of the `///` doc comment directly above the variant, or "". */
+        public String doc = "";
 
         public Variant(Span span, String name, int index, List<TypeRef> payloadRefs) {
             this.span = span;
@@ -180,7 +184,8 @@ public final class Ast {
         }
     }
 
-    public record Param(Span span, String name, boolean mut, TypeRef typeRef) {}
+    /** A parameter; {@code doc} is the text of the `///` doc comment directly above it, or "". */
+    public record Param(Span span, String name, boolean mut, TypeRef typeRef, String doc) {}
 
     /** A local variable, parameter, loop variable, match binding, or `result`. */
     public static final class LocalVar {
