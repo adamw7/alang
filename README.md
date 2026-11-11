@@ -228,7 +228,7 @@ published once; to redo one, delete its release and package first.
 
 ## Status
 
-Version 0.1. Not yet included: modules/imports, generics, slices, a formatter, and a standard library
+Version 0.2. Not yet included: modules/imports, generics, slices, a formatter, and a standard library
 beyond the builtins.
 
 ## License

@@ -1,4 +1,4 @@
-# ALang Language Specification (v0.1)
+# ALang Language Specification (v0.2)
 
 ALang is a small, statically typed language designed to be **written by AI agents** and **run safely**.
 Four properties drive every rule:

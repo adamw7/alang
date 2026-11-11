@@ -445,7 +445,7 @@ code runs, and its failures carry a code, a location and a fix.
   [AGENTS.md](../AGENTS.md#patterns)).
 - **No I/O beyond `print`:** the host reads files and calls the network, then passes the data to a
   `tool fn`.
-- **A small language:** version 0.1 has no modules, generics, slices, standard library beyond the
+- **A small language:** version 0.2 has no modules, generics, slices, standard library beyond the
   builtins, or `sin`, `exp` and `pow`.
 - **No ecosystem:** no packages to install, and none to vet.
 
