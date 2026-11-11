@@ -13,6 +13,12 @@ shows Claude Code building a small ALang tool: write, `alang check`, fix from th
 call it. Every `alang` output in it is real; [`docs/demo/make_demo.js`](docs/demo/make_demo.js) re-runs
 the commands and renders it again.
 
+**Why ALang:** [docs/demo/why.mp4](docs/demo/why.mp4) (under 2 minutes, narrated, with English subtitles)
+sets six bugs that JavaScript, C and Python let through (a string plus a number, an overflowing midpoint,
+a missing null check, a loop that never ends, a buffer overflow, a tool called with bad input) beside the
+same programs in ALang. Every program in it really runs; [`docs/demo/make_why.js`](docs/demo/make_why.js)
+re-runs them and renders it again.
+
 ```alang
 /// Splits a bill evenly; the remainder goes to the first payers.
 tool fn split_bill(total_cents: i64, people: i64) -> list[i64; 16]
