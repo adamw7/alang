@@ -11,6 +11,7 @@ import alang.cli.Frontend;
 import alang.diag.Source;
 import java.io.File;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +19,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DynamicTest;
@@ -41,6 +44,14 @@ class CBackendTest {
      */
     private static final Duration COMPILE_AND_RUN_TIMEOUT = Duration.ofSeconds(60);
 
+    private static final boolean WINDOWS = System.getProperty("os.name").startsWith("Windows");
+
+    /** The file name of the program the tests build. */
+    private static final String PROG = WINDOWS ? "prog.exe" : "prog";
+
+    /** Targets that use the Microsoft toolchain (clang on Windows by default), by compiler. */
+    private static final Map<String, Boolean> MSVC = new ConcurrentHashMap<>();
+
     /** A finished process; {@code stderrBytes} keeps the bytes that are not UTF-8, which {@code stderr} replaces. */
     private record Proc(int exit, String stdout, String stderr, byte[] stderrBytes) {}
 
@@ -61,10 +72,30 @@ class CBackendTest {
     }
 
     private static boolean available(String tool) {
+        String file = WINDOWS ? tool + ".exe" : tool;
         for (String dir : System.getenv().getOrDefault("PATH", "").split(File.pathSeparator)) {
-            if (Files.isExecutable(Path.of(dir, tool))) return true;
+            if (!dir.isEmpty() && Files.isExecutable(Path.of(dir, file))) return true;
         }
         return false;
+    }
+
+    /** Whether {@code cc} builds with the Microsoft toolchain, which has no libm and sets the stack with /STACK. */
+    private static boolean msvc(String cc) {
+        return WINDOWS && MSVC.computeIfAbsent(cc, c -> {
+            try {
+                return exec(Files.createTempDirectory("alang-cc"), c, "-dumpmachine").stdout().contains("msvc");
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(e);
+            }
+        });
+    }
+
+    /** The arguments that link the math library, which the Microsoft C runtime holds: it has no libm. */
+    private static List<String> libm(String cc) {
+        return msvc(cc) ? List.of() : List.of("-lm");
     }
 
     private static List<String[]> compilers() {
@@ -98,10 +129,11 @@ class CBackendTest {
         Files.writeString(c, CGen.generate(r.program()), StandardCharsets.UTF_8);
         for (String[] cc : ccs) {
             List<String> cmd = new ArrayList<>(List.of(cc));
-            cmd.addAll(List.of("-o", "prog", "prog.c", "-lm"));
+            cmd.addAll(List.of("-o", PROG, "prog.c"));
+            cmd.addAll(libm(cc[0]));
             Proc build = exec(dir, cmd.toArray(new String[0]));
             assertEquals(0, build.exit(), () -> String.join(" ", cc) + ":\n" + build.stderr());
-            Proc run = exec(dir, dir.resolve("prog").toString());
+            Proc run = exec(dir, dir.resolve(PROG).toString());
             String who = String.join(" ", cc) + " on " + r.diags().source().path;
             assertEquals(expected.stdout(), run.stdout(), "stdout differs: " + who);
             if (expected.trap() == null) {
@@ -213,6 +245,7 @@ class CBackendTest {
      * built with gcc and clang with and without optimization, must run in a stack of that size (plus
      * {@link #STACK_SLACK_KB}). clang -O0 never reuses a dead variable's stack slot, so every temporary of
      * a function counts, and so does any copy the generated C makes beyond the ones the bound counts.
+     * The shell's {@code ulimit -s} sets the stack, except on Windows, where the linker does.
      */
     @TestFactory
     Stream<DynamicTest> stackBound() {
@@ -220,7 +253,7 @@ class CBackendTest {
             List<String> ccs = new ArrayList<>();
             if (available("gcc")) ccs.add("gcc");
             if (available("clang")) ccs.add("clang");
-            assumeTrue(!ccs.isEmpty() && available("sh"), "no C compiler or shell available");
+            assumeTrue(!ccs.isEmpty() && (WINDOWS || available("sh")), "no C compiler or shell available");
             Frontend.Result r = Harness.compile(p);
             assertTrue(r.ok(), () -> r.diags().renderText());
             Harness.Run expected = Harness.runMain(r);
@@ -229,9 +262,14 @@ class CBackendTest {
             Files.writeString(dir.resolve("prog.c"), CGen.generate(r.program()), StandardCharsets.UTF_8);
             for (String cc : ccs) {
                 for (String opt : List.of("-O0", "-O2")) {
-                    Proc build = exec(dir, cc, opt, "-std=c99", "-o", "prog", "prog.c", "-lm");
+                    List<String> cmd = new ArrayList<>(List.of(cc, opt, "-std=c99", "-o", PROG, "prog.c"));
+                    if (WINDOWS) cmd.add((msvc(cc) ? "-Wl,/STACK:" : "-Wl,--stack,") + limitKb * 1024);
+                    cmd.addAll(libm(cc));
+                    Proc build = exec(dir, cmd.toArray(new String[0]));
                     assertEquals(0, build.exit(), () -> cc + " " + opt + ":\n" + build.stderr());
-                    Proc run = exec(dir, "sh", "-c", "ulimit -s " + limitKb + " && exec ./prog");
+                    Proc run = WINDOWS
+                        ? exec(dir, dir.resolve(PROG).toString())
+                        : exec(dir, "sh", "-c", "ulimit -s " + limitKb + " && exec ./prog");
                     String who = cc + " " + opt + " on " + p + " with a stack of " + limitKb + " KB";
                     assertEquals(0, run.exit(), who + "\n" + run.stderr());
                     assertEquals(expected.stdout(), run.stdout(), who);

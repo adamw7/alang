@@ -80,8 +80,8 @@ flowchart TB
 - `bin/alang` runs `mvn package` when `target/alang.jar` is missing or older than `pom.xml`, `grammar/`
   or `src/main`, and starts the jar under `LC_ALL=C.UTF-8`, so arguments decode the same on every host.
 - The jar shades in the ANTLR runtime. A compiled program is one C99 file, the program plus the runtime
-  [prelude](../src/main/resources/alang/cgen/prelude.c); it writes with `write(2)`, or `AL_WRITE` on
-  freestanding targets.
+  [prelude](../src/main/resources/alang/cgen/prelude.c); it writes with `write(2)`, `_write` in binary mode on
+  Windows, or `AL_WRITE` on freestanding targets.
 - The [benchmark](../bench/README.md) runs the jar directly, runs Python solutions in separate
   processes, and writes `bench/results/*.jsonl`.
 

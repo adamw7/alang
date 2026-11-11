@@ -249,7 +249,9 @@ order:
   `--max-stack BYTES` sets another (`0`: none). An entry point (`main`, a tool or a test) whose worst-case
   stack exceeds it is E0402. Constants are evaluated while checking, so they are checked first: together,
   with the values their initializers build, they must fit the same budget (E0405). A program that passes
-  cannot exhaust the interpreter's memory and fits the default C stack of Linux and macOS.
+  cannot exhaust the interpreter's memory and fits the default C stack of Linux and macOS. Windows
+  reserves less by default (1 MiB with MSVC, 2 MiB with MinGW): link with `-Wl,--stack,8388608`
+  (`/STACK:8388608` with MSVC), or check against the smaller stack with `--max-stack`.
 - Large values can be passed as `mut` to avoid copies; the C backend passes read-only aggregate
   parameters by address, so they are not copied either.
 - Capacities are part of the type: `push` past capacity traps (R0004); nothing reallocates.
@@ -384,8 +386,9 @@ are no exceptions: model recoverable failures as enum return values (see `exampl
 
 - Values become C structs (arrays are wrapped so they copy by value); `mut` parameters become pointers,
   read-only aggregates `const` pointers.
-- No allocation and no stdio: the object file references only `write`, `_Exit` and exact math functions
-  (`sqrt`, `floor`, `ceil`, `frexp`, `ldexp`). For bare-metal targets define `AL_WRITE(fd, ptr, len)`.
+- No allocation and no stdio: the object file references only `write` (`_write` and `_setmode` on
+  Windows, which keep output in binary mode), `_Exit` and exact math functions (`sqrt`, `floor`, `ceil`,
+  `frexp`, `ldexp`). For bare-metal targets define `AL_WRITE(fd, ptr, len)`.
 - Expressions are lowered to statements so the ALang evaluation order is kept exactly, with every check
   (overflow, bounds, contracts, loop limits) and identical trap messages.
 - The runtime prelude formats numbers itself (floats exactly, with big-number arithmetic), so output is

@@ -10,6 +10,7 @@ import alang.diag.Source;
 import alang.interp.Interpreter;
 import alang.interp.Trap;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -53,9 +54,17 @@ public final class Harness {
         return DynamicTest.dynamicTest(name, () -> assertTimeoutPreemptively(timeout, body, () -> name));
     }
 
+    /**
+     * The path of a file in the repository as the golden files show it: relative to the root, with '/'
+     * between names on every OS (Windows writes '\\').
+     */
+    public static String name(Path p) {
+        return ROOT.relativize(p.toAbsolutePath()).toString().replace(File.separatorChar, '/');
+    }
+
     public static Source source(Path p) {
         try {
-            return new Source(ROOT.relativize(p.toAbsolutePath()).toString(), Files.readString(p, StandardCharsets.UTF_8));
+            return new Source(name(p), Files.readString(p, StandardCharsets.UTF_8));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

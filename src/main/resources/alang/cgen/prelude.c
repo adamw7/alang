@@ -2,7 +2,7 @@
  * ALang C runtime prelude.
  *
  * Heap-free: no malloc/calloc/realloc/free, no stdio. Output goes through a static
- * buffer to write(2). Numbers are formatted here, not by printf, so the bytes are
+ * buffer to write(2) (_write on Windows). Numbers are formatted here, not by printf, so the bytes are
  * identical to the reference interpreter on every libc and in every locale.
  *
  * Deterministic floating point requires IEEE 754 binary32/binary64 arithmetic with
@@ -37,6 +37,22 @@
 #ifdef AL_WRITE
 /* Freestanding targets: define AL_WRITE(fd, ptr, len) to emit bytes (e.g. to a UART). */
 static void al_write(int fd, const uint8_t *p, uint32_t n) { AL_WRITE(fd, p, n); }
+#elif defined(_WIN32)
+/*
+ * Windows: the C runtime opens stdout and stderr in text mode, which writes every "\n" as
+ * "\r\n". Binary mode keeps the bytes those of the reference interpreter.
+ */
+#include <io.h>
+#include <fcntl.h>
+static void al_write(int fd, const uint8_t *p, uint32_t n) {
+    _setmode(fd, _O_BINARY);
+    while (n > 0) {
+        int w = _write(fd, p, n);
+        if (w <= 0) _Exit(2);
+        p += w;
+        n -= (uint32_t)w;
+    }
+}
 #else
 #include <unistd.h>
 static void al_write(int fd, const uint8_t *p, uint32_t n) {

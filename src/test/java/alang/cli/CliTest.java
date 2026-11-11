@@ -14,6 +14,7 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +22,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -55,6 +58,13 @@ class CliTest {
         return Json.write(Json.parse(json)) + "\n";
     }
 
+    /**
+     * Why the tests of argument bytes do not run on Windows: there a program gets its arguments as UTF-16
+     * text, which the POSIX locale does not change and which cannot hold bytes that are not UTF-8, and
+     * the tests build the bytes with a POSIX shell.
+     */
+    private static final String POSIX_ONLY = "arguments are UTF-16 text on Windows, not bytes decoded in a POSIX locale";
+
     /** "é" in UTF-8 as printf octal escapes, so the bytes do not depend on this JVM's charset. */
     private static final String E_ACUTE = "\\303\\251";
 
@@ -72,8 +82,10 @@ class CliTest {
         return runInLocale("C", shellArgs);
     }
 
+    /** Runs the command line in a new JVM, with arguments that a POSIX shell builds from {@code shellArgs}. */
     private Result runInLocale(String locale, String shellArgs) throws Exception {
-        return runProcess(locale, shellArgs, new byte[0], false);
+        return start(locale, new ProcessBuilder("sh", "-c", "exec \"$ALANG_JAVA\" -cp \"$ALANG_CP\" alang.cli.Main " + shellArgs),
+            new byte[0], false);
     }
 
     /**
@@ -81,13 +93,23 @@ class CliTest {
      * stdin never ends, like that of an agent harness that does not close it: a command that reads it
      * never exits, and the test fails on its time limit.
      */
-    private Result runProcess(String locale, String shellArgs, byte[] stdin, boolean keepStdinOpen) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder("sh", "-c", "exec \"$ALANG_JAVA\" -cp \"$ALANG_CP\" alang.cli.Main " + shellArgs)
-            .directory(dir.toFile());
+    private Result runProcess(String locale, byte[] stdin, boolean keepStdinOpen, String... args) throws Exception {
+        List<String> command = new ArrayList<>(List.of(java(), "-cp", System.getProperty("java.class.path"), "alang.cli.Main"));
+        command.addAll(List.of(args));
+        return start(locale, new ProcessBuilder(command), stdin, keepStdinOpen);
+    }
+
+    /** The java launcher of this JVM. */
+    private static String java() {
+        return Path.of(System.getProperty("java.home"), "bin", "java").toString();
+    }
+
+    private Result start(String locale, ProcessBuilder pb, byte[] stdin, boolean keepStdinOpen) throws Exception {
+        pb.directory(dir.toFile());
         Map<String, String> env = pb.environment();
         env.keySet().removeIf(k -> k.startsWith("LC_") || k.equals("LANG") || k.equals("JAVA_TOOL_OPTIONS"));
         env.put("LC_ALL", locale);
-        env.put("ALANG_JAVA", Path.of(System.getProperty("java.home"), "bin", "java").toString());
+        env.put("ALANG_JAVA", java());
         env.put("ALANG_CP", System.getProperty("java.class.path"));
         Process p = pb.start();
         try {
@@ -126,6 +148,7 @@ class CliTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = POSIX_ONLY)
     void nonAsciiArgumentsInThePosixLocaleAreReadOrRefused() throws Exception {
         write("size.al", "tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n");
         write("t.al", "test \"caf\u00e9\" {\n    assert true;\n}\n");
@@ -144,6 +167,7 @@ class CliTest {
     }
 
     @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = POSIX_ONLY)
     void invalidUtf8ArgumentsAreRefusedInAnyLocale() throws Exception {
         write("size.al", "tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n");
         // \\377 is never valid UTF-8, so every JVM decodes it as U+FFFD, on Linux and macOS alike.
@@ -218,7 +242,7 @@ class CliTest {
                 ]
               }
             }
-            """), r.out().replace(p.toString(), "FILE"));
+            """), r.out().replace(Json.write(p.toString()), "\"FILE\""));
         assertEquals("", r.err());
     }
 
@@ -271,7 +295,7 @@ class CliTest {
               ],
               "memory": null
             }
-            """), r.out().replace(p.toString(), "FILE"));
+            """), r.out().replace(Json.write(p.toString()), "\"FILE\""));
         assertEquals("", r.err());
     }
 
@@ -492,7 +516,7 @@ class CliTest {
         // `call` used to read its arguments from stdin whenever argv had none, so a call to a tool
         // without parameters waited forever on a caller that left stdin open.
         write("one.al", "tool fn one() -> i64 {\n    return 1;\n}\n");
-        Result r = runProcess("C.UTF-8", "call one.al one", new byte[0], true);
+        Result r = runProcess("C.UTF-8", new byte[0], true, "call", "one.al", "one");
         assertEquals(0, r.code(), r.out() + r.err());
         assertTrue(r.out().contains("\"result\": 1"), r.out());
     }
@@ -507,7 +531,7 @@ class CliTest {
         String session = "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"initialize\", \"params\": {}}\n"
             + "{\"jsonrpc\": \"2.0\", \"method\": \"notifications/initialized\"}\n"
             + "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"tools/call\", \"params\": {\"name\": \"one\"}}\n";
-        Result r = runProcess("C.UTF-8", "serve one.al", session.getBytes(StandardCharsets.UTF_8), false);
+        Result r = runProcess("C.UTF-8", session.getBytes(StandardCharsets.UTF_8), false, "serve", "one.al");
         assertEquals(0, r.code(), r.out() + r.err());
         String[] lines = r.out().split("\n");
         assertEquals(2, lines.length, r.out());
@@ -518,7 +542,7 @@ class CliTest {
         assertTrue(r.err().startsWith("warning[W0302]: "), r.err());
 
         write("bad.al", "tool fn bad() -> i64 {\n    return true;\n}\n");
-        r = runProcess("C.UTF-8", "serve bad.al", session.getBytes(StandardCharsets.UTF_8), false);
+        r = runProcess("C.UTF-8", session.getBytes(StandardCharsets.UTF_8), false, "serve", "bad.al");
         assertEquals(1, r.code(), r.err());
         assertEquals("", r.out());
         assertTrue(r.err().startsWith("error[E0201]: ") && r.err().endsWith("check failed: 1 error(s)\n"), r.err());
@@ -527,11 +551,11 @@ class CliTest {
     @Test
     void dashReadsTheArgumentsFromStdinAsStrictUtf8() throws Exception {
         write("size.al", "tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n");
-        Result r = runProcess("C", "call size.al size -", "{\"text\": \"\u00e9\"}".getBytes(StandardCharsets.UTF_8), false);
+        Result r = runProcess("C", "{\"text\": \"\u00e9\"}".getBytes(StandardCharsets.UTF_8), false, "call", "size.al", "size", "-");
         assertEquals(0, r.code(), r.out() + r.err());
         assertTrue(r.out().contains("\"result\": 2"), r.out());
         // An invalid byte used to become U+FFFD, 3 bytes long, and the tool ran on text nobody sent.
-        r = runProcess("C", "call size.al size -", new byte[] {'{', '"', 't', 'e', 'x', 't', '"', ':', '"', (byte) 0xFF, '"', '}'}, false);
+        r = runProcess("C", new byte[] {'{', '"', 't', 'e', 'x', 't', '"', ':', '"', (byte) 0xFF, '"', '}'}, false, "call", "size.al", "size", "-");
         assertEquals(1, r.code(), r.out() + r.err());
         assertTrue(r.out().contains("\"code\": \"bad_arguments\"") && r.out().contains("not valid UTF-8"), r.out());
     }

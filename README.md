@@ -198,7 +198,7 @@ bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` with gcc and clang on
-Linux and macOS, smoke-tests `bin/alang` against the packaged jar and the release archives' launcher
+Linux, macOS and Windows, smoke-tests `bin/alang` against the packaged jar and the release archives' launcher
 against theirs, and runs the TOON converter's tests,
 the benchmark self-test and a 3000-mutation fuzzing campaign. Every test, CI step and job has a time limit, so a hang fails fast.
 Mutation testing is too slow for every push: it runs every Saturday on `main`

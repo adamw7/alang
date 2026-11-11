@@ -1,0 +1,4 @@
+# Check out text files with LF line endings on every OS. Windows would otherwise get CRLF, and the golden
+# files (tests/*/*.out, *.err), the programs and docs the tests read, and the sh launcher bin/alang must
+# stay byte for byte as committed.
+* text=auto eol=lf

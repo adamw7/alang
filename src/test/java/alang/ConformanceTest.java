@@ -57,7 +57,7 @@ class ConformanceTest {
             Matcher m = EXPECT.matcher(text);
             assertTrue(m.find(), "missing // expect: line");
             TreeSet<String> expected = new TreeSet<>(List.of(m.group(1).trim().split("\\s+")));
-            String name = Harness.ROOT.relativize(p).toString();
+            String name = Harness.name(p);
             Frontend.Result r = Frontend.compile(new Source(name, text), Harness.budget(text));
             TreeSet<String> got = new TreeSet<>();
             for (Diagnostic d : r.diags().all()) got.add(d.code().name());
