@@ -1,6 +1,6 @@
 # Examples
 
-Complete ALang programs. Each one has a `fn main()` and `test` blocks, and most expose `tool fn`s an
+Complete ALang programs. Each one has a `fn main` and `test` blocks, and most expose `tool fn`s an
 agent can call with JSON. CI type-checks every example, runs its tests, compares its output with
 [`tests/examples/`](../tests/examples), and checks that the C backend prints the same bytes.
 
@@ -22,7 +22,8 @@ agent can call with JSON. CI type-checks every example, runs its tests, compares
 | [stats.al](stats.al) | `f64` statistics and least squares, `sqrt`, float comparisons with a tolerance |
 | [vending_machine.al](vending_machine.al) | A state machine: enum events as JSON input, `mut` state, an `ensures` on a `mut` parameter |
 | [sorting.al](sorting.al) | Merge sort and quicksort without recursion, sortedness as a contract, a seeded pseudo-random generator |
-| [helpers.al](helpers.al) | Helpers the standard library leaves out, to copy: str ordering, padding, parsing into an enum instead of trapping, pseudo-random numbers, a list of entries as a map |
+| [helpers.al](helpers.al) | Helpers the standard library leaves out, to import or copy: str ordering, padding, parsing into an enum instead of trapping, pseudo-random numbers, a list of entries as a map |
+| [tally.al](tally.al) | `import "helpers.al";` instead of copying, and a `fn main(input: str[N])` that reads the standard input ([tally.in](tally.in)) |
 
 ## Try them
 
@@ -31,6 +32,7 @@ bin/alang run examples/sudoku.al
 bin/alang test examples/sorting.al
 bin/alang tools examples/vending_machine.al
 bin/alang check examples/game_of_life.al --memory
+bin/alang run examples/tally.al < examples/tally.in
 
 bin/alang call examples/primes.al factorize '{"n": 600851475143}'
 # {"ok": true, "result": [71, 839, 1471, 6857], "stdout": "", "steps": 4919}
@@ -44,5 +46,6 @@ bin/alang call examples/base64.al encode '{"data": "agents"}'
 # {"ok": true, "result": "YWdlbnRz", "stdout": "", "steps": 34}
 ```
 
-To add an example, put `NAME.al` here and its exact `bin/alang run` output in `tests/examples/NAME.out`.
-It must check without a single warning, and its tests must pass.
+To add an example, put `NAME.al` here and its exact `bin/alang run` output in `tests/examples/NAME.out`;
+if its main reads the standard input, put that input in `NAME.in` here. It must check without a single
+warning, and its tests must pass.

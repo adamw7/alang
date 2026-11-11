@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'use', expected one of end of file, 'import', 'fn', 'tool', 'const', 'struct', 'enum', 'test'
+ --> tests/errors/import_habit_use.al:2:1
+  |
+2 | use std::collections;
+  | ^^^
+  = hint: to use the declarations of another file, import it at the top of this one: import "helpers.al"; (a path relative to this file). There are no modules or namespaces
+

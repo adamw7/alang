@@ -1,0 +1,28 @@
+error[E0702]: invalid import path "lib\shapes.al": write / between directories, on every OS
+ --> tests/errors/import_invalid.al:2:8
+  |
+2 | import "lib\\shapes.al";
+  |        ^^^^^^^^^^^^^^^^
+  = hint: import a file by its path relative to this one, with / between directories: import "lib/text.al";
+
+error[E0702]: invalid import path "/usr/lib/shapes.al": the path must be relative to the importing file, so that the program works wherever it is
+ --> tests/errors/import_invalid.al:3:8
+  |
+3 | import "/usr/lib/shapes.al";
+  |        ^^^^^^^^^^^^^^^^^^^^
+  = hint: import a file by its path relative to this one, with / between directories: import "lib/text.al";
+
+error[E0702]: invalid import path "lib/shapes": it must name a .al file
+ --> tests/errors/import_invalid.al:4:8
+  |
+4 | import "lib/shapes";
+  |        ^^^^^^^^^^^^
+  = hint: import a file by its path relative to this one, with / between directories: import "lib/text.al";
+
+error[E0702]: `tests/errors/lib/names.al` is already imported on line 5
+ --> tests/errors/import_invalid.al:6:8
+  |
+6 | import "./lib/../lib/names.al";
+  |        ^^^^^^^^^^^^^^^^^^^^^^^
+  = hint: remove this import
+

@@ -34,8 +34,9 @@ flowchart TB
 ```
 
 The toolchain never reaches out: no network, processes, clock, environment or randomness. It reads the
-source file (and stdin for `call -`) and writes stdout, stderr and the `-o` file of `build`. Only the
-benchmark talks to the Claude API, and the C compiler is the user's.
+source file and the files it imports (and stdin, for `call -` and for a `fn main` that takes input) and
+writes stdout, stderr and the `-o` file of `build`. Only the benchmark talks to the Claude API, and the C
+compiler is the user's.
 
 ## Level 2: Containers
 
@@ -96,7 +97,7 @@ flowchart TB
     programs[("<b>ALang programs</b><br/><i>[Container: .al files]</i>")]
 
     subgraph jar ["Toolchain [Container]"]
-        cli["<b>CLI</b><br/><i>[Component: alang.cli]</i><br/><br/>Arguments, files and stdin; text or JSON output; exit codes; the MCP server of serve. Frontend runs parse + check"]
+        cli["<b>CLI</b><br/><i>[Component: alang.cli]</i><br/><br/>Arguments, files and stdin; text or JSON output; exit codes; the MCP server of serve. Frontend reads the imported files, runs parse + check"]
         parse["<b>Parser</b><br/><i>[Component: alang.parse]</i><br/><br/>Nesting limit, syntax-error hints, parse tree to AST"]
         check["<b>Checker</b><br/><i>[Component: alang.check]</i><br/><br/>Types, names, constants, recursion ban, memory bound"]
         interp["<b>Interpreter</b><br/><i>[Component: alang.interp]</i><br/><br/>Reference semantics, the standard library, step budget, traps, formatting, JSON mapping"]

@@ -51,6 +51,9 @@ Codes are never reused for a different meaning.
 | [E0501](#e0501) | misplaced `result` |
 | [E0601](#e0601) | invalid tool signature |
 | [E0602](#e0602) | invalid main |
+| [E0701](#e0701) | imported file not found |
+| [E0702](#e0702) | invalid import |
+| [E0703](#e0703) | import cycle |
 | [W0301](#w0301) | unreachable code |
 | [W0302](#w0302) | unused result |
 | [W0303](#w0303) | character literal printed as a number |
@@ -401,10 +404,38 @@ tool fn f(x: mut i32) { }  // error
 
 ## E0602
 
-**invalid main**: `fn main()` takes no parameters and returns nothing.
+**invalid main**: `fn main()` returns nothing, and takes no parameters or one: a read-only `str[N]` that receives all of the program's standard input, e.g. `alang run prog.al < data.txt`. Input longer than N bytes traps (R0004).
 
 ```
 fn main() { print("hello"); }
+fn main(input: str[4096]) { print(len(input)); }
+```
+
+## E0701
+
+**imported file not found**: An `import` names a file that cannot be read: it does not exist, it is not readable, or it is not UTF-8 text. The path is relative to the file that has the import, not to the current directory.
+
+```
+// in examples/report.al:
+import "helpers.al";  // reads examples/helpers.al
+```
+
+## E0702
+
+**invalid import**: An import names a relative path to a .al file, with / between directories, at most once per file: no absolute paths, no backslashes. Imports come before every other declaration of a file.
+
+```
+import "lib/text.al";   // ok
+import "C:\\lib\\text.al";  // error: write a relative path with /
+```
+
+## E0703
+
+**import cycle**: Files import each other, directly or through other files. Imports form a tree (a file may be imported by several others); move what the files share into a file that both import.
+
+```
+// a.al: import "b.al";
+// b.al: import "a.al";  // error
 ```
 
 ## W0301
@@ -461,7 +492,7 @@ let x: i32 = a[3];  // trap
 
 ## R0004
 
-**capacity exceeded**: A push/append does not fit in the list or string capacity. Capacities are part of the type: list[T; N], str[N].
+**capacity exceeded**: A push/append does not fit in the list or string capacity, or the standard input is longer than the `str[N]` parameter of fn main. Capacities are part of the type: list[T; N], str[N].
 
 ```
 var s: str[4] = "abc";

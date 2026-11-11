@@ -113,7 +113,7 @@ public final class Checker {
         for (Item item : program.items) {
             switch (item) {
                 case StructDecl s -> {
-                    if (typeExists(s.name)) duplicate(s.span, "type", s.name);
+                    if (typeExists(s.name)) duplicate(s.span, "type", s.name, typeSpan(s.name));
                     else structs.put(s.name, s);
                     Set<String> seen = new HashSet<>();
                     for (Field f : s.fields) {
@@ -121,7 +121,7 @@ public final class Checker {
                     }
                 }
                 case EnumDecl e -> {
-                    if (typeExists(e.name)) duplicate(e.span, "type", e.name);
+                    if (typeExists(e.name)) duplicate(e.span, "type", e.name, typeSpan(e.name));
                     else enums.put(e.name, e);
                     Set<String> seen = new HashSet<>();
                     for (Variant v : e.variants) {
@@ -129,7 +129,7 @@ public final class Checker {
                     }
                 }
                 case ConstDecl c -> {
-                    if (consts.containsKey(c.name)) duplicate(c.span, "constant", c.name);
+                    if (consts.containsKey(c.name)) duplicate(c.span, "constant", c.name, consts.get(c.name).span);
                     else consts.put(c.name, c);
                 }
                 case FnDecl f -> {
@@ -139,7 +139,7 @@ public final class Checker {
                             b.group == Builtin.Group.CORE ? "choose a different name, e.g. my_" + f.name
                                 : "the standard library has " + b.signature + "; call it, or choose a different name, e.g. my_" + f.name);
                     } else if (fns.containsKey(f.name)) {
-                        duplicate(f.nameSpan, "function", f.name);
+                        duplicate(f.nameSpan, "function", f.name, fns.get(f.name).nameSpan);
                     } else {
                         fns.put(f.name, f);
                     }
@@ -175,7 +175,18 @@ public final class Checker {
     }
 
     private void duplicate(Span span, String what, String name) {
-        diags.error(Code.E0104, span, "duplicate " + what + " `" + name + "`", "rename or remove one of the declarations");
+        duplicate(span, what, name, null);
+    }
+
+    /** A duplicate of the declaration at {@code first}; the message names its file when that is another one. */
+    private void duplicate(Span span, String what, String name, Span first) {
+        String also = first == null || first.file() == span.file() || first.file() == null ? ""
+            : ": " + first.file().path + " declares it too, at line " + first.line();
+        diags.error(Code.E0104, span, "duplicate " + what + " `" + name + "`" + also, "rename or remove one of the declarations");
+    }
+
+    private Span typeSpan(String name) {
+        return structs.containsKey(name) ? structs.get(name).span : enums.get(name).span;
     }
 
     private void ensureStruct(StructDecl s) {
@@ -424,9 +435,16 @@ public final class Checker {
                     "tools receive JSON arguments; return the new value instead");
             }
         }
-        if (f.name.equals("main") && (!f.params.isEmpty() || f.retRef != null)) {
-            diags.error(Code.E0602, f.nameSpan, "`main` must take no parameters and return nothing",
-                "declare it as fn main() { ... }; use tool functions for input and output");
+        if (f.name.equals("main") && (f.params.size() > 1 || f.retRef != null)) {
+            diags.error(Code.E0602, f.nameSpan, "`main` must return nothing and take at most one parameter",
+                "declare it as fn main() { ... }, or as fn main(input: str[4096]) { ... } to receive the standard input");
+        } else if (f.name.equals("main") && f.params.size() == 1) {
+            Param p = f.params.get(0);
+            if (p.mut() || !(f.paramVars.get(0).type instanceof Type.Str) && f.paramVars.get(0).type != Type.ERROR) {
+                diags.error(Code.E0602, p.span(), "the parameter of `main` must be a read-only str: it receives the standard input",
+                    "declare it as " + p.name() + ": str[4096] (the most bytes of input the program accepts), and split "
+                        + "it as needed: let lines: list[str[80]; 64] = split(" + p.name() + ", '\\n');");
+            }
         }
         if (!f.ensures.isEmpty() && !(f.ret instanceof Type.Void)) {
             f.resultVar = new LocalVar("result", f.nameSpan, f.ret, false, false, f.locals.size());
@@ -2141,7 +2159,7 @@ public final class Checker {
     }
 
     private String exprText(Expr e) {
-        String t = diags.source().text(e.span);
+        String t = (e.span.file() == null ? diags.source() : e.span.file()).text(e.span);
         return t.isEmpty() ? "x" : t;
     }
 

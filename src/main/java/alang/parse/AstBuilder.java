@@ -22,20 +22,28 @@ import org.antlr.v4.runtime.Token;
 /** Converts the ANTLR parse tree into the {@link Ast}. */
 final class AstBuilder {
     private final Diagnostics diags;
+    private final Source file;
     private final BufferedTokenStream tokens;
+    private final boolean imported;
 
-    AstBuilder(Diagnostics diags, BufferedTokenStream tokens) {
+    AstBuilder(Diagnostics diags, Source file, BufferedTokenStream tokens, boolean imported) {
         this.diags = diags;
+        this.file = file;
         this.tokens = tokens;
+        this.imported = imported;
     }
 
     // ------------------------------------------------------------------ spans
 
-    static Span span(Token t) {
-        return new Span(t.getLine(), t.getCharPositionInLine() + 1, Math.max(1, Source.columns(t.getText())));
+    static Span span(Token t, Source file) {
+        return new Span(t.getLine(), t.getCharPositionInLine() + 1, Math.max(1, Source.columns(t.getText())), file);
     }
 
-    static Span span(ParserRuleContext ctx) {
+    private Span span(Token t) {
+        return span(t, file);
+    }
+
+    private Span span(ParserRuleContext ctx) {
         Token start = ctx.getStart();
         Token stop = ctx.getStop();
         int len = 1;
@@ -44,19 +52,32 @@ final class AstBuilder {
         } else if (start.getText() != null) {
             len = Math.max(1, Source.columns(start.getText()));
         }
-        return new Span(start.getLine(), start.getCharPositionInLine() + 1, len);
+        return new Span(start.getLine(), start.getCharPositionInLine() + 1, len, file);
     }
 
     // ------------------------------------------------------------------ items
 
+    /**
+     * The file's declarations and imports. An imported file's `fn main` and tests belong to it alone, so
+     * they are left out, and its `tool fn`s are plain functions: the program's tools are its main file's.
+     */
     Program program(ProgramContext ctx) {
+        List<Import> imports = new ArrayList<>();
+        for (ImportDeclContext ic : ctx.importDecl()) {
+            Token path = ic.STRING_LIT().getSymbol();
+            imports.add(new Import(span(path), new String(unescape(path), StandardCharsets.UTF_8)));
+        }
         List<Item> items = new ArrayList<>();
         for (ItemContext ic : ctx.item()) {
+            if (imported && (ic.testDecl() != null
+                || ic.functionDecl() != null && ic.functionDecl().identifier().getText().equals("main"))) {
+                continue;
+            }
             Item item = item(ic);
             item.doc = docComment(ic.getStart());
             items.add(item);
         }
-        return new Program(diags.source(), items);
+        return new Program(file, items, imports);
     }
 
     private String docComment(Token start) {
@@ -126,7 +147,7 @@ final class AstBuilder {
             (pre ? requiresText : ensuresText).add(oneLine(c.expression()));
         }
         TypeRef ret = f.type() == null ? null : type(f.type());
-        return new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null, params, ret,
+        return new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null && !imported, params, ret,
             requires, ensures, requiresText, ensuresText, block(f.block()));
     }
 
@@ -237,7 +258,7 @@ final class AstBuilder {
         Expr e = new Name(span(ctx.identifier()), ctx.identifier().getText());
         for (PlaceSuffixContext s : ctx.placeSuffix()) {
             Span sp = new Span(e.span.line(), e.span.col(),
-                s.getStop().getStopIndex() - ctx.getStart().getStartIndex() + 1);
+                s.getStop().getStopIndex() - ctx.getStart().getStartIndex() + 1, file);
             if (s.identifier() != null) {
                 e = new FieldAccess(sp, e, s.identifier().getText(), span(s.identifier()));
             } else {
@@ -368,7 +389,7 @@ final class AstBuilder {
         Token stop = end.getStop();
         if (stop.getLine() != start.line()) return start;
         int len = stop.getCharPositionInLine() + Source.columns(stop.getText()) - (start.col() - 1);
-        return new Span(start.line(), start.col(), Math.max(1, len));
+        return new Span(start.line(), start.col(), Math.max(1, len), start.file());
     }
 
     private Expr unary(UnaryContext ctx) {
@@ -506,7 +527,7 @@ final class AstBuilder {
         return b[0] & 0xFF;
     }
 
-    static Ast.Program build(Diagnostics diags, BufferedTokenStream tokens, ProgramContext ctx) {
-        return new AstBuilder(diags, tokens).program(ctx);
+    static Ast.Program build(Diagnostics diags, Source file, BufferedTokenStream tokens, ProgramContext ctx, boolean imported) {
+        return new AstBuilder(diags, file, tokens, imported).program(ctx);
     }
 }

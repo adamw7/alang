@@ -38,11 +38,12 @@ class FuzzTest {
         return out;
     }
 
-    private static void mustNotCrash(String text, String what) {
+    /** Compiles and runs {@code text} as the file {@code path}, so that its imports, relative to it, are read. */
+    private static void mustNotCrash(String path, String text, String what) {
         try {
             // The command line's budget: a mutation such as [0; 1048576] -> [[0; 1048576]; 1048576] must be
             // rejected, as `alang` rejects it, not built.
-            Frontend.Result r = Frontend.compile(new Source("fuzz.al", text), Checker.DEFAULT_MAX_STACK);
+            Frontend.Result r = Frontend.compile(new Source(path, text), Checker.DEFAULT_MAX_STACK);
             if (!r.ok()) assertTrue(r.diags().hasErrors(), "failed without an error diagnostic: " + what);
             r.diags().renderText();
             if (r.ok()) {
@@ -51,7 +52,7 @@ class FuzzTest {
                     Interpreter in = new Interpreter(r.diags().source(), OutputStream.nullOutputStream(), 200_000);
                     try {
                         if (item instanceof alang.ast.Ast.FnDecl f && f.name.equals("main")) {
-                            in.call(f, new Object[0], f.nameSpan);
+                            in.runMain(f, new byte[0]);
                         } else if (item instanceof alang.ast.Ast.TestDecl t) {
                             in.runTest(t);
                         }
@@ -96,7 +97,7 @@ class FuzzTest {
                         what = "swap " + i + "," + j;
                     }
                 }
-                mustNotCrash(String.join(" ", m), what);
+                mustNotCrash(Harness.name(p), String.join(" ", m), what);
             }
         }));
     }

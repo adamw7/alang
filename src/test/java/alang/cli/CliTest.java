@@ -7,8 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import alang.Harness;
 import alang.util.Json;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.math.BigInteger;
@@ -363,6 +365,119 @@ class CliTest {
         assertEquals(times == 1 ? p.toString() : null, j.get("file"), r.out());
         assertEquals("", r.err());
         return j;
+    }
+
+    private static Result runWithStdin(InputStream stdin, String... args) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int code = new Main(new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(err, true, StandardCharsets.UTF_8),
+            stdin).run(args);
+        return new Result(code, out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * A main that takes a str gets all of the standard input, as bytes; input past its capacity traps before
+     * main runs. A main without a parameter never reads stdin, so it cannot wait on a caller that leaves it open.
+     */
+    @Test
+    void mainReadsTheStandardInput() throws IOException {
+        Path p = write("count.al", """
+            fn main(input: str[8]) {
+                let lines: list[str[8]; 4] = split(trim(input), '\\n');
+                print(len(input), " bytes, ", len(lines), " lines");
+            }
+            """);
+        Result r = runWithStdin(new ByteArrayInputStream("a\nbc\n".getBytes(StandardCharsets.UTF_8)), "run", p.toString());
+        assertEquals(new Result(0, "5 bytes, 2 lines\n", ""), r);
+
+        r = runWithStdin(new ByteArrayInputStream("123456789".getBytes(StandardCharsets.UTF_8)), "run", p.toString(), "--json");
+        assertEquals(1, r.code(), r.err());
+        Map<?, ?> trap = (Map<?, ?>) ((Map<?, ?>) Json.parse(r.out())).get("trap");
+        assertEquals("R0004", trap.get("code"), r.out());
+        assertEquals("standard input exceeds str capacity 8 of `input`", trap.get("message"), r.out());
+        assertEquals(List.of(BigInteger.ONE, BigInteger.valueOf(9)), List.of(trap.get("line"), trap.get("column")), r.out());
+
+        Path hello = write("hello.al", "fn main() {\n    print(\"hi\");\n}\n");
+        InputStream unreadable = new InputStream() {
+            @Override
+            public int read() {
+                throw new AssertionError("stdin was read");
+            }
+        };
+        assertEquals(new Result(0, "hi\n", ""), runWithStdin(unreadable, "run", hello.toString()));
+    }
+
+    /**
+     * A diagnostic or trap in an imported file names that file, also in JSON, where the report names the
+     * main file once; a call there names it in the trace. The imported file's main, tests and tools are
+     * its own: the program has the main, tests and tools of the file given on the command line.
+     */
+    @Test
+    void importedFilesAreNamedAndKeepTheirMainTestsAndTools() throws IOException {
+        Files.createDirectories(dir.resolve("lib"));
+        Path lib = write("lib/util.al", """
+            fn item(i: i64) -> i64 {
+                let xs: [i64; 2] = [1, 2];
+                return xs[i];
+            }
+
+            /// A tool of this file, and a plain function where it is imported.
+            tool fn at(i: i64) -> i64 {
+                return item(i);
+            }
+
+            fn main() {
+                print("not this main");
+            }
+
+            test "not this test" {
+                assert false;
+            }
+            """);
+        Path p = write("prog.al", """
+            import "lib/util.al";
+
+            /// Doubles the item at an index.
+            tool fn double_at(i: i64) -> i64 {
+                return 2 * at(i);
+            }
+
+            fn main() {
+                print(double_at(5));
+            }
+
+            test "in range" {
+                assert double_at(1) == 4;
+            }
+            """);
+        String libPath = Frontend.resolve(p.toString(), "lib/util.al");
+        assertEquals(lib.toAbsolutePath().normalize(), Path.of(libPath).toAbsolutePath().normalize());
+
+        Result r = run("run", p.toString(), "--json");
+        assertEquals(1, r.code(), r.err());
+        Map<?, ?> j = (Map<?, ?>) Json.parse(r.out());
+        assertEquals(p.toString(), j.get("file"), r.out());
+        Map<?, ?> trap = (Map<?, ?>) j.get("trap");
+        assertEquals(List.of("R0003", libPath, BigInteger.valueOf(3), "    return xs[i];"),
+            List.of(trap.get("code"), trap.get("file"), trap.get("line"), trap.get("source_line")), r.out());
+        assertEquals(List.of("fn item (called at " + libPath + ":8:12)", "fn at (called at 5:16)",
+            "fn double_at (called at 9:11)", "fn main (entry point, line 8)"), trap.get("trace"), r.out());
+
+        r = run("run", p.toString());
+        assertTrue(r.err().contains(" --> " + libPath + ":3:12\n"), r.err());
+
+        r = run("tools", p.toString());
+        assertEquals(List.of("double_at"), ((List<?>) Json.parse(r.out())).stream().map(t -> ((Map<?, ?>) t).get("name")).toList(), r.out());
+
+        r = run("test", p.toString());
+        assertEquals(new Result(0, "test \"in range\" ... ok\n\n1 test(s): 1 passed, 0 failed\n", ""), r);
+
+        write("lib/util.al", Files.readString(lib, StandardCharsets.UTF_8).replace("return item(i);", "return item(true);"));
+        r = run("check", p.toString(), "--json");
+        assertEquals(1, r.code(), r.err());
+        j = (Map<?, ?>) Json.parse(r.out());
+        Map<?, ?> diag = (Map<?, ?>) ((List<?>) j.get("diagnostics")).get(0);
+        assertEquals(List.of("E0201", libPath, BigInteger.valueOf(8)), List.of(diag.get("code"), diag.get("file"), diag.get("line")), r.out());
     }
 
     @Test

@@ -11,6 +11,7 @@ with a concrete fix. This page covers everything you need; the full rules are in
 bin/alang check prog.al --json    # 1. diagnostics: code, line, column, message, hint
 bin/alang test  prog.al --json    # 2. run every `test "..." { }` block
 bin/alang run   prog.al           # 3. run fn main()
+bin/alang run   prog.al < in.txt  #    a fn main(input: str[N]) gets all of stdin
 bin/alang explain E0215           #    explain any code
 ```
 
@@ -105,6 +106,10 @@ test "counts repeated words" {
 16. **No methods.** `len(xs)`, not `xs.len()`; `push(mut xs, v)`, not `xs.push(v)`; `trim(s)`, not `s.trim()`.
 17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`.
 18. **No exceptions.** Return an enum for recoverable failures; `panic("...")` or `assert` for bugs.
+19. **Input arrives whole; nothing else is read.** `fn main(input: str[4096])` gets all of stdin as bytes
+    (`bin/alang run prog.al < data.txt`; more than 4096 bytes traps), a `tool fn` gets JSON. No files.
+20. **`import "lib/text.al";` at the top of a file** adds that file's declarations, by their plain names.
+    The path is relative to the importing file, with `/`. Its `fn main`, tests and tools stay its own.
 
 ## Translating habits from other languages
 
@@ -127,6 +132,8 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
 | `println!("{}", x)` | `print(x);` |
 | `throw` / `raise` | return an enum, or `panic("message")` |
+| `sys.stdin.read()`, `open(path).read()`, `input()` | `fn main(input: str[4096])`, run with `< path`; split it into lines |
+| `import utils`, `#include "utils.h"`, `use crate::utils` | `import "utils.al";` before any declaration |
 | `if x { }` with `x: i32` | `if x != 0 { }` |
 
 ## The standard library
@@ -134,7 +141,7 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 Builtins that work on any type and capacity. Their names are reserved: call `gcd`, do not define it. For
 what it leaves out (ordering strs with a `<`, padding, parsing into an enum instead of trapping,
 pseudo-random numbers, a map as a list of structs), [examples/helpers.al](examples/helpers.al) has tested
-helpers to copy.
+helpers to import or copy.
 
 | Area | Functions |
 |------|-----------|
@@ -241,6 +248,48 @@ fn main() {
 }
 ```
 
+**Reading input**
+
+```alang
+// bin/alang run total.al < numbers.txt: one integer per line; anything else is reported, not trapped on.
+fn main(input: str[4096]) {
+    let lines: list[str[32]; 128] = split(input, '\n');
+    var total: i64 = 0;
+    for line in lines {
+        let t: str[32] = trim(line);
+        if is_int(t) {
+            total += i64(t);
+        } else if len(t) > 0 {
+            print("not a number: ", t);
+        }
+    }
+    print(total);
+}
+```
+
+**Splitting a program into files**
+
+```
+// lib/fmt.al
+const WIDTH: i64 = 8;
+
+fn pad(s: str[32]) -> str[32] { ... }
+
+test "pad" { ... }    // bin/alang test lib/fmt.al runs it; report.al leaves it out
+```
+
+```
+// report.al
+import "lib/fmt.al";
+
+fn main() {
+    print(pad("42"), " points");
+}
+```
+
+`bin/alang check report.al` checks both files; a diagnostic or trap in `lib/fmt.al` names that file (a
+`"file"` key in JSON). There are no namespaces: every name in the program must be unique.
+
 **Contracts document and check intent**
 
 ```alang
@@ -297,8 +346,8 @@ bounded loops, no recursion, and a deterministic step budget.
 You get these for free; do not work around them:
 
 - Same input, same output, same trap, on every run, machine, compiler and locale.
-- No time, randomness, environment, threads or I/O other than `print`. For a "random" value, take a seed
-  as a tool argument and compute from it.
+- No time, randomness, environment, threads or I/O other than `print` and the stdin of `fn main`. For a
+  "random" value, take a seed as a tool argument and compute from it.
 - Floats are bit-exact across the interpreter and the C backend: only `+ - * /`, `sqrt`, `floor`, `ceil`,
   `round`, `trunc`, `abs`, `min`, `max`, `clamp` and conversions exist (no `sin`/`exp`, and `pow` is for
   integers only).

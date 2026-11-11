@@ -19,13 +19,27 @@ public final class Ast {
 
     // =================================================================== program
 
+    /**
+     * A program: the declarations of its main file, {@code source}, and of the files it imports. As the
+     * parser returns it, it holds one file and that file's {@code imports}; the CLI reads the imported
+     * files and joins them all into one program, whose {@code files} are the main file and then the
+     * imported ones in the order they were read.
+     */
     public static final class Program {
         public final Source source;
         public final List<Item> items;
+        public final List<Import> imports;
+        public final List<Source> files;
 
-        public Program(Source source, List<Item> items) {
+        public Program(Source source, List<Item> items, List<Import> imports) {
+            this(source, items, imports, List.of(source));
+        }
+
+        public Program(Source source, List<Item> items, List<Import> imports, List<Source> files) {
             this.source = source;
             this.items = items;
+            this.imports = imports;
+            this.files = files;
         }
 
         public <T extends Item> List<T> itemsOf(Class<T> cls) {
@@ -43,6 +57,9 @@ public final class Ast {
             return null;
         }
     }
+
+    /** `import "path";` at the top of a file: {@code span} is the path's string literal. */
+    public record Import(Span span, String path) {}
 
     public abstract static sealed class Item {
         public final Span span;

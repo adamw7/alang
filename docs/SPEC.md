@@ -5,8 +5,8 @@ Four properties drive every rule:
 
 1. **No heap.** Every value has a compile-time size and lives on the stack or in static data. There is
    no `new`, pointer, `null`, garbage collector or allocator.
-2. **Deterministic.** Output is a pure function of the source and the tool arguments: the same bytes and
-   the same trap on every machine, compiler and locale.
+2. **Deterministic.** Output is a pure function of the source and the input (the tool arguments, or the
+   standard input of `fn main`): the same bytes and the same trap on every machine, compiler and locale.
 3. **Always terminates.** No recursion, and every `while` loop states an iteration limit.
 4. **One obvious way.** Few constructs, explicit types, no implicit conversions, no shadowing, no
    precedence puzzles; every mistake gets a coded diagnostic with a concrete fix.
@@ -23,7 +23,7 @@ syntax; this document describes semantics. Diagnostic codes are listed in [ERROR
 - Identifiers: `[a-zA-Z_][a-zA-Z0-9_]*`. `_` alone is the wildcard, not a name.
 - Reserved words: `fn let var const struct enum if else while for in match break continue return assert
   requires ensures mut and or not true false bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str list`.
-  `limit`, `test`, `tool` and `result` are contextual and may be used as names.
+  `limit`, `test`, `tool`, `import` and `result` are contextual and may be used as names.
 - The names of the builtin functions, the standard library included (§9), cannot be redefined (E0108),
   but may be variable names.
 
@@ -94,9 +94,11 @@ the same type only. Floats follow IEEE 754: `NaN != NaN`, `-0.0 == 0.0`.
 
 ## 3. Declarations
 
-A program is a sequence of declarations, in any order (everything can refer to everything):
+A file is a sequence of imports (§3.1), then declarations, in any order (everything can refer to
+everything):
 
 ```
+import "path/to/file.al";
 const NAME: Type = constant-expression;
 struct Name { field: Type, ... }
 enum Name { Variant, Variant(Type, ...), ... }
@@ -109,13 +111,42 @@ test "description" { ... }
   struct, enum and array literals, and the builtins that only compute: all but `print`, `push`, `pop`,
   `clear`, `append`, `panic`, `sort`, `reverse`, `insert` and `remove` (`const MASK: u32 = pow(2, 12) - 1;`).
   User function calls are not allowed (E0209). There are no global variables.
-- **`fn main()`** takes no parameters and returns nothing; `alang run` calls it.
+- **`fn main()`** returns nothing; `alang run` calls it. It takes no parameters, or one read-only
+  `str[N]` (`fn main(input: str[4096])`), which receives all of the program's standard input as bytes:
+  `alang run prog.al < data.txt`. Input longer than N bytes traps (R0004) before main runs; no input is
+  an empty str. Any other signature is E0602. The program never reads a file itself: the host decides
+  what the input is, and the same input gives the same output.
 - **`tool fn`** is callable with JSON arguments (§10) and cannot take `mut` parameters.
 - **`test "..."`** blocks are run by `alang test`, each from a fresh state.
 
 Names are unique: two items cannot share a name, and **locals cannot shadow** (E0105): a local may not
 reuse the name of a local still in scope, a parameter, a constant or a type. Sibling blocks may reuse
 names.
+
+### 3.1 Imports
+
+`import "helpers.al";` makes the declarations of another file part of the program. Imports come first in
+a file, before any declaration (E0001), and:
+
+- **The path is relative to the importing file**, uses `/` between directories on every OS, and names a
+  `.al` file: `import "lib/text.al";`, `import "../shared/geometry.al";`. Absolute paths and backslashes
+  are E0702, so a program means the same wherever it is copied. A file that cannot be read, or is not
+  UTF-8, is E0701.
+- **One namespace.** The imported constants, structs, enums and functions are used by their plain names,
+  as if declared in the importing file, and every name in the program is unique (E0104 names both files).
+  There are no modules, qualified names or private declarations.
+- **Each file once.** A file reached through several imports is read once; importing the same file twice
+  from one file is E0702. Files may not import each other, directly or through others (E0703, the import
+  cycle).
+- **An imported file keeps its `fn main` and its tests**, which are left out of the importing program, and
+  its `tool fn`s are plain functions there: a program's entry points and tools are those of the file given
+  on the command line. So a library can have a demo main and tests of its own
+  ([examples/helpers.al](../examples/helpers.al) has both, and [examples/tally.al](../examples/tally.al)
+  imports it).
+- **Diagnostics and traps name their file.** In text, `--> lib/text.al:12:5`; in JSON, a diagnostic or
+  trap in an imported file has a `"file"` key (one in the file given on the command line does not, as the
+  report names that file once), and a call in an imported file is shown as `called at lib/text.al:12:5`.
+  Diagnostics are sorted by file, the main file first, then by position.
 
 ## 4. Statements
 
@@ -272,7 +303,9 @@ time, everywhere:**
 
 - **No sources of nondeterminism:** no clock, random numbers, environment, file or network I/O, threads,
   hash-ordered collections, addresses or uninitialized memory. The only effect is `print`; the only
-  inputs are a tool call's arguments.
+  inputs are a tool call's arguments and the standard input that `alang run` passes to a
+  `fn main(input: str[N])`, read whole before main starts. Imports are read when the program is checked,
+  relative to the importing file, so they add no input either.
 - **No undefined or implementation-defined behavior:** integer widths are fixed, and overflow, bad
   indexes, shifts and conversions, and failed contracts trap with a fixed code, message and location.
   Evaluation order is fixed (§6).
@@ -284,7 +317,7 @@ time, everywhere:**
 - **Exact text formatting** (§9.6), independent of locale and C library.
 - **A deterministic step budget:** the interpreter counts executed statements, and `--max-steps`
   (default 100 000 000) stops a runaway program with R0011 after exactly the same number of steps.
-- **Deterministic tooling:** diagnostics are sorted by position, JSON has a fixed key order, generated C
+- **Deterministic tooling:** diagnostics are sorted by file and position, JSON has a fixed key order, generated C
   is byte-identical for identical input, and nothing depends on the host locale or line endings.
 
 The test suite runs every program repeatedly and under several locales, and compares the C backend byte
@@ -436,7 +469,8 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
 
 ## 10. Tools: calling ALang from an agent
 
-A `tool fn` can be called with JSON. `alang tools file.al` prints Anthropic-style tool definitions
+A `tool fn` can be called with JSON; only those of the file given on the command line are tools, not
+those of the files it imports (§3.1). `alang tools file.al` prints Anthropic-style tool definitions
 (`name`, `description` from the `///` comment, `input_schema`). The doc comments of its parameters, and
 of the structs, enums, fields and variants they use, become the `description`s in `input_schema`; a
 documented variant without a payload is listed as a `{"const": "Variant"}` alternative of its own, so it
@@ -506,9 +540,12 @@ are no exceptions: model recoverable failures as enum return values (see `exampl
 
 - Values become C structs (arrays are wrapped so they copy by value); `mut` parameters become pointers,
   read-only aggregates `const` pointers.
-- No allocation and no stdio: the object file references only `write` (`_write` and `_setmode` on
-  Windows, which keep output in binary mode), `_Exit` and exact math functions (`sqrt`, `floor`, `ceil`,
-  `frexp`, `ldexp`). For bare-metal targets define `AL_WRITE(fd, ptr, len)`.
+- No allocation and no stdio: the object file references only `write` and `read` (`_write`, `_read` and
+  `_setmode` on Windows, which keep input and output in binary mode), `_Exit` and exact math functions
+  (`sqrt`, `floor`, `ceil`, `frexp`, `ldexp`). For bare-metal targets define `AL_WRITE(fd, ptr, len)`,
+  and `AL_READ(fd, ptr, len)` (bytes read, 0 at the end) for the input of a `fn main(input: str[N])`,
+  which is otherwise empty. That input is read into static storage before main runs.
+- A program with imports is still one C file; a trap in an imported file names that file.
 - Expressions are lowered to statements so the ALang evaluation order is kept exactly, with every check
   (overflow, bounds, contracts, loop limits) and identical trap messages.
 - The runtime prelude formats numbers itself (floats exactly, with big-number arithmetic), so output is

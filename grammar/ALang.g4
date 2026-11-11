@@ -24,6 +24,7 @@
  *   - Struct values are built with named arguments: `Point(x: 1, y: 2)`.
  *   - Enum variants are qualified: `Color.Red`, `Shape.Circle(2.0)`.
  *   - Arguments passed by reference are marked at the call site: `push(mut xs, 1)`.
+ *   - Imports come first and name a file: `import "helpers.al";`.
  *
  * Semantic rules (types, mutability, exhaustiveness, ...) are described in
  * docs/SPEC.md and enforced by the checker.
@@ -35,7 +36,12 @@ grammar ALang;
 // =====================================================================
 
 program
-    : item* EOF
+    : importDecl* item* EOF
+    ;
+
+// import "helpers.al";  (a path relative to this file; its declarations join the program)
+importDecl
+    : IMPORT STRING_LIT SEMI
     ;
 
 item
@@ -295,12 +301,13 @@ literal
     | FALSE
     ;
 
-// `limit`, `test` and `tool` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool` and `import` are contextual keywords and remain usable as names.
 identifier
     : IDENT
     | LIMIT
     | TEST
     | TOOL
+    | IMPORT
     ;
 
 // =====================================================================
@@ -308,6 +315,7 @@ identifier
 // =====================================================================
 
 // ---- keywords ----
+IMPORT    : 'import' ;
 FN        : 'fn' ;
 TOOL      : 'tool' ;
 LET       : 'let' ;

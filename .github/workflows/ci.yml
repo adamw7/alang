@@ -59,12 +59,15 @@ jobs:
           out="$RUNNER_TEMP/alang"
           mkdir -p "$out"
 
-          # Every example type-checks, passes its tests and prints its golden output.
+          # Every example type-checks, passes its tests and prints its golden output; one whose main
+          # reads the standard input gets examples/NAME.in, and the others an empty stdin.
           for f in examples/*.al; do
             n="$(basename "$f" .al)"
+            input="examples/$n.in"
+            [ -f "$input" ] || input=/dev/null
             bin/alang check "$f"
             bin/alang test "$f"
-            bin/alang run "$f" > "$out/$n.out"
+            bin/alang run "$f" < "$input" > "$out/$n.out"
             diff -u "tests/examples/$n.out" "$out/$n.out"
           done
 
@@ -151,7 +154,7 @@ jobs:
           test "$(grep -c $'\r$' "$cmd_file")" -eq "$(wc -l < "$cmd_file")"
           home="$out/tar/alang-$version"
           cmp target/alang.jar "$home/lib/alang.jar"
-          for f in AGENTS.md README.md LICENSE THIRD-PARTY-NOTICES docs/*.md grammar/ALang.g4 examples/*.al examples/README.md harness/toon.py; do
+          for f in AGENTS.md README.md LICENSE THIRD-PARTY-NOTICES docs/*.md grammar/ALang.g4 examples/*.al examples/*.in examples/README.md harness/toon.py; do
             cmp "$f" "$home/$f"
           done
 

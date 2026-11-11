@@ -2,6 +2,7 @@ package alang.parse;
 
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Source;
 import alang.parser.ALangLexer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -36,17 +37,17 @@ import org.antlr.v4.runtime.Token;
 final class Nesting {
     static final int MAX_DEPTH = 128;
 
-    private Nesting() {}
-
     /** A top-level declaration, as seen in the tokens. */
     private static final class Item {
+        final Source file;
         final Token start;
         final Token name;      // null for a test
         final boolean endsWithSemicolon;
         final Set<String> names = new HashSet<>();
         int weight = 1;
 
-        Item(Token start, Token name, boolean endsWithSemicolon) {
+        Item(Source file, Token start, Token name, boolean endsWithSemicolon) {
+            this.file = file;
             this.start = start;
             this.name = name;
             this.endsWithSemicolon = endsWithSemicolon;
@@ -57,15 +58,27 @@ final class Nesting {
         }
     }
 
+    private final Source file;
     private final List<Item> items = new ArrayList<>();
+
+    private Nesting(Source file) {
+        this.file = file;
+    }
 
     /**
      * Reports E0404 and returns false if a single place nests too deeply. Run before parsing: the
      * parser itself recurses on brackets and prefix operators.
      */
-    static Nesting scan(List<Token> tokens, Diagnostics diags) {
-        Nesting n = new Nesting();
+    static Nesting scan(List<Token> tokens, Source file, Diagnostics diags) {
+        Nesting n = new Nesting(file);
         return n.scanTokens(tokens, diags) ? n : null;
+    }
+
+    /** The declarations of several files, so that chains through imported files count too. */
+    static Nesting merge(List<Nesting> files) {
+        Nesting all = new Nesting(null);
+        for (Nesting n : files) all.items.addAll(n.items);
+        return all;
     }
 
     private boolean scanTokens(List<Token> tokens, Diagnostics diags) {
@@ -121,7 +134,7 @@ final class Nesting {
                 }
             }
             if (depth > MAX_DEPTH) {
-                diags.error(Code.E0404, AstBuilder.span(t),
+                diags.error(Code.E0404, AstBuilder.span(t, file),
                     "this nests more than " + MAX_DEPTH + " levels deep (each bracket and each chained operator counts)",
                     "split the expression with intermediate `let` bindings, or move inner blocks into helper functions");
                 return false;
@@ -140,7 +153,7 @@ final class Nesting {
         int type = tokens.get(i).getType();
         int nameAt = type == ALangLexer.TOOL ? i + 2 : i + 1;  // tool fn NAME
         Token name = type != ALangLexer.TEST && nameAt < tokens.size() ? tokens.get(nameAt) : null;
-        Item item = new Item(tokens.get(i), name, type == ALangLexer.CONST);
+        Item item = new Item(file, tokens.get(i), name, type == ALangLexer.CONST);
         items.add(item);
         return item;
     }
@@ -167,7 +180,7 @@ final class Nesting {
 
     private static boolean isIdentifier(int type) {
         return type == ALangLexer.IDENT || type == ALangLexer.LIMIT || type == ALangLexer.TEST
-            || type == ALangLexer.TOOL;
+            || type == ALangLexer.TOOL || type == ALangLexer.IMPORT;
     }
 
     /**
@@ -191,7 +204,7 @@ final class Nesting {
         for (int i = 0; i < items.size(); i++) {
             if (total[i] > MAX_DEPTH) {
                 Item it = items.get(i);
-                diags.error(Code.E0404, AstBuilder.span(it.name != null ? it.name : it.start),
+                diags.error(Code.E0404, AstBuilder.span(it.name != null ? it.name : it.start, it.file),
                     it.label() + " nests " + total[i] + " levels deep through the functions, constants and types it "
                         + "uses; the limit is " + MAX_DEPTH,
                     "shorten the chain of declarations that use each other, or split deep expressions with `let` bindings");

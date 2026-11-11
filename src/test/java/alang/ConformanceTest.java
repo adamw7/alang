@@ -21,7 +21,8 @@ import org.junit.jupiter.api.TestFactory;
 /**
  * tests/run/NAME.al     must compile cleanly; stdout must equal NAME.out;
  *                       NAME.trap (if present) holds the expected trap code and line:col, and optionally
- *                       the trap's message on a second line.
+ *                       the trap's message on a second line; NAME.in (if present) is the standard input
+ *                       of a fn main(input: str[N]). Files the programs import live in tests/run/lib/.
  * tests/errors/NAME.al  first line `// expect: CODE...` lists the exact set of diagnostic codes;
  *                       an optional `// max-stack: N` line sets the memory budget (default: the
  *                       command line's, 8 MiB).
@@ -35,7 +36,7 @@ class ConformanceTest {
         return Harness.files("tests/run", ".al").stream().map(p -> Harness.dynamicTest(p.getFileName().toString(), () -> {
             Frontend.Result r = Harness.compile(p);
             assertTrue(r.diags().all().isEmpty(), () -> r.diags().renderText());
-            Harness.Run run = Harness.runMain(r);
+            Harness.Run run = Harness.runMain(r, Harness.input(p));
             String base = p.toString().substring(0, p.toString().length() - 3);
             assertEquals(Harness.read(Path.of(base + ".out")), run.stdout(), "stdout of " + p);
             Path trapFile = Path.of(base + ".trap");

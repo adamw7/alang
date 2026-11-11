@@ -103,18 +103,41 @@ public final class Harness {
         return Frontend.compile(src, budget(src.text));
     }
 
-    /** Runs fn main() and captures stdout. */
+    /** Runs fn main() and captures stdout; a main that takes the standard input gets none. */
     public static Run runMain(Frontend.Result r) {
+        return runMain(r, new byte[0]);
+    }
+
+    /** Runs fn main with {@code input} as its standard input, and captures stdout. */
+    public static Run runMain(Frontend.Result r, byte[] input) {
         FnDecl main = r.program().function("main");
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Interpreter in = new Interpreter(r.diags().source(), out, Interpreter.DEFAULT_MAX_STEPS);
         Trap trap = null;
         try {
-            in.call(main, new Object[0], main.nameSpan);
+            in.runMain(main, input);
         } catch (Trap t) {
             trap = t;
         }
         return new Run(out.toString(StandardCharsets.UTF_8), trap);
+    }
+
+    /**
+     * The standard input of tests/run/NAME.al: the bytes of NAME.in next to it, or none. The C build of the
+     * program reads the same file.
+     */
+    public static Path inputFile(Path program) {
+        String p = program.toString();
+        return Path.of(p.substring(0, p.length() - 3) + ".in");
+    }
+
+    public static byte[] input(Path program) {
+        try {
+            Path in = inputFile(program);
+            return Files.exists(in) ? Files.readAllBytes(in) : new byte[0];
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     /** Runs every test block; returns failure descriptions (empty when all pass). */
