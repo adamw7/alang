@@ -228,6 +228,7 @@ const findLine = (re) => fixed.findIndex((l) => re.test(l));
 
 // ---------------------------------------------------------------- timeline (seconds)
 const CPS_TYPE = 30, CPS_TEXT = 70, CPS_CODE = 330;
+let codeCps = CPS_CODE;
 const STEPS = ['Ask', 'Write', 'Check', 'Fix', 'Test', 'Run', 'Call'];
 const steps = [], spin = [], blocks = [], ev = {};
 let T = 0;
@@ -247,39 +248,78 @@ function tool(o) {
 const bash = (cmd, output, step, verb, wait, hold, status) =>
   tool({ name: 'Bash', arg: cmd, step, verb, wait, hold, status, res: { kind: 'alang', output } });
 
-ev.titleOut = 3.6;
+// Narration: D.voice maps a cue name to the length of its spoken clip in seconds (no entry, no clip).
+// cue() starts a clip now; waitVoice() holds the picture until the clip has finished.
+const cues = [];
+let voiceEnd = 0;
+function cue(name) {
+  const seconds = (D.voice || {})[name];
+  if (seconds == null) return;
+  cues.push({ name, t: T, seconds });
+  voiceEnd = T + seconds;
+}
+const waitVoice = (gap) => { T = Math.max(T, voiceEnd + gap); };
+function bashCue(cmd, output, step, verb, status, name, hold) {
+  const b = bash(cmd, output, step, verb, 0.8, 0, status);
+  cue(name);
+  T += hold;
+  waitVoice(0.5);
+  return b;
+}
+
+T = 0.7;
+cue('intro');
+T = 3.6;
+waitVoice(0.6);
+ev.titleOut = T;
 T = ev.titleOut + 1.0;
 ev.typeStart = T;
 steps.push([T, 0]);
-T += D.prompt.length / CPS_TYPE;
-T += 0.5;
+cue('ask');
+T += D.prompt.length / CPS_TYPE + 0.5;
+waitVoice(0.3);
 ev.submit = T;
 blocks.push({ kind: 'user', t0: T, text: D.prompt });
 spin.push([T, 'Thinking']);
+cue('read');
 T += 1.3;
 say("I'll follow AGENTS.md: explicit types, a fixed-size `str[64]` input, a documented `tool fn` and `test` blocks.");
 tool({ name: 'Read', arg: 'AGENTS.md', verb: 'Reading', wait: 0.6, hold: 0.5, res: { kind: 'plain', lines: [`Read ${D.agentsLines} lines`] } });
-const write = tool({ name: 'Write', arg: 'password.al', step: 1, verb: 'Writing', wait: D.draft.length / CPS_CODE + 0.55, hold: 0.6,
+waitVoice(0.5);
+cue('write');
+// The file is typed out in step with its narration, at most CPS_CODE characters a second.
+const writeSecs = Math.max(D.draft.length / CPS_CODE, ((D.voice || {}).write || 0) - 1.5);
+codeCps = D.draft.length / writeSecs;
+const write = tool({ name: 'Write', arg: 'password.al', step: 1, verb: 'Writing', wait: writeSecs + 0.55, hold: 0.6,
   res: { kind: 'plain', lines: [`Wrote ${draft.length} lines to password.al`] } });
 ev.writeStart = write.t0 + 0.25;
-ev.writeEnd = ev.writeStart + D.draft.length / CPS_CODE;
-ev.errors = bash('bin/alang check password.al', 'check1', 2, 'Checking', 0.8, 4.4, 'err').tRes;
+ev.writeEnd = ev.writeStart + writeSecs;
+waitVoice(0.5);
+ev.errors = bashCue('bin/alang check password.al', 'check1', 2, 'Checking', 'err', 'errors', 4.4).tRes;
 const diagnostics = D.diagnostics.slice().sort((a, b) => a.line - b.line);
+cue('fix');
 say('Two errors, each with a hint: `score` has to be `var` to change, and `+` does not join strings. `print` takes several values, so no join is needed.');
 const update = tool({ name: 'Update', arg: 'password.al', step: 3, verb: 'Editing', wait: 0.6, hold: 1.9, res: { kind: 'diff' } });
 ev.fix = changed.map((_, k) => update.tRes + 0.35 * k);
-ev.clean = bash('bin/alang check password.al', 'check2', 2, 'Checking', 0.7, 1.5, 'ok').tRes;
-ev.tests = bash('bin/alang test password.al', 'test', 4, 'Testing', 0.8, 1.9, 'ok').tRes;
-ev.run = bash('bin/alang run password.al', 'run', 5, 'Running', 0.7, 1.3, 'ok').tRes;
-const call = bash(`bin/alang call password.al rate_password '${D.callArgs}'`, 'call', 6, 'Calling', 0.8, 2.3, 'ok');
+waitVoice(0.5);
+ev.clean = bashCue('bin/alang check password.al', 'check2', 2, 'Checking', 'ok', 'clean', 1.5).tRes;
+ev.tests = bashCue('bin/alang test password.al', 'test', 4, 'Testing', 'ok', 'test', 1.9).tRes;
+ev.run = bashCue('bin/alang run password.al', 'run', 5, 'Running', 'ok', 'run', 1.3).tRes;
+const call = bashCue(`bin/alang call password.al rate_password '${D.callArgs}'`, 'call', 6, 'Calling', 'ok', 'call', 2.3);
 ev.callStart = call.t0;
 ev.call = call.tRes;
 ev.done = T;
+cue('done');
 say('Done. `password.al` passes `check` and both tests, and `rate_password` is a JSON tool any agent can call; `bin/alang tools password.al` prints its schema.');
 T += 3.2;
+waitVoice(0.8);
 ev.endIn = T;
-T += 0.6 + 6.0;
+T += 0.5;
+cue('end');
+T = ev.endIn + 6.6;
+waitVoice(1.6);
 window.DURATION = T;
+window.CUES = cues;
 
 // ---------------------------------------------------------------- editor
 const LH = 24, PAD = 14;
@@ -308,7 +348,7 @@ function renderEditor(t) {
   const writing = t < ev.writeEnd;
   const editing = t >= ev.fix[0] - 0.6 && t < ev.fix[ev.fix.length - 1] + 0.5;
   $('tab').innerHTML = `<span class="name">password.al</span>${writing || editing ? ' <span class="mod">●</span>' : ''}`;
-  const typed = writing ? Math.floor((t - ev.writeStart) * CPS_CODE) : Infinity;
+  const typed = writing ? Math.floor((t - ev.writeStart) * codeCps) : Infinity;
   let curLine = draft.length - 1;
   if (writing) { while (curLine > 0 && lineStart[curLine] > typed) curLine--; }
   const shown = writing ? curLine + 1 : draft.length;

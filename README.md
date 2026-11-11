@@ -8,9 +8,10 @@ Agentic language. For agents. Not for humans. Does not use heaps and other sourc
 statically typed language that AI agents write and hosts run safely. The parser is generated from one
 ANTLR 4 grammar, [`grammar/ALang.g4`](grammar/ALang.g4), on every build.
 
-**Demo:** [docs/demo/demo.mp4](docs/demo/demo.mp4) (50 s) shows Claude Code building a small ALang tool:
-write, `alang check`, fix from the hints, test, run and call it. Every `alang` output in it is real;
-`node docs/demo/make_demo.js` re-runs the commands and renders it again.
+**Demo:** [docs/demo/demo.mp4](docs/demo/demo.mp4) (under 2 minutes, narrated, with English subtitles)
+shows Claude Code building a small ALang tool: write, `alang check`, fix from the hints, test, run and
+call it. Every `alang` output in it is real; [`docs/demo/make_demo.js`](docs/demo/make_demo.js) re-runs
+the commands and renders it again.
 
 ```alang
 /// Splits a bill evenly; the remainder goes to the first payers.
