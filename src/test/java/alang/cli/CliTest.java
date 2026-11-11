@@ -508,6 +508,15 @@ class CliTest {
             """);
         // The shortest decimal of the f32, not of the double it widens to (0.10000000149011612).
         assertEquals("{\"ok\": true, \"result\": 0.1, \"stdout\": \"\"}\n", run("call", p.toString(), "tenth").out());
+        // Every float result is written as a float, never as an integer: 123456789.0 used to come back as
+        // 123456789 (Python's json reads an int) while 1234567.0 came back as 1234567.0.
+        assertEquals("{\"ok\": true, \"result\": [1.0, 123456789.0], \"stdout\": \"\"}\n",
+            run("call", p.toString(), "ratio", "{\"a\": 123456789, \"b\": 1}").out());
+        assertEquals("{\"ok\": true, \"result\": [1.0, 1234567.0], \"stdout\": \"\"}\n",
+            run("call", p.toString(), "ratio", "{\"a\": 1234567, \"b\": 1}").out());
+        assertEquals("{\"ok\": true, \"result\": 16777216.0, \"stdout\": \"\"}\n",
+            run("call", p.toString(), "narrow", "{\"x\": 16777216}").out());
+        assertEquals("{\"ok\": true, \"result\": 1.0E+16, \"stdout\": \"\"}\n", run("call", p.toString(), "narrow", "{\"x\": 1e16}").out());
         // NaN and infinities used to come back as null with "ok": true.
         for (String args : new String[] {"{\"a\": 0, \"b\": 0}", "{\"a\": 1, \"b\": 0}"}) {
             Result r = run("call", p.toString(), "ratio", args);
@@ -792,6 +801,11 @@ class CliTest {
         r = run("run", p.toString(), "--max-steps", "0");
         assertEquals(1, r.code(), r.err());
         assertTrue(r.err().startsWith("trap[R0008]: "), r.err());
+        // Steps are still counted without a budget: `run --json` used to report 0 for any program.
+        Path count = write("count.al", "fn main() {\n    var t: i64 = 0;\n    for i in 0..10 {\n        t += i;\n    }\n}\n");
+        String counted = run("run", count.toString(), "--json").out();
+        assertTrue(counted.endsWith("\"steps\": 22}\n"), counted);
+        assertEquals(counted, run("run", count.toString(), "--json", "--max-steps", "0").out());
 
         // Without --max-steps the documented default applies.
         Path forever = write("forever.al", "fn main() {\n    while true limit 1000000000 {\n    }\n}\n");

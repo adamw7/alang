@@ -32,7 +32,8 @@ public final class Layout {
     public static long size(Type t) {
         return switch (t) {
             case Type.Prim p -> p.kind().size;
-            case Type.Str s -> align(add(4, s.cap()), 4);
+            // C has no zero-length arrays, so the C backend gives the str[0] of "" a one-byte buffer.
+            case Type.Str s -> align(add(4, Math.max(1, s.cap())), 4);
             case Type.ArrayT a -> mul(size(a.elem()), a.len());
             case Type.ListT l -> {
                 long al = Math.max(4, align(l.elem()));
