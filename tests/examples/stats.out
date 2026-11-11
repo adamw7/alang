@@ -1,0 +1,3 @@
+Summary(count: 14, smallest: 12.5, largest: 21.0, mean: 16.628571, median: 16.8, stddev: 2.577493)
+trend: 0.62989 degrees per day, r^2 = 0.970483
+forecast for day 14: 21.352747
