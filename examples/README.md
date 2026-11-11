@@ -38,7 +38,7 @@ bin/alang call examples/vending_machine.al simulate '{"events": [{"Coin": [200]}
 bin/alang call examples/task_scheduler.al schedule '{"tasks": [{"name": "test", "deps": ["build"]}, {"name": "build", "deps": []}]}'
 # {"ok": true, "result": {"Order": [["build", "test"]]}, "stdout": "", "steps": 62}
 bin/alang call examples/stats.al fit_line '{"xs": [0, 1, 2], "ys": [1, 3, 5]}'
-# {"ok": true, "result": {"Ok": [{"slope": 2.0, "intercept": 1.0, "r_squared": 1.0}]}, "stdout": "", "steps": 49}
+# {"ok": true, "result": {"Ok": [{"slope": 2.0, "intercept": 1.0, "r_squared": 1.0}]}, "stdout": "", "steps": 68}
 bin/alang call examples/base64.al encode '{"data": "agents"}'
 # {"ok": true, "result": "YWdlbnRz", "stdout": "", "steps": 34}
 ```

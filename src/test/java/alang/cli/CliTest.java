@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import alang.Harness;
 import alang.util.Json;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -746,6 +747,21 @@ class CliTest {
         assertEquals(2, r.code(), r.err());
         assertEquals("{\"ok\": false, \"error\": {\"code\": \"usage_error\", \"message\": \"file not found: missing.al\"}}\n", r.out());
         assertEquals("", r.err());
+    }
+
+    @Test
+    void theCallsShownInTheExamplesReadmeAreCurrent() {
+        // Each `bin/alang call` line there is followed by its output as a `# ` comment. Nothing checked them, so
+        // the step count of fit_line stayed 49 after a fix made it 68.
+        String doc = Harness.read(Harness.ROOT.resolve("examples/README.md"));
+        Matcher m = Pattern.compile("^bin/alang call (\\S+) (\\S+) '([^']*)'\\n# (.*)$", Pattern.MULTILINE).matcher(doc);
+        int calls = 0;
+        while (m.find()) {
+            Result r = run("call", Harness.ROOT.resolve(m.group(1)).toString(), m.group(2), m.group(3));
+            assertEquals(m.group(4) + "\n", r.out(), "examples/README.md: the output shown for " + m.group(1) + " " + m.group(2));
+            calls++;
+        }
+        assertTrue(calls >= 5, "expected the `bin/alang call` lines of examples/README.md");
     }
 
     @Test
