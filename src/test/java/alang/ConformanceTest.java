@@ -20,7 +20,8 @@ import org.junit.jupiter.api.TestFactory;
 
 /**
  * tests/run/NAME.al     must compile cleanly; stdout must equal NAME.out;
- *                       NAME.trap (if present) holds the expected trap code and line:col.
+ *                       NAME.trap (if present) holds the expected trap code and line:col, and optionally
+ *                       the trap's message on a second line.
  * tests/errors/NAME.al  first line `// expect: CODE...` lists the exact set of diagnostic codes;
  *                       an optional `// max-stack: N` line sets the memory budget (default: the
  *                       command line's, 8 MiB).
@@ -41,7 +42,9 @@ class ConformanceTest {
             if (Files.exists(trapFile)) {
                 assertNotNull(run.trap(), "expected a trap");
                 String got = run.trap().code + " " + run.trap().span.line() + ":" + run.trap().span.col();
-                assertEquals(Harness.read(trapFile).strip(), got);
+                String[] want = Harness.read(trapFile).strip().split("\n", 2);
+                assertEquals(want[0], got);
+                if (want.length > 1) assertEquals(want[1], run.trap().getMessage(), "trap message of " + p);
             } else {
                 assertNull(run.trap(), () -> "unexpected trap: " + run.trap().getMessage());
             }

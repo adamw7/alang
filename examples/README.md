@@ -10,7 +10,7 @@ agent can call with JSON. CI type-checks every example, runs its tests, compares
 | [fizzbuzz.al](fizzbuzz.al) | Loops, conditions, building text in a fixed-capacity `str` |
 | [binary_search.al](binary_search.al) | A bounded `while` loop, `requires`/`ensures` contracts |
 | [shapes.al](shapes.al) | Structs, enums with payloads, exhaustive `match`, value semantics |
-| [text_tools.al](text_tools.al) | Text tools working byte by byte |
+| [text_tools.al](text_tools.al) | Text tools on the standard library: `words`, `to_upper`, `sort`, `contains`, `join` |
 | [inventory.al](inventory.al) | State passed as a value and changed through `mut` parameters; results as enums |
 | [rpn_calculator.al](rpn_calculator.al) | A tokenizer and an evaluation stack; errors as enum values instead of exceptions |
 | [maze_bfs.al](maze_bfs.al) | Breadth-first search with a fixed-capacity queue in place of recursion |
@@ -22,7 +22,7 @@ agent can call with JSON. CI type-checks every example, runs its tests, compares
 | [stats.al](stats.al) | `f64` statistics and least squares, `sqrt`, float comparisons with a tolerance |
 | [vending_machine.al](vending_machine.al) | A state machine: enum events as JSON input, `mut` state, an `ensures` on a `mut` parameter |
 | [sorting.al](sorting.al) | Merge sort and quicksort without recursion, sortedness as a contract, a seeded pseudo-random generator |
-| [helpers.al](helpers.al) | Library functions other languages build in, to copy: string ordering, split, trim, parse an integer, pow, sort, a list of entries as a map |
+| [helpers.al](helpers.al) | Helpers the standard library leaves out, to copy: str ordering, padding, parsing into an enum instead of trapping, pseudo-random numbers, a list of entries as a map |
 
 ## Try them
 

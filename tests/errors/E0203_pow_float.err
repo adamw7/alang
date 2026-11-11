@@ -1,0 +1,7 @@
+error[E0203]: pow() needs an integer base, found f64
+ --> tests/errors/E0203_pow_float.al:3:25
+  |
+3 |     let area: f64 = pow(2.0, 2.0);
+  |                         ^^^
+  = hint: there is no float pow, which rounds differently in different math libraries; for a whole power, multiply: x * x * x
+

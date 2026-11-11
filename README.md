@@ -119,6 +119,48 @@ command does not take, or an extra argument). With `--json`, and always for `cal
 stdout too; `call`'s error codes are `usage_error`, `compile_error`, `bad_tool`, `bad_json`,
 `bad_arguments`, `bad_result` and the trap codes (`R....`).
 
+## Standard library
+
+Without generics, the standard library is a set of builtins that work on any type and capacity, in the
+interpreter and the C backend alike, traps included
+([SPEC.md §9](docs/SPEC.md#9-builtins-and-the-standard-library)):
+
+| Area | Functions |
+|------|-----------|
+| Core | `print` `len` `cap` `push` `pop` `clear` `append` `panic` |
+| Math | `abs` `min` `max` `clamp` `pow` `gcd` `lcm` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
+| Characters | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` |
+| Text | `contains` `index_of` `starts_with` `ends_with` `slice` `trim` `split` `words` `join` `replace` `is_int`, and `i64(s)` to parse |
+| Collections | `sort` `reverse` `insert` `remove` (and `contains`, `index_of`, `slice` on lists and arrays) |
+
+```alang
+/// The distinct words of a text in alphabetical order, lower-cased.
+tool fn vocabulary(text: str[256]) -> list[str[16]; 32] {
+    var all: list[str[16]; 32] = words(to_lower(text));
+    sort(mut all);
+    var unique: list[str[16]; 32] = [];
+    for w in all {
+        if not contains(unique, w) {
+            push(mut unique, w);
+        }
+    }
+    return unique;
+}
+
+fn main() {
+    let line: str[64] = join(vocabulary("The cat saw the dog"), ", ");
+    print(line);
+}
+```
+
+```
+$ bin/alang run vocabulary.al
+cat, dog, saw, the
+```
+
+`split`, `words`, `join` and `replace` take their capacities from the variable they are stored in, and
+`sort` orders every type, structs field by field, so a list of records sorts by putting the key first.
+
 ## Diagnostics built for agents
 
 ```
@@ -134,7 +176,7 @@ With `--json`, the report is one line of JSON that names the source `file` once,
 has `severity`, `code`, `title`, `message`, `line`, `column`, `length`, `source_line` and `hint`. A trap
 gives its `line`, `column` and `source_line` the same way. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`,
 `xs.len()`, `let x = 5`, `while` without a limit, `null`, generics, imports, tuples, slices, `if` as an
-expression, match guards, `sort`, `pow`, ...) are answered with the ALang spelling.
+expression, match guards, `substr`, `parse_int`, `sorted`, ...) are answered with the ALang spelling.
 See [docs/ERRORS.md](docs/ERRORS.md).
 
 ## Tools in an agent host
@@ -189,8 +231,8 @@ same, so measure before switching a harness over. `--delimiter tab` saves a litt
 - [bench/](bench): do models write more correct tools in ALang or in Python?
 - [harness/toon.py](harness/toon.py): tool results as TOON for a model's prompt
 - [examples/](examples): complete programs, each with tests
-- [examples/helpers.al](examples/helpers.al): tested stand-ins for library functions ALang leaves out
-  (sort, split, trim, parse an integer, a map), to copy into a program
+- [examples/helpers.al](examples/helpers.al): tested helpers the standard library leaves out (str
+  ordering, padding, parsing into an enum, pseudo-random numbers, a map), to copy into a program
 
 `src/main/java/alang/` holds the toolchain, one package per component (see the architecture);
 `tests/run/` has programs with golden output (`.out`) and expected traps (`.trap`), `tests/errors/`
@@ -239,8 +281,7 @@ published once; to redo one, delete its release and package first.
 
 ## Status
 
-Version 0.2. Not yet included: modules/imports, generics, slices, a formatter, and a standard library
-beyond the builtins.
+Version 0.2. Not yet included: modules/imports, generics, slices and a formatter.
 
 ## License
 

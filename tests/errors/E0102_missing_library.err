@@ -3,63 +3,63 @@ error[E0102]: unknown function `parse_int`
   |
 5 |     let n: i64 = parse_int(s);
   |                  ^^^^^^^^^
-  = hint: there is no parsing builtin; build the number digit by digit: var n: i64 = 0; for c in s { n = n * 10 + i64(c - '0'); } (check '0' <= c and c <= '9' first)
+  = hint: convert the text with an integer type's name: i64(trim(s)), which traps unless the text is a decimal integer, so check is_int(trim(s)) first
 
 error[E0102]: unknown function `int`
  --> tests/errors/E0102_missing_library.al:6:18
   |
 6 |     let k: i64 = int(2.5);
   |                  ^^^
-  = hint: convert numbers with the target type's name: i64(x), f64(x), u8(x)
+  = hint: convert with the target type's name: i64(x), f64(x), u8(x); i64(s) also reads an integer from text
 
-error[E0102]: unknown function `split`
+error[E0102]: unknown function `splitlines`
  --> tests/errors/E0102_missing_library.al:7:5
   |
-7 |     split(s);
-  |     ^^^^^
-  = hint: there is no split; walk the bytes and collect each part in a str[N]: for c in s { if c == ' ' { ...use part...; clear(mut part); } else { push(mut part, c); } }
+7 |     splitlines(s);
+  |     ^^^^^^^^^^
+  = hint: use words(s) to split on whitespace, or split(s, sep): let parts: list[str[32]; 16] = split(s, '\n');
 
-error[E0102]: unknown function `trim`
+error[E0102]: unknown function `strip`
  --> tests/errors/E0102_missing_library.al:8:5
   |
-8 |     trim(s);
-  |     ^^^^
-  = hint: there is no trim; find the first and last byte to keep with loops, then copy that range: for i in a..b { push(mut out, s[i]); }
+8 |     strip(s);
+  |     ^^^^^
+  = hint: use trim(s), which removes ASCII whitespace at both ends
 
 error[E0102]: unknown function `upper`
  --> tests/errors/E0102_missing_library.al:9:5
   |
 9 |     upper(s);
   |     ^^^^^
-  = hint: there is no case conversion; for ASCII, a byte c with 'a' <= c and c <= 'z' becomes c - 32 (and 'A'..'Z' becomes c + 32)
+  = hint: use to_upper(x), for a u8 byte or a str
 
-error[E0102]: unknown function `join`
+error[E0102]: unknown function `implode`
   --> tests/errors/E0102_missing_library.al:10:5
    |
-10 |     join(s);
-   |     ^^^^
-  = hint: there is no join; append each part after a separator: for i in 0..len(parts) { if i > 0 { append(mut s, ", "); } append(mut s, parts[i]); }
+10 |     implode(s);
+   |     ^^^^^^^
+  = hint: use join(parts, sep): let line: str[64] = join(parts, ", ");
 
-error[E0102]: unknown function `reverse`
+error[E0102]: unknown function `reversed`
   --> tests/errors/E0102_missing_library.al:11:5
    |
-11 |     reverse(s);
-   |     ^^^^^^^
-  = hint: there is no reverse; copy from the end: for k in 0..len(xs) { push(mut out, xs[len(xs) - 1 - k]); }
+11 |     reversed(s);
+   |     ^^^^^^^^
+  = hint: reverse in place with reverse(mut xs)
 
 error[E0102]: unknown function `substring`
   --> tests/errors/E0102_missing_library.al:12:5
    |
 12 |     substring(s);
    |     ^^^^^^^^^
-  = hint: there are no slices; copy the bytes you need in a loop: for i in a..b { push(mut part, s[i]); }
+  = hint: use slice(s, from, to): the bytes from..to as a copy
 
 error[E0102]: unknown function `isdigit`
   --> tests/errors/E0102_missing_library.al:13:5
    |
 13 |     isdigit(s);
    |     ^^^^^^^
-  = hint: compare the byte with character literals: '0' <= c and c <= '9', 'a' <= c and c <= 'z', c == ' '
+  = hint: use is_digit(c) on a u8 byte
 
 error[E0102]: unknown function `sum`
   --> tests/errors/E0102_missing_library.al:14:5

@@ -1,0 +1,8 @@
+digit: 0123456789
+alpha: ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+alnum: 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+upper: ABCDEFGHIJKLMNOPQRSTUVWXYZ
+lower: abcdefghijklmnopqrstuvwxyz
+space: <9><10><11><12><13> 
+ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz
+64 96 123 91 122

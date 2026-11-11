@@ -4,11 +4,11 @@ fn main() {
     let s: str[16] = "12 ab";
     let n: i64 = parse_int(s);
     let k: i64 = int(2.5);
-    split(s);
-    trim(s);
+    splitlines(s);
+    strip(s);
     upper(s);
-    join(s);
-    reverse(s);
+    implode(s);
+    reversed(s);
     substring(s);
     isdigit(s);
     sum(s);

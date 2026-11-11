@@ -1,0 +1,125 @@
+error[E0108]: `trim` is a builtin function and cannot be redefined
+ --> tests/errors/stdlib_misuse.al:3:4
+  |
+3 | fn trim(s: str[8]) -> str[8] {
+  |    ^^^^
+  = hint: the standard library has trim(s) -> str[N]; call it, or choose a different name, e.g. my_trim
+
+error[E0216]: split() takes its type, and so its capacity, from the variable it is stored in
+  --> tests/errors/stdlib_misuse.al:10:11
+   |
+10 |     print(split(s, ","));
+   |           ^^^^^^^^^^^^^
+  = hint: make the call the whole right-hand side of a typed let/var, an assignment or a return: let parts: list[str[32]; 16] = split(s, ",");
+
+error[E0201]: split() builds a list[str[K]; M], but str[8] is expected
+  --> tests/errors/stdlib_misuse.al:11:21
+   |
+11 |     let n: str[8] = split(s, ",");
+   |                     ^^^^^^^^^^^^^
+  = hint: store it in a variable of that type: let parts: list[str[32]; 16] = split(s, ",");
+
+error[E0201]: split() builds a list[str[K]; M], but list[i64; 4] is expected
+  --> tests/errors/stdlib_misuse.al:12:31
+   |
+12 |     let parts: list[i64; 4] = split(s, ",");
+   |                               ^^^^^^^^^^^^^
+  = hint: store it in a variable of that type: let parts: list[str[32]; 16] = split(s, ",");
+
+error[E0203]: join() needs an array or list of str, found list[i64; 4]
+  --> tests/errors/stdlib_misuse.al:13:30
+   |
+13 |     let line: str[16] = join(xs, ",");
+   |                              ^^
+
+error[E0201]: is_digit() needs a u8 byte, found i64
+  --> tests/errors/stdlib_misuse.al:14:32
+   |
+14 |     let digit: bool = is_digit(len(s));
+   |                                ^^^^^^
+  = hint: convert it: is_digit(u8(len(s)))
+
+error[E0201]: contains() looks for an element of type i64, found str[1]
+  --> tests/errors/stdlib_misuse.al:15:34
+   |
+15 |     let has: bool = contains(xs, "a");
+   |                                  ^^^
+
+error[E0203]: contains() needs a str, array or list, found i64
+  --> tests/errors/stdlib_misuse.al:16:30
+   |
+16 |     let num: bool = contains(42, 4);
+   |                              ^^
+
+error[E0207]: sort() modifies its argument
+  --> tests/errors/stdlib_misuse.al:17:10
+   |
+17 |     sort(xs);
+   |          ^^
+  = hint: write sort(mut xs)
+
+error[E0212]: remove() needs an integer position, found f64
+  --> tests/errors/stdlib_misuse.al:18:36
+   |
+18 |     let last: i64 = remove(mut xs, 1.5);
+   |                                    ^^^
+
+error[E0215]: a call with `mut` arguments must be its own statement or the whole right-hand side of let/var/assignment/return
+  --> tests/errors/stdlib_misuse.al:19:11
+   |
+19 |     print(remove(mut xs, 0));
+   |           ^^^^^^^^^^^^^^^^^
+  = hint: store the result first: let value: i64 = remove(mut xs, 0); then use `value`
+
+error[E0203]: pow() needs an integer exponent, found f64
+  --> tests/errors/stdlib_misuse.al:20:25
+   |
+20 |     let p: i64 = pow(2, 1.5);
+   |                         ^^^
+
+error[E0201]: gcd() needs two integers of the same type, found i32 and i64
+  --> tests/errors/stdlib_misuse.al:21:18
+   |
+21 |     let g: i64 = gcd(i32(4), i64(6));
+   |                  ^^^^^^^^^^^^^^^^^^^
+
+error[E0214]: cannot convert str[3] to f64
+  --> tests/errors/stdlib_misuse.al:22:18
+   |
+22 |     let f: f64 = f64("1.5");
+   |                  ^^^^^^^^^^
+  = hint: text converts only to integers; there is no float parsing: f64(i64("1.5")), checked with is_int("1.5") first
+
+error[E0204]: clamp() takes 3 argument(s) but 2 were given
+  --> tests/errors/stdlib_misuse.al:23:18
+   |
+23 |     let c: i64 = clamp(1, 2);
+   |                  ^^^^^^^^^^^
+  = hint: signature: clamp(x, lo, hi) -> T
+
+error[E0102]: unknown function `substr`
+  --> tests/errors/stdlib_misuse.al:24:22
+   |
+24 |     let w: str[16] = substr(s, 0, 1);
+   |                      ^^^^^^
+  = hint: use slice(s, from, to): the bytes from..to as a copy
+
+error[E0203]: starts_with() needs a str, found list[i64; 4]
+  --> tests/errors/stdlib_misuse.al:25:31
+   |
+25 |     let q: bool = starts_with(xs, 3);
+   |                               ^^
+
+error[E0201]: replace() needs a str or a u8 byte for what it replaces, found f64
+  --> tests/errors/stdlib_misuse.al:26:33
+   |
+26 |     let r: str[16] = replace(s, 1.5, "x");
+   |                                 ^^^
+
+error[E0204]: split() takes 2 argument(s) but 1 were given
+  --> tests/errors/stdlib_misuse.al:29:10
+   |
+29 |     ws = split(s);
+   |          ^^^^^^^^
+  = hint: split(s, sep) needs a separator; to split on whitespace, use words(s)
+

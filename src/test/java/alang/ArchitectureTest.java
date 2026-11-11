@@ -269,7 +269,7 @@ class ArchitectureTest {
             .orShould().dependOnClassesThat().belongToAnyOf(StrictMath.class)
             .because("float results are bit-exact between the interpreter and the C backend, so ALang has "
                     + "only correctly rounded operations (+ - * /, sqrt, floor, ceil, abs, min, max, "
-                    + "conversions); the transcendental functions may differ in the last bit between JVMs "
+                    + "conversions, and round and trunc built from them); the transcendental functions may differ in the last bit between JVMs "
                     + "and C libraries");
 
     @ArchTest

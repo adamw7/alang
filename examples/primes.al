@@ -86,8 +86,8 @@ tool fn factorize(n: i64) -> list[i64; MAX_FACTORS]
     return factors;
 }
 
-/// Greatest common divisor of two non-negative numbers (Euclid's algorithm).
-tool fn gcd(a: i64, b: i64) -> i64
+/// Greatest common divisor of two non-negative numbers by Euclid's algorithm (the builtin gcd(a, b) does the same).
+tool fn euclid(a: i64, b: i64) -> i64
     requires a >= 0 and b >= 0
 {
     var x: i64 = a;
@@ -107,7 +107,7 @@ fn main() {
     for n in numbers {
         print(n, " = ", factorize(n));
     }
-    print("gcd(1071, 462) = ", gcd(1071, 462));
+    print("gcd(1071, 462) = ", euclid(1071, 462));
 }
 
 test "there are 25 primes below 100 and 168 below 1000" {
@@ -143,4 +143,13 @@ test "gcd" {
     assert gcd(17, 0) == 17;
     // F(92) and F(91), the slowest pair that fits.
     assert gcd(7_540_113_804_746_346_429, 4_660_046_610_375_530_309) == 1;
+}
+
+test "euclid agrees with the builtin gcd" {
+    for a in 0..40 {
+        for b in 0..40 {
+            assert euclid(a, b) == gcd(a, b);
+        }
+    }
+    assert euclid(1071, 462) == 21;
 }

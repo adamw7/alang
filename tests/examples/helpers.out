@@ -1,11 +1,5 @@
-["a", "b", "", "c"]
-["the", "quick", "brown", "fox"]
-[padded]
-HELLO, WORLD hello, world
-000042 3
+true 000042
 ParsedI64.Ok(-9223372036854775808) ParsedI64.Bad
-1594323
-[-2, 0, 5, 9] [9, 5, 0, -2]
-Zebra, app, apple, pear
+131874305
 [Entry(key: "apples", value: 7), Entry(key: "pears", value: 5)]
 MaybeI64.Some(7) MaybeI64.None

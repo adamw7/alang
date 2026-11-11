@@ -176,8 +176,9 @@ public enum Code {
         "A `while` loop ran more iterations than its `limit`. Either the limit is too small or the loop does not make progress.",
         "while true limit 10 { }  // trap after 10 iterations"),
     R0009("conversion out of range",
-        "A numeric conversion such as u8(x) or i32(f) received a value that the target type cannot represent (or NaN).",
-        "let b: u8 = u8(-1);  // trap"),
+        "A conversion such as u8(x), i32(f) or i64(s) received a value that the target type cannot represent: a number "
+            + "out of its range, NaN, or a str that is not a decimal integer (check it first with is_int(s)).",
+        "let b: u8 = u8(-1);  // trap\nlet n: i64 = i64(\"12a\");  // trap"),
     R0010("panic",
         "The program called panic(message).",
         "panic(\"unreachable state\");"),
@@ -186,7 +187,11 @@ public enum Code {
         "alang run long.al --max-steps 1000000000"),
     R0012("invalid shift or empty pop",
         "A shift amount is negative or not smaller than the bit width, or pop() was called on an empty list/string.",
-        "let x: u32 = 1 << 32;  // trap");
+        "let x: u32 = 1 << 32;  // trap"),
+    R0013("invalid argument",
+        "A standard library function received an argument outside its domain: a negative exponent for pow, bounds "
+            + "with lo > hi for clamp, or an empty separator or pattern for split or replace.",
+        "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap");
 
     public final String title;
     public final String explanation;

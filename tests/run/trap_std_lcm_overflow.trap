@@ -1,0 +1,2 @@
+R0001 3:11
+integer overflow: result of `lcm` does not fit in u32

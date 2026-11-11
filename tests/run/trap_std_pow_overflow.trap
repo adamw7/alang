@@ -1,0 +1,2 @@
+R0001 3:11
+integer overflow: result of `pow` does not fit in i64

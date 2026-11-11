@@ -1,0 +1,39 @@
+["a", "bb", "", "c"] a|bb||c HELLO
+true false true true
+4 7 -1 0 0
+true true false true
+true true false true
+true true false true
+["abcd", "efgh"] abcd,efgh a--b--c xyzb
+[Hello] [World] [] [Hello, World]
+[padded] [] [] [x]
+MIXED 123 ä mixed 123 Ä 81 113 63
+["one", "two", "", "three"] 4
+[""] 1
+["", "x", ""]
+["a", "b", "", "c"]
+["one", "two", "three", "four"] 4
+[] 0
+ann, bob, cy
+annbobcy
+[]
+a + b + c
+bb 2
+abc
+a/b/c
+ba
+"0" is_int true
+"-0" is_int true
+"+42" is_int true
+"-17" is_int true
+"007" is_int true
+"9223372036854775807" is_int true
+"-9223372036854775808" is_int true
+"9223372036854775808" is_int false
+"" is_int false
+"-" is_int false
+"1.5" is_int false
+" 1" is_int false
+-9223372036854775808 18446744073709551615 255 -128 0
+124
+[Pair(key: "a", value: 1), Pair(key: "b", value: 22), Pair(key: "long_key", value: -3)]

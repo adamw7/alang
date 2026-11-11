@@ -51,6 +51,11 @@ public final class Checker {
         int loopDepth;
         boolean inEnsures;
         Expr mutCallAllowed;
+        /**
+         * The expression stored by the let/var, assignment, return or constant being checked, whose type it
+         * then takes: split, words, join and replace build a value of that type.
+         */
+        Expr stored;
     }
 
     private Ctx ctx = new Ctx();
@@ -128,9 +133,11 @@ public final class Checker {
                     else consts.put(c.name, c);
                 }
                 case FnDecl f -> {
-                    if (Builtin.byName(f.name) != null) {
+                    Builtin b = Builtin.byName(f.name);
+                    if (b != null) {
                         diags.error(Code.E0108, f.nameSpan, "`" + f.name + "` is a builtin function and cannot be redefined",
-                            "choose a different name, e.g. my_" + f.name);
+                            b.group == Builtin.Group.CORE ? "choose a different name, e.g. my_" + f.name
+                                : "the standard library has " + b.signature + "; call it, or choose a different name, e.g. my_" + f.name);
                     } else if (fns.containsKey(f.name)) {
                         duplicate(f.nameSpan, "function", f.name);
                     } else {
@@ -210,14 +217,17 @@ public final class Checker {
         // value, or constants computed from it would be evaluated with an error type.
         int before = diags.errorCount();
         c.type = resolveType(c.typeRef);
+        ctx.stored = c.init;
         Type t = expr(c.init, c.type);
+        ctx.stored = null;
         requireAssignable(c.init, t, c.type);
         // An error-typed initializer (e.g. one using a constant that already failed) was reported
         // where it went wrong; skip evaluation without piling on another diagnostic.
         if (diags.errorCount() == before && !Type.isError(t)) {
             if (!isConst(c.init)) {
                 diags.error(Code.E0209, c.init.span, "the value of constant `" + c.name + "` is not a constant expression",
-                    "constants may use literals, other constants, operators and conversions, but not function calls");
+                    "constants may use literals, other constants, operators, conversions and the builtins that only compute "
+                        + "(such as len, pow or split), but not other function calls");
             } else if (withinBudget(c)) {
                 c.value = evalConst(c.init);
             }
@@ -564,8 +574,10 @@ public final class Checker {
             case Let l -> {
                 Type t = resolveType(l.typeRef);
                 ctx.mutCallAllowed = l.init;
+                ctx.stored = l.init;
                 Type it = expr(l.init, t);
                 ctx.mutCallAllowed = null;
+                ctx.stored = null;
                 requireAssignable(l.init, it, t);
                 l.var = declare(l.name, l.nameSpan, t, l.mutable);
                 yield false;
@@ -655,8 +667,10 @@ public final class Checker {
                 immutableHint(v));
         }
         ctx.mutCallAllowed = a.value;
+        if (a.op == null) ctx.stored = a.value;
         Type vt = expr(a.value, tt);
         ctx.mutCallAllowed = null;
+        ctx.stored = null;
         if (a.op == null) {
             requireAssignable(a.value, vt, tt);
             return;
@@ -731,8 +745,10 @@ public final class Checker {
             return;
         }
         ctx.mutCallAllowed = r.value;
+        ctx.stored = r.value;
         Type t = expr(r.value, ret);
         ctx.mutCallAllowed = null;
+        ctx.stored = null;
         requireAssignable(r.value, t, ret);
     }
 
@@ -743,7 +759,7 @@ public final class Checker {
             Type t = expr(c, null);
             ctx.mutCallAllowed = null;
             if (c.builtin == Builtin.PANIC) return true;
-            if (!(t instanceof Type.Void) && !Type.isError(t) && c.builtin != Builtin.POP) {
+            if (!(t instanceof Type.Void) && !Type.isError(t) && c.builtin != Builtin.POP && c.builtin != Builtin.REMOVE) {
                 diags.warning(Code.W0302, c.span, "the result of `" + c.name + "` (" + t + ") is not used",
                     "store it: let value: " + t + " = " + c.name + "(...);");
             }
@@ -906,7 +922,7 @@ public final class Checker {
             case Name n -> name(n);
             case FieldAccess f -> fieldAccess(f);
             case Index ix -> index(ix);
-            case Call c -> call(c);
+            case Call c -> call(c, expected);
             case VariantCall v -> variantCall(v);
             case StructLit s -> structLit(s);
             case Convert c -> convert(c);
@@ -1046,11 +1062,11 @@ public final class Checker {
 
     // ------------------------------------------------------------------ calls
 
-    private Type call(Call c) {
+    private Type call(Call c, Type expected) {
         Builtin b = Builtin.byName(c.name);
         if (b != null) {
             c.builtin = b;
-            Type t = builtin(c, b);
+            Type t = builtin(c, b, expected);
             checkMutCallPosition(c, t);
             checkAliasing(c.args);
             return t;
@@ -1108,50 +1124,59 @@ public final class Checker {
     }
 
     private String functionHint(String name) {
+        // Names of builtins never get here: they are calls of the builtin (or E0108 when declared).
         return switch (name) {
             case "println", "printf", "printLn", "puts", "console_log", "echo" -> "use print(values...)";
             case "length", "size", "count", "strlen" -> "use len(x)";
             case "capacity" -> "use cap(x)";
             case "format", "sprintf", "concat", "str_cat", "strcat", "to_string", "str", "string" ->
                 "build strings with append(mut s, values...) into a str[N] variable";
-            case "add", "insert", "append_item", "push_back" -> "use push(mut xs, value)";
+            case "add", "append_item", "push_back" -> "use push(mut xs, value)";
+            case "insert_at", "add_at" -> "use insert(mut xs, i, value)";
+            case "remove_at", "delete", "erase", "pop_at" -> "use remove(mut xs, i), which returns the element";
             case "exit", "abort", "fail", "error", "throw", "raise" -> "use panic(\"message\")";
             case "range" -> "use a range loop: for i in 0..n { }";
-            case "sort", "sorted", "sort_by" -> "there is no sort builtin; sort a mut list in place with two loops, e.g. an insertion sort";
-            case "contains", "includes", "find", "index_of", "indexOf", "position", "starts_with", "ends_with" ->
-                "there is no " + name + " builtin; loop over the elements and compare: for x in xs { if x == v { ... } }";
-            case "pow", "powf", "powi" -> "there is no pow; for an integer power, multiply in a loop: "
-                + "var r: i64 = 1; for i in 0..n { r *= x; }";
+            case "sorted", "sort_by", "sort_by_key", "order_by" ->
+                "sort a list in place with sort(mut xs); to order by a key, sort structs whose first field is the key "
+                    + "(structs order field by field), and reverse(mut xs) for descending";
+            case "reversed", "rev" -> "reverse in place with reverse(mut xs)";
+            case "implode", "join_with", "joined", "concat_with" -> "use join(parts, sep): let line: str[64] = join(parts, \", \");";
+            case "includes", "has" -> "use contains(xs, x)";
+            case "find", "indexOf", "index", "position", "find_index", "search" -> "use index_of(xs, x), which is -1 when x is absent";
+            case "startswith", "startsWith", "has_prefix" -> "use starts_with(s, prefix)";
+            case "endswith", "endsWith", "has_suffix" -> "use ends_with(s, suffix)";
+            case "substr", "substring", "sub", "mid", "subslice" -> "use slice(s, from, to): the bytes from..to as a copy";
+            case "strip", "trim_start", "trim_end", "lstrip", "rstrip", "trim_left", "trim_right", "trimStart", "trimEnd" ->
+                "use trim(s), which removes ASCII whitespace at both ends";
+            case "upper", "uppercase", "toUpperCase", "toupper" -> "use to_upper(x), for a u8 byte or a str";
+            case "lower", "lowercase", "toLowerCase", "tolower" -> "use to_lower(x), for a u8 byte or a str";
+            case "capitalize" -> "change the first byte of a var: s[0] = to_upper(s[0]);";
+            case "split_whitespace", "split_words", "splitlines", "lines", "tokenize", "strtok" ->
+                "use words(s) to split on whitespace, or split(s, sep): let parts: list[str[32]; 16] = split(s, '\\n');";
+            case "int", "float", "double", "long", "short", "usize", "isize" ->
+                "convert with the target type's name: i64(x), f64(x), u8(x); i64(s) also reads an integer from text";
+            case "parse", "parse_int", "parseInt", "parse_i64", "parse_i32", "atoi", "atol", "stoi", "strtol", "to_int",
+                 "toInt", "to_i64", "to_number", "number", "Number" -> Hints.PARSE_NUMBER;
+            case "parse_float", "atof", "parseFloat" ->
+                "there is no float parsing; convert an integer: f64(i64(s)), checked with is_int(s) first";
+            case "powf", "powi", "exp2" -> "pow(x, n) takes an integer x and n >= 0; for a float, multiply: x * x";
             case "exp", "log", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "hypot", "cbrt" ->
                 "there is no " + name + ": it rounds differently in different math libraries, so ALang leaves it out; "
-                + "only + - * /, sqrt, floor, ceil, abs, min and max exist";
-            case "int", "float", "double", "long", "short", "usize", "isize" ->
-                "convert numbers with the target type's name: i64(x), f64(x), u8(x)";
-            case "parse", "parse_int", "parseInt", "parse_i64", "parse_i32", "parse_float", "parseFloat", "atoi", "atol",
-                 "atof", "stoi", "strtol", "to_int", "toInt", "to_i64", "to_number", "number", "Number" -> Hints.PARSE_NUMBER;
-            case "split", "split_whitespace", "splitlines", "lines", "words", "tokenize", "strtok" ->
-                "there is no " + name + "; walk the bytes and collect each part in a str[N]: "
-                + "for c in s { if c == ' ' { ...use part...; clear(mut part); } else { push(mut part, c); } }";
-            case "substring", "substr", "slice", "mid" ->
-                "there are no slices; copy the bytes you need in a loop: for i in a..b { push(mut part, s[i]); }";
-            case "trim", "strip", "lstrip", "rstrip", "trim_start", "trim_end", "trimStart", "trimEnd" ->
-                "there is no " + name + "; find the first and last byte to keep with loops, then copy that range: "
-                + "for i in a..b { push(mut out, s[i]); }";
-            case "join" -> "there is no join; append each part after a separator: "
-                + "for i in 0..len(parts) { if i > 0 { append(mut s, \", \"); } append(mut s, parts[i]); }";
-            case "upper", "lower", "to_upper", "to_lower", "toupper", "tolower", "toUpperCase", "toLowerCase",
-                 "uppercase", "lowercase", "capitalize" ->
-                "there is no case conversion; for ASCII, a byte c with 'a' <= c and c <= 'z' becomes c - 32 "
-                + "(and 'A'..'Z' becomes c + 32)";
-            case "reverse", "reversed" -> "there is no reverse; copy from the end: "
-                + "for k in 0..len(xs) { push(mut out, xs[len(xs) - 1 - k]); }";
+                + "only + - * /, sqrt, floor, ceil, round, trunc, abs, min and max exist";
+            case "fabs" -> "use abs(x)";
+            case "fmin", "fmax" -> "use " + name.substring(1) + "(a, b)";
+            case "isdigit", "isDigit" -> "use is_digit(c) on a u8 byte";
+            case "isalpha", "isAlpha", "is_letter" -> "use is_alpha(c) on a u8 byte";
+            case "isalnum", "is_alphanumeric" -> "use is_alnum(c) on a u8 byte";
+            case "isspace", "is_whitespace" -> "use is_space(c) on a u8 byte";
+            case "isupper" -> "use is_upper(c) on a u8 byte";
+            case "islower" -> "use is_lower(c) on a u8 byte";
+            case "isnan" -> "use is_nan(x)";
+            case "isfinite" -> "use is_finite(x)";
             case "sum" -> "there is no sum; add in a loop: var total: i64 = 0; for x in xs { total += x; }";
             case "map", "filter", "reduce", "fold", "any", "all", "zip", "foreach", "for_each", "forEach" ->
                 "there are no higher-order functions; write the loop: for x in xs { if x > 0 { push(mut out, x); } }";
             case "enumerate" -> "loop over the indexes: for i in 0..len(xs) { let x: i64 = xs[i]; }";
-            case "isdigit", "is_digit", "isDigit", "isalpha", "is_alpha", "isalnum", "is_alphanumeric", "isspace",
-                 "is_space", "is_whitespace", "islower", "isupper" ->
-                "compare the byte with character literals: '0' <= c and c <= '9', 'a' <= c and c <= 'z', c == ' '";
             case "ord" -> "a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number";
             case "chr" -> "push(mut s, u8(n)) adds the byte n to a str";
             case "dict", "HashMap", "hashmap", "Map", "set", "Set", "HashSet" -> Hints.COLLECTIONS;
@@ -1236,7 +1261,12 @@ public final class Checker {
         }
     }
 
-    /** A variable passed as `mut` must not appear in any other argument of the same call. */
+    /**
+     * A variable passed as `mut` must not appear in any other argument of the same call that is an
+     * aggregate: the callee could see it change while it reads it (the C backend passes a read-only
+     * aggregate by address). A number or bool is a copy made before the call, so remove(mut xs, len(xs) - 1)
+     * is fine.
+     */
     private void checkAliasing(List<Arg> args) {
         for (int i = 0; i < args.size(); i++) {
             Arg a = args.get(i);
@@ -1244,7 +1274,9 @@ public final class Checker {
             Name root = rootName(a.expr());
             if (root == null || root.local == null) continue;
             for (int j = 0; j < args.size(); j++) {
-                if (j != i && mentions(args.get(j).expr(), root.local)) {
+                Expr other = args.get(j).expr();
+                boolean copied = other.type instanceof Type.Prim;
+                if (j != i && !copied && mentions(other, root.local)) {
                     diags.error(Code.E0208, args.get(j).span(), "`" + root.name + "` is passed as `mut` and also used in "
                         + "another argument of the same call",
                         "copy the value into a separate variable first, then pass the copy");
@@ -1271,7 +1303,7 @@ public final class Checker {
         };
     }
 
-    private Type builtin(Call c, Builtin b) {
+    private Type builtin(Call c, Builtin b, Type expected) {
         List<Arg> args = c.args;
         switch (b) {
             case PRINT -> {
@@ -1349,7 +1381,7 @@ public final class Checker {
                 if (!arity(c, 2)) return Type.ERROR;
                 noMut(args.get(0));
                 noMut(args.get(1));
-                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), null);
+                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isNumeric(expected) ? expected : null);
                 if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
                 if (!Type.isNumeric(ts[0]) || !ts[0].equals(ts[1])) {
                     diags.error(Code.E0201, c.span, b.name + "() needs two numbers of the same type, found "
@@ -1358,7 +1390,7 @@ public final class Checker {
                 }
                 return ts[0];
             }
-            case SQRT, FLOOR, CEIL -> {
+            case SQRT, FLOOR, CEIL, ROUND, TRUNC -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 noMut(args.get(0));
                 Type t = expr(args.get(0).expr(), Type.F64);
@@ -1369,6 +1401,182 @@ public final class Checker {
                     return Type.ERROR;
                 }
                 return t;
+            }
+            case IS_NAN, IS_FINITE -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), Type.F64);
+                if (!Type.isFloat(t) && !Type.isError(t)) {
+                    diags.error(Code.E0201, args.get(0).span(), b.name + "() needs f32 or f64, found " + t,
+                        Type.isInt(t) ? "an integer is always finite and never NaN" : null);
+                }
+                return Type.BOOL;
+            }
+            case CLAMP -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                for (Arg a : args) noMut(a);
+                Type x = sameType(c, args, Type.isNumeric(expected) ? expected : null);
+                if (Type.isError(x)) return x;
+                if (!Type.isNumeric(x)) {
+                    diags.error(Code.E0201, c.span, "clamp() needs three numbers of the same type, found " + joinArgTypes(args));
+                    return Type.ERROR;
+                }
+                return x;
+            }
+            case POW -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0));
+                noMut(args.get(1));
+                Type x = expr(args.get(0).expr(), Type.isInt(expected) ? expected : null);
+                Type n = expr(args.get(1).expr(), Type.I64);
+                if (Type.isError(x) || Type.isError(n)) return Type.ERROR;
+                if (!Type.isInt(x)) {
+                    diags.error(Code.E0203, args.get(0).span(), "pow() needs an integer base, found " + x,
+                        Type.isFloat(x) ? "there is no float pow, which rounds differently in different math libraries; "
+                            + "for a whole power, multiply: x * x * x" : null);
+                    return Type.ERROR;
+                }
+                if (!Type.isInt(n)) {
+                    diags.error(Code.E0203, args.get(1).span(), "pow() needs an integer exponent, found " + n);
+                    return Type.ERROR;
+                }
+                return x;
+            }
+            case GCD, LCM -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0));
+                noMut(args.get(1));
+                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isInt(expected) ? expected : null);
+                if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
+                if (!Type.isInt(ts[0]) || !ts[0].equals(ts[1])) {
+                    diags.error(Code.E0201, c.span, b.name + "() needs two integers of the same type, found "
+                        + ts[0] + " and " + ts[1]);
+                    return Type.ERROR;
+                }
+                return ts[0];
+            }
+            case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), Type.U8);
+                if (!t.equals(Type.U8) && !Type.isError(t)) {
+                    diags.error(Code.E0201, args.get(0).span(), b.name + "() needs a u8 byte, found " + t,
+                        Type.isInt(t) ? "convert it: " + b.name + "(u8(" + exprText(args.get(0).expr()) + "))"
+                            : t instanceof Type.Str ? "pass one byte, s[i], or loop over the string: for ch in s { }" : null);
+                }
+                return Type.BOOL;
+            }
+            case TO_UPPER, TO_LOWER -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                noMut(args.get(0));
+                Expr e = args.get(0).expr();
+                Type t = expr(e, isUntyped(e) ? Type.U8 : null);
+                if (Type.isError(t)) return t;
+                if (!t.equals(Type.U8) && !(t instanceof Type.Str)) {
+                    diags.error(Code.E0201, args.get(0).span(), b.name + "() needs a u8 byte or a str, found " + t);
+                    return Type.ERROR;
+                }
+                return t;
+            }
+            case CONTAINS, INDEX_OF -> {
+                Type ret = b == Builtin.CONTAINS ? Type.BOOL : Type.I64;
+                if (!arity(c, 2)) return ret;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                if (t instanceof Type.Str) {
+                    textPattern(b, args.get(1), "what it looks for");
+                } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
+                    noMut(args.get(1));
+                    Type elem = Type.elementOf(t);
+                    Type x = expr(args.get(1).expr(), elem);
+                    if (!Type.comparable(x, elem)) {
+                        diags.error(Code.E0201, args.get(1).span(), b.name + "() looks for an element of type " + elem
+                            + ", found " + x);
+                    }
+                } else {
+                    expr(args.get(1).expr(), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, args.get(0).span(), b.name + "() needs a str, array or list, found " + t);
+                    }
+                }
+                return ret;
+            }
+            case STARTS_WITH, ENDS_WITH -> {
+                if (!arity(c, 2)) return Type.BOOL;
+                textArg(b, args.get(0));
+                textPattern(b, args.get(1), b == Builtin.STARTS_WITH ? "the prefix" : "the suffix");
+                return Type.BOOL;
+            }
+            case SLICE -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                for (int i = 1; i < 3; i++) indexArg(b, args.get(i));
+                if (Type.isError(t)) return t;
+                if (t instanceof Type.ArrayT a) return new Type.ListT(a.elem(), a.len());
+                if (t instanceof Type.Str || t instanceof Type.ListT) return t;
+                diags.error(Code.E0203, args.get(0).span(), "slice() needs a str, list or array, found " + t);
+                return Type.ERROR;
+            }
+            case TRIM -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                return textArg(b, args.get(0));
+            }
+            case IS_INT -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                textArg(b, args.get(0));
+                return Type.BOOL;
+            }
+            case SPLIT, WORDS -> {
+                if (b == Builtin.SPLIT && args.size() == 1) {
+                    diags.error(Code.E0204, c.span, "split() takes 2 argument(s) but 1 were given",
+                        "split(s, sep) needs a separator; to split on whitespace, use words(" + exprText(args.get(0).expr()) + ")");
+                    expr(args.get(0).expr(), null);
+                    return Type.ERROR;
+                }
+                if (!arity(c, b == Builtin.SPLIT ? 2 : 1)) return Type.ERROR;
+                textArg(b, args.get(0));
+                if (b == Builtin.SPLIT) textPattern(b, args.get(1), "the separator");
+                return storedType(c, b, expected);
+            }
+            case JOIN -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                if (!Type.isError(t) && !((t instanceof Type.ArrayT || t instanceof Type.ListT) && Type.elementOf(t) instanceof Type.Str)) {
+                    diags.error(Code.E0203, args.get(0).span(), "join() needs an array or list of str, found " + t);
+                }
+                textPattern(b, args.get(1), "the separator");
+                return storedType(c, b, expected);
+            }
+            case REPLACE -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                textArg(b, args.get(0));
+                textPattern(b, args.get(1), "what it replaces");
+                textPattern(b, args.get(2), "the replacement");
+                return storedType(c, b, expected);
+            }
+            case SORT, REVERSE -> {
+                if (!arity(c, 1)) return Type.VOID;
+                sequenceArg(c, args.get(0));
+                return Type.VOID;
+            }
+            case INSERT -> {
+                if (!arity(c, 3)) return Type.VOID;
+                Type t = collectionArg(c, args.get(0));
+                indexArg(b, args.get(1));
+                Arg v = args.get(2);
+                noMut(v);
+                Type elem = Type.isError(t) ? null : Type.elementOf(t);
+                Type vt = expr(v.expr(), elem);
+                if (elem != null) requireAssignable(v.expr(), vt, elem);
+                return Type.VOID;
+            }
+            case REMOVE -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                Type t = collectionArg(c, args.get(0));
+                indexArg(b, args.get(1));
+                return Type.isError(t) ? Type.ERROR : Type.elementOf(t);
             }
             case PANIC -> {
                 if (!arity(c, 1)) return Type.VOID;
@@ -1408,12 +1616,125 @@ public final class Checker {
         if (a.mut()) diags.error(Code.E0207, a.span(), "this argument is not modified; remove `mut`");
     }
 
+    /**
+     * Checks operands that share a type, the way {@link #sameTypeOperands} checks two: the first that is not
+     * a bare literal (or, among literals, the first float literal) gives the type, else {@code hint}.
+     * Returns the type, or ERROR after reporting operands of different types.
+     */
+    private Type sameType(Call c, List<Arg> args, Type hint) {
+        int anchor = 0;
+        for (int i = 0; i < args.size(); i++) {
+            Expr e = args.get(i).expr();
+            if (!isUntyped(e)) {
+                anchor = i;
+                break;
+            }
+            if (hint == null && hasFloatLiteral(e) && !hasFloatLiteral(args.get(anchor).expr())) anchor = i;
+        }
+        Type t = expr(args.get(anchor).expr(), hint);
+        Type[] ts = new Type[args.size()];
+        ts[anchor] = t;
+        for (int i = 0; i < args.size(); i++) {
+            if (i != anchor) ts[i] = expr(args.get(i).expr(), Type.isError(t) ? hint : t);
+        }
+        for (Type x : ts) {
+            if (Type.isError(x)) return Type.ERROR;
+        }
+        for (Type x : ts) {
+            if (!x.equals(t)) {
+                diags.error(Code.E0201, c.span, c.name + "() needs operands of the same type, found " + joinArgTypes(args),
+                    "convert them to one type, e.g. " + t + "(...)");
+                return Type.ERROR;
+            }
+        }
+        return t;
+    }
+
+    private static String joinArgTypes(List<Arg> args) {
+        return String.join(", ", args.stream().map(a -> String.valueOf(a.expr().type)).toList());
+    }
+
+    /** A read-only str argument; returns its type, or ERROR after reporting another type. */
+    private Type textArg(Builtin b, Arg a) {
+        noMut(a);
+        Type t = expr(a.expr(), null);
+        if (Type.isError(t) || t instanceof Type.Str) return t;
+        diags.error(Code.E0203, a.span(), b.name + "() needs a str, found " + t);
+        return Type.ERROR;
+    }
+
+    /** What a text function looks for, splits on or puts in: a str or a single u8 byte (a character literal). */
+    private void textPattern(Builtin b, Arg a, String what) {
+        noMut(a);
+        Type t = expr(a.expr(), isUntyped(a.expr()) ? Type.U8 : null);
+        if (!Type.isError(t) && !(t instanceof Type.Str) && !t.equals(Type.U8)) {
+            diags.error(Code.E0201, a.span(), b.name + "() needs a str or a u8 byte for " + what + ", found " + t,
+                Type.isInt(t) ? "convert it: u8(" + exprText(a.expr()) + ")" : null);
+        }
+    }
+
+    /** A position: an integer of any type, like an index. */
+    private void indexArg(Builtin b, Arg a) {
+        noMut(a);
+        Type t = expr(a.expr(), Type.I64);
+        if (!Type.isInt(t) && !Type.isError(t)) {
+            diags.error(Code.E0212, a.span(), b.name + "() needs an integer position, found " + t);
+        }
+    }
+
+    /**
+     * The type of split, words, join and replace: that of the variable they initialize or are assigned to,
+     * or of the function's return value, since the capacity of what they build cannot be computed.
+     */
+    private Type storedType(Call c, Builtin b, Type expected) {
+        boolean list = b == Builtin.SPLIT || b == Builtin.WORDS;
+        String example = switch (b) {
+            case SPLIT -> "let parts: list[str[32]; 16] = ";
+            case WORDS -> "let ws: list[str[32]; 16] = ";
+            case JOIN -> "let line: str[256] = ";
+            default -> "let text: str[256] = ";
+        } + exprText(c) + ";";
+        if (expected != null && Type.isError(expected)) return Type.ERROR;
+        if (ctx.stored != c || expected == null) {
+            diags.error(Code.E0216, c.span, b.name + "() takes its type, and so its capacity, from the variable it is stored in",
+                "make the call the whole right-hand side of a typed let/var, an assignment or a return: " + example);
+            return Type.ERROR;
+        }
+        boolean ok = list ? expected instanceof Type.ListT l && l.elem() instanceof Type.Str : expected instanceof Type.Str;
+        if (!ok) {
+            diags.error(Code.E0201, c.span, b.name + "() builds a " + (list ? "list[str[K]; M]" : "str[N]")
+                + ", but " + expected + " is expected", "store it in a variable of that type: " + example);
+            return Type.ERROR;
+        }
+        return expected;
+    }
+
+    /** The argument of sort and reverse: a `mut` list, array or str. */
+    private Type sequenceArg(Call c, Arg a) {
+        if (!a.mut()) {
+            Type t = expr(a.expr(), null);
+            diags.error(Code.E0207, a.span(), c.name + "() modifies its argument", "write " + c.name + "(mut " + exprText(a.expr()) + ")");
+            return t;
+        }
+        Type t = mutPlace(a.expr());
+        if (Type.elementOf(t) == null && !Type.isError(t)) {
+            diags.error(Code.E0203, a.span(), c.name + "() needs a list, array or str, found " + t);
+            return Type.ERROR;
+        }
+        return t;
+    }
+
     /** First argument of push/pop/clear: `mut` list or str. */
     private Type collectionArg(Call c, Arg a) {
         if (!a.mut()) {
             Type t = expr(a.expr(), null);
             diags.error(Code.E0207, a.span(), c.name + "() modifies its first argument",
-                "write " + c.name + "(mut " + exprText(a.expr()) + (c.builtin == Builtin.PUSH ? ", value)" : ")"));
+                "write " + c.name + "(mut " + exprText(a.expr()) + switch (c.builtin) {
+                    case PUSH -> ", value)";
+                    case INSERT -> ", i, value)";
+                    case REMOVE -> ", i)";
+                    default -> ")";
+                });
             return t instanceof Type.ListT || t instanceof Type.Str ? t : Type.ERROR;
         }
         Type t = mutPlace(a.expr());
@@ -1428,7 +1749,7 @@ public final class Checker {
     /** Whether `name(...)` takes its first argument as `mut`: push, pop, clear, append, or a function declared so. */
     private boolean modifiesFirstArgument(String name) {
         Builtin b = Builtin.byName(name);
-        if (b != null) return b == Builtin.PUSH || b == Builtin.POP || b == Builtin.CLEAR || b == Builtin.APPEND;
+        if (b != null) return b.modifiesFirst();
         FnDecl f = fns.get(name);
         return f != null && !f.params.isEmpty() && f.params.get(0).mut();
     }
@@ -1528,10 +1849,18 @@ public final class Checker {
             diags.error(Code.E0214, c.span, "nothing converts to bool", "compare instead: x != 0");
             return target;
         }
+        if (t instanceof Type.Str) {
+            // Text converts to integers only: i64("42"), traps unless it is a decimal integer that fits.
+            if (!c.target.isInt()) {
+                diags.error(Code.E0214, c.span, "cannot convert " + t + " to " + target,
+                    "text converts only to integers; there is no float parsing: " + target + "(i64(" + exprText(c.arg)
+                        + ")), checked with is_int(" + exprText(c.arg) + ") first");
+            }
+            return target;
+        }
         if (!(t instanceof Type.Prim)) {
             diags.error(Code.E0214, c.span, "cannot convert " + t + " to " + target,
-                t instanceof Type.Str && !c.target.isFloat ? Hints.PARSE_NUMBER
-                    : "conversions work between numbers (and from bool to integers)");
+                "conversions work between numbers, from bool to integers, and from a str to integers");
             return target;
         }
         if (Type.isBool(t) && c.target.isFloat) {
@@ -1826,10 +2155,7 @@ public final class Checker {
             case Name n -> n.constant != null && n.constant.value != null;
             case FieldAccess f -> f.variant != null || isConst(f.target);
             case Index i -> isConst(i.target) && isConst(i.index);
-            case Call c -> c.builtin != null && switch (c.builtin) {
-                case LEN, CAP, ABS, MIN, MAX, SQRT, FLOOR, CEIL -> c.args.stream().allMatch(a -> isConst(a.expr()));
-                default -> false;
-            };
+            case Call c -> c.builtin != null && c.builtin.pure && c.args.stream().allMatch(a -> isConst(a.expr()));
             case VariantCall v -> v.args.stream().allMatch(a -> isConst(a.expr()));
             case StructLit s -> s.fields.stream().allMatch(f -> isConst(f.value()));
             case Convert c -> isConst(c.arg);

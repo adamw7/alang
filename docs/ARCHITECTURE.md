@@ -99,7 +99,7 @@ flowchart TB
         cli["<b>CLI</b><br/><i>[Component: alang.cli]</i><br/><br/>Arguments, files and stdin; text or JSON output; exit codes; the MCP server of serve. Frontend runs parse + check"]
         parse["<b>Parser</b><br/><i>[Component: alang.parse]</i><br/><br/>Nesting limit, syntax-error hints, parse tree to AST"]
         check["<b>Checker</b><br/><i>[Component: alang.check]</i><br/><br/>Types, names, constants, recursion ban, memory bound"]
-        interp["<b>Interpreter</b><br/><i>[Component: alang.interp]</i><br/><br/>Reference semantics, step budget, traps, formatting, JSON mapping"]
+        interp["<b>Interpreter</b><br/><i>[Component: alang.interp]</i><br/><br/>Reference semantics, the standard library, step budget, traps, formatting, JSON mapping"]
         cgen["<b>C backend</b><br/><i>[Component: alang.cgen]</i><br/><br/>Checked AST to one heap-free C99 file with the prelude"]
         gen["<b>Generated parser</b><br/><i>[Component: alang.parser, ANTLR 4]</i><br/><br/>ALangLexer and ALangParser"]
         model["<b>Model</b><br/><i>[Component: alang.ast, alang.types]</i><br/><br/>AST nodes, builtins and types; annotated once by the checker"]

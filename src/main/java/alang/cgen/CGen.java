@@ -1105,6 +1105,12 @@ public final class CGen {
     private String convert(Convert c) {
         PrimKind from = Type.kind(c.arg.type);
         PrimKind to = c.target;
+        if (c.arg.type instanceof Type.Str) {
+            String s = lowerLvalue(c.arg);
+            String max = "(uint64_t)" + (to.signed ? "INT" : "UINT") + to.bits + "_MAX";
+            return tmp(Type.prim(to), "(" + cPrim(to) + ")" + (to.signed ? "al_str_to_s(" : "al_str_to_u(") + "(" + s + ").b, ("
+                + s + ").len, " + max + ", \"" + to.name + "\", " + loc(c.span) + ")");
+        }
         String v = lower(c.arg);
         if (from == to) return v;
         String at = loc(c.span);
@@ -1221,6 +1227,216 @@ public final class CGen {
                 String name = c.builtin.name + (k == PrimKind.F32 ? "f" : "");
                 return "((" + cPrim(k) + ")" + name + "(" + v + "))";
             }
+            case ROUND, TRUNC -> {
+                PrimKind k = Type.kind(c.type);
+                String v = lower(args.get(0).expr());
+                return tmp(c.type, "(" + cPrim(k) + ")al_" + c.builtin.name + "((double)(" + v + "))");
+            }
+            case IS_NAN, IS_FINITE -> {
+                String v = tmp(args.get(0).expr().type, lower(args.get(0).expr()));
+                return tmp(Type.BOOL, (c.builtin == Builtin.IS_NAN ? "isnan(" : "isfinite(") + v + ") != 0");
+            }
+            case CLAMP -> {
+                String x = tmp(c.type, lower(args.get(0).expr()));
+                String lo = tmp(c.type, lower(args.get(1).expr()));
+                String hi = tmp(c.type, lower(args.get(2).expr()));
+                open("if (!(" + lo + " <= " + hi + ")) {");
+                emit("al_out al_e = al_trap_begin(\"R0013\");");
+                emit("AL_PUTS(&al_e, \"clamp needs lo <= hi, found lo \");");
+                emit(fmtStmt(c.type, "&al_e", lo, "0"));
+                emit("AL_PUTS(&al_e, \" and hi \");");
+                emit(fmtStmt(c.type, "&al_e", hi, "0"));
+                emit("al_trap_end(&al_e, " + at + ");");
+                close("}");
+                return tmp(c.type, x + " < " + lo + " ? " + lo + " : (" + x + " > " + hi + " ? " + hi + " : " + x + ")");
+            }
+            case POW -> {
+                PrimKind k = Type.kind(c.type);
+                String x = tmp(c.type, lower(args.get(0).expr()));
+                PrimKind nk = Type.kind(args.get(1).expr().type);
+                String n = lower(args.get(1).expr());
+                String exp = tmp(Type.U64, nk.signed ? "al_pow_exp((int64_t)(" + n + "), " + at + ")" : "(uint64_t)(" + n + ")");
+                String call = k.signed
+                    ? "al_pow_s((int64_t)" + x + ", " + exp + ", INT" + k.bits + "_MIN, INT" + k.bits + "_MAX"
+                    : "al_pow_u((uint64_t)" + x + ", " + exp + ", UINT" + k.bits + "_MAX";
+                return tmp(c.type, "(" + cPrim(k) + ")" + call + ", \"" + k.name + "\", " + at + ")");
+            }
+            case GCD, LCM -> {
+                PrimKind k = Type.kind(c.type);
+                String a = tmp(c.type, lower(args.get(0).expr()));
+                String b = tmp(c.type, lower(args.get(1).expr()));
+                String ma = k.signed ? "al_mag((int64_t)" + a + ")" : "(uint64_t)" + a;
+                String mb = k.signed ? "al_mag((int64_t)" + b + ")" : "(uint64_t)" + b;
+                String hi = "(uint64_t)" + (k.signed ? "INT" : "UINT") + k.bits + "_MAX";
+                return tmp(c.type, "(" + cPrim(k) + ")al_" + c.builtin.name + "(" + ma + ", " + mb + ", " + hi + ", \""
+                    + k.name + "\", " + at + ")");
+            }
+            case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
+                String ch = tmp(Type.U8, lower(args.get(0).expr()));
+                String digit = "(" + ch + " >= 48 && " + ch + " <= 57)";
+                String upper = "(" + ch + " >= 65 && " + ch + " <= 90)";
+                String lowerCase = "(" + ch + " >= 97 && " + ch + " <= 122)";
+                return tmp(Type.BOOL, switch (c.builtin) {
+                    case IS_DIGIT -> digit;
+                    case IS_ALPHA -> upper + " || " + lowerCase;
+                    case IS_ALNUM -> upper + " || " + lowerCase + " || " + digit;
+                    case IS_SPACE -> "al_is_space(" + ch + ") != 0";
+                    case IS_UPPER -> upper;
+                    default -> lowerCase;
+                });
+            }
+            case TO_UPPER, TO_LOWER -> {
+                boolean up = c.builtin == Builtin.TO_UPPER;
+                Expr a = args.get(0).expr();
+                if (a.type instanceof Type.Str) {
+                    String v = lowerLvalue(a);
+                    String r = tmp(c.type, "{0}");
+                    emit(r + ".len = al_case_into(" + r + ".b, (" + v + ").b, (" + v + ").len, " + (up ? 1 : 0) + ");");
+                    return r;
+                }
+                String ch = tmp(Type.U8, lower(a));
+                return tmp(Type.U8, up ? "(uint8_t)(" + ch + " >= 97 && " + ch + " <= 122 ? " + ch + " - 32 : " + ch + ")"
+                    : "(uint8_t)(" + ch + " >= 65 && " + ch + " <= 90 ? " + ch + " + 32 : " + ch + ")");
+            }
+            case CONTAINS, INDEX_OF -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String at0;
+                if (xs.type instanceof Type.Str) {
+                    String[] p = pattern(args.get(1).expr());
+                    at0 = tmp(Type.I64, "al_find_bytes((" + h + ").b, (" + h + ").len, " + p[0] + ", " + p[1] + ", 0)");
+                } else {
+                    Expr needle = args.get(1).expr();
+                    String x = lowerLvalue(needle);
+                    Type elem = Type.elementOf(xs.type);
+                    String n = xs.type instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + h + ").len";
+                    at0 = tmp(Type.I64, "-1");
+                    String i = "t" + ++tmpCount;
+                    open("{");
+                    emit("uint32_t " + i + ";");
+                    open("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                    open("if (" + eqExpr(elem, needle.type, "(" + h + ").v[" + i + "]", x) + " != 0) {");
+                    emit(at0 + " = (int64_t)" + i + ";");
+                    emit("break;");
+                    close("}");
+                    close("}");
+                    close("}");
+                }
+                return c.builtin == Builtin.CONTAINS ? tmp(Type.BOOL, at0 + " >= 0") : at0;
+            }
+            case STARTS_WITH, ENDS_WITH -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String[] p = pattern(args.get(1).expr());
+                String fn = c.builtin == Builtin.STARTS_WITH ? "al_starts_with" : "al_ends_with";
+                return tmp(Type.BOOL, fn + "((" + v + ").b, (" + v + ").len, " + p[0] + ", " + p[1] + ")");
+            }
+            case SLICE -> {
+                Type t = args.get(0).expr().type;
+                String v = lowerLvalue(args.get(0).expr());
+                String from = position(args.get(1).expr());
+                String to = position(args.get(2).expr());
+                String len = t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + v + ").len";
+                String f = tmp(Type.U32, "0");
+                String n = tmp(Type.U32, "al_slice(" + from + ", " + to + ", " + len + ", &" + f + ", " + at + ")");
+                String r = tmp(c.type, "{0}");
+                if (t instanceof Type.Str) {
+                    emit(r + ".len = al_copy_bytes(" + r + ".b, (" + v + ").b + " + f + ", " + n + ");");
+                } else {
+                    String i = "t" + ++tmpCount;
+                    open("{");
+                    emit("uint32_t " + i + ";");
+                    emit("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) " + r + ".v[" + i + "] = (" + v + ").v[" + f + " + " + i + "];");
+                    close("}");
+                    emit(r + ".len = " + n + ";");
+                }
+                return r;
+            }
+            case TRIM -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String r = tmp(c.type, "{0}");
+                emit(r + ".len = al_trim_into(" + r + ".b, (" + v + ").b, (" + v + ").len);");
+                return r;
+            }
+            case IS_INT -> {
+                String v = lowerLvalue(args.get(0).expr());
+                return tmp(Type.BOOL, "al_is_int((" + v + ").b, (" + v + ").len)");
+            }
+            case SPLIT, WORDS -> {
+                String v = lowerLvalue(args.get(0).expr());
+                boolean words = c.builtin == Builtin.WORDS;
+                String[] p = words ? new String[] {"0", "0u"} : pattern(args.get(1).expr());
+                String r = tmp(c.type, "{0}");
+                emit(splitFn((Type.ListT) c.type) + "(&" + r + ", (" + v + ").b, (" + v + ").len, " + p[0] + ", " + p[1] + ", "
+                    + (words ? 1 : 0) + ", " + at + ");");
+                return r;
+            }
+            case JOIN -> {
+                Type pt = args.get(0).expr().type;
+                String parts = lowerLvalue(args.get(0).expr());
+                String[] p = pattern(args.get(1).expr());
+                String r = tmp(c.type, "{0}");
+                emit(joinFn((Type.Str) c.type, pt) + "(&" + r + ", &(" + parts + "), " + p[0] + ", " + p[1] + ", " + at + ");");
+                return r;
+            }
+            case REPLACE -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String[] f = pattern(args.get(1).expr());
+                String[] t = pattern(args.get(2).expr());
+                String r = tmp(c.type, "{0}");
+                emit(r + ".len = al_replace_into(" + r + ".b, " + ((Type.Str) c.type).cap() + "u, (" + v + ").b, (" + v + ").len, "
+                    + f[0] + ", " + f[1] + ", " + t[0] + ", " + t[1] + ", " + at + ");");
+                return r;
+            }
+            case SORT, REVERSE -> {
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String base = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
+                String n = t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + place + ").len";
+                String size = "sizeof " + base + "[0]";
+                if (c.builtin == Builtin.REVERSE) emit("al_reverse(" + base + ", " + n + ", " + size + ");");
+                else emit("al_heapsort(" + base + ", " + n + ", " + size + ", " + ordFn(Type.elementOf(t)) + ");");
+                return null;
+            }
+            case INSERT -> {
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String pos = position(args.get(1).expr());
+                Type elem = Type.elementOf(t);
+                String v = coerce(lower(args.get(2).expr()), args.get(2).expr().type, elem);
+                // As in push, the value cannot refer to the target (E0208), so an aggregate is stored from where it is.
+                String vt = Type.isAggregate(elem) ? v : tmp(elem, v);
+                int cap = t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap();
+                String kind = t instanceof Type.Str ? "str" : "list";
+                String arr = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
+                String i = tmp(Type.U32, "al_insert_pos(" + pos + ", (" + place + ").len, " + at + ")");
+                emit("if ((" + place + ").len >= " + cap + "u) AL_TRAP(\"R0004\", \"insert into a full " + kind + " (capacity " + cap + ")\", " + at + ");");
+                String k = "t" + ++tmpCount;
+                open("{");
+                emit("uint32_t " + k + ";");
+                emit("for (" + k + " = (" + place + ").len; " + k + " > " + i + "; " + k + "--) " + arr + "[" + k + "] = " + arr + "[" + k + " - 1];");
+                close("}");
+                emit(arr + "[" + i + "] = " + vt + ";");
+                emit("(" + place + ").len++;");
+                return null;
+            }
+            case REMOVE -> {
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                Expr ie = args.get(1).expr();
+                String idx = lower(ie);
+                String check = Type.kind(ie.type).signed ? "al_idx_s((int64_t)(" + idx + "), (" + place + ").len, " + at + ")"
+                    : "al_idx_u((uint64_t)(" + idx + "), (" + place + ").len, " + at + ")";
+                String i = tmp(Type.U32, check);
+                String arr = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
+                String r = tmp(Type.elementOf(t), arr + "[" + i + "]");
+                String k = "t" + ++tmpCount;
+                open("{");
+                emit("uint32_t " + k + ";");
+                emit("for (" + k + " = " + i + "; " + k + " + 1 < (" + place + ").len; " + k + "++) " + arr + "[" + k + "] = " + arr + "[" + k + " + 1];");
+                close("}");
+                emit("(" + place + ").len--;");
+                return r;
+            }
             case PANIC -> {
                 String v = lowerLvalue(args.get(0).expr());
                 open("{");
@@ -1233,6 +1449,145 @@ public final class CGen {
             }
         }
         throw new IllegalStateException();
+    }
+
+    // =================================================================== standard library helpers
+
+    /** A str or a u8 byte as a C pointer and length: the str's bytes, or the byte in a temporary. */
+    private String[] pattern(Expr e) {
+        if (e.type instanceof Type.Str) {
+            String v = lowerLvalue(e);
+            return new String[] {"(" + v + ").b", "(" + v + ").len"};
+        }
+        String t = tmp(Type.U8, lower(e));
+        return new String[] {"&" + t, "1u"};
+    }
+
+    /** A position argument of any integer type, as an al_pos in a temporary. */
+    private String position(Expr e) {
+        String v = lower(e);
+        String p = "t" + ++tmpCount;
+        emit("al_pos " + p + " = " + (Type.kind(e.type).signed ? "al_pos_s((int64_t)(" : "al_pos_u((uint64_t)(") + v + "));");
+        return p;
+    }
+
+    /** A C expression ordering lvalues a and b of type t as sort does: negative, zero or positive. */
+    private String cmpExpr(Type t, String a, String b) {
+        return switch (t) {
+            case Type.Prim p -> p.kind().isFloat ? "al_cmp_f64((double)(" + a + "), (double)(" + b + "))"
+                : "(((" + a + ") > (" + b + ")) - ((" + a + ") < (" + b + ")))";
+            case Type.Str s -> "al_cmp_bytes((" + a + ").b, (" + a + ").len, (" + b + ").b, (" + b + ").len)";
+            default -> ordFn(t) + "(&(" + a + "), &(" + b + "))";
+        };
+    }
+
+    /** The comparison function of sort for elements of type t, with the signature al_heapsort takes. */
+    private String ordFn(Type t) {
+        String name = "al_ord_" + mangle(t);
+        if (!doneHelpers.add(name)) return name;
+        String ty = ct(t);
+        StringBuilder body = new StringBuilder();
+        body.append("    const ").append(ty).append(" *a = (const ").append(ty).append(" *)pa;\n");
+        body.append("    const ").append(ty).append(" *b = (const ").append(ty).append(" *)pb;\n");
+        switch (t) {
+            case Type.Prim p -> body.append("    return ").append(cmpExpr(t, "*a", "*b")).append(";\n");
+            case Type.Str s -> body.append("    return ").append(cmpExpr(t, "*a", "*b")).append(";\n");
+            case Type.ArrayT arr -> body.append("    uint32_t i;\n    for (i = 0; i < ").append(arr.len()).append("u; i++) {\n")
+                .append("        int c = ").append(cmpExpr(arr.elem(), "a->v[i]", "b->v[i]")).append(";\n")
+                .append("        if (c != 0) return c;\n    }\n    return 0;\n");
+            case Type.ListT l -> body.append("    uint32_t i;\n    for (i = 0; i < a->len && i < b->len; i++) {\n")
+                .append("        int c = ").append(cmpExpr(l.elem(), "a->v[i]", "b->v[i]")).append(";\n")
+                .append("        if (c != 0) return c;\n    }\n    return (a->len > b->len) - (a->len < b->len);\n");
+            case Type.StructT st -> {
+                body.append("    int c;\n");
+                for (Field f : st.decl().fields) {
+                    body.append("    c = ").append(cmpExpr(f.type, "a->f_" + f.name, "b->f_" + f.name)).append(";\n")
+                        .append("    if (c != 0) return c;\n");
+                }
+                body.append("    return 0;\n");
+            }
+            case Type.EnumT e -> {
+                body.append("    int c = (a->tag > b->tag) - (a->tag < b->tag);\n    if (c != 0) return c;\n");
+                for (Variant v : e.decl().variants) {
+                    if (v.payload.isEmpty()) continue;
+                    body.append("    if (a->tag == ").append(v.index).append("u) {\n");
+                    for (int i = 0; i < v.payload.size(); i++) {
+                        String f = "u.v_" + v.name + ".p" + i;
+                        body.append("        c = ").append(cmpExpr(v.payload.get(i), "a->" + f, "b->" + f)).append(";\n")
+                            .append("        if (c != 0) return c;\n");
+                    }
+                    body.append("    }\n");
+                }
+                body.append("    return 0;\n");
+            }
+            default -> throw new IllegalStateException();
+        }
+        helpers.append("static int ").append(name).append("(const void *pa, const void *pb) {\n").append(body).append("}\n\n");
+        return name;
+    }
+
+    /** split() and words() into a list of type t: the pieces in turn, each checked for room and then for size. */
+    private String splitFn(Type.ListT t) {
+        String name = "al_split_" + mangle(t);
+        if (!doneHelpers.add(name)) return name;
+        int k = ((Type.Str) t.elem()).cap();
+        String full = cString(utf8(" makes more than " + t.cap() + " pieces, the capacity of " + t));
+        helpers.append("static void ").append(name).append("(").append(ct(t)).append(" *r, const uint8_t *s, uint32_t n, ")
+            .append("const uint8_t *sep, uint32_t sn, int words, int line, int col) {\n")
+            .append("    uint32_t pos = 0, end;\n")
+            .append("    int last = 0;\n")
+            .append("    r->len = 0;\n")
+            .append("    if (!words && sn == 0) AL_TRAP(\"R0013\", \"split separator is empty\", line, col);\n")
+            .append("    for (;;) {\n")
+            .append("        if (words) {\n")
+            .append("            while (pos < n && al_is_space(s[pos])) pos++;\n")
+            .append("            if (pos == n) break;\n")
+            .append("            end = pos;\n")
+            .append("            while (end < n && !al_is_space(s[end])) end++;\n")
+            .append("        } else {\n")
+            .append("            int64_t hit = al_find_bytes(s, n, sep, sn, pos);\n")
+            .append("            last = hit < 0;\n")
+            .append("            end = last ? n : (uint32_t)hit;\n")
+            .append("        }\n")
+            .append("        if (r->len >= ").append(t.cap()).append("u) {\n")
+            .append("            al_out e = al_trap_begin(\"R0004\");\n")
+            .append("            if (words) AL_PUTS(&e, \"words\");\n")
+            .append("            else AL_PUTS(&e, \"split\");\n")
+            .append("            AL_PUTS(&e, ").append(full).append(");\n")
+            .append("            al_trap_end(&e, line, col);\n")
+            .append("        }\n")
+            .append("        if (end - pos > ").append(k).append("u) al_piece_trap(words, end - pos, ").append(k).append("u, line, col);\n")
+            .append("        r->v[r->len].len = al_copy_bytes(r->v[r->len].b, s + pos, end - pos);\n")
+            .append("        r->len++;\n")
+            .append("        if (words) {\n")
+            .append("            pos = end;\n")
+            .append("        } else {\n")
+            .append("            if (last) break;\n")
+            .append("            pos = end + sn;\n")
+            .append("        }\n")
+            .append("    }\n")
+            .append("}\n\n");
+        return name;
+    }
+
+    /** join() of an array or list of str, of type parts, into a str of type t. */
+    private String joinFn(Type.Str t, Type parts) {
+        String name = "al_join_" + mangle(t) + "_" + mangle(parts);
+        if (!doneHelpers.add(name)) return name;
+        String n = parts instanceof Type.ArrayT arr ? arr.len() + "u" : "p->len";
+        helpers.append("static void ").append(name).append("(").append(ct(t)).append(" *r, const ").append(ct(parts))
+            .append(" *p, const uint8_t *sep, uint32_t sn, int line, int col) {\n")
+            .append("    uint32_t i;\n")
+            .append("    uint64_t need = 0;\n")
+            .append("    for (i = 0; i < ").append(n).append("; i++) need += p->v[i].len + (i > 0 ? sn : 0);\n")
+            .append("    if (need > ").append(t.cap()).append("u) al_need_trap(\"join\", need, ").append(t.cap()).append("u, line, col);\n")
+            .append("    r->len = 0;\n")
+            .append("    for (i = 0; i < ").append(n).append("; i++) {\n")
+            .append("        if (i > 0) r->len += al_copy_bytes(r->b + r->len, sep, sn);\n")
+            .append("        r->len += al_copy_bytes(r->b + r->len, p->v[i].b, p->v[i].len);\n")
+            .append("    }\n")
+            .append("}\n\n");
+        return name;
     }
 
     // =================================================================== text helpers

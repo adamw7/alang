@@ -605,6 +605,7 @@ public final class Interpreter {
     }
 
     private Object convert(Convert c, Object v) {
+        if (v instanceof StrV s) return Stdlib.parseInt(s, c.target, c.span);
         PrimKind from = Type.kind(c.arg.type);
         PrimKind to = c.target;
         if (from == to) return v;
@@ -714,14 +715,114 @@ public final class Interpreter {
                     : Integer.signum(IntOps.compare(Type.kind(c.type), (Long) b, (Long) a)) == (min ? -1 : 1);
                 return takeB ? b : a;
             }
-            case SQRT, FLOOR, CEIL -> {
+            case SQRT, FLOOR, CEIL, ROUND, TRUNC -> {
                 double d = (Double) eval(args.get(0).expr(), slots);
                 double r = switch (c.builtin) {
                     case SQRT -> Math.sqrt(d);
                     case FLOOR -> Math.floor(d);
-                    default -> Math.ceil(d);
+                    case CEIL -> Math.ceil(d);
+                    case ROUND -> Stdlib.round(d);
+                    default -> Stdlib.trunc(d);
                 };
                 return round(r, c.type);
+            }
+            case IS_NAN, IS_FINITE -> {
+                double d = (Double) eval(args.get(0).expr(), slots);
+                return c.builtin == Builtin.IS_NAN ? Double.isNaN(d) : Double.isFinite(d);
+            }
+            case CLAMP -> {
+                Object x = eval(args.get(0).expr(), slots);
+                Object lo = eval(args.get(1).expr(), slots);
+                Object hi = eval(args.get(2).expr(), slots);
+                return Stdlib.clamp(c.type, x, lo, hi, c.span);
+            }
+            case POW -> {
+                long x = (Long) eval(args.get(0).expr(), slots);
+                long n = (Long) eval(args.get(1).expr(), slots);
+                return Stdlib.pow(Type.kind(c.type), x, Type.kind(args.get(1).expr().type), n, c.span);
+            }
+            case GCD, LCM -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                long b = (Long) eval(args.get(1).expr(), slots);
+                PrimKind k = Type.kind(c.type);
+                return c.builtin == Builtin.GCD ? Stdlib.gcd(k, a, b, c.span) : Stdlib.lcm(k, a, b, c.span);
+            }
+            case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
+                long ch = (Long) eval(args.get(0).expr(), slots);
+                return switch (c.builtin) {
+                    case IS_DIGIT -> Stdlib.isDigit(ch);
+                    case IS_ALPHA -> Stdlib.isAlpha(ch);
+                    case IS_ALNUM -> Stdlib.isAlpha(ch) || Stdlib.isDigit(ch);
+                    case IS_SPACE -> Stdlib.isSpace(ch);
+                    case IS_UPPER -> Stdlib.isUpper(ch);
+                    default -> Stdlib.isLower(ch);
+                };
+            }
+            case TO_UPPER, TO_LOWER -> {
+                Object v = eval(args.get(0).expr(), slots);
+                boolean upper = c.builtin == Builtin.TO_UPPER;
+                if (v instanceof StrV s) return Stdlib.mapCase(s, upper);
+                return upper ? Stdlib.toUpper((Long) v) : Stdlib.toLower((Long) v);
+            }
+            case CONTAINS, INDEX_OF -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object x = eval(args.get(1).expr(), slots);
+                long at = xs instanceof StrV s ? Stdlib.find(s.b, s.len, Stdlib.pattern(x), 0)
+                    : Stdlib.indexOf(xs, x, Type.elementOf(args.get(0).expr().type));
+                return c.builtin == Builtin.CONTAINS ? (Object) (at >= 0) : (Object) at;
+            }
+            case STARTS_WITH, ENDS_WITH -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                byte[] p = Stdlib.pattern(eval(args.get(1).expr(), slots));
+                return c.builtin == Builtin.STARTS_WITH ? Stdlib.startsWith(s, p) : Stdlib.endsWith(s, p);
+            }
+            case SLICE -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                long from = (Long) eval(args.get(1).expr(), slots);
+                long to = (Long) eval(args.get(2).expr(), slots);
+                return Stdlib.slice(xs, c.type, from, Type.kind(args.get(1).expr().type), to,
+                    Type.kind(args.get(2).expr().type), c.span);
+            }
+            case TRIM -> {
+                return Stdlib.trim((StrV) eval(args.get(0).expr(), slots));
+            }
+            case IS_INT -> {
+                return Stdlib.isInt((StrV) eval(args.get(0).expr(), slots));
+            }
+            case SPLIT, WORDS -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                byte[] sep = c.builtin == Builtin.SPLIT ? Stdlib.pattern(eval(args.get(1).expr(), slots)) : null;
+                return Stdlib.split(c.name, s, sep, (Type.ListT) c.type, c.span);
+            }
+            case JOIN -> {
+                Object parts = eval(args.get(0).expr(), slots);
+                byte[] sep = Stdlib.pattern(eval(args.get(1).expr(), slots));
+                return Stdlib.join(parts, sep, (Type.Str) c.type, c.span);
+            }
+            case REPLACE -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                byte[] from = Stdlib.pattern(eval(args.get(1).expr(), slots));
+                byte[] to = Stdlib.pattern(eval(args.get(2).expr(), slots));
+                return Stdlib.replace(s, from, to, (Type.Str) c.type, c.span);
+            }
+            case SORT, REVERSE -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                if (c.builtin == Builtin.SORT) Stdlib.sort(xs, args.get(0).expr().type);
+                else Stdlib.reverse(xs);
+                return null;
+            }
+            case INSERT -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                long i = (Long) eval(args.get(1).expr(), slots);
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                Object v = Values.coerce(owned(args.get(2).expr(), slots), elem);
+                Stdlib.insert(xs, i, Type.kind(args.get(1).expr().type), v, c.span);
+                return null;
+            }
+            case REMOVE -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                long i = (Long) eval(args.get(1).expr(), slots);
+                return Stdlib.remove(xs, i, Type.kind(args.get(1).expr().type), c.span);
             }
             case PANIC -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);

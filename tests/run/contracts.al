@@ -1,5 +1,5 @@
 // requires / ensures are checked on every call.
-fn clamp(x: i32, lo: i32, hi: i32) -> i32
+fn bounded(x: i32, lo: i32, hi: i32) -> i32
     requires lo <= hi
     ensures result >= lo and result <= hi
 {
@@ -14,7 +14,7 @@ fn take(stack: mut list[i32; 4]) -> i32
 }
 
 fn main() {
-    print(clamp(5, 0, 3), " ", clamp(-5, 0, 3), " ", clamp(2, 0, 3));
+    print(bounded(5, 0, 3), " ", bounded(-5, 0, 3), " ", bounded(2, 0, 3));
     var s: list[i32; 4] = [1, 2, 3, 4];
     let top: i32 = take(mut s);
     print(top, " ", s);

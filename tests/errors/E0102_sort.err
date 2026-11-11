@@ -1,7 +1,0 @@
-error[E0102]: unknown function `sort`
- --> tests/errors/E0102_sort.al:4:5
-  |
-4 |     sort(mut xs);
-  |     ^^^^
-  = hint: there is no sort builtin; sort a mut list in place with two loops, e.g. an insertion sort
-

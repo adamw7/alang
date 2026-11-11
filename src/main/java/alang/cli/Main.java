@@ -767,8 +767,13 @@ public final class Main {
         }
         if (what.equals("all") || what.equals("--all")) {
             for (Code c : Code.values()) line(out, explainText(c));
-            line(out, "Builtin functions:");
-            for (Builtin b : Builtin.values()) line(out, "  " + b.signature + "  -- " + b.doc);
+            line(out, "Builtin functions and the standard library:");
+            for (Builtin.Group g : Builtin.Group.values()) {
+                line(out, "  " + g.title + ":");
+                for (Builtin b : Builtin.values()) {
+                    if (b.group == g) line(out, "    " + b.signature + "  -- " + b.doc);
+                }
+            }
             return 0;
         }
         try {
@@ -803,8 +808,14 @@ public final class Main {
             sb.append("\n## ").append(c.name()).append("\n\n**").append(c.title).append("**: ");
             sb.append(c.explanation).append("\n\n```\n").append(c.example).append("\n```\n");
         }
-        sb.append("\n## Builtin functions\n\n| Signature | Description |\n|-----------|-------------|\n");
-        for (Builtin b : Builtin.values()) sb.append("| `").append(b.signature).append("` | ").append(b.doc).append(" |\n");
+        sb.append("\n## Builtin functions and the standard library\n\n");
+        sb.append("Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.\n");
+        for (Builtin.Group g : Builtin.Group.values()) {
+            sb.append("\n### ").append(g.title).append("\n\n| Signature | Description |\n|-----------|-------------|\n");
+            for (Builtin b : Builtin.values()) {
+                if (b.group == g) sb.append("| `").append(b.signature).append("` | ").append(b.doc.replace("|", "\\|")).append(" |\n");
+            }
+        }
         return sb.toString();
     }
 
