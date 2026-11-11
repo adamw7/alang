@@ -1,0 +1,7 @@
+1. docs
+2. fetch
+3. compile
+4. test
+5. package
+6. deploy
+Plan.Cycle(["deploy", "test", "package", "compile", "fetch"])

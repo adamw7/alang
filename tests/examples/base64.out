@@ -1,0 +1,5 @@
+Hello, agents! -> SGVsbG8sIGFnZW50cyE=
+SGVsbG8sIGFnZW50cyE= -> Hello, agents!
+SGk/ -> Decoded.Bytes([72, 105, 63])
+SGk  -> Decoded.WrongLength(3)
+S=k= -> Decoded.BadChar(1)
