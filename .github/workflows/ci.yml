@@ -132,7 +132,10 @@ jobs:
           MSYS: winsymlinks:nativestrict
         run: |
           version="$(bin/alang version | cut -d ' ' -f 2)"
-          out="$RUNNER_TEMP/dist"
+          tmp="$RUNNER_TEMP"
+          # On Windows a POSIX path: GNU tar reads the "D:" of D:\a\_temp as the name of a remote host.
+          if [ "$RUNNER_OS" = Windows ]; then tmp="$(cygpath -u "$tmp")"; fi
+          out="$tmp/dist"
           mkdir -p "$out/tar" "$out/zip" "$out/jar" "$out/path"
           tar -xzf "target/alang-$version.tar.gz" -C "$out/tar"
           if command -v unzip > /dev/null; then
