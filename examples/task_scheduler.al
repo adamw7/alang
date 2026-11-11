@@ -102,14 +102,15 @@ fn main() {
     for t in BUILD {
         push(mut tasks, t);
     }
-    match schedule(tasks) {
+    let plan: Plan = schedule(tasks);
+    match plan {
         Plan.Order(order) => {
             for i in 0..len(order) {
                 print(i + 1, ". ", order[i]);
             }
         }
         _ => {
-            print(schedule(tasks));
+            print(plan);
         }
     }
     // Make `fetch` wait for `deploy`: a cycle, so only `docs` can still run.

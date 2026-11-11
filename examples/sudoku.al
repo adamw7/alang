@@ -177,12 +177,14 @@ const PUZZLE: str[81] = "53..7....6..195....98....6.8...6...34..8.3..17...2...6.
 fn main() {
     print_grid(PUZZLE);
     print("");
-    match solve(PUZZLE) {
+    // Solve once: a second call would spend the step budget a second time.
+    let solution: Solution = solve(PUZZLE);
+    match solution {
         Solution.Solved(grid) => {
             print_grid(grid);
         }
         _ => {
-            print(solve(PUZZLE));
+            print(solution);
         }
     }
 }
