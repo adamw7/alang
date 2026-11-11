@@ -1,0 +1,7 @@
+error[E0214]: cannot convert str[3] to f64
+ --> tests/errors/E0214_parse_text.al:3:18
+  |
+3 |     let x: f64 = f64("4.2");
+  |                  ^^^^^^^^^^
+  = hint: text converts only to integers; there is no float parsing: f64(i64("4.2")), checked with is_int("4.2") first
+

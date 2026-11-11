@@ -2,3 +2,5 @@
 # files (tests/*/*.out, *.err), the programs and docs the tests read, and the sh launcher bin/alang must
 # stay byte for byte as committed.
 * text=auto eol=lf
+# Except the Windows launcher: cmd.exe misreads a batch file with LF line endings.
+*.cmd text eol=crlf

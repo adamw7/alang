@@ -22,6 +22,7 @@ agent can call with JSON. CI type-checks every example, runs its tests, compares
 | [stats.al](stats.al) | `f64` statistics and least squares, `sqrt`, float comparisons with a tolerance |
 | [vending_machine.al](vending_machine.al) | A state machine: enum events as JSON input, `mut` state, an `ensures` on a `mut` parameter |
 | [sorting.al](sorting.al) | Merge sort and quicksort without recursion, sortedness as a contract, a seeded pseudo-random generator |
+| [helpers.al](helpers.al) | Helpers the standard library leaves out, to copy: str ordering, padding, parsing into an enum instead of trapping, pseudo-random numbers, a list of entries as a map |
 
 ## Try them
 
@@ -38,7 +39,7 @@ bin/alang call examples/vending_machine.al simulate '{"events": [{"Coin": [200]}
 bin/alang call examples/task_scheduler.al schedule '{"tasks": [{"name": "test", "deps": ["build"]}, {"name": "build", "deps": []}]}'
 # {"ok": true, "result": {"Order": [["build", "test"]]}, "stdout": "", "steps": 62}
 bin/alang call examples/stats.al fit_line '{"xs": [0, 1, 2], "ys": [1, 3, 5]}'
-# {"ok": true, "result": {"Ok": [{"slope": 2.0, "intercept": 1.0, "r_squared": 1.0}]}, "stdout": "", "steps": 49}
+# {"ok": true, "result": {"Ok": [{"slope": 2.0, "intercept": 1.0, "r_squared": 1.0}]}, "stdout": "", "steps": 68}
 bin/alang call examples/base64.al encode '{"data": "agents"}'
 # {"ok": true, "result": "YWdlbnRz", "stdout": "", "steps": 34}
 ```

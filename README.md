@@ -13,6 +13,12 @@ shows Claude Code building a small ALang tool: write, `alang check`, fix from th
 call it. Every `alang` output in it is real; [`docs/demo/make_demo.js`](docs/demo/make_demo.js) re-runs
 the commands and renders it again.
 
+**Why ALang:** [docs/demo/why.mp4](docs/demo/why.mp4) (under 2 minutes, narrated, with English subtitles)
+sets six bugs that JavaScript, C and Python let through (a string plus a number, an overflowing midpoint,
+a missing null check, a loop that never ends, a buffer overflow, a tool called with bad input) beside the
+same programs in ALang. Every program in it really runs; [`docs/demo/make_why.js`](docs/demo/make_why.js)
+re-runs them and renders it again.
+
 ```alang
 /// Splits a bill evenly; the remainder goes to the first payers.
 tool fn split_bill(total_cents: i64, people: i64) -> list[i64; 16]
@@ -70,7 +76,10 @@ and Java, with programs you can run.
 Download `alang-VERSION.tar.gz` (or `.zip`) from the [latest release](https://github.com/adamw7/alang/releases/latest)
 and unpack it; it needs only Java 21 or newer. It holds `bin/alang` (put it, or a link to it, on your
 `PATH`), `lib/alang.jar`, [AGENTS.md](AGENTS.md), the docs and the examples, so the commands below work in
-it as they do in a clone. A release also has the runnable jar on its own (`java -jar alang-VERSION.jar`),
+it as they do in a clone. On Windows, `bin\alang.cmd` runs it from cmd.exe or PowerShell. Both shells can strip
+the quotes out of a JSON argument, so pass `alang call` arguments on stdin there:
+`alang call prog.al tool - < args.json` in cmd.exe, `Get-Content args.json | alang call prog.al tool -` in
+PowerShell. A release also has the runnable jar on its own (`java -jar alang-VERSION.jar`),
 and the guide for agents at an address that does not change:
 <https://github.com/adamw7/alang/releases/latest/download/AGENTS.md>.
 
@@ -222,6 +231,8 @@ same, so measure before switching a harness over. `--delimiter tab` saves a litt
 - [bench/](bench): do models write more correct tools in ALang or in Python?
 - [harness/toon.py](harness/toon.py): tool results as TOON for a model's prompt
 - [examples/](examples): complete programs, each with tests
+- [examples/helpers.al](examples/helpers.al): tested helpers the standard library leaves out (str
+  ordering, padding, parsing into an enum, pseudo-random numbers, a map), to copy into a program
 
 `src/main/java/alang/` holds the toolchain, one package per component (see the architecture);
 `tests/run/` has programs with golden output (`.out`) and expected traps (`.trap`), `tests/errors/`
@@ -240,8 +251,8 @@ bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` with gcc and clang on
-Linux, macOS and Windows, smoke-tests `bin/alang` against the packaged jar and the release archives' launcher
-against theirs, and runs the TOON converter's tests,
+Linux, macOS and Windows, smoke-tests `bin/alang` against the packaged jar and the release archives' launchers
+against theirs (`alang.cmd` from PowerShell on Windows), and runs the TOON converter's tests,
 the benchmark self-test and a 3000-mutation fuzzing campaign. Every test, CI step and job has a time limit, so a hang fails fast.
 Mutation testing is too slow for every push: it runs every Saturday on `main`
 ([`.github/workflows/mutation.yml`](.github/workflows/mutation.yml), or on demand from the Actions tab),
@@ -253,7 +264,7 @@ mutation testing is not part of that, so a PIT update is first exercised by the 
 ### Releases
 
 `mvn package` builds what a release publishes: `target/alang.jar`, and `target/alang-VERSION.tar.gz` and
-`.zip` with the jar, a launcher that needs only Java, AGENTS.md, the docs, the grammar and the examples
+`.zip` with the jar, launchers for sh and Windows that need only Java, AGENTS.md, the docs, the grammar and the examples
 ([`src/dist/assembly.xml`](src/dist/assembly.xml)). The jar carries AGENTS.md, the license and the
 ANTLR runtime's notice ([THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)). To release, set the new version in
 `pom.xml` and `Main.VERSION` (`CliTest` checks that they agree), merge to `main`, then tag that commit:

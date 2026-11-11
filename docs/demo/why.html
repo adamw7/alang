@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ALang vs classic languages</title>
+<!--
+  One 1920x1080 frame of why.mp4. make_why.js sets window.DEMO (the chapters: both programs, the
+  commands and their real outputs), then video.js calls window.renderAt(seconds) once per frame and
+  screenshots the page. renderAt is a pure function of time and returns a key that changes whenever the
+  picture does. The look follows scene.html, which draws demo.mp4.
+-->
+<style>
+:root {
+  --bg: #0c0c0e;
+  --pane: #161619;
+  --bar: #1c1c20;
+  --term: #111114;
+  --line: #2a2a30;
+  --text: #ebe7df;
+  --muted: #8e8a82;
+  --dim: #5a5752;
+  --accent: #d97757;
+  --green: #8fcf7e;
+  --red: #f07470;
+  --blue: #82aaff;
+  --purple: #c8a2f5;
+  --yellow: #ecc66e;
+  --cyan: #74d3d3;
+  --orange: #f3a861;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); }
+#stage {
+  position: relative; width: 1920px; height: 1080px; overflow: hidden; color: var(--text);
+  font-family: 'JetBrains Mono', 'DejaVu Sans Mono', monospace;
+  font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0;
+  background: radial-gradient(1300px 700px at 12% -12%, rgba(217, 119, 87, .11), transparent 62%), var(--bg);
+}
+.sym { font-family: 'DejaVu Sans', 'JetBrains Mono', sans-serif; }
+
+#top {
+  position: absolute; left: 32px; right: 32px; top: 0; height: 76px;
+  display: flex; align-items: center; justify-content: space-between; font-family: Inter, sans-serif;
+}
+.brand { font-size: 24px; font-weight: 700; letter-spacing: -.01em; }
+.brand .x { color: var(--dim); font-weight: 400; margin: 0 10px; }
+.brand .cc { color: var(--accent); }
+#steps { display: flex; gap: 8px; }
+.step {
+  font-size: 15px; font-weight: 500; padding: 7px 15px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--dim);
+}
+.step b { font-weight: 700; margin-right: 7px; }
+.step.seen { color: var(--muted); border-color: #3a3a41; }
+.step.on { color: #1d120d; background: var(--accent); border-color: var(--accent); }
+
+#head {
+  position: absolute; left: 34px; right: 34px; top: 76px; height: 64px;
+  display: flex; align-items: baseline; gap: 18px; padding-top: 6px; font-family: Inter, sans-serif; white-space: nowrap;
+}
+#head .hn { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 700; color: var(--accent); }
+#head .ht { font-size: 33px; font-weight: 700; letter-spacing: -.02em; }
+#head .hs { font-size: 23px; color: var(--muted); }
+#head .hs::before { content: '·'; color: var(--dim); margin-right: 16px; }
+
+#main { position: absolute; left: 24px; right: 24px; top: 140px; bottom: 24px; display: flex; gap: 20px; }
+.pane {
+  flex: 1; min-width: 0; background: var(--pane); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+  display: flex; flex-direction: column; box-shadow: 0 18px 50px rgba(0, 0, 0, .35);
+}
+.bar {
+  height: 46px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 18px;
+  background: var(--bar); border-bottom: 1px solid var(--line); font-size: 15px; color: var(--muted);
+}
+.dots { display: flex; gap: 7px; margin-right: 8px; }
+.dots i { display: block; width: 12px; height: 12px; border-radius: 50%; background: #34343a; }
+.bar .name { color: var(--text); }
+.bar .mod { color: var(--accent); }
+.bar .right { margin-left: auto; font-family: Inter, sans-serif; font-size: 16px; font-weight: 600; color: var(--muted); }
+.bar .right.al { color: var(--accent); }
+
+.code { position: relative; flex: none; overflow: hidden; font-size: 16px; }
+.codeInner { position: absolute; left: 0; right: 0; top: 0; padding: 14px 0; }
+.ln { position: relative; display: flex; height: 24px; line-height: 24px; white-space: pre; }
+.no { width: 68px; flex: none; text-align: right; padding-right: 22px; color: var(--dim); }
+.mark { position: absolute; left: 10px; top: 0; width: 18px; text-align: center; font-size: 14px; }
+.ln.err .no { color: var(--red); }
+.lens { color: var(--red); font-style: italic; margin-left: 34px; }
+.sq { text-decoration: underline wavy var(--red); text-decoration-skip-ink: none; text-underline-offset: 5px; }
+.caret { display: inline-block; width: 2px; height: 19px; margin-right: -2px; background: var(--accent); vertical-align: -4px; }
+.empty { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 17px; }
+.k { color: var(--purple); }
+.t { color: var(--yellow); }
+.s { color: var(--green); }
+.n { color: var(--orange); }
+.c { color: var(--muted); font-style: italic; }
+.f { color: var(--blue); }
+.p { color: #b6b1a8; }
+
+.term { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--term); border-top: 1px solid var(--line); }
+.termInner {
+  position: absolute; left: 0; right: 0; top: 0; padding: 14px 22px 10px; font-size: 15px; line-height: 23px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.pr { color: var(--accent); }
+.dim { color: var(--muted); }
+.ok { color: var(--green); }
+.bad { color: var(--red); }
+.blue { color: var(--blue); }
+.cyan { color: var(--cyan); }
+.hide { visibility: hidden; }
+
+.verdict {
+  height: 52px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 22px;
+  border-top: 1px solid var(--line); font-family: Inter, sans-serif; font-size: 19px; font-weight: 500;
+}
+.verdict.bad { background: rgba(240, 116, 112, .09); }
+.verdict.ok { background: rgba(143, 207, 126, .08); }
+.verdict .ico { font-size: 20px; font-weight: 700; }
+
+#overlay {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; font-family: Inter, sans-serif;
+  background: radial-gradient(1100px 650px at 50% 30%, rgba(217, 119, 87, .14), transparent 65%), var(--bg);
+}
+.kicker { color: var(--accent); font-size: 22px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
+.h1 { font-size: 78px; font-weight: 800; letter-spacing: -.03em; margin: 20px 0 22px; }
+.sub { font-size: 29px; color: var(--muted); }
+.foot { position: absolute; bottom: 58px; left: 0; right: 0; font-size: 19px; color: var(--dim); }
+.loop { display: flex; flex-direction: column; gap: 18px; margin-top: 8px; text-align: left; }
+.loop div { font-size: 30px; color: var(--text); }
+.loop b { display: inline-block; width: 52px; color: var(--accent); }
+.loop code { font-family: 'JetBrains Mono', monospace; font-variant-ligatures: none; font-size: 27px; color: var(--accent); }
+.same { margin-top: 46px; font-size: 26px; color: var(--text); }
+.url { margin-top: 22px; font-size: 26px; color: var(--muted); }
+.url code { font-family: 'JetBrains Mono', monospace; color: var(--text); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="top">
+    <div class="brand">ALang<span class="x">vs</span><span class="cc">classic languages</span></div>
+    <div id="steps"></div>
+  </div>
+  <div id="head"></div>
+  <div id="main">
+    <div id="classic" class="pane"></div>
+    <div id="alang" class="pane"></div>
+  </div>
+  <div id="overlay"></div>
+</div>
+<script>
+'use strict';
+const D = window.DEMO;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const ease = (x) => { x = clamp(x, 0, 1); return x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2; };
+
+// ---------------------------------------------------------------- syntax highlighting
+const words = (s) => new Set(s.split(' '));
+const LANGS = {
+  ALang: {
+    comment: '//',
+    keywords: words('fn tool let var const for in if else return enum struct test assert match while limit requires '
+      + 'ensures and or not mut true false break continue'),
+    types: words('i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 bool str list'), capitalTypes: true,
+  },
+  JavaScript: {
+    comment: '//', keywords: words('const let var function return if else for while new true false null undefined'),
+    types: words('Array Math'),
+  },
+  Python: {
+    comment: '#', keywords: words('def for in if elif else return while None True False not and or import from'),
+    types: new Set(),
+  },
+  C: {
+    comment: '//', block: true, preprocessor: true, keywords: words('return if else for while struct sizeof'),
+    types: words('int char void long unsigned double'),
+  },
+};
+
+function tokenize(line, lang) {
+  const L = LANGS[lang];
+  const out = [];
+  let i = 0;
+  while (i < line.length) {
+    const rest = line.slice(i);
+    let m, cls = 'p';
+    if (rest.startsWith(L.comment)) m = [rest], cls = 'c';
+    else if (L.block && (m = rest.match(/^\/\*.*?\*\//))) cls = 'c';
+    else if (L.preprocessor && i === 0 && (m = rest.match(/^#\w+/))) cls = 'k';
+    else if (L.preprocessor && /^#/.test(line) && (m = rest.match(/^<[^>]*>/))) cls = 's';
+    else if ((m = rest.match(/^"(?:[^"\\]|\\.)*"/)) || (m = rest.match(/^'(?:[^'\\]|\\.)+'/))) cls = 's';
+    else if ((m = rest.match(/^\d[\d_]*(?:\.\d+)?/))) cls = 'n';
+    else if ((m = rest.match(/^[A-Za-z_]\w*/))) {
+      const w = m[0];
+      if (L.keywords.has(w)) cls = 'k';
+      else if (L.types.has(w) || (L.capitalTypes && /^[A-Z]/.test(w))) cls = 't';
+      else if (/^\s*\(/.test(rest.slice(w.length))) cls = 'f';
+      else cls = '';
+    } else if ((m = rest.match(/^\s+/))) cls = '';
+    else m = [rest[0]];
+    out.push({ text: m[0], cls });
+    i += m[0].length;
+  }
+  return out;
+}
+
+// Renders the first `limit` characters of a tokenized line; `marks` wraps [from, to) ranges in a class.
+function renderTokens(tokens, limit, marks) {
+  let html = '', pos = 0;
+  const cuts = new Set([limit]);
+  for (const mk of marks) { cuts.add(mk.from); cuts.add(mk.to); }
+  for (const tk of tokens) {
+    let start = 0;
+    while (start < tk.text.length && pos + start < limit) {
+      let end = tk.text.length;
+      for (const c of cuts) if (c > pos + start && c < pos + end) end = c - pos;
+      const piece = tk.text.slice(start, end);
+      const at = pos + start;
+      let span = tk.cls ? `<span class="${tk.cls}">${esc(piece)}</span>` : esc(piece);
+      for (const mk of marks) if (at >= mk.from && at < mk.to) span = `<span class="${mk.cls}">${span}</span>`;
+      html += span;
+      start = end;
+    }
+    pos += tk.text.length;
+  }
+  return html;
+}
+
+// ---------------------------------------------------------------- terminal output
+function colorJson(line) {
+  return esc(line).replace(/(&quot;|")(?:[^"\\]|\\.)*?"(\s*:)?|\b(true|false)\b|-?\b\d+(?:\.\d+)?\b/g, (m, _q, colon, bool) => {
+    if (colon) return `<span class="blue">${m.slice(0, -colon.length)}</span>${colon}`;
+    if (bool) return `<span class="${bool === 'true' ? 'ok' : 'bad'}">${m}</span>`;
+    if (m.startsWith('"')) return `<span class="ok">${m}</span>`;
+    return `<span class="n">${m}</span>`;
+  });
+}
+
+// JSON indented one key per line, with arrays of plain values kept on one line.
+function pretty(v, ind = '') {
+  if (Array.isArray(v) && v.every((x) => x === null || typeof x !== 'object')) return `[${v.map((x) => JSON.stringify(x)).join(', ')}]`;
+  if (v && typeof v === 'object') {
+    const inner = ind + '  ';
+    const items = Array.isArray(v) ? v.map((x) => inner + pretty(x, inner))
+      : Object.entries(v).map(([k, x]) => `${inner}${JSON.stringify(k)}: ${pretty(x, inner)}`);
+    const [open, close] = Array.isArray(v) ? '[]' : '{}';
+    return `${open}\n${items.join(',\n')}\n${ind}${close}`;
+  }
+  return JSON.stringify(v);
+}
+
+function colorAlang(line) {
+  let m;
+  if ((m = line.match(/^(error|warning|trap)(\[[A-Z]\d+\])(:)(.*)$/)))
+    return `<b class="bad">${esc(m[1] + m[2])}</b>${esc(m[3])}<b>${esc(m[4])}</b>`;
+  if ((m = line.match(/^(\s*)(-->)(.*)$/))) return `${esc(m[1])}<span class="blue">${esc(m[2])}</span><span class="dim">${esc(m[3])}</span>`;
+  if ((m = line.match(/^(\s*\d*\s*\|)(.*)$/)))
+    return `<span class="blue">${esc(m[1])}</span>${/^\s*\^+\s*$/.test(m[2]) ? `<span class="bad">${esc(m[2])}</span>` : esc(m[2])}`;
+  if ((m = line.match(/^(\s*= hint:)(.*)$/))) return `<span class="cyan">${esc(m[1])}${esc(m[2])}</span>`;
+  if (/^\s+in fn /.test(line)) return `<span class="dim">${esc(line)}</span>`;
+  if (/^check failed/.test(line)) return `<span class="bad">${esc(line)}</span>`;
+  if ((m = line.match(/^ok:(.*)$/))) return `<span class="ok">ok:</span>${esc(m[1])}`;
+  if ((m = line.match(/^memory:(.*)$/))) return `<span class="dim">memory:</span>${esc(m[1]).replace(/\d+ B/g, '<span class="n">$&</span>')}`;
+  if (/^[{[]|^\s+"/.test(line)) return colorJson(line);
+  return esc(line);
+}
+
+function colorClassic(line, isSymptom) {
+  if (isSymptom) return `<b class="bad">${esc(line)}</b>`;
+  if (/^Traceback|^\s*File "/.test(line)) return `<span class="dim">${esc(line)}</span>`;
+  if (/^\s*[\^~]+\s*$/.test(line)) return `<span class="bad">${esc(line)}</span>`;
+  return esc(line);
+}
+
+// ---------------------------------------------------------------- timeline (seconds)
+const CPS_CODE = 330;
+const chapters = D.chapters.map((ch) => {
+  const side = (s, lang) => ({
+    ...s, lang, tokens: s.code.map((l) => tokenize(l, lang)),
+    starts: s.code.reduce((a, l, i) => (a.push(i ? a[i - 1] + s.code[i - 1].length + 1 : 0), a), []),
+    chars: s.code.join('\n').length,
+    out: s.outputJson ? pretty(s.outputJson).split('\n') : s.output.split('\n'),
+  });
+  return { ...ch, classic: side(ch.classic, ch.classic.lang), alang: side(ch.alang, 'ALang') };
+});
+
+// Narration: D.voice maps a cue name to the length of its spoken clip in seconds (no entry, no clip).
+// cue() starts a clip now; waitVoice() holds the picture until the clip has finished.
+const cues = [];
+let voiceEnd = 0;
+let T = 0;
+function cue(name) {
+  const seconds = (D.voice || {})[name];
+  if (seconds == null) return;
+  cues.push({ name, t: T, seconds });
+  voiceEnd = T + seconds;
+}
+const waitVoice = (gap) => { T = Math.max(T, voiceEnd + gap); };
+
+// One pane's moments: its code is typed, its command runs, and its output appears.
+function play(s, name, wait, hold) {
+  s.typeStart = T;
+  cue(name);
+  s.typeEnd = T + s.chars / CPS_CODE;
+  s.cmdAt = s.typeEnd + 0.35;
+  s.outAt = s.cmdAt + wait;
+  T = s.outAt + hold;
+}
+
+const ev = {};
+T = 0.7;
+cue('intro');
+T = 3.6;
+waitVoice(0.6);
+ev.titleOut = T;
+T += 0.9;
+for (const ch of chapters) {
+  ch.t0 = T;
+  T += 0.35;
+  play(ch.classic, `${ch.id}_classic`, ch.classic.wait, 0.6);
+  waitVoice(0.4);
+  play(ch.alang, `${ch.id}_alang`, 0.8, 1.4);
+  waitVoice(0.7);
+  ch.t1 = T;
+  T += 0.15;
+}
+ev.endIn = T;
+T += 0.5;
+cue('outro');
+T = ev.endIn + 6.6;
+waitVoice(1.6);
+window.DURATION = T;
+window.CUES = cues;
+
+// ---------------------------------------------------------------- panes
+const LH = 24, PAD = 14;
+
+function codeHtml(s, t, alangPane) {
+  if (t < s.typeStart) {
+    const hint = alangPane ? 'the same program in ALang' : '';
+    return `<div class="empty" style="height:${s.codeH}px">${hint}</div>`;
+  }
+  const typing = t < s.typeEnd;
+  const typed = typing ? Math.floor((t - s.typeStart) * CPS_CODE) : Infinity;
+  let cur = s.code.length - 1;
+  if (typing) { while (cur > 0 && s.starts[cur] > typed) cur--; }
+  const shown = typing ? cur + 1 : s.code.length;
+  const done = t >= s.outAt;
+  let html = '';
+  for (let i = 0; i < shown; i++) {
+    const marks = [];
+    let bg = '', mark = '', lens = '', err = false;
+    if (done && alangPane && s.mark.line - 1 === i) {
+      err = true;
+      marks.push({ from: s.mark.column - 1, to: s.mark.column - 1 + s.mark.length, cls: 'sq' });
+      // The label after the code when the line leaves room for it (about 88 characters fit), else the code alone.
+      const full = `${s.mark.code} ${s.mark.label}`;
+      lens = `<span class="lens">■ ${esc(s.code[i].length + 6 + full.length <= 88 ? full : s.mark.code)}</span>`;
+    }
+    if (done && !alangPane && s.culprit === i) err = true;
+    if (err) {
+      mark = '<span class="mark bad sym">●</span>';
+      bg = 'rgba(240,116,112,.12)';
+    }
+    const limit = typing && i === cur ? typed - s.starts[i] : Infinity;
+    let text = renderTokens(s.tokens[i], limit, marks);
+    if (typing && i === cur) text += '<span class="caret"></span>';
+    html += `<div class="ln${err ? ' err' : ''}"${bg ? ` style="background:${bg}"` : ''}>${mark}<span class="no">${i + 1}</span><span>${text}${lens}</span></div>`;
+  }
+  return html;
+}
+
+function termHtml(s, t, alangPane) {
+  const caret = '<span class="caret" style="background: var(--text)"></span>';
+  const blink = Math.floor(t * 1.6) % 2 === 0;
+  if (t < s.cmdAt) return `<span class="pr">$</span> ${t >= s.typeStart && blink ? caret : ''}`;
+  let html = `<div><span class="pr">$</span> ${esc(s.cmd)}</div>`;
+  if (t < s.outAt) {
+    const secs = s.outAt - s.cmdAt > 1.5 ? ` ${Math.floor(t - s.cmdAt)}s` : '';
+    return html + `<div class="dim">Running…${secs}</div>`;
+  }
+  s.out.forEach((line, i) => {
+    html += `<div>${(alangPane ? colorAlang(line) : colorClassic(line, i === s.symptom)) || ' '}</div>`;
+  });
+  return html;
+}
+
+function verdictHtml(s, t, alangPane) {
+  if (t < s.outAt) return { cls: '', html: '' };
+  const a = ease((t - s.outAt) / 0.4).toFixed(3);
+  const [cls, ico] = alangPane ? ['ok', '✓'] : ['bad', '✗'];
+  return { cls, html: `<span class="ico sym ${cls}" style="opacity:${a}">${ico}</span><span style="opacity:${a}">${esc(s.verdict)}</span>` };
+}
+
+function paneSkeleton(el) {
+  el.innerHTML = '<div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="tab"></span>'
+    + '<span class="right"></span></div><div class="code"><div class="codeInner"></div></div>'
+    + '<div class="term"><div class="termInner"></div></div><div class="verdict"></div>';
+}
+paneSkeleton($('classic'));
+paneSkeleton($('alang'));
+for (const ch of chapters) {
+  const lines = Math.max(ch.classic.code.length, ch.alang.code.length);
+  ch.classic.codeH = ch.alang.codeH = lines * LH + 2 * PAD;
+}
+
+function renderPane(el, s, t, alpha, alangPane) {
+  const q = (sel) => el.querySelector(sel);
+  const typing = t >= s.typeStart && t < s.typeEnd;
+  q('.tab').innerHTML = t >= s.typeStart ? `<span class="name">${esc(s.file)}</span>${typing ? ' <span class="mod">●</span>' : ''}` : '';
+  q('.right').textContent = s.lang;
+  q('.right').className = `right${alangPane ? ' al' : ''}`;
+  q('.code').style.height = `${s.codeH}px`;
+  q('.codeInner').innerHTML = codeHtml(s, t, alangPane);
+  q('.termInner').innerHTML = termHtml(s, t, alangPane);
+  const v = verdictHtml(s, t, alangPane);
+  q('.verdict').className = `verdict ${v.cls}`;
+  q('.verdict').innerHTML = v.html;
+  for (const sel of ['.tab', '.codeInner', '.termInner', '.verdict']) q(sel).style.opacity = alpha;
+  const over = Math.max(0, q('.termInner').offsetHeight - q('.term').clientHeight);
+  q('.termInner').style.transform = `translateY(${-over}px)`;
+  return el.innerHTML + over;
+}
+
+function chapterAt(t) {
+  let k = 0;
+  chapters.forEach((ch, i) => { if (t >= ch.t0) k = i; });
+  return k;
+}
+
+function renderChapter(t) {
+  const k = chapterAt(t);
+  const ch = chapters[k];
+  const alpha = Math.min(ease((t - ch.t0) / 0.35), ease((ch.t1 - t) / 0.3)).toFixed(3);
+  $('head').innerHTML = `<span class="hn">0${k + 1}</span><span class="ht">${esc(ch.title)}</span><span class="hs">${esc(ch.tag)}</span>`;
+  $('head').style.opacity = alpha;
+  return [k, alpha, renderPane($('classic'), ch.classic, t, alpha, false), renderPane($('alang'), ch.alang, t, alpha, true)].join('|');
+}
+
+function renderSteps(t) {
+  const cur = t >= chapters[0].t0 ? chapterAt(t) : -1;
+  $('steps').innerHTML = chapters.map((ch, i) =>
+    `<span class="step${i === cur ? ' on' : i < cur ? ' seen' : ''}"><b>${i + 1}</b>${esc(ch.step)}</span>`).join('');
+  return String(cur);
+}
+
+// ---------------------------------------------------------------- title and end cards
+function renderOverlay(t) {
+  const o = $('overlay');
+  if (t < ev.titleOut + 0.6) {
+    const rise = (d) => `opacity:${ease((t - d) / 0.6).toFixed(3)};transform:translateY(${(14 * (1 - ease((t - d) / 0.6))).toFixed(1)}px)`;
+    o.style.opacity = (1 - ease((t - ev.titleOut) / 0.6)).toFixed(3);
+    o.style.display = 'flex';
+    o.innerHTML = `<div class="kicker" style="${rise(0.1)}">ALang vs classic languages</div>`
+      + `<div class="h1" style="${rise(0.3)}">Six bugs classic languages let through</div>`
+      + `<div class="sub" style="${rise(0.5)}">Each one next to the same program in ALang, and what ALang does instead.</div>`
+      + `<div class="foot" style="${rise(0.9)}">Every program really runs · every output shown is real</div>`;
+    return 'title' + o.innerHTML + o.style.opacity;
+  }
+  if (t >= ev.endIn) {
+    const fade = (d) => `opacity:${ease((t - ev.endIn - d) / 0.5).toFixed(3)}`;
+    const rows = [
+      'No implicit conversions: <code>+</code> never guesses',
+      'Overflow traps, it never wraps',
+      'No null: enums and an exhaustive <code>match</code>',
+      'Every loop has a limit, so every program finishes',
+      'No heap: memory is known before it runs',
+      'Tools fail with a coded JSON error, never a crash',
+    ];
+    o.style.opacity = ease((t - ev.endIn) / 0.6).toFixed(3);
+    o.style.display = 'flex';
+    o.innerHTML = `<div class="kicker" style="${fade(0.2)}">What you get</div>`
+      + `<div class="loop" style="margin-top:34px">${rows.map((r, i) => `<div style="${fade(0.5 + 0.3 * i)}"><b>${i + 1}</b>${r}</div>`).join('')}</div>`
+      + `<div class="same" style="${fade(2.5)}">Same input, same output, on every run and every machine.</div>`
+      + `<div class="url" style="${fade(2.9)}"><code>github.com/adamw7/alang</code> · start with <code>AGENTS.md</code></div>`;
+    return 'end' + o.innerHTML + o.style.opacity;
+  }
+  o.style.display = 'none';
+  return '';
+}
+
+window.renderAt = function renderAt(t) {
+  return [renderOverlay(t), renderSteps(t), renderChapter(t)].join('\u0000');
+};
+window.EVENTS = { ev, chapters: chapters.map((ch) => ({ id: ch.id, t0: ch.t0, t1: ch.t1,
+  classic: { typeStart: ch.classic.typeStart, outAt: ch.classic.outAt },
+  alang: { typeStart: ch.alang.typeStart, outAt: ch.alang.outAt } })) };
+window.renderAt(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+error[E0001]: unexpected '{', expected a statement or expression
+ --> tests/errors/E0001_while_condition.al:3:11
+  |
+3 |     while {
+  |           ^
+  = hint: a while loop needs a condition and a limit: while i < n limit 1000 { ... }
+

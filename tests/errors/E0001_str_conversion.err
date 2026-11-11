@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'str', expected a statement or expression
+ --> tests/errors/E0001_str_conversion.al:4:19
+  |
+4 |     append(mut s, str(42));
+  |                   ^^^
+  = hint: there is no str() conversion; build text with append(mut s, value) into a str[N] variable
+

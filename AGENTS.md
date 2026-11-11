@@ -18,7 +18,7 @@ Fix the **first** diagnostic first, using its `hint`, and re-run `check` after e
 deterministic: a test that fails once fails every time, identically.
 
 No `bin/alang` yet? Unpack `alang-VERSION.tar.gz` from <https://github.com/adamw7/alang/releases/latest>
-and use its `bin/alang`; it needs only Java 21 or newer.
+and use its `bin/alang` (`bin\alang.cmd` on Windows); it needs only Java 21 or newer.
 
 ## A complete program
 
@@ -131,7 +131,10 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 
 ## The standard library
 
-Builtins that work on any type and capacity. Their names are reserved: call `gcd`, do not define it.
+Builtins that work on any type and capacity. Their names are reserved: call `gcd`, do not define it. For
+what it leaves out (ordering strs with a `<`, padding, parsing into an enum instead of trapping,
+pseudo-random numbers, a map as a list of structs), [examples/helpers.al](examples/helpers.al) has tested
+helpers to copy.
 
 | Area | Functions |
 |------|-----------|
@@ -275,7 +278,8 @@ The definitions are all the calling model knows about your tool, so give them so
 - Calls in your `test` blocks with literal arguments, such as `word_counts("a b a")`, become
   `input_examples`.
 
-JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string, arrays and lists as
+JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string of at most N UTF-8
+bytes (a non-ASCII character takes 2 to 4, so size N in bytes, not characters), arrays and lists as
 arrays, structs as objects (all fields required), enum variants as `"Name"` or `{"Name": [payload...]}`.
 Tools cannot take `mut` parameters. A trap inside a tool returns `{"ok": false, "error": {"code":
 "R....", ...}}` instead of crashing the caller. JSON has no NaN or infinity, so a float result holding one

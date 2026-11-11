@@ -146,6 +146,9 @@ jobs:
           fi
           diff -r "$out/tar" "$out/zip"
           test -x "$out/zip/alang-$version/bin/alang"
+          # The Windows launcher has CRLF line endings on every line, which cmd.exe needs.
+          cmd_file="$out/tar/alang-$version/bin/alang.cmd"
+          test "$(grep -c $'\r$' "$cmd_file")" -eq "$(wc -l < "$cmd_file")"
           home="$out/tar/alang-$version"
           cmp target/alang.jar "$home/lib/alang.jar"
           for f in AGENTS.md README.md LICENSE THIRD-PARTY-NOTICES docs/*.md grammar/ALang.g4 examples/*.al examples/README.md harness/toon.py; do
@@ -166,6 +169,32 @@ jobs:
           path/alang test "$home/examples/shapes.al"
           printf 'tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n' > size.al
           LC_ALL=C path/alang call size.al size '{"text": "é"}' | grep -q '"result": 2'
+
+      - name: Windows launcher
+        # The release archive's bin\alang.cmd, run from PowerShell as a Windows user runs it, in a folder
+        # whose path has a space in it.
+        if: runner.os == 'Windows'
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $dist = Join-Path $env:RUNNER_TEMP 'with space'
+          Copy-Item -Recurse (Get-Item (Join-Path $env:RUNNER_TEMP 'dist\tar\alang-*')).FullName $dist
+          $alang = Join-Path $dist 'bin\alang.cmd'
+          & $alang version
+          $hello = & $alang run (Join-Path $dist 'examples\hello.al')
+          if ("$hello" -ne (Get-Content tests/examples/hello.out -Raw).Trim()) { throw "hello.al printed: $hello" }
+          & $alang test (Join-Path $dist 'examples\shapes.al')
+          # `alang call` arguments on stdin, as the launcher advises; "é" is 2 bytes in UTF-8.
+          Set-Content -Path size.al -Value "tool fn size(text: str[16]) -> i64 {`n    return len(text);`n}"
+          $result = ('{"text": "' + [char]0xE9 + '"}') | & $alang call size.al size -
+          if ("$result" -notmatch '"result": 2') { throw "call printed: $result" }
+          # The exit code comes through: 1 for diagnostics.
+          $PSNativeCommandUseErrorActionPreference = $false
+          & $alang check tests/errors/E0001_and_and.al --json > $null
+          if ($LASTEXITCODE -ne 1) { throw "check exited with $LASTEXITCODE, expected 1" }
+          $PSNativeCommandUseErrorActionPreference = $true
+          & $alang explain E0215 > $null
 
       - name: TOON converter
         # harness/toon.py shows `alang call` results to a model as TOON; standard library only.

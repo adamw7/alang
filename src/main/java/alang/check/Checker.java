@@ -4,6 +4,7 @@ import alang.ast.Ast.*;
 import alang.ast.Builtin;
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Hints;
 import alang.diag.Span;
 import alang.interp.Interpreter;
 import alang.interp.Trap;
@@ -1123,6 +1124,7 @@ public final class Checker {
     }
 
     private String functionHint(String name) {
+        // Names of builtins never get here: they are calls of the builtin (or E0108 when declared).
         return switch (name) {
             case "println", "printf", "printLn", "puts", "console_log", "echo" -> "use print(values...)";
             case "length", "size", "count", "strlen" -> "use len(x)";
@@ -1138,20 +1140,24 @@ public final class Checker {
                 "sort a list in place with sort(mut xs); to order by a key, sort structs whose first field is the key "
                     + "(structs order field by field), and reverse(mut xs) for descending";
             case "reversed", "rev" -> "reverse in place with reverse(mut xs)";
+            case "implode", "join_with", "joined", "concat_with" -> "use join(parts, sep): let line: str[64] = join(parts, \", \");";
             case "includes", "has" -> "use contains(xs, x)";
             case "find", "indexOf", "index", "position", "find_index", "search" -> "use index_of(xs, x), which is -1 when x is absent";
             case "startswith", "startsWith", "has_prefix" -> "use starts_with(s, prefix)";
             case "endswith", "endsWith", "has_suffix" -> "use ends_with(s, suffix)";
             case "substr", "substring", "sub", "mid", "subslice" -> "use slice(s, from, to): the bytes from..to as a copy";
-            case "strip", "trim_start", "trim_end", "lstrip", "rstrip", "trim_left", "trim_right" ->
+            case "strip", "trim_start", "trim_end", "lstrip", "rstrip", "trim_left", "trim_right", "trimStart", "trimEnd" ->
                 "use trim(s), which removes ASCII whitespace at both ends";
             case "upper", "uppercase", "toUpperCase", "toupper" -> "use to_upper(x), for a u8 byte or a str";
             case "lower", "lowercase", "toLowerCase", "tolower" -> "use to_lower(x), for a u8 byte or a str";
-            case "split_whitespace", "split_words", "tokenize" ->
-                "use words(s): let ws: list[str[32]; 16] = words(s);";
-            case "parse", "parse_int", "atoi", "to_int", "int", "stoi", "parseInt", "number" ->
-                "convert text with a conversion such as i64(s), which traps unless is_int(s)";
-            case "parse_float", "atof", "float", "parseFloat" ->
+            case "capitalize" -> "change the first byte of a var: s[0] = to_upper(s[0]);";
+            case "split_whitespace", "split_words", "splitlines", "lines", "tokenize", "strtok" ->
+                "use words(s) to split on whitespace, or split(s, sep): let parts: list[str[32]; 16] = split(s, '\\n');";
+            case "int", "float", "double", "long", "short", "usize", "isize" ->
+                "convert with the target type's name: i64(x), f64(x), u8(x); i64(s) also reads an integer from text";
+            case "parse", "parse_int", "parseInt", "parse_i64", "parse_i32", "atoi", "atol", "stoi", "strtol", "to_int",
+                 "toInt", "to_i64", "to_number", "number", "Number" -> Hints.PARSE_NUMBER;
+            case "parse_float", "atof", "parseFloat" ->
                 "there is no float parsing; convert an integer: f64(i64(s)), checked with is_int(s) first";
             case "powf", "powi", "exp2" -> "pow(x, n) takes an integer x and n >= 0; for a float, multiply: x * x";
             case "exp", "log", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "hypot", "cbrt" ->
@@ -1159,10 +1165,30 @@ public final class Checker {
                 + "only + - * /, sqrt, floor, ceil, round, trunc, abs, min and max exist";
             case "fabs" -> "use abs(x)";
             case "fmin", "fmax" -> "use " + name.substring(1) + "(a, b)";
-            case "isdigit", "isalpha", "isalnum", "isspace", "isupper", "islower" ->
-                "use is_" + name.substring(2) + "(c) on a u8 byte";
+            case "isdigit", "isDigit" -> "use is_digit(c) on a u8 byte";
+            case "isalpha", "isAlpha", "is_letter" -> "use is_alpha(c) on a u8 byte";
+            case "isalnum", "is_alphanumeric" -> "use is_alnum(c) on a u8 byte";
+            case "isspace", "is_whitespace" -> "use is_space(c) on a u8 byte";
+            case "isupper" -> "use is_upper(c) on a u8 byte";
+            case "islower" -> "use is_lower(c) on a u8 byte";
             case "isnan" -> "use is_nan(x)";
             case "isfinite" -> "use is_finite(x)";
+            case "sum" -> "there is no sum; add in a loop: var total: i64 = 0; for x in xs { total += x; }";
+            case "map", "filter", "reduce", "fold", "any", "all", "zip", "foreach", "for_each", "forEach" ->
+                "there are no higher-order functions; write the loop: for x in xs { if x > 0 { push(mut out, x); } }";
+            case "enumerate" -> "loop over the indexes: for i in 0..len(xs) { let x: i64 = xs[i]; }";
+            case "ord" -> "a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number";
+            case "chr" -> "push(mut s, u8(n)) adds the byte n to a str";
+            case "dict", "HashMap", "hashmap", "Map", "set", "Set", "HashSet" -> Hints.COLLECTIONS;
+            case "input", "read", "read_line", "readline", "readLine", "scanf", "gets", "getline", "open", "fopen",
+                 "read_file", "readFile", "write_file", "writeFile", "fetch", "get_env", "getenv", "env" ->
+                "there is no input, file, network or environment access; a program's only inputs are its tool "
+                + "arguments: declare `tool fn f(text: str[1024])` and call it with `alang call`";
+            case "random", "rand", "randint", "rand_int", "random_int" ->
+                "there is no randomness; take a seed as an argument and compute the next value from it: "
+                + "seed = (seed * 1103515245 + 12345) % 2147483648; with seed: i64 below 2147483648";
+            case "time", "now", "clock", "sleep", "timestamp", "time_now", "current_time" ->
+                "there is no clock; take the time as an argument";
             default -> {
                 List<String> names = new ArrayList<>(fns.keySet());
                 for (Builtin b : Builtin.values()) names.add(b.name);

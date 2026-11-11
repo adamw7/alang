@@ -1,0 +1,7 @@
+error[E0001]: unexpected ']', expected ';'
+ --> tests/errors/E0001_stray_bracket.al:5:23
+  |
+5 |     let a: i64 = xs[0]];
+  |                       ^
+  = hint: add `;` at the end of the previous statement
+

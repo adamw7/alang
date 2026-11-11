@@ -1,0 +1,7 @@
+error[E0001]: unexpected '[', expected one of 'requires', 'ensures', '{'
+ --> tests/errors/E0001_python_generic.al:2:39
+  |
+2 | fn first(xs: list[i64; 8]) -> Optional[i64] {
+  |                                       ^
+  = hint: there are no generics; write a function or type for each element type, e.g. fn max_i64(a: i64, b: i64) -> i64, and use list[T; N] instead of Vec<T>
+

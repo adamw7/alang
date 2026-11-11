@@ -20,7 +20,10 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CoderResult;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -269,13 +272,27 @@ public final class Main {
     private Source file() {
         if (positional.isEmpty()) throw new UsageException("missing source file");
         Path p = Path.of(positional.get(0));
+        byte[] bytes;
         try {
-            return new Source(p.toString(), Files.readString(p, StandardCharsets.UTF_8));
+            bytes = Files.readAllBytes(p);
         } catch (NoSuchFileException e) {
             throw new UsageException("file not found: " + p);
         } catch (IOException e) {
             throw new UsageException("cannot read " + p + ": " + e.getMessage());
         }
+        // Files.readString reported a byte that is not UTF-8 only as "Input length = 1".
+        CharsetDecoder dec = StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT);
+        ByteBuffer in = ByteBuffer.wrap(bytes);
+        CharBuffer text = CharBuffer.allocate(bytes.length);
+        CoderResult r = dec.decode(in, text, true);
+        if (!r.isError()) r = dec.flush(text);
+        if (r.isError()) {
+            throw new UsageException(p + " is not UTF-8 text (byte 0x" + String.format(Locale.ROOT, "%02x", bytes[in.position()] & 0xFF)
+                + " at offset " + in.position() + "); save it as UTF-8");
+        }
+        return new Source(p.toString(), text.flip().toString());
     }
 
     // =================================================================== check

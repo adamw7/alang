@@ -1,0 +1,7 @@
+error[E0001]: unexpected character U+FEFF, expected one of end of file, 'fn', 'tool', 'const', 'struct', 'enum', 'test'
+ --> tests/errors/E0001_byte_order_mark.al:1:1
+  |
+1 | ﻿
+  | ^
+  = hint: the file starts with a byte order mark (U+FEFF); save it as UTF-8 without a BOM
+

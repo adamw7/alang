@@ -2,12 +2,14 @@ package alang.parse;
 
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Hints;
 import alang.diag.Source;
 import alang.diag.Span;
 import alang.parser.ALangLexer;
 import alang.parser.ALangParser;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import org.antlr.v4.runtime.BaseErrorListener;
 import org.antlr.v4.runtime.InputMismatchException;
 import org.antlr.v4.runtime.NoViableAltException;
@@ -49,7 +51,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         Token prev2 = prev == null ? null : previous(ts, prev);
 
         String text = tok.getType() == Token.EOF ? "end of file"
-            : tok.getType() == ALangLexer.ERROR_CHAR ? "character `" + tok.getText() + "`"
+            : tok.getType() == ALangLexer.ERROR_CHAR ? "character " + strayCharacter(tok.getText())
             : "'" + tok.getText() + "'";
         int len = tok.getType() == Token.EOF ? 1 : Math.max(1, Source.columns(tok.getText()));
 
@@ -72,6 +74,24 @@ final class SyntaxErrorListener extends BaseErrorListener {
         }
         String hint = hint(ts, tok, prev, prev2, expected);
         diags.error(Code.E0001, new Span(tok.getLine(), tok.getCharPositionInLine() + 1, len), message, hint);
+    }
+
+    /**
+     * A character the lexer does not know, as a message shows it: in backticks, or by its code point when
+     * it would not show there. A byte order mark, a no-break space or a form feed printed as itself made
+     * "unexpected character ``", which names nothing the reader can find.
+     */
+    private static String strayCharacter(String s) {
+        return invisible(s) ? String.format(Locale.ROOT, "U+%04X", s.codePointAt(0)) : "`" + s + "`";
+    }
+
+    /** Control characters, format characters such as U+FEFF and U+200B, and spaces other than ' '. */
+    private static boolean invisible(String s) {
+        return switch (Character.getType(s.codePointAt(0))) {
+            case Character.CONTROL, Character.FORMAT, Character.SPACE_SEPARATOR, Character.LINE_SEPARATOR,
+                 Character.PARAGRAPH_SEPARATOR -> true;
+            default -> false;
+        };
     }
 
     private static Token previous(TokenStream ts, Token tok) {
@@ -147,12 +167,19 @@ final class SyntaxErrorListener extends BaseErrorListener {
             if (s.equals("#")) return "comments start with //";
             if (s.equals("\"")) return "unterminated string literal; strings must close on the same line (use \\n for newlines)";
             if (s.equals("'")) return "strings use double quotes \"...\"; single quotes are for one-byte character literals like 'a'";
+            if (s.equals("﻿") && tok.getStartIndex() == 0) {
+                return "the file starts with a byte order mark (U+FEFF); save it as UTF-8 without a BOM";
+            }
+            if (invisible(s)) {
+                return strayCharacter(s) + " is an invisible character that is not part of ALang syntax; "
+                    + "delete it, or replace it with a plain space";
+            }
             return "the character '" + s + "' is not part of ALang syntax";
         }
         if (t == ALangLexer.STAR && p == ALangLexer.SLASH) {
             return "block comments are not supported; start each comment line with //";
         }
-        String missing = missingFeature(ts, tok, p, expected);
+        String missing = missingFeature(ts, tok, prev, prev2, expected);
         if (missing != null) return missing;
         if (t == ALangLexer.LPAREN && p == ALangLexer.IDENT && prev2 != null && prev2.getType() == ALangLexer.DOT) {
             return "there are no methods; call functions with the value as an argument, e.g. len(xs) instead of xs.len()";
@@ -160,7 +187,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (t == ALangLexer.LBRACE && p == ALangLexer.IDENT && Character.isUpperCase(prev.getText().charAt(0))) {
             return "struct values are built with named arguments: " + prev.getText() + "(field: value, ...)";
         }
-        if (expected != null && expected.contains(ALangLexer.LIMIT) && t == ALangLexer.LBRACE) {
+        // `limit` is also a name, so it is expected where an expression starts too: not a `while` there.
+        if (expected != null && expected.contains(ALangLexer.LIMIT) && t == ALangLexer.LBRACE
+            && !expected.contains(ALangLexer.INT_LIT)) {
             return "while loops must state an iteration limit: while cond limit 1000 { ... }";
         }
         if (p == ALangLexer.FOR && t == ALangLexer.LPAREN) {
@@ -202,10 +231,32 @@ final class SyntaxErrorListener extends BaseErrorListener {
         + "e.g. struct Pair { a: i64, b: i64 }, and build it with Pair(a: 1, b: 2)";
 
     /** Constructs common in other languages that ALang leaves out, each with the ALang way to write it. */
-    private static String missingFeature(TokenStream ts, Token tok, int p, IntervalSet expected) {
+    private static String missingFeature(TokenStream ts, Token tok, Token prev, Token prev2, IntervalSet expected) {
         if (expected == null) return null;
         int t = tok.getType();
+        int p = prev == null ? -1 : prev.getType();
         String word = tok.getText();
+        String capacity = missingCapacity(ts, tok, p, expected);
+        if (capacity != null) return capacity;
+        if (t == ALangLexer.STR && expected.contains(ALangLexer.INT_LIT)) {
+            // `str(x)` where a value must start.
+            return "there is no str() conversion; build text with append(mut s, value) into a str[N] variable";
+        }
+        if (p == ALangLexer.WHILE && t == ALangLexer.LBRACE) {
+            return "a while loop needs a condition and a limit: while i < n limit 1000 { ... }";
+        }
+        if ((t == ALangLexer.LBRACK || t == ALangLexer.LT) && p == ALangLexer.IDENT && !expectsOperator(expected)
+            && isCollection(prev.getText())) {
+            return Hints.COLLECTIONS; // map[K, V], HashMap<K, V>, set[T]
+        }
+        if (t == ALangLexer.LBRACE && expected.contains(ALangLexer.INT_LIT) && switch (p) {
+            case ALangLexer.ASSIGN, ALangLexer.RETURN, ALangLexer.LPAREN, ALangLexer.COMMA, ALangLexer.COLON -> true;
+            default -> false;
+        }) {
+            // `{` where a value must start: `= {}`, `return {...}`, `f({...})`.
+            return "`{ }` is a block, not a value: an empty list is [], a struct value is Name(field: value, ...), "
+                + "and there are no map or set literals";
+        }
         if (expected.contains(ALangLexer.STRUCT)) {
             // Where a top-level declaration may start.
             if (t == ALangLexer.LET || t == ALangLexer.VAR || t == ALangLexer.IDENT && word.equals("static")) {
@@ -219,7 +270,10 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 return "there are no modules or imports; a program is one file, so declare everything it uses in it";
             }
         }
-        if (t == ALangLexer.LT && p == ALangLexer.IDENT && !expectsOperator(expected)) {
+        // `Vec<T>`, or `List[int]` / `Optional[int]` where a type starts (elsewhere `xs[` is an index).
+        if ((t == ALangLexer.LT || t == ALangLexer.LBRACK && prev2 != null
+                && (prev2.getType() == ALangLexer.COLON || prev2.getType() == ALangLexer.ARROW))
+            && p == ALangLexer.IDENT && !expectsOperator(expected)) {
             return "there are no generics; write a function or type for each element type, "
                 + "e.g. fn max_i64(a: i64, b: i64) -> i64, and use list[T; N] instead of Vec<T>";
         }
@@ -291,6 +345,37 @@ final class SyntaxErrorListener extends BaseErrorListener {
             }
         }
         return null;
+    }
+
+    /** A str, list or array type without its capacity: {@code str}, {@code list<T>}, {@code list[T]}, {@code [T]}. */
+    private static String missingCapacity(TokenStream ts, Token tok, int p, IntervalSet expected) {
+        int t = tok.getType();
+        if (p == ALangLexer.STR && t != ALangLexer.LBRACK && expected.contains(ALangLexer.LBRACK)) {
+            return "a string type needs its capacity in bytes: str[64]";
+        }
+        if (p == ALangLexer.LIST && t != ALangLexer.LBRACK && expected.contains(ALangLexer.LBRACK)) {
+            return "a list type needs an element type and a capacity: list[i64; 16]";
+        }
+        if (t == ALangLexer.RBRACK && expected.contains(ALangLexer.SEMI)) {
+            // A `]` that closes a `[` is unexpected only in a type: in an expression it closes an index
+            // or a literal. (A stray `]`, as in `xs[0]];`, closes nothing.)
+            Token open = opener(ts, tok);
+            if (open != null && open.getType() == ALangLexer.LBRACK) {
+                return "lists and arrays need a capacity after `;`: list[i64; 16] holds up to 16 items, "
+                    + "[i64; 4] exactly 4";
+            }
+        }
+        return null;
+    }
+
+    /** Names other languages give maps, dictionaries and sets. */
+    private static boolean isCollection(String name) {
+        return switch (name) {
+            case "map", "Map", "HashMap", "hashmap", "BTreeMap", "TreeMap", "unordered_map", "dict", "Dict",
+                 "dictionary", "Dictionary", "OrderedDict", "set", "Set", "HashSet", "BTreeSet", "TreeSet",
+                 "unordered_set", "frozenset" -> true;
+            default -> false;
+        };
     }
 
     /** The innermost bracket, parenthesis or brace still open at {@code tok}, or null. */

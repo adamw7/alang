@@ -1,0 +1,7 @@
+error[E0001]: unexpected ']', expected ';'
+ --> tests/errors/E0001_list_capacity.al:3:21
+  |
+3 |     var xs: list[i64] = [];
+  |                     ^
+  = hint: lists and arrays need a capacity after `;`: list[i64; 16] holds up to 16 items, [i64; 4] exactly 4
+

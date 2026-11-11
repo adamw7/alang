@@ -1,0 +1,126 @@
+error[E0102]: unknown function `parse_int`
+ --> tests/errors/E0102_missing_library.al:5:18
+  |
+5 |     let n: i64 = parse_int(s);
+  |                  ^^^^^^^^^
+  = hint: convert the text with an integer type's name: i64(trim(s)), which traps unless the text is a decimal integer, so check is_int(trim(s)) first
+
+error[E0102]: unknown function `int`
+ --> tests/errors/E0102_missing_library.al:6:18
+  |
+6 |     let k: i64 = int(2.5);
+  |                  ^^^
+  = hint: convert with the target type's name: i64(x), f64(x), u8(x); i64(s) also reads an integer from text
+
+error[E0102]: unknown function `splitlines`
+ --> tests/errors/E0102_missing_library.al:7:5
+  |
+7 |     splitlines(s);
+  |     ^^^^^^^^^^
+  = hint: use words(s) to split on whitespace, or split(s, sep): let parts: list[str[32]; 16] = split(s, '\n');
+
+error[E0102]: unknown function `strip`
+ --> tests/errors/E0102_missing_library.al:8:5
+  |
+8 |     strip(s);
+  |     ^^^^^
+  = hint: use trim(s), which removes ASCII whitespace at both ends
+
+error[E0102]: unknown function `upper`
+ --> tests/errors/E0102_missing_library.al:9:5
+  |
+9 |     upper(s);
+  |     ^^^^^
+  = hint: use to_upper(x), for a u8 byte or a str
+
+error[E0102]: unknown function `implode`
+  --> tests/errors/E0102_missing_library.al:10:5
+   |
+10 |     implode(s);
+   |     ^^^^^^^
+  = hint: use join(parts, sep): let line: str[64] = join(parts, ", ");
+
+error[E0102]: unknown function `reversed`
+  --> tests/errors/E0102_missing_library.al:11:5
+   |
+11 |     reversed(s);
+   |     ^^^^^^^^
+  = hint: reverse in place with reverse(mut xs)
+
+error[E0102]: unknown function `substring`
+  --> tests/errors/E0102_missing_library.al:12:5
+   |
+12 |     substring(s);
+   |     ^^^^^^^^^
+  = hint: use slice(s, from, to): the bytes from..to as a copy
+
+error[E0102]: unknown function `isdigit`
+  --> tests/errors/E0102_missing_library.al:13:5
+   |
+13 |     isdigit(s);
+   |     ^^^^^^^
+  = hint: use is_digit(c) on a u8 byte
+
+error[E0102]: unknown function `sum`
+  --> tests/errors/E0102_missing_library.al:14:5
+   |
+14 |     sum(s);
+   |     ^^^
+  = hint: there is no sum; add in a loop: var total: i64 = 0; for x in xs { total += x; }
+
+error[E0102]: unknown function `filter`
+  --> tests/errors/E0102_missing_library.al:15:5
+   |
+15 |     filter(s);
+   |     ^^^^^^
+  = hint: there are no higher-order functions; write the loop: for x in xs { if x > 0 { push(mut out, x); } }
+
+error[E0102]: unknown function `enumerate`
+  --> tests/errors/E0102_missing_library.al:16:5
+   |
+16 |     enumerate(s);
+   |     ^^^^^^^^^
+  = hint: loop over the indexes: for i in 0..len(xs) { let x: i64 = xs[i]; }
+
+error[E0102]: unknown function `ord`
+  --> tests/errors/E0102_missing_library.al:17:5
+   |
+17 |     ord(s);
+   |     ^^^
+  = hint: a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number
+
+error[E0102]: unknown function `chr`
+  --> tests/errors/E0102_missing_library.al:18:5
+   |
+18 |     chr(s);
+   |     ^^^
+  = hint: push(mut s, u8(n)) adds the byte n to a str
+
+error[E0102]: unknown function `dict`
+  --> tests/errors/E0102_missing_library.al:19:5
+   |
+19 |     dict();
+   |     ^^^^
+  = hint: there are no maps, dictionaries or sets; keep the entries in a list of structs and find a key with a loop: struct Entry { key: str[16], value: i64 } and list[Entry; 64]
+
+error[E0102]: unknown function `input`
+  --> tests/errors/E0102_missing_library.al:20:5
+   |
+20 |     input();
+   |     ^^^^^
+  = hint: there is no input, file, network or environment access; a program's only inputs are its tool arguments: declare `tool fn f(text: str[1024])` and call it with `alang call`
+
+error[E0102]: unknown function `random`
+  --> tests/errors/E0102_missing_library.al:21:5
+   |
+21 |     random();
+   |     ^^^^^^
+  = hint: there is no randomness; take a seed as an argument and compute the next value from it: seed = (seed * 1103515245 + 12345) % 2147483648; with seed: i64 below 2147483648
+
+error[E0102]: unknown function `now`
+  --> tests/errors/E0102_missing_library.al:22:5
+   |
+22 |     now();
+   |     ^^^
+  = hint: there is no clock; take the time as an argument
+

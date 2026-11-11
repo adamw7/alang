@@ -172,7 +172,7 @@ sequenceDiagram
     Interp-->>CLI: result and captured print output, or a trap (R code)
     CLI->>Interp: JsonValues.toJson(result)
     Interp-->>CLI: JSON value, or bad_result (NaN, infinity)
-    CLI-->>Host: {"ok": true, "result": [...], "stdout": "", "steps": 16}
+    CLI-->>Host: {"ok": true, "result": [...], "stdout": "", "steps": 41}
 ```
 
 Every step is deterministic: the same program and arguments give the same bytes, step count and trap on

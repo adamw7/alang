@@ -10,7 +10,8 @@ runs:
 4. When it is wrong, will it say so, and how to fix it?
 
 For mainstream languages the honest answer is mostly "it depends". In ALang the compiler enforces a rule
-for each. This page shows the difference with small programs you can run.
+for each. This page shows the difference with small programs you can run; the two-minute video
+[demo/why.mp4](demo/why.mp4) shows six of them side by side.
 
 > Every ALang program here compiles and passes its tests, and every ALang diagnostic and trap shown is
 > the toolchain's exact output; `DocsTest` checks both on every build. Output from other languages was
