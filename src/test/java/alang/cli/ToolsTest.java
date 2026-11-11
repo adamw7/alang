@@ -206,6 +206,89 @@ class ToolsTest {
             + "\"minLength\": 1}", param(program, "code"));
     }
 
+    /** Calls in tests with constant arguments become input_examples: distinct, in order, at most three. */
+    @Test
+    void testsProvideInputExamples() throws IOException {
+        String out = tools("""
+            const START: u8 = 7;
+
+            struct Range {
+                from: u8,
+                to: u8,
+            }
+
+            enum Unit {
+                Day,
+                Hours(u8),
+            }
+
+            /// Counts the steps of a range.
+            tool fn steps(r: Range, unit: Unit, label: str[8]) -> list[u8; 4]
+                requires r.from <= r.to
+            {
+                var out: list[u8; 4] = [];
+                push(mut out, r.to - r.from);
+                return out;
+            }
+
+            tool fn ratio(a: f64, b: f64) -> f64 {
+                return a / b;
+            }
+
+            test "steps" {
+                let r: Range = Range(from: 1, to: 3);
+                assert len(steps(r, Unit.Day, "local")) == 1;                   // a local: not an example
+                assert steps(Range(from: 2, to: 1), Unit.Day, "x") == [255];    // traps: not an example
+                assert len(steps(Range(from: START, to: 9), Unit.Hours(2), "ok")) == 1;
+                assert len(steps(Range(from: START, to: 9), Unit.Hours(2), "ok")) == 1;
+            }
+
+            test "more steps" {
+                for i in 0..2 {
+                    assert len(steps(Range(from: 0, to: 0), Unit.Day, "")) == 1;
+                }
+                assert len(steps(Range(from: 1, to: 1), Unit.Day, "a")) == 1;
+                assert len(steps(Range(from: 2, to: 2), Unit.Day, "b")) == 1;
+            }
+
+            test "ratio" {
+                assert ratio(1.0, 4.0) == 0.25;
+                assert ratio(0.0, 0.0) != ratio(0.0, 0.0);                      // NaN has no JSON: not an example
+            }
+            """);
+        List<?> tools = (List<?>) Json.parse(out);
+        assertEquals(oneLine("""
+            [{"r": {"from": 7, "to": 9}, "unit": {"Hours": [2]}, "label": "ok"},
+             {"r": {"from": 0, "to": 0}, "unit": "Day", "label": ""},
+             {"r": {"from": 1, "to": 1}, "unit": "Day", "label": "a"}]
+            """), Json.write(((Map<?, ?>) tools.get(0)).get("input_examples")) + "\n");
+        assertEquals("[{\"a\": 1.0, \"b\": 4.0}]", Json.write(((Map<?, ?>) tools.get(1)).get("input_examples")));
+    }
+
+    /** An example must return within the step budget, and a tool without one has no input_examples key. */
+    @Test
+    void examplesRespectTheStepBudget() throws IOException {
+        Path p = dir.resolve("budget.al");
+        Files.writeString(p, """
+            tool fn spin(n: i64) -> i64 {
+                var total: i64 = 0;
+                for i in 0..n {
+                    total += i;
+                }
+                return total;
+            }
+
+            test "spin" {
+                assert spin(1000) == 499500;
+            }
+            """, StandardCharsets.UTF_8);
+        Result r = run("tools", p.toString());
+        assertEquals("[{\"n\": 1000}]", Json.write(((Map<?, ?>) ((List<?>) Json.parse(r.out())).get(0)).get("input_examples")));
+        r = run("tools", p.toString(), "--max-steps", "100");
+        assertEquals(0, r.code(), r.err());
+        assertEquals(false, ((Map<?, ?>) ((List<?>) Json.parse(r.out())).get(0)).containsKey("input_examples"), r.out());
+    }
+
     @Test
     void otherClausesAreOnlyDescribed() throws IOException {
         String program = """

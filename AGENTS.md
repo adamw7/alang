@@ -198,16 +198,21 @@ fn main() {
 
 ## Writing tools for agents
 
-Mark a function `tool fn` and document it with `///`. A `///` line above a parameter, a struct field or
-an enum variant describes it in the tool's schema, so the calling model knows what to pass. State limits
-as `requires` clauses: the description lists them, and simple ones such as
-`requires people > 0 and people <= 16` become schema bounds (`"minimum": 1, "maximum": 16`). Then:
+Mark a function `tool fn` and document it with `///`. Then:
 
 ```sh
-bin/alang tools prog.al                        # JSON tool definitions (name, description, input_schema)
+bin/alang tools prog.al                        # JSON tool definitions (name, description, input_schema, input_examples)
 bin/alang call prog.al word_counts '{"text": "a b a"}'
 # {"ok": true, "result": [{"word": "a", "count": 2}, {"word": "b", "count": 1}], "stdout": ""}
 ```
+
+The definitions are all the calling model knows about your tool, so give them something to say:
+
+- A `///` line above a parameter, a struct field or an enum variant describes it in the schema.
+- `requires` clauses are listed in the description, and simple ones such as
+  `requires people > 0 and people <= 16` become schema bounds (`"minimum": 1, "maximum": 16`).
+- Calls in your `test` blocks with literal arguments, such as `word_counts("a b a")`, become
+  `input_examples`.
 
 JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string, arrays and lists as
 arrays, structs as objects (all fields required), enum variants as `"Name"` or `{"Name": [payload...]}`.

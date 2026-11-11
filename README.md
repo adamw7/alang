@@ -80,7 +80,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `alang check FILE [--json] [--memory] [--max-stack B]` | Type-check; print diagnostics and the static memory bound (budget 8 MiB unless `--max-stack` sets another) |
 | `alang run FILE [--json] [--max-steps N] [--max-stack B]` | Run `fn main()` |
 | `alang test FILE [--json] [--filter TEXT] [--max-steps N] [--max-stack B]` | Run all `test "..." { }` blocks; a filter that matches no test fails |
-| `alang tools FILE [--json] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema) |
+| `alang tools FILE [--json] [--max-steps N] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema, and input_examples from the tests' calls) |
 | `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B]` | Call a tool with JSON arguments; `-` reads them from stdin, none means `{}` |
 | `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
 | `alang explain CODE \| --all \| --markdown` | Explain a diagnostic or trap code, or all of them |

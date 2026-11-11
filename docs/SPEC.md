@@ -329,6 +329,12 @@ characters, an upper bound sets `maxLength` and a lower one only `"minLength": 1
 described. The schema never rejects a call the contract accepts, and the call still checks every clause
 (R0006).
 
+`input_examples` shows the model up to three distinct argument objects, taken from the calls of the tool
+in `test` blocks whose arguments are all constant expressions, in the order the tests make them. Each call
+is run first (within `--max-steps`), and only one that returns a result JSON can represent becomes an
+example, so every example passes the contract and therefore fits the schema. A tool that no test calls
+that way has no `input_examples`.
+
 `alang call file.al name '{"arg": ...}'`
 runs one call and prints `{"ok": true, "result": ..., "stdout": "..."}` or
 `{"ok": false, "error": {...}}`. With `-` in place of the JSON the arguments are read from stdin (as

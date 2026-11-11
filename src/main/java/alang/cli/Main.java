@@ -49,7 +49,8 @@ public final class Main {
           check <file.al>              type-check; report diagnostics and the static memory bound
           run <file.al>                check, then run fn main()
           test <file.al>               check, then run every `test "..." { }` block
-          tools <file.al>              print JSON schemas of all `tool fn` functions
+          tools <file.al>              print JSON tool definitions of all `tool fn` functions, with
+                                       example arguments from the tests' calls
           call <file.al> <tool> [json] call a tool with a JSON object of arguments (`-`: read it from
                                        stdin; omitted: {}, for a tool without parameters)
           build <file.al> [-o out.c]   compile to heap-free C99 (no malloc; stack and static data only)
@@ -59,7 +60,8 @@ public final class Main {
 
         options (an option a command does not take is a usage error):
           --json             machine-readable output (check, run, test, tools; call always prints JSON)
-          --max-steps N      interpreter statement budget (run, test, call; default %d, 0 = unlimited)
+          --max-steps N      interpreter statement budget (run, test, call, tools; default %d,
+                             0 = unlimited)
           --max-stack BYTES  memory budget: the worst-case stack of each entry point, and the
                              constants (check, run, test, tools, call, build; default %d = 8 MiB,
                              0 = unlimited)
@@ -78,7 +80,7 @@ public final class Main {
         "check", Set.of("--json", "--memory", "--max-stack"),
         "run", Set.of("--json", "--max-steps", "--max-stack"),
         "test", Set.of("--json", "--filter", "--max-steps", "--max-stack"),
-        "tools", Set.of("--json", "--max-stack"),
+        "tools", Set.of("--json", "--max-steps", "--max-stack"),
         "call", Set.of("--json", "--max-steps", "--max-stack"),
         "build", Set.of("-o", "--max-stack"),
         "explain", Set.of(),
@@ -526,16 +528,22 @@ public final class Main {
         List<Object> list = new ArrayList<>();
         for (FnDecl f : r.program().itemsOf(FnDecl.class)) {
             if (!f.tool) continue;
-            list.add(toolSchema(f));
+            list.add(toolSchema(f, r.program(), src));
         }
         line(out, Json.write(list));
         return 0;
     }
 
-    /** A tool definition in the shape of the Messages API's `tools`. */
-    static Map<String, Object> toolSchema(FnDecl f) {
-        return Json.obj("name", f.name, "description", ToolDefinitions.description(f),
+    /**
+     * A tool definition in the shape of the Messages API's `tools`, with `input_examples` when the tests
+     * call the tool with constant arguments.
+     */
+    private Map<String, Object> toolSchema(FnDecl f, Program p, Source src) {
+        Map<String, Object> tool = Json.obj("name", f.name, "description", ToolDefinitions.description(f),
             "input_schema", ToolDefinitions.inputSchema(f));
+        List<Object> examples = ToolExamples.of(f, p, src, maxSteps);
+        if (!examples.isEmpty()) tool.put("input_examples", examples);
+        return tool;
     }
 
     private int call(Source src) {
