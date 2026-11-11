@@ -2,13 +2,22 @@ package alang.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import alang.ast.Ast.Call;
+import alang.ast.Ast.IntLit;
+import alang.ast.Ast.TestDecl;
+import alang.check.Checker;
+import alang.diag.Source;
 import alang.util.Json;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -164,6 +173,9 @@ class ToolsTest {
         assertEquals("{\"type\": \"number\", \"minimum\": 0.1, \"exclusiveMaximum\": 2.0}", param("""
             tool fn f(r: f32) -> f32 requires r >= 0.1 and r < 2.0 { return r; }
             """, "r"));
+        assertEquals("{\"type\": \"number\", \"minimum\": 0.5, \"maximum\": 0.5}", param("""
+            tool fn f(r: f64) -> f64 requires r == 0.5 { return r; }
+            """, "r"));
         // No JSON number is NaN or infinite: such a bound is left to the contract.
         assertEquals("{\"type\": \"number\"}", param("""
             const INF: f64 = 1.0 / 0.0;
@@ -204,6 +216,14 @@ class ToolsTest {
         // len counts bytes and minLength characters: four bytes may be one character.
         assertEquals("{\"type\": \"string\", \"maxLength\": 6, \"description\": \"UTF-8 text of at most 12 bytes\", "
             + "\"minLength\": 1}", param(program, "code"));
+        // A length of at least 0 says nothing; one below 1 allows only the empty list.
+        String bounds = """
+            tool fn f(s: str[4], xs: list[i64; 4]) -> i64 requires len(s) >= 0 and len(xs) < 1 { return 0; }
+            """;
+        assertEquals("{\"type\": \"string\", \"maxLength\": 4, \"description\": \"UTF-8 text of at most 4 bytes\"}",
+            param(bounds, "s"));
+        assertEquals("{\"type\": \"array\", \"items\": {\"type\": \"integer\", \"minimum\": -9223372036854775808, "
+            + "\"maximum\": 9223372036854775807}, \"maxItems\": 0}", param(bounds, "xs"));
     }
 
     /** Calls in tests with constant arguments become input_examples: distinct, in order, at most three. */
@@ -263,6 +283,103 @@ class ToolsTest {
              {"r": {"from": 1, "to": 1}, "unit": "Day", "label": "a"}]
             """), Json.write(((Map<?, ?>) tools.get(0)).get("input_examples")) + "\n");
         assertEquals("[{\"a\": 1.0, \"b\": 4.0}]", Json.write(((Map<?, ?>) tools.get(1)).get("input_examples")));
+    }
+
+    /** A tool call is found wherever a test can make one, in the order the calls are evaluated. */
+    @Test
+    void examplesAreFoundInEveryStatementAndExpression() {
+        String program = """
+            struct S {
+                a: i64,
+            }
+
+            enum E {
+                V(i64),
+            }
+
+            tool fn t(n: i64) -> i64 {
+                return n;
+            }
+
+            test "everywhere" {
+                let a: i64 = t(1);
+                var x: i64 = 0;
+                var xs: [i64; 2] = [0, 0];
+                xs[t(3)] = t(2);
+                if t(4) > 0 {
+                    x = t(5);
+                } else if t(6) > 0 {
+                    x = t(7);
+                } else {
+                    x = t(8);
+                }
+                while t(10) > x limit t(9) {
+                    x = t(11);
+                }
+                for i in t(12)..t(13) {
+                    x = t(14);
+                    if i > 0 {
+                        break;
+                    }
+                    continue;
+                }
+                for v in [t(15)] {
+                }
+                match t(16) {
+                    0 => { x = t(17); }
+                    _ => { }
+                }
+                assert t(18) > 0;
+                t(19);
+                match E.V(t(20)) {
+                    E.V(n) => { }
+                }
+                x = S(a: t(21)).a + [t(22)][0] + [t(23); 2][0] - t(24) + i64(i32(t(25))) + [1, 2][t(26)];
+                x = abs(t(27));
+                if false {
+                    return;
+                }
+            }
+            """;
+        Frontend.Result r = Frontend.compile(new Source("calls.al", program), Checker.DEFAULT_MAX_STACK);
+        assertTrue(r.ok(), () -> r.diags().renderText());
+        List<BigInteger> order = new ArrayList<>();
+        for (Call c : ToolExamples.callsIn(r.program().itemsOf(TestDecl.class).get(0).body)) {
+            if (c.fn != null && c.fn.tool) order.add(((IntLit) c.args.get(0).expr()).value);
+        }
+        List<BigInteger> expected = new ArrayList<>();
+        for (int i = 1; i <= 27; i++) expected.add(BigInteger.valueOf(i));
+        assertEquals(expected, order);
+    }
+
+    /** Only constants make examples: a local anywhere inside an argument rules the call out. */
+    @Test
+    void examplesNeedConstantArguments() throws IOException {
+        String out = tools("""
+            struct S {
+                a: i64,
+            }
+
+            enum E {
+                V(i64),
+            }
+
+            tool fn f(s: S, e: E, xs: list[i64; 4]) -> i64 {
+                return s.a;
+            }
+
+            test "locals" {
+                let n: i64 = 1;
+                assert f(S(a: n), E.V(1), [1]) == 1;
+                assert f(S(a: 1), E.V(n), [1]) == 1;
+                assert f(S(a: 1), E.V(1), [n]) == 1;
+                assert f(S(a: 1), E.V(1), [n; 2]) == 1;
+                assert f(S(a: abs(n)), E.V(1), [1]) == 1;
+                assert f(S(a: abs(-3)), E.V(min(1, 2)), [7; 2]) == 3;
+            }
+            """);
+        assertEquals("[{\"s\": {\"a\": 3}, \"e\": {\"V\": [1]}, \"xs\": [7, 7]}]",
+            Json.write(((Map<?, ?>) ((List<?>) Json.parse(out)).get(0)).get("input_examples")));
     }
 
     /** An example must return within the step budget, and a tool without one has no input_examples key. */

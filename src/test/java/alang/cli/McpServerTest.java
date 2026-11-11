@@ -186,6 +186,16 @@ class McpServerTest {
             serve("{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"ping\"}"));
     }
 
+    /** A NUL byte is part of its line, not the end of it or of the input. */
+    @Test
+    void aNulByteDoesNotEndALine() throws IOException {
+        byte[] input = "\u0000\n{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"ping\"}\n".getBytes(StandardCharsets.UTF_8);
+        List<String> out = serve(input, 1000);
+        assertEquals(2, out.size(), out.toString());
+        assertTrue(out.get(0).contains("\"code\": -32700"), out.get(0));
+        assertEquals(msg("{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {}}"), out.get(1));
+    }
+
     @Test
     void aMessageThatIsNotUtf8IsAParseError() throws IOException {
         byte[] bad = {'{', '"', 'a', '"', ':', '"', (byte) 0xFF, '"', '}', '\n'};

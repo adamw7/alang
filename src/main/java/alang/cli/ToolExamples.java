@@ -67,9 +67,7 @@ final class ToolExamples {
         List<Object> examples = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (TestDecl t : program.itemsOf(TestDecl.class)) {
-            List<Call> calls = new ArrayList<>();
-            calls(t.body, calls);
-            for (Call c : calls) {
+            for (Call c : callsIn(t.body)) {
                 if (examples.size() == MAX) return examples;
                 if (c.fn != tool || !c.args.stream().allMatch(a -> ToolDefinitions.isConstant(a.expr()))) continue;
                 Map<String, Object> example = example(tool, c, src, maxSteps);
@@ -99,6 +97,13 @@ final class ToolExamples {
     }
 
     // ------------------------------------------------------------------ the calls in a test, in order
+
+    /** Every call in {@code b}, of functions and builtins alike, in the order they are evaluated. */
+    static List<Call> callsIn(Block b) {
+        List<Call> out = new ArrayList<>();
+        calls(b, out);
+        return out;
+    }
 
     private static void calls(Block b, List<Call> out) {
         for (Stmt s : b.stmts()) calls(s, out);
