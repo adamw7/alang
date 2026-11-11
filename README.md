@@ -65,9 +65,23 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 [docs/COMPARISON.md](docs/COMPARISON.md) sets these guarantees beside Python, JavaScript, Go, Rust, C
 and Java, with programs you can run.
 
+## Install
+
+Download `alang-VERSION.tar.gz` (or `.zip`) from the [latest release](https://github.com/adamw7/alang/releases/latest)
+and unpack it; it needs only Java 21 or newer. It holds `bin/alang` (put it, or a link to it, on your
+`PATH`), `lib/alang.jar`, [AGENTS.md](AGENTS.md), the docs and the examples, so the commands below work in
+it as they do in a clone. A release also has the runnable jar on its own (`java -jar alang-VERSION.jar`),
+and the guide for agents at an address that does not change:
+<https://github.com/adamw7/alang/releases/latest/download/AGENTS.md>.
+
+For a JVM host, the jar is in GitHub Packages as `io.github.adamw7:alang` (repository
+`https://maven.pkg.github.com/adamw7/alang`; GitHub asks for a token even to read it), with the ANTLR
+runtime inside and the guide on the classpath at `/alang/AGENTS.md`, ready for a system prompt.
+
 ## Quick start
 
-Requires JDK 21+ and Maven; a C compiler is optional (for `alang build`).
+In a clone, `bin/alang` needs JDK 21+ and Maven and builds the jar itself; from a release it needs only
+Java. A C compiler is optional (for `alang build`).
 
 ```sh
 bin/alang run examples/hello.al         # builds target/alang.jar on first use and after source changes
@@ -184,7 +198,8 @@ bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` with gcc and clang on
-Linux and macOS, smoke-tests `bin/alang` against the packaged jar, and runs the TOON converter's tests,
+Linux and macOS, smoke-tests `bin/alang` against the packaged jar and the release archives' launcher
+against theirs, and runs the TOON converter's tests,
 the benchmark self-test and a 3000-mutation fuzzing campaign. Every test, CI step and job has a time limit, so a hang fails fast.
 Mutation testing is too slow for every push: it runs every Saturday on `main`
 ([`.github/workflows/mutation.yml`](.github/workflows/mutation.yml), or on demand from the Actions tab),
@@ -193,9 +208,27 @@ strength below 85%; [`pom.xml`](pom.xml) explains what is mutated and why. Renov
 dependencies, plugins and GitHub Actions current and merges its pull requests once CI passes;
 mutation testing is not part of that, so a PIT update is first exercised by the next Saturday run.
 
+### Releases
+
+`mvn package` builds what a release publishes: `target/alang.jar`, and `target/alang-VERSION.tar.gz` and
+`.zip` with the jar, a launcher that needs only Java, AGENTS.md, the docs, the grammar and the examples
+([`src/dist/assembly.xml`](src/dist/assembly.xml)). The jar carries AGENTS.md, the license and the
+ANTLR runtime's notice ([THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)). To release, set the new version in
+`pom.xml` and `Main.VERSION` (`CliTest` checks that they agree), merge to `main`, then tag that commit:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) checks that the tag is the version, runs
+the whole CI on it, and only then publishes: a GitHub release with `alang-VERSION.jar`, both archives,
+AGENTS.md and `SHA256SUMS`, and the jar, its pom and the archives in GitHub Packages. A version is
+published once; to redo one, delete its release and package first.
+
 ## Status
 
-Version 0.1. Not yet included: modules/imports, generics, slices, a formatter, and a standard library
+Version 0.2. Not yet included: modules/imports, generics, slices, a formatter, and a standard library
 beyond the builtins.
 
 ## License

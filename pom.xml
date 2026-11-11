@@ -6,10 +6,34 @@
 
   <groupId>io.github.adamw7</groupId>
   <artifactId>alang</artifactId>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <packaging>jar</packaging>
   <name>ALang</name>
   <description>An agent-first, heap-free programming language.</description>
+  <url>https://github.com/adamw7/alang</url>
+
+  <licenses>
+    <license>
+      <name>MIT</name>
+      <url>https://opensource.org/license/mit</url>
+    </license>
+  </licenses>
+
+  <scm>
+    <url>https://github.com/adamw7/alang</url>
+    <connection>scm:git:https://github.com/adamw7/alang.git</connection>
+  </scm>
+
+  <!-- `mvn deploy` publishes the jar, its pom and the release archives to GitHub Packages; the
+       release workflow (.github/workflows/release.yml) runs it for a v* tag. The credentials come
+       from the `github` server in settings.xml, which actions/setup-java writes. -->
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/adamw7/alang</url>
+    </repository>
+  </distributionManagement>
 
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
@@ -47,6 +71,9 @@
       <groupId>org.antlr</groupId>
       <artifactId>antlr4-runtime</artifactId>
       <version>${antlr.version}</version>
+      <!-- The shade plugin puts the runtime inside alang.jar. Optional keeps it out of the
+           dependencies of a project that uses the published jar, which would get it twice. -->
+      <optional>true</optional>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -63,6 +90,29 @@
 
   <build>
     <finalName>alang</finalName>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <!-- The guide for agents travels with the jar: a JVM host can read it with
+           getResourceAsStream("/alang/AGENTS.md") and hand it to its model. -->
+      <resource>
+        <directory>${project.basedir}</directory>
+        <targetPath>alang</targetPath>
+        <includes>
+          <include>AGENTS.md</include>
+        </includes>
+      </resource>
+      <!-- The jar contains the ANTLR runtime, whose license asks binaries to carry its notice. -->
+      <resource>
+        <directory>${project.basedir}</directory>
+        <targetPath>META-INF</targetPath>
+        <includes>
+          <include>LICENSE</include>
+          <include>THIRD-PARTY-NOTICES</include>
+        </includes>
+      </resource>
+    </resources>
     <plugins>
       <!-- Generates the parser from grammar/ALang.g4 on every build. -->
       <plugin>
@@ -217,6 +267,32 @@
                   </excludes>
                 </filter>
               </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Produces target/alang-VERSION.zip and .tar.gz, the release archives: the jar, a launcher,
+           AGENTS.md and the docs (see src/dist/assembly.xml). Declared after the shade plugin, so
+           it runs after it in the package phase and packs the shaded jar. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.8.0</version>
+        <executions>
+          <execution>
+            <id>dist</id>
+            <phase>package</phase>
+            <goals>
+              <goal>single</goal>
+            </goals>
+            <configuration>
+              <descriptors>
+                <descriptor>src/dist/assembly.xml</descriptor>
+              </descriptors>
+              <finalName>alang-${project.version}</finalName>
+              <appendAssemblyId>false</appendAssemblyId>
+              <tarLongFileMode>posix</tarLongFileMode>
             </configuration>
           </execution>
         </executions>

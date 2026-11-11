@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+# ALang launcher in the release archive: runs lib/alang.jar with Java 21 or newer (JAVA_HOME, else
+# `java` on PATH). Unlike the launcher in the source tree, it needs neither Maven nor the sources.
+set -e
+# Follow symlinks, so a link to this script from a directory on PATH still finds lib/alang.jar.
+self="$0"
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case "$link" in
+    /*) self="$link" ;;
+    *) self="$(dirname -- "$self")/$link" ;;
+  esac
+done
+ROOT="$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)"
+# Java decodes command-line arguments (file names, `alang call` JSON) with the host locale's
+# charset; under a POSIX/C locale every non-ASCII byte would be replaced. Use UTF-8 so the
+# result never depends on the host locale (the toolchain's own output is locale-independent).
+exec env LC_ALL=C.UTF-8 "${JAVA_HOME:+$JAVA_HOME/bin/}java" -jar "$ROOT/lib/alang.jar" "$@"

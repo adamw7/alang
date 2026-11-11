@@ -1,7 +1,10 @@
 name: CI
 
 on:
+  # Branches only: a v* tag runs this workflow from release.yml, before publishing.
   push:
+    branches: ['**']
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -106,6 +109,38 @@ jobs:
           printf 'tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n' > "$out/size.al"
           LC_ALL=C bin/alang call "$out/size.al" size '{"text": "é"}' > "$out/size.json"
           grep -q '"result": 2' "$out/size.json"
+
+      - name: Release archives
+        # What a release publishes (src/dist/assembly.xml): the jar with a launcher that needs only Java,
+        # AGENTS.md, the docs and the examples, as a .tar.gz and a .zip with the same files.
+        timeout-minutes: 2
+        run: |
+          version="$(bin/alang version | cut -d ' ' -f 2)"
+          out="$RUNNER_TEMP/dist"
+          mkdir -p "$out/tar" "$out/zip" "$out/path"
+          tar -xzf "target/alang-$version.tar.gz" -C "$out/tar"
+          unzip -q "target/alang-$version.zip" -d "$out/zip"
+          diff -r "$out/tar" "$out/zip"
+          test -x "$out/zip/alang-$version/bin/alang"
+          home="$out/tar/alang-$version"
+          cmp target/alang.jar "$home/lib/alang.jar"
+          for f in AGENTS.md README.md LICENSE THIRD-PARTY-NOTICES docs/*.md grammar/ALang.g4 examples/*.al examples/README.md harness/toon.py; do
+            cmp "$f" "$home/$f"
+          done
+
+          # The jar alone carries the guide and the licenses (the ANTLR runtime is inside it).
+          unzip -p target/alang.jar alang/AGENTS.md | cmp - AGENTS.md
+          unzip -p target/alang.jar META-INF/LICENSE | cmp - LICENSE
+          unzip -p target/alang.jar META-INF/THIRD-PARTY-NOTICES | cmp - THIRD-PARTY-NOTICES
+
+          # The launcher runs from any directory and through a symlink, such as one on PATH.
+          ln -s "$home/bin/alang" "$out/path/alang"
+          cd "$out"
+          path/alang version | grep -qx "alang $version"
+          path/alang run "$home/examples/hello.al" | diff -u "$GITHUB_WORKSPACE/tests/examples/hello.out" -
+          path/alang test "$home/examples/shapes.al"
+          printf 'tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n' > size.al
+          LC_ALL=C path/alang call size.al size '{"text": "é"}' | grep -q '"result": 2'
 
       - name: TOON converter
         # harness/toon.py shows `alang call` results to a model as TOON; standard library only.

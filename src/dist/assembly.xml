@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The release archive, target/alang-VERSION.zip and .tar.gz: everything an agent needs to write and
+     run ALang with only Java installed. The guide, spec and error catalog keep their paths from the
+     repository, so the links between them still work.
+
+       alang-VERSION/
+         bin/alang          launcher (src/dist/bin/alang)
+         lib/alang.jar      the toolchain, with the ANTLR runtime inside
+         AGENTS.md          the guide for agents
+         README.md, LICENSE, THIRD-PARTY-NOTICES
+         docs/*.md          spec, error catalog, comparison, architecture
+         grammar/ALang.g4
+         examples/          complete programs with tests
+         harness/toon.py    tool results as TOON -->
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 https://maven.apache.org/xsd/assembly-2.2.0.xsd">
+  <id>dist</id>
+  <formats>
+    <format>zip</format>
+    <format>tar.gz</format>
+  </formats>
+  <baseDirectory>alang-${project.version}</baseDirectory>
+
+  <files>
+    <!-- The shaded jar; the shade plugin runs first, in the same phase. -->
+    <file>
+      <source>${project.build.directory}/${project.build.finalName}.jar</source>
+      <outputDirectory>lib</outputDirectory>
+      <destName>alang.jar</destName>
+    </file>
+    <file>
+      <source>src/dist/bin/alang</source>
+      <outputDirectory>bin</outputDirectory>
+      <fileMode>0755</fileMode>
+    </file>
+  </files>
+
+  <fileSets>
+    <fileSet>
+      <directory>${project.basedir}</directory>
+      <outputDirectory/>
+      <includes>
+        <include>AGENTS.md</include>
+        <include>README.md</include>
+        <include>LICENSE</include>
+        <include>THIRD-PARTY-NOTICES</include>
+        <include>docs/*.md</include>
+        <include>grammar/ALang.g4</include>
+        <include>examples/*.al</include>
+        <include>examples/README.md</include>
+        <include>harness/toon.py</include>
+      </includes>
+      <fileMode>0644</fileMode>
+    </fileSet>
+  </fileSets>
+</assembly>
