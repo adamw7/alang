@@ -792,6 +792,11 @@ class CliTest {
         r = run("run", p.toString(), "--max-steps", "0");
         assertEquals(1, r.code(), r.err());
         assertTrue(r.err().startsWith("trap[R0008]: "), r.err());
+        // Steps are still counted without a budget: `run --json` used to report 0 for any program.
+        Path count = write("count.al", "fn main() {\n    var t: i64 = 0;\n    for i in 0..10 {\n        t += i;\n    }\n}\n");
+        String counted = run("run", count.toString(), "--json").out();
+        assertTrue(counted.endsWith("\"steps\": 22}\n"), counted);
+        assertEquals(counted, run("run", count.toString(), "--json", "--max-steps", "0").out());
 
         // Without --max-steps the documented default applies.
         Path forever = write("forever.al", "fn main() {\n    while true limit 1000000000 {\n    }\n}\n");

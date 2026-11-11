@@ -173,8 +173,9 @@ public final class Interpreter {
         }
     }
 
+    /** Counts a step, also without a budget (`--max-steps 0`), so that `run --json` reports the real count. */
     private void step(Span at) {
-        if (maxSteps > 0 && ++steps > maxSteps) {
+        if (++steps > maxSteps && maxSteps > 0) {
             throw new Trap(Code.R0011, at, "step budget of " + maxSteps + " statements exhausted");
         }
     }
