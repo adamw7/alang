@@ -25,7 +25,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        # Git Bash on Windows, so every OS runs the same scripts.
+        shell: bash
+    env:
+      # Windows has no python3 command.
+      PYTHON: ${{ matrix.os == 'windows-latest' && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -62,7 +69,7 @@ jobs:
           done
 
           # Tools: JSON definitions and a JSON call.
-          bin/alang tools examples/text_tools.al | python3 -m json.tool > /dev/null
+          bin/alang tools examples/text_tools.al | "$PYTHON" -m json.tool > /dev/null
           bin/alang call examples/inventory.al place_order '{"sku": "B-200", "quantity": 2}' > "$out/call.json"
           cat "$out/call.json"
           grep -q '"ok": true' "$out/call.json"
@@ -71,14 +78,17 @@ jobs:
           bin/alang call examples/inventory.al place_order - < "$out/args.json" > "$out/call.json"
           grep -q '"ok": true' "$out/call.json"
           # Without an argument, `call` must not read stdin: here stdin stays open and never sends
-          # anything, so a call that reads it hangs until the step's time limit.
-          printf 'tool fn one() -> i64 {\n    return 1;\n}\n' > "$out/one.al"
-          mkfifo "$out/stdin"
-          sleep 600 > "$out/stdin" &
-          writer=$!
-          bin/alang call "$out/one.al" one < "$out/stdin" > "$out/one.json"
-          kill "$writer"
-          grep -q '"result": 1' "$out/one.json"
+          # anything, so a call that reads it hangs until the step's time limit. Git Bash cannot hand
+          # a FIFO to a Windows program; CliTest checks the same on every OS.
+          if [ "$RUNNER_OS" != Windows ]; then
+            printf 'tool fn one() -> i64 {\n    return 1;\n}\n' > "$out/one.al"
+            mkfifo "$out/stdin"
+            sleep 600 > "$out/stdin" &
+            writer=$!
+            bin/alang call "$out/one.al" one < "$out/stdin" > "$out/one.json"
+            kill "$writer"
+            grep -q '"result": 1' "$out/one.json"
+          fi
           # `serve`: the same tools over MCP; it stops when stdin ends.
           printf '%s\n' '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | bin/alang serve examples/text_tools.al > "$out/serve.json"
           grep -q '"name": "word_count"' "$out/serve.json"
@@ -90,9 +100,12 @@ jobs:
           bin/alang version 2> "$out/rebuild.err"
           if grep -q 'building' "$out/rebuild.err"; then exit 1; fi
 
-          # C backend: the compiled program prints the same bytes as the interpreter.
+          # C backend: the compiled program prints the same bytes as the interpreter. Windows has gcc
+          # but no cc.
+          cc=cc
+          command -v cc > /dev/null || cc=gcc
           bin/alang build examples/shapes.al -o "$out/shapes.c"
-          cc -std=c99 -O2 "$out/shapes.c" -lm -o "$out/shapes"
+          "$cc" -std=c99 -O2 "$out/shapes.c" -lm -o "$out/shapes"
           "$out/shapes" | diff -u tests/examples/shapes.out -
 
           # Exit codes: 1 for diagnostics, 2 for usage errors.
@@ -114,12 +127,20 @@ jobs:
         # What a release publishes (src/dist/assembly.xml): the jar with a launcher that needs only Java,
         # AGENTS.md, the docs and the examples, as a .tar.gz and a .zip with the same files.
         timeout-minutes: 2
+        env:
+          # Git Bash on Windows copies the file for `ln -s` unless told to make a real symbolic link.
+          MSYS: winsymlinks:nativestrict
         run: |
           version="$(bin/alang version | cut -d ' ' -f 2)"
           out="$RUNNER_TEMP/dist"
-          mkdir -p "$out/tar" "$out/zip" "$out/path"
+          mkdir -p "$out/tar" "$out/zip" "$out/jar" "$out/path"
           tar -xzf "target/alang-$version.tar.gz" -C "$out/tar"
-          unzip -q "target/alang-$version.zip" -d "$out/zip"
+          if command -v unzip > /dev/null; then
+            unzip -q "target/alang-$version.zip" -d "$out/zip"
+          else
+            # Git Bash on Windows has no unzip; the JDK's jar tool reads any zip file.
+            (cd "$out/zip" && jar -xf "$GITHUB_WORKSPACE/target/alang-$version.zip")
+          fi
           diff -r "$out/tar" "$out/zip"
           test -x "$out/zip/alang-$version/bin/alang"
           home="$out/tar/alang-$version"
@@ -129,9 +150,10 @@ jobs:
           done
 
           # The jar alone carries the guide and the licenses (the ANTLR runtime is inside it).
-          unzip -p target/alang.jar alang/AGENTS.md | cmp - AGENTS.md
-          unzip -p target/alang.jar META-INF/LICENSE | cmp - LICENSE
-          unzip -p target/alang.jar META-INF/THIRD-PARTY-NOTICES | cmp - THIRD-PARTY-NOTICES
+          (cd "$out/jar" && jar -xf "$GITHUB_WORKSPACE/target/alang.jar" alang/AGENTS.md META-INF/LICENSE META-INF/THIRD-PARTY-NOTICES)
+          cmp "$out/jar/alang/AGENTS.md" AGENTS.md
+          cmp "$out/jar/META-INF/LICENSE" LICENSE
+          cmp "$out/jar/META-INF/THIRD-PARTY-NOTICES" THIRD-PARTY-NOTICES
 
           # The launcher runs from any directory and through a symlink, such as one on PATH.
           ln -s "$home/bin/alang" "$out/path/alang"
@@ -146,8 +168,8 @@ jobs:
         # harness/toon.py shows `alang call` results to a model as TOON; standard library only.
         timeout-minutes: 2
         run: |
-          python3 harness/test_toon.py
-          bin/alang call examples/text_tools.al most_common_letter '{"text": "hello"}' | python3 harness/toon.py > "$RUNNER_TEMP/call.toon"
+          "$PYTHON" harness/test_toon.py
+          bin/alang call examples/text_tools.al most_common_letter '{"text": "hello"}' | "$PYTHON" harness/toon.py > "$RUNNER_TEMP/call.toon"
           printf 'ok: true\nresult:\n  letter: l\n  count: 2\nstdout: ""\nsteps: 84\n' | diff -u - "$RUNNER_TEMP/call.toon"
 
       - name: Benchmark self-test
