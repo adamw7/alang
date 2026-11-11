@@ -4,6 +4,7 @@ import alang.ast.Ast.*;
 import alang.ast.Builtin;
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Hints;
 import alang.diag.Span;
 import alang.interp.Interpreter;
 import alang.interp.Trap;
@@ -1124,6 +1125,45 @@ public final class Checker {
             case "exp", "log", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "hypot", "cbrt" ->
                 "there is no " + name + ": it rounds differently in different math libraries, so ALang leaves it out; "
                 + "only + - * /, sqrt, floor, ceil, abs, min and max exist";
+            case "int", "float", "double", "long", "short", "usize", "isize" ->
+                "convert numbers with the target type's name: i64(x), f64(x), u8(x)";
+            case "parse", "parse_int", "parseInt", "parse_i64", "parse_i32", "parse_float", "parseFloat", "atoi", "atol",
+                 "atof", "stoi", "strtol", "to_int", "toInt", "to_i64", "to_number", "number", "Number" -> Hints.PARSE_NUMBER;
+            case "split", "split_whitespace", "splitlines", "lines", "words", "tokenize", "strtok" ->
+                "there is no " + name + "; walk the bytes and collect each part in a str[N]: "
+                + "for c in s { if c == ' ' { ...use part...; clear(mut part); } else { push(mut part, c); } }";
+            case "substring", "substr", "slice", "mid" ->
+                "there are no slices; copy the bytes you need in a loop: for i in a..b { push(mut part, s[i]); }";
+            case "trim", "strip", "lstrip", "rstrip", "trim_start", "trim_end", "trimStart", "trimEnd" ->
+                "there is no " + name + "; find the first and last byte to keep with loops, then copy that range: "
+                + "for i in a..b { push(mut out, s[i]); }";
+            case "join" -> "there is no join; append each part after a separator: "
+                + "for i in 0..len(parts) { if i > 0 { append(mut s, \", \"); } append(mut s, parts[i]); }";
+            case "upper", "lower", "to_upper", "to_lower", "toupper", "tolower", "toUpperCase", "toLowerCase",
+                 "uppercase", "lowercase", "capitalize" ->
+                "there is no case conversion; for ASCII, a byte c with 'a' <= c and c <= 'z' becomes c - 32 "
+                + "(and 'A'..'Z' becomes c + 32)";
+            case "reverse", "reversed" -> "there is no reverse; copy from the end: "
+                + "for k in 0..len(xs) { push(mut out, xs[len(xs) - 1 - k]); }";
+            case "sum" -> "there is no sum; add in a loop: var total: i64 = 0; for x in xs { total += x; }";
+            case "map", "filter", "reduce", "fold", "any", "all", "zip", "foreach", "for_each", "forEach" ->
+                "there are no higher-order functions; write the loop: for x in xs { if x > 0 { push(mut out, x); } }";
+            case "enumerate" -> "loop over the indexes: for i in 0..len(xs) { let x: i64 = xs[i]; }";
+            case "isdigit", "is_digit", "isDigit", "isalpha", "is_alpha", "isalnum", "is_alphanumeric", "isspace",
+                 "is_space", "is_whitespace", "islower", "isupper" ->
+                "compare the byte with character literals: '0' <= c and c <= '9', 'a' <= c and c <= 'z', c == ' '";
+            case "ord" -> "a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number";
+            case "chr" -> "push(mut s, u8(n)) adds the byte n to a str";
+            case "dict", "HashMap", "hashmap", "Map", "set", "Set", "HashSet" -> Hints.COLLECTIONS;
+            case "input", "read", "read_line", "readline", "readLine", "scanf", "gets", "getline", "open", "fopen",
+                 "read_file", "readFile", "write_file", "writeFile", "fetch", "get_env", "getenv", "env" ->
+                "there is no input, file, network or environment access; a program's only inputs are its tool "
+                + "arguments: declare `tool fn f(text: str[1024])` and call it with `alang call`";
+            case "random", "rand", "randint", "rand_int", "random_int" ->
+                "there is no randomness; take a seed as an argument and compute the next value from it: "
+                + "seed = (seed * 1103515245 + 12345) % 2147483648; with seed: i64 below 2147483648";
+            case "time", "now", "clock", "sleep", "timestamp", "time_now", "current_time" ->
+                "there is no clock; take the time as an argument";
             default -> {
                 List<String> names = new ArrayList<>(fns.keySet());
                 for (Builtin b : Builtin.values()) names.add(b.name);
@@ -1490,7 +1530,8 @@ public final class Checker {
         }
         if (!(t instanceof Type.Prim)) {
             diags.error(Code.E0214, c.span, "cannot convert " + t + " to " + target,
-                "conversions work between numbers (and from bool to integers)");
+                t instanceof Type.Str && !c.target.isFloat ? Hints.PARSE_NUMBER
+                    : "conversions work between numbers (and from bool to integers)");
             return target;
         }
         if (Type.isBool(t) && c.target.isFloat) {

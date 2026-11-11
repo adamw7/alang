@@ -1,0 +1,7 @@
+error[E0001]: unexpected ';', expected '['
+ --> tests/errors/E0001_str_capacity.al:2:27
+  |
+2 | fn longest(names: list[str; 8]) -> i64 {
+  |                           ^
+  = hint: a string type needs its capacity in bytes: str[64]
+

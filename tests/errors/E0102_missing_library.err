@@ -1,0 +1,126 @@
+error[E0102]: unknown function `parse_int`
+ --> tests/errors/E0102_missing_library.al:5:18
+  |
+5 |     let n: i64 = parse_int(s);
+  |                  ^^^^^^^^^
+  = hint: there is no parsing builtin; build the number digit by digit: var n: i64 = 0; for c in s { n = n * 10 + i64(c - '0'); } (check '0' <= c and c <= '9' first)
+
+error[E0102]: unknown function `int`
+ --> tests/errors/E0102_missing_library.al:6:18
+  |
+6 |     let k: i64 = int(2.5);
+  |                  ^^^
+  = hint: convert numbers with the target type's name: i64(x), f64(x), u8(x)
+
+error[E0102]: unknown function `split`
+ --> tests/errors/E0102_missing_library.al:7:5
+  |
+7 |     split(s);
+  |     ^^^^^
+  = hint: there is no split; walk the bytes and collect each part in a str[N]: for c in s { if c == ' ' { ...use part...; clear(mut part); } else { push(mut part, c); } }
+
+error[E0102]: unknown function `trim`
+ --> tests/errors/E0102_missing_library.al:8:5
+  |
+8 |     trim(s);
+  |     ^^^^
+  = hint: there is no trim; find the first and last byte to keep with loops, then copy that range: for i in a..b { push(mut out, s[i]); }
+
+error[E0102]: unknown function `upper`
+ --> tests/errors/E0102_missing_library.al:9:5
+  |
+9 |     upper(s);
+  |     ^^^^^
+  = hint: there is no case conversion; for ASCII, a byte c with 'a' <= c and c <= 'z' becomes c - 32 (and 'A'..'Z' becomes c + 32)
+
+error[E0102]: unknown function `join`
+  --> tests/errors/E0102_missing_library.al:10:5
+   |
+10 |     join(s);
+   |     ^^^^
+  = hint: there is no join; append each part after a separator: for i in 0..len(parts) { if i > 0 { append(mut s, ", "); } append(mut s, parts[i]); }
+
+error[E0102]: unknown function `reverse`
+  --> tests/errors/E0102_missing_library.al:11:5
+   |
+11 |     reverse(s);
+   |     ^^^^^^^
+  = hint: there is no reverse; copy from the end: for k in 0..len(xs) { push(mut out, xs[len(xs) - 1 - k]); }
+
+error[E0102]: unknown function `substring`
+  --> tests/errors/E0102_missing_library.al:12:5
+   |
+12 |     substring(s);
+   |     ^^^^^^^^^
+  = hint: there are no slices; copy the bytes you need in a loop: for i in a..b { push(mut part, s[i]); }
+
+error[E0102]: unknown function `isdigit`
+  --> tests/errors/E0102_missing_library.al:13:5
+   |
+13 |     isdigit(s);
+   |     ^^^^^^^
+  = hint: compare the byte with character literals: '0' <= c and c <= '9', 'a' <= c and c <= 'z', c == ' '
+
+error[E0102]: unknown function `sum`
+  --> tests/errors/E0102_missing_library.al:14:5
+   |
+14 |     sum(s);
+   |     ^^^
+  = hint: there is no sum; add in a loop: var total: i64 = 0; for x in xs { total += x; }
+
+error[E0102]: unknown function `filter`
+  --> tests/errors/E0102_missing_library.al:15:5
+   |
+15 |     filter(s);
+   |     ^^^^^^
+  = hint: there are no higher-order functions; write the loop: for x in xs { if x > 0 { push(mut out, x); } }
+
+error[E0102]: unknown function `enumerate`
+  --> tests/errors/E0102_missing_library.al:16:5
+   |
+16 |     enumerate(s);
+   |     ^^^^^^^^^
+  = hint: loop over the indexes: for i in 0..len(xs) { let x: i64 = xs[i]; }
+
+error[E0102]: unknown function `ord`
+  --> tests/errors/E0102_missing_library.al:17:5
+   |
+17 |     ord(s);
+   |     ^^^
+  = hint: a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number
+
+error[E0102]: unknown function `chr`
+  --> tests/errors/E0102_missing_library.al:18:5
+   |
+18 |     chr(s);
+   |     ^^^
+  = hint: push(mut s, u8(n)) adds the byte n to a str
+
+error[E0102]: unknown function `dict`
+  --> tests/errors/E0102_missing_library.al:19:5
+   |
+19 |     dict();
+   |     ^^^^
+  = hint: there are no maps, dictionaries or sets; keep the entries in a list of structs and find a key with a loop: struct Entry { key: str[16], value: i64 } and list[Entry; 64]
+
+error[E0102]: unknown function `input`
+  --> tests/errors/E0102_missing_library.al:20:5
+   |
+20 |     input();
+   |     ^^^^^
+  = hint: there is no input, file, network or environment access; a program's only inputs are its tool arguments: declare `tool fn f(text: str[1024])` and call it with `alang call`
+
+error[E0102]: unknown function `random`
+  --> tests/errors/E0102_missing_library.al:21:5
+   |
+21 |     random();
+   |     ^^^^^^
+  = hint: there is no randomness; take a seed as an argument and compute the next value from it: seed = (seed * 1103515245 + 12345) % 2147483648; with seed: i64 below 2147483648
+
+error[E0102]: unknown function `now`
+  --> tests/errors/E0102_missing_library.al:22:5
+   |
+22 |     now();
+   |     ^^^
+  = hint: there is no clock; take the time as an argument
+
