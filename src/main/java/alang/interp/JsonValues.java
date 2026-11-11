@@ -72,6 +72,10 @@ public final class JsonValues {
 
     // ------------------------------------------------------------------ schema
 
+    /**
+     * The JSON Schema of a type's JSON form. The `///` doc comments of structs, enums, fields and variants
+     * become descriptions; every call returns new maps, which the caller may change.
+     */
     public static Map<String, Object> schema(Type t) {
         return switch (t) {
             case Type.Prim p -> {
@@ -88,29 +92,50 @@ public final class JsonValues {
                 Map<String, Object> props = new LinkedHashMap<>();
                 List<Object> required = new ArrayList<>();
                 for (Field f : st.decl().fields) {
-                    props.put(f.name, schema(f.type));
+                    props.put(f.name, describe(schema(f.type), f.doc));
                     required.add(f.name);
                 }
-                yield Json.obj("type", "object", "properties", props, "required", required, "additionalProperties", false);
+                yield describe(Json.obj("type", "object", "properties", props, "required", required,
+                    "additionalProperties", false), st.decl().doc);
             }
-            case Type.EnumT et -> enumSchema(et.decl());
+            case Type.EnumT et -> describe(enumSchema(et.decl()), et.decl().doc);
             default -> Json.obj();
         };
     }
 
+    /**
+     * {@code schema} with {@code doc} in front of its description: a field's or parameter's own doc comes
+     * first, then what its type says, such as the doc of a struct or the byte limit of a str.
+     */
+    public static Map<String, Object> describe(Map<String, Object> schema, String doc) {
+        if (doc.isEmpty()) return schema;
+        Object own = schema.get("description");
+        schema.put("description", own == null ? doc : doc + "\n" + own);
+        return schema;
+    }
+
+    /**
+     * Variants without a payload are one string enum, unless one of them is documented: an enum cannot
+     * describe its values one by one, so then each becomes a {"const": name} alternative of its own.
+     */
     private static Map<String, Object> enumSchema(EnumDecl d) {
+        boolean documentedUnit = d.variants.stream().anyMatch(v -> v.payload.isEmpty() && !v.doc.isEmpty());
         List<Object> units = new ArrayList<>();
         List<Object> alternatives = new ArrayList<>();
         for (Variant v : d.variants) {
             if (v.payload.isEmpty()) {
-                units.add(v.name);
+                if (documentedUnit) {
+                    alternatives.add(describe(Json.obj("type", "string", "const", v.name), v.doc));
+                } else {
+                    units.add(v.name);
+                }
             } else {
                 List<Object> items = new ArrayList<>();
                 for (Type t : v.payload) items.add(schema(t));
                 Map<String, Object> arr = Json.obj("type", "array", "prefixItems", items,
                     "minItems", items.size(), "maxItems", items.size());
-                alternatives.add(Json.obj("type", "object", "properties", Json.obj(v.name, arr),
-                    "required", List.of(v.name), "additionalProperties", false));
+                alternatives.add(describe(Json.obj("type", "object", "properties", Json.obj(v.name, arr),
+                    "required", List.of(v.name), "additionalProperties", false), v.doc));
             }
         }
         if (alternatives.isEmpty()) return Json.obj("type", "string", "enum", units);

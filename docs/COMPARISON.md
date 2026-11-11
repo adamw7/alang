@@ -29,7 +29,7 @@ for each. This page shows the difference with small programs you can run.
 | Guaranteed to terminate | yes: no recursion, every `while` has a `limit` | no | no | no | no | no |
 | Same output on every run and machine | guaranteed and tested | no: `set` order changes per process | no: `Math.random`, `Date`, engine-specific math | no: map order is randomized | no: `HashMap` order is randomized | no: undefined behavior, FMA contraction, locale |
 | Can reach files, network, clock | no | yes | yes | yes | yes | yes |
-| Tool schema for an agent | generated from the signature | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand |
+| Tool schema for an agent | generated from the signature, doc comments and contract | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand |
 
 ## 1. Arithmetic never goes wrong quietly
 
@@ -393,13 +393,14 @@ the hints target the mistakes agents actually make.
 
 Giving an agent a tool usually takes three pieces: the function, a JSON Schema for its arguments (by
 hand, or with Pydantic, Zod or schemars), and a sandbox with time and memory limits. In ALang the
-signature is the schema and the language is the sandbox. With the `split_bill` tool from the
-[README](../README.md):
+signature and the contract are the schema, and the language is the sandbox. With the `split_bill` tool
+from the [README](../README.md), whose `requires people > 0 and people <= 16` reaches the schema as
+`"minimum": 1, "maximum": 16`:
 
 ```
 $ bin/alang tools bill.al            # name, description (from ///) and input_schema
 $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
-{"ok": true, "result": [334, 333, 333], "stdout": ""}
+{"ok": true, "result": [334, 333, 333], "stdout": "", "steps": 16}
 $ bin/alang call bill.al split_bill '{"total_cents": "1000", "people": 3}'
 {"ok": false, "error": {"code": "bad_arguments", "message": "total_cents: expected an integer"}}
 $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 0}'
@@ -408,7 +409,8 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 0}'
 
 Arguments are validated against the parameter types before the call. A broken `requires` is reported
 against the caller and a broken `ensures` against the function, so the agent knows which side to fix, and
-a trap comes back as JSON instead of crashing the host.
+a trap comes back as JSON instead of crashing the host. `alang serve bill.al` offers the same tools to any
+host that speaks the Model Context Protocol, with no wrapper to write.
 
 **Why not sandbox Python?** A container, WebAssembly runtime or seccomp profile limits the damage, but it
 does not make the program terminate (you get a timeout, not an answer), does not make it deterministic,

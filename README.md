@@ -43,7 +43,7 @@ test "shares add up to the total" {
 $ bin/alang run bill.al
 [334, 333, 333]
 $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
-{"ok": true, "result": [334, 333, 333], "stdout": ""}
+{"ok": true, "result": [334, 333, 333], "stdout": "", "steps": 16}
 ```
 
 ## Why
@@ -80,8 +80,9 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `alang check FILE [--json] [--memory] [--max-stack B]` | Type-check; print diagnostics and the static memory bound (budget 8 MiB unless `--max-stack` sets another) |
 | `alang run FILE [--json] [--max-steps N] [--max-stack B]` | Run `fn main()` |
 | `alang test FILE [--json] [--filter TEXT] [--max-steps N] [--max-stack B]` | Run all `test "..." { }` blocks; a filter that matches no test fails |
-| `alang tools FILE [--json] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema) |
+| `alang tools FILE [--json] [--max-steps N] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema, and input_examples from the tests' calls) |
 | `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B]` | Call a tool with JSON arguments; `-` reads them from stdin, none means `{}` |
+| `alang serve FILE [--max-steps N] [--max-stack B]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout) |
 | `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
 | `alang explain CODE \| --all \| --markdown` | Explain a diagnostic or trap code, or all of them |
 
@@ -108,6 +109,22 @@ gives its `line`, `column` and `source_line` the same way. Habits from other lan
 expression, match guards, `sort`, `pow`, ...) are answered with the ALang spelling.
 See [docs/ERRORS.md](docs/ERRORS.md).
 
+## Tools in an agent host
+
+`alang serve` speaks the [Model Context Protocol](https://modelcontextprotocol.io) over stdin and stdout,
+so any MCP host can use a program's tools without code of its own. In a host's server list (Claude Code's
+`.mcp.json`, for example):
+
+```json
+{"mcpServers": {"bill": {"command": "/path/to/alang/bin/alang", "args": ["serve", "/path/to/bill.al"]}}}
+```
+
+The host sees each `tool fn` with the description and input schema `alang tools` prints, an output schema
+for its result, and annotations that hold for every ALang tool: read-only, not destructive, idempotent,
+closed-world. A call's text is the JSON `alang call` prints, and a call that fails, from bad arguments to
+a trap, comes back as an error result the model can read and fix. The program is checked once, at start:
+restart the server after editing it.
+
 ## Tool results in a prompt
 
 `alang call` prints JSON, and a harness should keep reading `ok`, `result` and `error.code` from it. For
@@ -117,7 +134,7 @@ quoting, and a list of structs as a table that names the fields once.
 
 ```
 $ bin/alang call words.al word_counts '{"text": "the cat saw the dog"}'
-{"ok": true, "result": [{"word": "the", "count": 2}, {"word": "cat", "count": 1}, {"word": "saw", "count": 1}, {"word": "dog", "count": 1}], "stdout": ""}
+{"ok": true, "result": [{"word": "the", "count": 2}, {"word": "cat", "count": 1}, {"word": "saw", "count": 1}, {"word": "dog", "count": 1}], "stdout": "", "steps": 105}
 $ bin/alang call words.al word_counts '{"text": "the cat saw the dog"}' | python3 harness/toon.py
 ok: true
 result[4]{word,count}:
@@ -126,6 +143,7 @@ result[4]{word,count}:
   saw,1
   dog,1
 stdout: ""
+steps: 105
 ```
 
 It saves the most on long lists of structs. On a small or nested result, compact JSON costs about the

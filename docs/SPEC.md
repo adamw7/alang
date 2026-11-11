@@ -18,7 +18,8 @@ syntax; this document describes semantics. Diagnostic codes are listed in [ERROR
 
 - Source files are UTF-8, extension `.al`. Statements end with `;`; blocks always use `{ }`.
 - `// ...` comments to the end of the line. `/// ...` is a **doc comment**: it documents the next
-  declaration and becomes the description of a `tool fn`. There are no block comments.
+  declaration, struct field, enum variant or parameter, and tool definitions show it (§10). There are no
+  block comments.
 - Identifiers: `[a-zA-Z_][a-zA-Z0-9_]*`. `_` alone is the wildcard, not a name.
 - Reserved words: `fn let var const struct enum if else while for in match break continue return assert
   requires ensures mut and or not true false bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str list`.
@@ -314,11 +315,33 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
 ## 10. Tools: calling ALang from an agent
 
 A `tool fn` can be called with JSON. `alang tools file.al` prints Anthropic-style tool definitions
-(`name`, `description` from the `///` comment, `input_schema`). `alang call file.al name '{"arg": ...}'`
-runs one call and prints `{"ok": true, "result": ..., "stdout": "..."}` or
+(`name`, `description` from the `///` comment, `input_schema`). The doc comments of its parameters, and
+of the structs, enums, fields and variants they use, become the `description`s in `input_schema`; a
+documented variant without a payload is listed as a `{"const": "Variant"}` alternative of its own, so it
+can carry one.
+
+The description also lists every `requires` clause, the return type and every `ensures` clause, each on a
+line of its own. A `requires` clause that compares a parameter, a field of one, or the `len` of either with
+a constant expression also narrows the schema, so the model sees the limit before it calls:
+`requires people > 0 and people <= 16` gives `"minimum": 1, "maximum": 16`. A bound on the `len` of a
+list sets `minItems`/`maxItems`; on a `str`, whose `len` counts bytes while JSON Schema counts
+characters, an upper bound sets `maxLength` and a lower one only `"minLength": 1`. Other clauses are only
+described. The schema never rejects a call the contract accepts, and the call still checks every clause
+(R0006).
+
+`input_examples` shows the model up to three distinct argument objects, taken from the calls of the tool
+in `test` blocks whose arguments are all constant expressions, in the order the tests make them. Each call
+is run first (within `--max-steps`), and only one that returns a result JSON can represent becomes an
+example, so every example passes the contract and therefore fits the schema. A tool that no test calls
+that way has no `input_examples`.
+
+`alang call file.al name '{"arg": ...}'`
+runs one call and prints `{"ok": true, "result": ..., "stdout": "...", "steps": N}` or
 `{"ok": false, "error": {...}}`. With `-` in place of the JSON the arguments are read from stdin (as
 UTF-8; other bytes are an error); with nothing they are `{}`. `stdout` keeps the first 1 MiB of output;
-past that, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are added.
+past that, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are added. `steps` is the
+number of statements the call executed (as for `--max-steps`), a cost that is the same on every run;
+a call that ran into a trap or `bad_result` reports it too, one refused before it ran does not.
 
 | ALang type | JSON |
 |------------|------|
@@ -335,6 +358,18 @@ Arguments must be strict JSON (RFC 8259: ASCII digits, no leading zeros, escaped
 paired surrogates) and are validated against the parameter types before the call; unknown, missing or
 duplicate keys are errors. With no I/O, no heap and bounded loops, a tool written by an agent is safe to
 run: it cannot touch the host, cannot exhaust memory, and terminates.
+
+`alang serve file.al` serves the same tools over the Model Context Protocol's stdio transport: JSON-RPC
+2.0 messages, one per line, on stdin and stdout, until stdin ends. It answers `initialize` (protocol
+revisions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05; a client asking for another gets the
+newest), `ping`, `tools/list` and `tools/call`, and ignores notifications. A tool's `inputSchema` and
+description are those of `alang tools`; a tool that returns a value also has an `outputSchema`,
+`{"result": <schema of the return type>}`, and every tool is annotated read-only, not destructive,
+idempotent and closed-world. The text of a call's result is the JSON `alang call` prints; a successful
+call of a tool that returns a value also gives `{"result": value}` as `structuredContent`; and a call that
+fails, from `bad_arguments` to a trap, is a result with `"isError": true`. Only a name that is not a
+`tool fn` is a JSON-RPC error (-32602). The program is checked once, at start: one with errors starts no
+server, and its diagnostics, like any warning, go to stderr, which is the only other output.
 
 ## 11. Runtime errors (traps)
 

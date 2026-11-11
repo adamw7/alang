@@ -82,7 +82,9 @@ final class AstBuilder {
             StructDeclContext s = ctx.structDecl();
             List<Field> fields = new ArrayList<>();
             for (FieldDeclContext f : s.fieldDecl()) {
-                fields.add(new Field(span(f.identifier()), f.identifier().getText(), type(f.type())));
+                Field field = new Field(span(f.identifier()), f.identifier().getText(), type(f.type()));
+                field.doc = docComment(f.getStart());
+                fields.add(field);
             }
             return new StructDecl(span(s.identifier()), s.identifier().getText(), fields);
         }
@@ -92,7 +94,9 @@ final class AstBuilder {
             for (VariantDeclContext v : e.variantDecl()) {
                 List<TypeRef> payload = new ArrayList<>();
                 for (TypeContext t : v.type()) payload.add(type(t));
-                variants.add(new Variant(span(v.identifier()), v.identifier().getText(), variants.size(), payload));
+                Variant variant = new Variant(span(v.identifier()), v.identifier().getText(), variants.size(), payload);
+                variant.doc = docComment(v.getStart());
+                variants.add(variant);
             }
             return new EnumDecl(span(e.identifier()), e.identifier().getText(), variants);
         }
@@ -108,17 +112,40 @@ final class AstBuilder {
         List<Param> params = new ArrayList<>();
         if (f.paramList() != null) {
             for (ParamContext p : f.paramList().param()) {
-                params.add(new Param(span(p.identifier()), p.identifier().getText(), p.MUT() != null, type(p.type())));
+                params.add(new Param(span(p.identifier()), p.identifier().getText(), p.MUT() != null, type(p.type()),
+                    docComment(p.getStart())));
             }
         }
         List<Expr> requires = new ArrayList<>();
         List<Expr> ensures = new ArrayList<>();
+        List<String> requiresText = new ArrayList<>();
+        List<String> ensuresText = new ArrayList<>();
         for (ContractContext c : f.contract()) {
-            (c.kind.getType() == ALangLexer.REQUIRES ? requires : ensures).add(expr(c.expression()));
+            boolean pre = c.kind.getType() == ALangLexer.REQUIRES;
+            (pre ? requires : ensures).add(expr(c.expression()));
+            (pre ? requiresText : ensuresText).add(oneLine(c.expression()));
         }
         TypeRef ret = f.type() == null ? null : type(f.type());
         return new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null, params, ret,
-            requires, ensures, block(f.block()));
+            requires, ensures, requiresText, ensuresText, block(f.block()));
+    }
+
+    /**
+     * The tokens of {@code ctx} on one line: one space wherever the source has whitespace or a comment
+     * between two tokens, none where they touch, so `len(xs) >\n    0` reads `len(xs) > 0`.
+     */
+    private String oneLine(ParserRuleContext ctx) {
+        StringBuilder sb = new StringBuilder();
+        if (ctx.getStop() == null) return "";
+        Token prev = null;
+        for (int i = ctx.getStart().getTokenIndex(); i <= ctx.getStop().getTokenIndex(); i++) {
+            Token t = tokens.get(i);
+            if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+            if (prev != null && t.getStartIndex() > prev.getStopIndex() + 1) sb.append(' ');
+            sb.append(t.getText());
+            prev = t;
+        }
+        return sb.toString();
     }
 
     // ------------------------------------------------------------------ types

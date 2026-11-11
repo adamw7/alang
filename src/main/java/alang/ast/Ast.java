@@ -97,6 +97,8 @@ public final class Ast {
         public final String name;
         public final TypeRef typeRef;
         public Type type = Type.ERROR;
+        /** Text of the `///` doc comment directly above the field, or "". */
+        public String doc = "";
 
         public Field(Span span, String name, TypeRef typeRef) {
             this.span = span;
@@ -128,6 +130,8 @@ public final class Ast {
         public final int index;
         public final List<TypeRef> payloadRefs;
         public final List<Type> payload = new ArrayList<>();
+        /** Text of the `///` doc comment directly above the variant, or "". */
+        public String doc = "";
 
         public Variant(Span span, String name, int index, List<TypeRef> payloadRefs) {
             this.span = span;
@@ -158,12 +162,17 @@ public final class Ast {
         public final TypeRef retRef;
         public final List<Expr> requires;
         public final List<Expr> ensures;
+        /** The source text of each `requires` clause on one line, for a tool's description. */
+        public final List<String> requiresText;
+        /** The source text of each `ensures` clause on one line. */
+        public final List<String> ensuresText;
         public Type ret = Type.VOID;
         public final List<LocalVar> paramVars = new ArrayList<>();
         public LocalVar resultVar;
 
         public FnDecl(Span span, Span nameSpan, String name, boolean tool, List<Param> params, TypeRef retRef,
-                      List<Expr> requires, List<Expr> ensures, Block body) {
+                      List<Expr> requires, List<Expr> ensures, List<String> requiresText, List<String> ensuresText,
+                      Block body) {
             super(span, name, body);
             this.nameSpan = nameSpan;
             this.tool = tool;
@@ -171,6 +180,8 @@ public final class Ast {
             this.retRef = retRef;
             this.requires = requires;
             this.ensures = ensures;
+            this.requiresText = requiresText;
+            this.ensuresText = ensuresText;
         }
     }
 
@@ -180,7 +191,8 @@ public final class Ast {
         }
     }
 
-    public record Param(Span span, String name, boolean mut, TypeRef typeRef) {}
+    /** A parameter; {@code doc} is the text of the `///` doc comment directly above it, or "". */
+    public record Param(Span span, String name, boolean mut, TypeRef typeRef, String doc) {}
 
     /** A local variable, parameter, loop variable, match binding, or `result`. */
     public static final class LocalVar {

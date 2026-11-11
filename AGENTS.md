@@ -201,10 +201,18 @@ fn main() {
 Mark a function `tool fn` and document it with `///`. Then:
 
 ```sh
-bin/alang tools prog.al                        # JSON tool definitions (name, description, input_schema)
+bin/alang tools prog.al                        # JSON tool definitions (name, description, input_schema, input_examples)
 bin/alang call prog.al word_counts '{"text": "a b a"}'
-# {"ok": true, "result": [{"word": "a", "count": 2}, {"word": "b", "count": 1}], "stdout": ""}
+# {"ok": true, "result": [{"word": "a", "count": 2}, {"word": "b", "count": 1}], "stdout": "", "steps": 41}
 ```
+
+The definitions are all the calling model knows about your tool, so give them something to say:
+
+- A `///` line above a parameter, a struct field or an enum variant describes it in the schema.
+- `requires` clauses are listed in the description, and simple ones such as
+  `requires people > 0 and people <= 16` become schema bounds (`"minimum": 1, "maximum": 16`).
+- Calls in your `test` blocks with literal arguments, such as `word_counts("a b a")`, become
+  `input_examples`.
 
 JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string, arrays and lists as
 arrays, structs as objects (all fields required), enum variants as `"Name"` or `{"Name": [payload...]}`.
@@ -212,6 +220,9 @@ Tools cannot take `mut` parameters. A trap inside a tool returns `{"ok": false, 
 "R....", ...}}` instead of crashing the caller. JSON has no NaN or infinity, so a float result holding one
 fails with `bad_result` (check for it in the tool); a `str` result must be UTF-8 text, so return raw
 bytes as a `list[u8; N]`. Pass `-` instead of the JSON to read the arguments from stdin.
+
+To hand the tools to an agent host, run `bin/alang serve prog.al`: an MCP server on stdin and stdout with
+every `tool fn`, its result schema, and the same JSON per call. Restart it after editing the program.
 
 Tools are safe to run minutes after you wrote them: no file, network, clock or random access, no heap,
 bounded loops, no recursion, and a deterministic step budget.
