@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import alang.Harness;
 import alang.util.Json;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -746,6 +747,37 @@ class CliTest {
         assertEquals(2, r.code(), r.err());
         assertEquals("{\"ok\": false, \"error\": {\"code\": \"usage_error\", \"message\": \"file not found: missing.al\"}}\n", r.out());
         assertEquals("", r.err());
+    }
+
+    @Test
+    void theCallsShownInTheExamplesReadmeAreCurrent() {
+        // Each `bin/alang call` line there is followed by its output as a `# ` comment. Nothing checked them, so
+        // the step count of fit_line stayed 49 after a fix made it 68.
+        String doc = Harness.read(Harness.ROOT.resolve("examples/README.md"));
+        Matcher m = Pattern.compile("^bin/alang call (\\S+) (\\S+) '([^']*)'\\n# (.*)$", Pattern.MULTILINE).matcher(doc);
+        int calls = 0;
+        while (m.find()) {
+            Result r = run("call", Harness.ROOT.resolve(m.group(1)).toString(), m.group(2), m.group(3));
+            assertEquals(m.group(4) + "\n", r.out(), "examples/README.md: the output shown for " + m.group(1) + " " + m.group(2));
+            calls++;
+        }
+        assertTrue(calls >= 5, "expected the `bin/alang call` lines of examples/README.md");
+    }
+
+    @Test
+    void sourceFilesThatAreNotUtf8SayWhere() throws IOException {
+        // Files.readString only said "cannot read bad.al: Input length = 1".
+        Path p = dir.resolve("bad.al");
+        Files.write(p, new byte[] {'f', 'n', ' ', 'm', (byte) 0xE9, '(', ')', ' ', '{', '}', '\n'});
+        Result r = run("check", p.toString());
+        assertEquals(2, r.code(), r.err());
+        assertEquals("alang: " + p + " is not UTF-8 text (byte 0xe9 at offset 4); save it as UTF-8\n", r.err());
+        // A sequence cut off by the end of the file.
+        Files.write(p, new byte[] {'/', '/', ' ', (byte) 0xC3});
+        r = run("check", p.toString(), "--json");
+        assertEquals(2, r.code(), r.err());
+        assertEquals(Json.write(Json.obj("ok", false, "error", p + " is not UTF-8 text (byte 0xc3 at offset 3); save it as UTF-8"))
+            + "\n", r.out());
     }
 
     @Test
