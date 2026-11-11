@@ -17,6 +17,9 @@ bin/alang explain E0215           #    explain any code
 Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. Results are
 deterministic: a test that fails once fails every time, identically.
 
+No `bin/alang` yet? Unpack `alang-VERSION.tar.gz` from <https://github.com/adamw7/alang/releases/latest>
+and use its `bin/alang`; it needs only Java 21 or newer.
+
 ## A complete program
 
 ```alang

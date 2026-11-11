@@ -18,13 +18,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The command line: the JSON reports of `check`, tool calls with malformed JSON, the nesting limit,
- * non-ASCII arguments, the memory budget, captured output and arguments on stdin.
+ * non-ASCII arguments, the memory budget, captured output, arguments on stdin and the version.
  */
 class CliTest {
     @TempDir
@@ -111,6 +112,17 @@ class CliTest {
             assertEquals(0, r.code(), r.err());
             assertTrue(r.out().contains(expected), () -> "expected " + expected + " in: " + r.out());
         }
+    }
+
+    @Test
+    void versionIsTheOneInPomXml() throws IOException {
+        // A release publishes the jar under the pom's version, from a tag that must match it
+        // (.github/workflows/release.yml); `alang version` and the MCP server report Main.VERSION.
+        String pom = Files.readString(Path.of("pom.xml"), StandardCharsets.UTF_8);
+        Matcher m = Pattern.compile("<artifactId>alang</artifactId>\\s*<version>([^<]+)</version>").matcher(pom);
+        assertTrue(m.find(), "pom.xml: the project's <version> was not found");
+        assertEquals(m.group(1), Main.VERSION, "Main.VERSION must be the <version> in pom.xml; change both");
+        assertEquals(new Result(0, "alang " + m.group(1) + "\n", ""), run("version"));
     }
 
     @Test
