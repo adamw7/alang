@@ -126,8 +126,8 @@ final class Temporaries {
                 Type given = c.args.get(i).expr().type;
                 if (!p.byRef && Type.isAggregate(p.type) && !given.equals(p.type)) t = Layout.add(t, Layout.size(p.type));
             }
-        } else if (c.builtin == Builtin.PUSH) {
-            Expr v = c.args.get(1).expr();
+        } else if (c.builtin == Builtin.PUSH || c.builtin == Builtin.INSERT) {
+            Expr v = c.args.get(c.args.size() - 1).expr();
             t = Layout.add(t, stored(v, Type.elementOf(c.args.get(0).expr().type)));
         }
         return t;

@@ -1,0 +1,2 @@
+R0013 4:11
+clamp needs lo <= hi, found lo nan and hi 1.0

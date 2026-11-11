@@ -2,3 +2,4 @@ words: 9
 upper: THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG
 most common: Frequency(letter: "o", count: 4)
 palindrome? true
+vocabulary: and cat hat the

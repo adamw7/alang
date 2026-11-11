@@ -1,9 +1,5 @@
-// Text utilities exposed as tools. Run `alang tools text_tools.al` to get
-// JSON schemas an agent can use, and `alang call` to invoke them.
-
-fn is_space(c: u8) -> bool {
-    return c == ' ' or c == '\n' or c == '\t' or c == '\r';
-}
+// Text utilities exposed as tools, built on the standard library's text and character functions.
+// Run `alang tools text_tools.al` to get JSON schemas an agent can use, and `alang call` to invoke them.
 
 /// Counts the words (runs of non-whitespace bytes) in a text.
 tool fn word_count(text: str[1024]) -> i64 {
@@ -22,15 +18,7 @@ tool fn word_count(text: str[1024]) -> i64 {
 
 /// Converts ASCII letters to upper case; other bytes are unchanged.
 tool fn upper(text: str[256]) -> str[256] {
-    var out: str[256] = "";
-    for c in text {
-        if c >= 'a' and c <= 'z' {
-            push(mut out, c - 32);
-        } else {
-            push(mut out, c);
-        }
-    }
-    return out;
+    return to_upper(text);
 }
 
 struct Frequency {
@@ -41,13 +29,9 @@ struct Frequency {
 /// The most frequent ASCII letter (case-insensitive) and its number of occurrences.
 tool fn most_common_letter(text: str[1024]) -> Frequency {
     var counts: [i64; 26] = [0; 26];
-    for c in text {
-        var lower: u8 = c;
-        if c >= 'A' and c <= 'Z' {
-            lower = c + 32;
-        }
-        if lower >= 'a' and lower <= 'z' {
-            counts[lower - 'a'] += 1;
+    for c in to_lower(text) {
+        if is_lower(c) {
+            counts[c - 'a'] += 1;
         }
     }
     var best: i64 = 0;
@@ -63,20 +47,28 @@ tool fn most_common_letter(text: str[1024]) -> Frequency {
 
 /// True if the text reads the same forwards and backwards, ignoring case and non-letters.
 tool fn is_palindrome(text: str[256]) -> bool {
-    let up: str[256] = upper(text);
     var letters: str[256] = "";
-    for c in up {
-        if c >= 'A' and c <= 'Z' {
+    for c in to_upper(text) {
+        if is_alpha(c) {
             push(mut letters, c);
         }
     }
-    let n: i64 = len(letters);
-    for i in 0..n / 2 {
-        if letters[i] != letters[n - 1 - i] {
-            return false;
+    var backwards: str[256] = letters;
+    reverse(mut backwards);
+    return letters == backwards;
+}
+
+/// The words of a text, without repeats, in alphabetical order (at most 32 words of up to 24 bytes).
+tool fn vocabulary(text: str[1024]) -> list[str[24]; 32] {
+    var all: list[str[24]; 32] = words(to_lower(text));
+    sort(mut all);
+    var unique: list[str[24]; 32] = [];
+    for w in all {
+        if not contains(unique, w) {
+            push(mut unique, w);
         }
     }
-    return true;
+    return unique;
 }
 
 fn main() {
@@ -85,6 +77,8 @@ fn main() {
     print("upper: ", upper(text));
     print("most common: ", most_common_letter(text));
     print("palindrome? ", is_palindrome("A man, a plan, a canal: Panama"));
+    let vocab: str[256] = join(vocabulary("the cat and the hat"), " ");
+    print("vocabulary: ", vocab);
 }
 
 test "word count handles repeated whitespace" {
@@ -99,4 +93,9 @@ test "upper leaves non-letters alone" {
 test "palindromes" {
     assert is_palindrome("Never odd or even");
     assert not is_palindrome("agent");
+}
+
+test "vocabulary sorts and drops repeats" {
+    assert vocabulary("b a B c a") == ["a", "b", "c"];
+    assert len(vocabulary("   ")) == 0;
 }

@@ -42,10 +42,6 @@ import java.util.Set;
 final class ToolDefinitions {
     private ToolDefinitions() {}
 
-    /** The builtins a constant may call: those whose result depends only on their arguments. */
-    private static final Set<Builtin> PURE_BUILTINS = EnumSet.of(
-        Builtin.LEN, Builtin.CAP, Builtin.ABS, Builtin.MIN, Builtin.MAX, Builtin.SQRT, Builtin.FLOOR, Builtin.CEIL);
-
     private static final Set<BinOp> COMPARISONS = EnumSet.of(BinOp.LT, BinOp.LE, BinOp.GT, BinOp.GE, BinOp.EQ);
 
     /** The doc comment, a line per `requires` clause, the return type, and a line per `ensures` clause. */
@@ -89,7 +85,7 @@ final class ToolDefinitions {
             case Convert c -> isConstant(c.arg);
             case FieldAccess fa -> fa.variant != null || isConstant(fa.target);
             case Index ix -> isConstant(ix.target) && isConstant(ix.index);
-            case Call c -> c.fn == null && PURE_BUILTINS.contains(c.builtin)
+            case Call c -> c.fn == null && c.builtin != null && c.builtin.pure
                 && c.args.stream().allMatch(a -> !a.mut() && isConstant(a.expr()));
             case VariantCall vc -> vc.args.stream().allMatch(a -> isConstant(a.expr()));
             case StructLit s -> s.fields.stream().allMatch(fi -> isConstant(fi.value()));

@@ -1,27 +1,121 @@
 package alang.ast;
 
-/** Builtin functions. Their names are reserved and cannot be declared by programs. */
+/**
+ * The builtin functions: the core ones and the standard library. Their names are reserved and cannot be
+ * declared by programs. They are polymorphic where user functions cannot be (there are no generics):
+ * {@code len} takes any array, list or str, {@code sort} any list, and so on.
+ */
 public enum Builtin {
-    PRINT("print", "print(values...)", "Prints the values (no separator) followed by a newline."),
-    LEN("len", "len(x) -> i64", "Number of elements in an array/list, or bytes in a str."),
-    CAP("cap", "cap(x) -> i64", "Capacity of a list or str (the N in list[T; N] / str[N])."),
-    PUSH("push", "push(mut xs, value)", "Appends one element to a list (or one u8 byte to a str). Traps if full."),
-    POP("pop", "pop(mut xs) -> T", "Removes and returns the last element of a list (or last byte of a str). Traps if empty."),
-    CLEAR("clear", "clear(mut xs)", "Removes all elements of a list or str."),
-    APPEND("append", "append(mut s, values...)", "Appends the text form of each value to a str (same format as print). Traps if full."),
-    ABS("abs", "abs(x) -> T", "Absolute value of a signed integer or float. Traps on overflow (abs of the minimum integer)."),
-    MIN("min", "min(a, b) -> T", "Smaller of two numbers of the same type."),
-    MAX("max", "max(a, b) -> T", "Larger of two numbers of the same type."),
-    SQRT("sqrt", "sqrt(x) -> f", "Square root of an f32/f64."),
-    FLOOR("floor", "floor(x) -> f", "Largest integral value not greater than x (f32/f64)."),
-    CEIL("ceil", "ceil(x) -> f", "Smallest integral value not less than x (f32/f64)."),
-    PANIC("panic", "panic(message)", "Stops the program with an error message. Never returns.");
+    // ---- core
+    PRINT(Group.CORE, false, "print", "print(values...)", "Prints the values (no separator) followed by a newline."),
+    LEN(Group.CORE, true, "len", "len(x) -> i64", "Number of elements in an array/list, or bytes in a str."),
+    CAP(Group.CORE, true, "cap", "cap(x) -> i64", "Capacity of a list or str (the N in list[T; N] / str[N])."),
+    PUSH(Group.CORE, false, "push", "push(mut xs, value)", "Appends one element to a list (or one u8 byte to a str). Traps if full."),
+    POP(Group.CORE, false, "pop", "pop(mut xs) -> T", "Removes and returns the last element of a list (or last byte of a str). Traps if empty."),
+    CLEAR(Group.CORE, false, "clear", "clear(mut xs)", "Removes all elements of a list or str."),
+    APPEND(Group.CORE, false, "append", "append(mut s, values...)", "Appends the text form of each value to a str (same format as print). Traps if full."),
+    PANIC(Group.CORE, false, "panic", "panic(message)", "Stops the program with an error message. Never returns."),
 
+    // ---- math
+    ABS(Group.MATH, true, "abs", "abs(x) -> T", "Absolute value of a signed integer or float. Traps on overflow (abs of the minimum integer)."),
+    MIN(Group.MATH, true, "min", "min(a, b) -> T", "Smaller of two numbers of the same type."),
+    MAX(Group.MATH, true, "max", "max(a, b) -> T", "Larger of two numbers of the same type."),
+    CLAMP(Group.MATH, true, "clamp", "clamp(x, lo, hi) -> T",
+        "x limited to lo..hi (numbers of the same type). Traps (R0013) unless lo <= hi."),
+    POW(Group.MATH, true, "pow", "pow(x, n) -> T",
+        "x to the power n, for an integer x and an integer n >= 0; pow(0, 0) is 1. Traps on overflow, and (R0013) if n < 0."),
+    GCD(Group.MATH, true, "gcd", "gcd(a, b) -> T",
+        "Greatest common divisor of two integers of the same type, never negative; gcd(0, 0) is 0. Traps if it does not fit."),
+    LCM(Group.MATH, true, "lcm", "lcm(a, b) -> T",
+        "Least common multiple of two integers of the same type, never negative; 0 if either is 0. Traps on overflow."),
+    SQRT(Group.MATH, true, "sqrt", "sqrt(x) -> f", "Square root of an f32/f64."),
+    FLOOR(Group.MATH, true, "floor", "floor(x) -> f", "Largest integral value not greater than x (f32/f64)."),
+    CEIL(Group.MATH, true, "ceil", "ceil(x) -> f", "Smallest integral value not less than x (f32/f64)."),
+    ROUND(Group.MATH, true, "round", "round(x) -> f", "Nearest integral value, halves away from zero: round(2.5) is 3.0 (f32/f64)."),
+    TRUNC(Group.MATH, true, "trunc", "trunc(x) -> f", "x without its fraction, rounded toward zero: trunc(-2.7) is -2.0 (f32/f64)."),
+    IS_NAN(Group.MATH, true, "is_nan", "is_nan(x) -> bool", "Whether an f32/f64 is NaN."),
+    IS_FINITE(Group.MATH, true, "is_finite", "is_finite(x) -> bool", "Whether an f32/f64 is neither NaN nor infinite."),
+
+    // ---- characters: ASCII, on one u8 byte
+    IS_DIGIT(Group.CHARS, true, "is_digit", "is_digit(c) -> bool", "Whether the u8 byte c is an ASCII digit 0-9."),
+    IS_ALPHA(Group.CHARS, true, "is_alpha", "is_alpha(c) -> bool", "Whether the u8 byte c is an ASCII letter a-z or A-Z."),
+    IS_ALNUM(Group.CHARS, true, "is_alnum", "is_alnum(c) -> bool", "Whether the u8 byte c is an ASCII letter or digit."),
+    IS_SPACE(Group.CHARS, true, "is_space", "is_space(c) -> bool",
+        "Whether the u8 byte c is ASCII whitespace: space, \\t, \\n, \\r, \\x0b or \\x0c."),
+    IS_UPPER(Group.CHARS, true, "is_upper", "is_upper(c) -> bool", "Whether the u8 byte c is an ASCII uppercase letter A-Z."),
+    IS_LOWER(Group.CHARS, true, "is_lower", "is_lower(c) -> bool", "Whether the u8 byte c is an ASCII lowercase letter a-z."),
+    TO_UPPER(Group.CHARS, true, "to_upper", "to_upper(x) -> T",
+        "A u8 byte or a str[N] with ASCII a-z changed to A-Z; other bytes are kept."),
+    TO_LOWER(Group.CHARS, true, "to_lower", "to_lower(x) -> T",
+        "A u8 byte or a str[N] with ASCII A-Z changed to a-z; other bytes are kept."),
+
+    // ---- text
+    CONTAINS(Group.TEXT, true, "contains", "contains(xs, x) -> bool",
+        "Whether a str contains a str or u8 byte, or an array/list contains an element equal to x."),
+    INDEX_OF(Group.TEXT, true, "index_of", "index_of(xs, x) -> i64",
+        "Position of the first occurrence of x (as for contains), or -1 if there is none."),
+    STARTS_WITH(Group.TEXT, true, "starts_with", "starts_with(s, prefix) -> bool", "Whether a str begins with a str or u8 byte."),
+    ENDS_WITH(Group.TEXT, true, "ends_with", "ends_with(s, suffix) -> bool", "Whether a str ends with a str or u8 byte."),
+    SLICE(Group.TEXT, true, "slice", "slice(xs, from, to) -> T",
+        "A copy of the elements from..to (half-open) of a str, list or array, of the same type (a list for an array). "
+            + "Traps (R0003) unless 0 <= from <= to <= len(xs)."),
+    TRIM(Group.TEXT, true, "trim", "trim(s) -> str[N]", "s without the ASCII whitespace at its start and end."),
+    SPLIT(Group.TEXT, true, "split", "split(s, sep) -> list[str[K]; M]",
+        "The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. "
+            + "Its type is that of the variable it is stored in. Traps if a piece or the count does not fit."),
+    WORDS(Group.TEXT, true, "words", "words(s) -> list[str[K]; M]",
+        "The pieces of s between runs of ASCII whitespace, never empty. Its type is that of the variable it is "
+            + "stored in. Traps if a word or the count does not fit."),
+    JOIN(Group.TEXT, true, "join", "join(parts, sep) -> str[N]",
+        "The strs of an array or list with sep (a str or u8 byte) between them. Its type is that of the variable "
+            + "it is stored in. Traps if the result does not fit."),
+    REPLACE(Group.TEXT, true, "replace", "replace(s, from, to) -> str[N]",
+        "s with every occurrence of from (a non-empty str or a u8 byte) replaced by to, left to right. Its type is "
+            + "that of the variable it is stored in. Traps if the result does not fit."),
+    IS_INT(Group.TEXT, true, "is_int", "is_int(s) -> bool",
+        "Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it."),
+
+    // ---- collections
+    SORT(Group.COLLECTIONS, false, "sort", "sort(mut xs)",
+        "Sorts a list, array or str in place, ascending. Every type is ordered: numbers by value (-0.0 before 0.0, "
+            + "NaN last), false before true, strs and lists element by element (a prefix first), structs field by field, "
+            + "enums by variant, then payload."),
+    REVERSE(Group.COLLECTIONS, false, "reverse", "reverse(mut xs)", "Reverses a list, array or str in place."),
+    INSERT(Group.COLLECTIONS, false, "insert", "insert(mut xs, i, value)",
+        "Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. "
+            + "Traps unless 0 <= i <= len(xs), or if full."),
+    REMOVE(Group.COLLECTIONS, false, "remove", "remove(mut xs, i) -> T",
+        "Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. "
+            + "Traps unless 0 <= i < len(xs).");
+
+    /** Where the documentation lists a builtin. */
+    public enum Group {
+        CORE("Core"),
+        MATH("Math"),
+        CHARS("Characters"),
+        TEXT("Text"),
+        COLLECTIONS("Collections");
+
+        public final String title;
+
+        Group(String title) {
+            this.title = title;
+        }
+    }
+
+    public final Group group;
+    /**
+     * True if the result depends only on the arguments and nothing is modified or printed, so that a
+     * constant may call it.
+     */
+    public final boolean pure;
     public final String name;
     public final String signature;
     public final String doc;
 
-    Builtin(String name, String signature, String doc) {
+    Builtin(Group group, boolean pure, String name, String signature, String doc) {
+        this.group = group;
+        this.pure = pure;
         this.name = name;
         this.signature = signature;
         this.doc = doc;
@@ -32,5 +126,18 @@ public enum Builtin {
             if (b.name.equals(name)) return b;
         }
         return null;
+    }
+
+    /** Whether the result's capacity comes from where it is stored: split, words, join and replace. */
+    public boolean typedByTarget() {
+        return this == SPLIT || this == WORDS || this == JOIN || this == REPLACE;
+    }
+
+    /** Whether the first argument is modified, and so passed as `mut`. */
+    public boolean modifiesFirst() {
+        return switch (this) {
+            case PUSH, POP, CLEAR, APPEND, SORT, REVERSE, INSERT, REMOVE -> true;
+            default -> false;
+        };
     }
 }

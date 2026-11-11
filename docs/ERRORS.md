@@ -66,6 +66,7 @@ Codes are never reused for a different meaning.
 | [R0010](#r0010) | panic |
 | [R0011](#r0011) | step budget exhausted |
 | [R0012](#r0012) | invalid shift or empty pop |
+| [R0013](#r0013) | invalid argument |
 
 ## E0001
 
@@ -501,10 +502,11 @@ while true limit 10 { }  // trap after 10 iterations
 
 ## R0009
 
-**conversion out of range**: A numeric conversion such as u8(x) or i32(f) received a value that the target type cannot represent (or NaN).
+**conversion out of range**: A conversion such as u8(x), i32(f) or i64(s) received a value that the target type cannot represent: a number out of its range, NaN, or a str that is not a decimal integer (check it first with is_int(s)).
 
 ```
 let b: u8 = u8(-1);  // trap
+let n: i64 = i64("12a");  // trap
 ```
 
 ## R0010
@@ -531,7 +533,20 @@ alang run long.al --max-steps 1000000000
 let x: u32 = 1 << 32;  // trap
 ```
 
-## Builtin functions
+## R0013
+
+**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, or an empty separator or pattern for split or replace.
+
+```
+let p: i64 = pow(2, -1);  // trap
+let c: i64 = clamp(x, 10, 0);  // trap
+```
+
+## Builtin functions and the standard library
+
+Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
+
+### Core
 
 | Signature | Description |
 |-----------|-------------|
@@ -542,10 +557,61 @@ let x: u32 = 1 << 32;  // trap
 | `pop(mut xs) -> T` | Removes and returns the last element of a list (or last byte of a str). Traps if empty. |
 | `clear(mut xs)` | Removes all elements of a list or str. |
 | `append(mut s, values...)` | Appends the text form of each value to a str (same format as print). Traps if full. |
+| `panic(message)` | Stops the program with an error message. Never returns. |
+
+### Math
+
+| Signature | Description |
+|-----------|-------------|
 | `abs(x) -> T` | Absolute value of a signed integer or float. Traps on overflow (abs of the minimum integer). |
 | `min(a, b) -> T` | Smaller of two numbers of the same type. |
 | `max(a, b) -> T` | Larger of two numbers of the same type. |
+| `clamp(x, lo, hi) -> T` | x limited to lo..hi (numbers of the same type). Traps (R0013) unless lo <= hi. |
+| `pow(x, n) -> T` | x to the power n, for an integer x and an integer n >= 0; pow(0, 0) is 1. Traps on overflow, and (R0013) if n < 0. |
+| `gcd(a, b) -> T` | Greatest common divisor of two integers of the same type, never negative; gcd(0, 0) is 0. Traps if it does not fit. |
+| `lcm(a, b) -> T` | Least common multiple of two integers of the same type, never negative; 0 if either is 0. Traps on overflow. |
 | `sqrt(x) -> f` | Square root of an f32/f64. |
 | `floor(x) -> f` | Largest integral value not greater than x (f32/f64). |
 | `ceil(x) -> f` | Smallest integral value not less than x (f32/f64). |
-| `panic(message)` | Stops the program with an error message. Never returns. |
+| `round(x) -> f` | Nearest integral value, halves away from zero: round(2.5) is 3.0 (f32/f64). |
+| `trunc(x) -> f` | x without its fraction, rounded toward zero: trunc(-2.7) is -2.0 (f32/f64). |
+| `is_nan(x) -> bool` | Whether an f32/f64 is NaN. |
+| `is_finite(x) -> bool` | Whether an f32/f64 is neither NaN nor infinite. |
+
+### Characters
+
+| Signature | Description |
+|-----------|-------------|
+| `is_digit(c) -> bool` | Whether the u8 byte c is an ASCII digit 0-9. |
+| `is_alpha(c) -> bool` | Whether the u8 byte c is an ASCII letter a-z or A-Z. |
+| `is_alnum(c) -> bool` | Whether the u8 byte c is an ASCII letter or digit. |
+| `is_space(c) -> bool` | Whether the u8 byte c is ASCII whitespace: space, \t, \n, \r, \x0b or \x0c. |
+| `is_upper(c) -> bool` | Whether the u8 byte c is an ASCII uppercase letter A-Z. |
+| `is_lower(c) -> bool` | Whether the u8 byte c is an ASCII lowercase letter a-z. |
+| `to_upper(x) -> T` | A u8 byte or a str[N] with ASCII a-z changed to A-Z; other bytes are kept. |
+| `to_lower(x) -> T` | A u8 byte or a str[N] with ASCII A-Z changed to a-z; other bytes are kept. |
+
+### Text
+
+| Signature | Description |
+|-----------|-------------|
+| `contains(xs, x) -> bool` | Whether a str contains a str or u8 byte, or an array/list contains an element equal to x. |
+| `index_of(xs, x) -> i64` | Position of the first occurrence of x (as for contains), or -1 if there is none. |
+| `starts_with(s, prefix) -> bool` | Whether a str begins with a str or u8 byte. |
+| `ends_with(s, suffix) -> bool` | Whether a str ends with a str or u8 byte. |
+| `slice(xs, from, to) -> T` | A copy of the elements from..to (half-open) of a str, list or array, of the same type (a list for an array). Traps (R0003) unless 0 <= from <= to <= len(xs). |
+| `trim(s) -> str[N]` | s without the ASCII whitespace at its start and end. |
+| `split(s, sep) -> list[str[K]; M]` | The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. Its type is that of the variable it is stored in. Traps if a piece or the count does not fit. |
+| `words(s) -> list[str[K]; M]` | The pieces of s between runs of ASCII whitespace, never empty. Its type is that of the variable it is stored in. Traps if a word or the count does not fit. |
+| `join(parts, sep) -> str[N]` | The strs of an array or list with sep (a str or u8 byte) between them. Its type is that of the variable it is stored in. Traps if the result does not fit. |
+| `replace(s, from, to) -> str[N]` | s with every occurrence of from (a non-empty str or a u8 byte) replaced by to, left to right. Its type is that of the variable it is stored in. Traps if the result does not fit. |
+| `is_int(s) -> bool` | Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it. |
+
+### Collections
+
+| Signature | Description |
+|-----------|-------------|
+| `sort(mut xs)` | Sorts a list, array or str in place, ascending. Every type is ordered: numbers by value (-0.0 before 0.0, NaN last), false before true, strs and lists element by element (a prefix first), structs field by field, enums by variant, then payload. |
+| `reverse(mut xs)` | Reverses a list, array or str in place. |
+| `insert(mut xs, i, value)` | Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. Traps unless 0 <= i <= len(xs), or if full. |
+| `remove(mut xs, i) -> T` | Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. Traps unless 0 <= i < len(xs). |

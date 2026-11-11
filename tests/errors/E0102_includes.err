@@ -1,0 +1,7 @@
+error[E0102]: unknown function `includes`
+ --> tests/errors/E0102_includes.al:4:23
+  |
+4 |     let found: bool = includes(xs, 2);
+  |                       ^^^^^^^^
+  = hint: use contains(xs, x)
+

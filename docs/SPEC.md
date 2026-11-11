@@ -24,8 +24,8 @@ syntax; this document describes semantics. Diagnostic codes are listed in [ERROR
 - Reserved words: `fn let var const struct enum if else while for in match break continue return assert
   requires ensures mut and or not true false bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str list`.
   `limit`, `test`, `tool` and `result` are contextual and may be used as names.
-- Builtin function names (`print len cap push pop clear append abs min max sqrt floor ceil panic`)
-  cannot be redefined, but may be variable names.
+- The names of the builtin functions, the standard library included (§9), cannot be redefined (E0108),
+  but may be variable names.
 
 | Literal | Examples | Notes |
 |---------|----------|-------|
@@ -106,8 +106,9 @@ test "description" { ... }
 ```
 
 - **Constants** are evaluated at compile time from literals, other constants, operators, conversions,
-  `len`/`cap`/`abs`/`min`/`max`/`sqrt`/`floor`/`ceil` and struct, enum and array literals; user function
-  calls are not allowed (E0209). There are no global variables.
+  struct, enum and array literals, and the builtins that only compute: all but `print`, `push`, `pop`,
+  `clear`, `append`, `panic`, `sort`, `reverse`, `insert` and `remove` (`const MASK: u32 = pow(2, 12) - 1;`).
+  User function calls are not allowed (E0209). There are no global variables.
 - **`fn main()`** takes no parameters and returns nothing; `alang run` calls it.
 - **`tool fn`** is callable with JSON arguments (§10) and cannot take `mut` parameters.
 - **`test "..."`** blocks are run by `alang test`, each from a fresh state.
@@ -165,7 +166,8 @@ fn shift(p: mut Point, dx: f64) {               // p refers to the caller's vari
   site says so: `shift(mut origin, 1.0)` (E0207), with a mutable place of exactly the parameter type.
 - `mut` references cannot be stored, returned or captured, so they never dangle.
 - **Exclusive access (E0208):** a variable passed as `mut` may not appear in another argument of the
-  same call: `append(mut s, s)` is rejected; copy first.
+  same call that is an aggregate: `append(mut s, s)` is rejected; copy first. A number or bool is a copy
+  made before the call, so `remove(mut xs, len(xs) - 1)` is fine.
 - **Mutating calls are statements (E0215):** a call with a `mut` argument is a statement of its own or the
   whole right-hand side of `let`/`var`/assignment/`return`, so every mutation is at a visible point.
 - **No recursion (E0401):** the call graph, contracts included, must be acyclic. Use a loop and a
@@ -222,6 +224,8 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 | f64 → f32 | rounded to nearest; may become `inf` |
 | f32 → f64 | exact |
 | bool → integer | `true` → 1, `false` → 0 |
+| str → integer | decimal text: an optional `+` or `-`, then digits; other text or out of range traps (R0009) |
+| str → float | not allowed (E0214); there is no float parsing: `f64(i64(s))` |
 | anything → bool | not allowed (E0214); compare instead |
 
 **Evaluation order** is fully specified, so side effects (`print`, traps) always happen in the same
@@ -273,11 +277,11 @@ time, everywhere:**
   indexes, shifts and conversions, and failed contracts trap with a fixed code, message and location.
   Evaluation order is fixed (§6).
 - **Portable floats:** only correctly rounded IEEE 754 operations exist (`+ - * /`, `sqrt`, `floor`,
-  `ceil`, `abs`, `min`, `max`, conversions); `sin`, `exp`, `pow` and the like differ between math
-  libraries and are left out. `min`/`max` are `if b < a then b else a` / `if b > a then b else a`, which
+  `ceil`, `round`, `trunc`, `abs`, `min`, `max`, `clamp`, conversions); `sin`, `exp`, a float `pow` and
+  the like differ between math libraries and are left out. `min`/`max` are `if b < a then b else a` / `if b > a then b else a`, which
   fixes NaN handling. The C backend refuses `-ffast-math` and x87 excess precision, and disables fused
   multiply-add contraction.
-- **Exact text formatting** (§9), independent of locale and C library.
+- **Exact text formatting** (§9.6), independent of locale and C library.
 - **A deterministic step budget:** the interpreter counts executed statements, and `--max-steps`
   (default 100 000 000) stops a runaway program with R0011 after exactly the same number of steps.
 - **Deterministic tooling:** diagnostics are sorted by position, JSON has a fixed key order, generated C
@@ -286,7 +290,16 @@ time, everywhere:**
 The test suite runs every program repeatedly and under several locales, and compares the C backend byte
 for byte with the interpreter under several compilers and optimization levels.
 
-## 9. Builtins and text formatting
+## 9. Builtins and the standard library
+
+Builtin functions come with the language. They are polymorphic where a user function cannot be (there
+are no generics): `len` takes any array, list or str, `sort` any list. The core builtins print and change
+lists and strings; the rest are the standard library: math, characters, text and collections. Each
+behaves the same in the interpreter and the C backend, traps and messages included, and each checks its
+arguments in a fixed order, so the same bad call always gives the same trap. `alang explain --all` lists
+them all.
+
+### 9.1 Core
 
 | Builtin | Description |
 |---------|-------------|
@@ -297,9 +310,116 @@ for byte with the interpreter under several compilers and optimization levels.
 | `pop(mut xs) -> T` | Removes and returns the last element. Traps if empty (R0012). |
 | `clear(mut xs)` | Removes all elements. |
 | `append(mut s, values...)` | Appends the text of each value to a str. Traps if it does not fit (R0004). |
-| `abs(x)`, `min(a, b)`, `max(a, b)` | Numeric helpers (same-type operands). `abs` of the minimum integer traps. |
-| `sqrt(x)`, `floor(x)`, `ceil(x)` | On `f32`/`f64`, correctly rounded. |
 | `panic(message)` | Stops with trap R0010. |
+
+### 9.2 Math
+
+| Function | Description |
+|----------|-------------|
+| `abs(x)`, `min(a, b)`, `max(a, b)` | Same-type numbers. `abs` of the minimum integer traps (R0001). |
+| `clamp(x, lo, hi) -> T` | `lo` if `x < lo`, `hi` if `x > hi`, else `x`; same-type numbers. Traps (R0013) unless `lo <= hi`, so a NaN bound traps. |
+| `pow(x, n) -> T` | `x` (any integer type) to the power `n` (any integer type); `pow(0, 0)` is 1. Traps if `n < 0` (R0013) or the result does not fit (R0001). There is no float `pow`. |
+| `gcd(a, b) -> T` | Greatest common divisor of same-type integers, never negative; `gcd(0, 0)` is 0. `gcd(x, 0)` for the minimum `x` does not fit and traps (R0001). |
+| `lcm(a, b) -> T` | Least common multiple, never negative; 0 if either is 0. Traps if it does not fit (R0001). |
+| `sqrt(x)`, `floor(x)`, `ceil(x)` | On `f32`/`f64`, correctly rounded. |
+| `round(x)`, `trunc(x)` | On `f32`/`f64`, exact: `round` halves away from zero (`round(2.5)` is `3.0`, `round(-0.5)` is `-1.0`); `trunc` drops the fraction (`trunc(-2.7)` is `-2.0`). |
+| `is_nan(x)`, `is_finite(x)` | On `f32`/`f64`. |
+
+A literal argument takes the type of the other arguments or, for `min`, `max`, `clamp`, `pow`, `gcd` and
+`lcm`, of the variable the result is stored in: `let b: u8 = pow(2, 7);`.
+
+### 9.3 Characters
+
+On one byte, a `u8` such as `s[i]`, a loop variable of `for c in s`, or a character literal; ASCII only,
+so every other byte is not a letter, digit or space and is left as it is.
+
+| Function | Description |
+|----------|-------------|
+| `is_digit(c)`, `is_alpha(c)`, `is_alnum(c)` | `0-9`; `a-z` and `A-Z`; either. |
+| `is_upper(c)`, `is_lower(c)` | `A-Z`; `a-z`. |
+| `is_space(c)` | Space, `\t`, `\n`, `\r`, `\x0b` or `\x0c`. |
+| `to_upper(x)`, `to_lower(x)` | A `u8`, or every byte of a `str[N]`, with its case changed; the same type back. |
+
+### 9.4 Text
+
+What `contains` and `index_of` look for in a str, a prefix or suffix, a separator, and what `replace`
+replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ',')` and
+`split(line, ", ")` both work).
+
+| Function | Description |
+|----------|-------------|
+| `contains(xs, x) -> bool` | In a str, whether the pattern `x` occurs (the empty str always does); in an array or list, whether an element `== x`. |
+| `index_of(xs, x) -> i64` | Where the first occurrence starts, as for `contains`, or -1. |
+| `starts_with(s, p) -> bool`, `ends_with(s, p) -> bool` | Whether the str `s` begins or ends with the pattern `p`. |
+| `slice(xs, from, to) -> T` | A copy of the elements `from..to` (half-open) of a str or list, of the same type, or of an array, as a `list[T; N]`. Traps (R0003) unless `0 <= from <= to <= len(xs)`. |
+| `trim(s) -> str[N]` | `s` without the ASCII whitespace at its start and end. |
+| `split(s, sep) -> list[str[K]; M]` | The pieces of `s` between occurrences of the pattern `sep`, left to right, empty pieces included: `split("a,,b", ",")` is `["a", "", "b"]`, `split("", ",")` is `[""]`. Traps if `sep` is empty (R0013). |
+| `words(s) -> list[str[K]; M]` | The pieces of `s` between runs of ASCII whitespace; never empty pieces. |
+| `join(parts, sep) -> str[N]` | The strs of an array or list, with the pattern `sep` between them. |
+| `replace(s, from, to) -> str[N]` | `s` with every occurrence of the pattern `from`, left to right and not overlapping, replaced by the pattern `to`. Traps if `from` is empty (R0013). |
+| `is_int(s) -> bool` | Whether `i64(s)` would succeed: decimal text that fits an `i64`. |
+
+**Results typed by where they are stored.** The size of what `split`, `words`, `join` and `replace`
+build depends on the data, so each takes its type, capacities included, from the variable it initializes
+or is assigned to, or from the function's return type. The call must be the whole right-hand side of a
+typed `let`/`var`, a constant, an assignment with `=`, or a `return`; anywhere else is E0216. A result
+that does not fit traps (R0004): `split` and `words` check each piece in turn, first that the list has
+room for it, then that it fits a `str[K]`; `join` and `replace` check the whole length first.
+
+**Text to integers.** A conversion from a str to an integer type (§6) reads decimal text: an optional `+`
+or `-`, then at least one ASCII digit, and nothing else, so `trim` it first. Other text, or a value out of
+the type's range, traps (R0009). `is_int(s)` says whether `i64(s)` succeeds; for a narrower type, convert
+to `i64` and check the range.
+
+```alang
+/// Sums the integers in a comma-separated list, skipping empty items; -1 if an item is not an integer.
+tool fn sum_csv(line: str[256]) -> i64 {
+    let items: list[str[32]; 64] = split(line, ',');
+    var total: i64 = 0;
+    for item in items {
+        let t: str[32] = trim(item);
+        if len(t) == 0 {
+            continue;
+        }
+        if not is_int(t) {
+            return -1;
+        }
+        total += i64(t);
+    }
+    return total;
+}
+
+fn main() {
+    print(sum_csv("1, 2,, 40 "));
+}
+
+test "empty items are skipped and bad ones reported" {
+    assert sum_csv("1, 2,, 40 ") == 43;
+    assert sum_csv("1, two") == -1;
+}
+```
+
+### 9.5 Collections
+
+| Function | Description |
+|----------|-------------|
+| `sort(mut xs)` | Sorts a list, array or str in place, ascending, in the order below. |
+| `reverse(mut xs)` | Reverses a list, array or str in place. |
+| `insert(mut xs, i, v)` | Inserts `v` into a list (a `u8` into a str) at position `i`, moving the rest up. Traps unless `0 <= i <= len(xs)` (R0003), then if full (R0004). |
+| `remove(mut xs, i) -> T` | Removes and returns the element at position `i` of a list (a byte of a str), moving the rest down. Traps unless `0 <= i < len(xs)` (R0003). Like `pop`, it may be a statement of its own. |
+
+`contains`, `index_of` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
+be of any integer type, as indexes may.
+
+**The order of `sort`** is defined for every type: numbers by value, with `-0.0` before `0.0` and every
+NaN after everything else; `false` before `true`; strs (by unsigned byte), arrays and lists element by
+element, a prefix before a longer value; structs field by field, in the order they are declared; enums
+by the order of their variants, then by payload. So a list of structs sorts by its first field, then its
+second: put the key first, and sort on a negated key, or `reverse` afterwards, for descending order. Two
+values this order calls equal cannot be told apart, so the result is the same whatever the algorithm,
+and no sort is stable or unstable in a way a program can see.
+
+### 9.6 Text formatting
 
 The text of a value (for `print`, `append`, trap messages and the left/right values of a failed
 `assert`):
@@ -375,7 +495,7 @@ server, and its diagnostics, like any warning, go to stderr, which is the only o
 
 ## 11. Runtime errors (traps)
 
-A trap stops the program (or the current test or tool call) and reports a code `R0001`–`R0012`, a
+A trap stops the program (or the current test or tool call) and reports a code `R0001`–`R0013`, a
 message and the source location; the interpreter also prints the call stack. The exit code is 1. There
 are no exceptions: model recoverable failures as enum return values (see `examples/rpn_calculator.al`).
 [ERRORS.md](ERRORS.md) lists every trap.

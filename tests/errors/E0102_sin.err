@@ -3,5 +3,5 @@ error[E0102]: unknown function `sin`
   |
 3 |     let y: f64 = sin(1.0);
   |                  ^^^
-  = hint: there is no sin: it rounds differently in different math libraries, so ALang leaves it out; only + - * /, sqrt, floor, ceil, abs, min and max exist
+  = hint: there is no sin: it rounds differently in different math libraries, so ALang leaves it out; only + - * /, sqrt, floor, ceil, round, trunc, abs, min and max exist
 

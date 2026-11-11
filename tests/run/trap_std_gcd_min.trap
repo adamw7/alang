@@ -1,0 +1,2 @@
+R0001 4:11
+integer overflow: result of `gcd` does not fit in i64

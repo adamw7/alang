@@ -27,7 +27,7 @@ fn main() {
     let a16: i64 = nope + 1;
     let a17: bool = nope < 1;
     let a18: i64 = xs[b];
-    let a19: i64 = i64(s);
+    let a19: f64 = f64(s);
     let a20: u8 = u8(300);
     let a21: i64 = i64(nope);
     let a22: [i64; 3] = [1, 2];

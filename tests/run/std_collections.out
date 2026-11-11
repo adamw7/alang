@@ -1,0 +1,24 @@
+[-40, -3, 0, 5, 5, 7, 9, 12]
+[12, 9, 7, 5, 5, 0, -3, -40]
+[100, 12, 9, 300, 7, 5, 5, 0, -3, -40, 200]
+100 200 300 [12, 9, 7, 5, 5, 0, -3, -40]
+true false 3 7 -1
+[0, 1, 2, 3, 128, 255]
+[255, 128, 3, 2, 1, 0] 1 false
+[-inf, -7.25, -0.0, -0.0, 0.0, 2.5, inf, nan]
+2 false
+["", "Zoo", "app", "apple", "apples", "fig", "pear"] 5 false
+[false, false, true, true]
+[Score(points: -2, name: "dee"), Score(points: 7, name: "al"), Score(points: 7, name: "al"), Score(points: 7, name: "cy"), Score(points: 9, name: "bo")]
+Score(points: 9, name: "bo") 2
+[Shape.Dot, Shape.Circle(-1.0), Shape.Circle(3.0), Shape.Circle(3.0), Shape.Rect(1.0, 1.5), Shape.Rect(1.0, 2.0), Shape.Rect(1.0, 2.0)] true
+[[1, 5], [1, 5, 0], [2], [2, 1]]
+[[1, 2], [1, 9], [3, 1]]
+aaabnn
+nnbaaa
+Xnn-baa 97
+Xn-baa 110
+1 97 128 255
+[1] 0
+[9, 7, 5, 5, 0, -3, -40] [255, 128]
+[]

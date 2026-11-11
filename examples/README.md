@@ -10,7 +10,7 @@ agent can call with JSON. CI type-checks every example, runs its tests, compares
 | [fizzbuzz.al](fizzbuzz.al) | Loops, conditions, building text in a fixed-capacity `str` |
 | [binary_search.al](binary_search.al) | A bounded `while` loop, `requires`/`ensures` contracts |
 | [shapes.al](shapes.al) | Structs, enums with payloads, exhaustive `match`, value semantics |
-| [text_tools.al](text_tools.al) | Text tools working byte by byte |
+| [text_tools.al](text_tools.al) | Text tools on the standard library: `words`, `to_upper`, `sort`, `contains`, `join` |
 | [inventory.al](inventory.al) | State passed as a value and changed through `mut` parameters; results as enums |
 | [rpn_calculator.al](rpn_calculator.al) | A tokenizer and an evaluation stack; errors as enum values instead of exceptions |
 | [maze_bfs.al](maze_bfs.al) | Breadth-first search with a fixed-capacity queue in place of recursion |

@@ -1,0 +1,7 @@
+error[E0102]: unknown function `sorted`
+ --> tests/errors/E0102_sorted.al:4:28
+  |
+4 |     let ys: list[i64; 4] = sorted(xs);
+  |                            ^^^^^^
+  = hint: sort a list in place with sort(mut xs); to order by a key, sort structs whose first field is the key (structs order field by field), and reverse(mut xs) for descending
+
