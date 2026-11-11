@@ -70,7 +70,10 @@ and Java, with programs you can run.
 Download `alang-VERSION.tar.gz` (or `.zip`) from the [latest release](https://github.com/adamw7/alang/releases/latest)
 and unpack it; it needs only Java 21 or newer. It holds `bin/alang` (put it, or a link to it, on your
 `PATH`), `lib/alang.jar`, [AGENTS.md](AGENTS.md), the docs and the examples, so the commands below work in
-it as they do in a clone. A release also has the runnable jar on its own (`java -jar alang-VERSION.jar`),
+it as they do in a clone. On Windows, `bin\alang.cmd` runs it from cmd.exe or PowerShell. Both shells can strip
+the quotes out of a JSON argument, so pass `alang call` arguments on stdin there:
+`alang call prog.al tool - < args.json` in cmd.exe, `Get-Content args.json | alang call prog.al tool -` in
+PowerShell. A release also has the runnable jar on its own (`java -jar alang-VERSION.jar`),
 and the guide for agents at an address that does not change:
 <https://github.com/adamw7/alang/releases/latest/download/AGENTS.md>.
 
@@ -200,8 +203,8 @@ bin/alang explain markdown > docs/ERRORS.md   # regenerate the error catalog
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `mvn verify` with gcc and clang on
-Linux, macOS and Windows, smoke-tests `bin/alang` against the packaged jar and the release archives' launcher
-against theirs, and runs the TOON converter's tests,
+Linux, macOS and Windows, smoke-tests `bin/alang` against the packaged jar and the release archives' launchers
+against theirs (`alang.cmd` from PowerShell on Windows), and runs the TOON converter's tests,
 the benchmark self-test and a 3000-mutation fuzzing campaign. Every test, CI step and job has a time limit, so a hang fails fast.
 Mutation testing is too slow for every push: it runs every Saturday on `main`
 ([`.github/workflows/mutation.yml`](.github/workflows/mutation.yml), or on demand from the Actions tab),
@@ -213,7 +216,7 @@ mutation testing is not part of that, so a PIT update is first exercised by the 
 ### Releases
 
 `mvn package` builds what a release publishes: `target/alang.jar`, and `target/alang-VERSION.tar.gz` and
-`.zip` with the jar, a launcher that needs only Java, AGENTS.md, the docs, the grammar and the examples
+`.zip` with the jar, launchers for sh and Windows that need only Java, AGENTS.md, the docs, the grammar and the examples
 ([`src/dist/assembly.xml`](src/dist/assembly.xml)). The jar carries AGENTS.md, the license and the
 ANTLR runtime's notice ([THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)). To release, set the new version in
 `pom.xml` and `Main.VERSION` (`CliTest` checks that they agree), merge to `main`, then tag that commit:

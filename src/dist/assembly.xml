@@ -4,7 +4,8 @@
      repository, so the links between them still work.
 
        alang-VERSION/
-         bin/alang          launcher (src/dist/bin/alang)
+         bin/alang          launcher for sh (src/dist/bin/alang)
+         bin/alang.cmd      launcher for Windows cmd.exe and PowerShell (src/dist/bin/alang.cmd)
          lib/alang.jar      the toolchain, with the ANTLR runtime inside
          AGENTS.md          the guide for agents
          README.md, LICENSE, THIRD-PARTY-NOTICES
@@ -32,6 +33,13 @@
     <file>
       <source>src/dist/bin/alang</source>
       <outputDirectory>bin</outputDirectory>
+      <fileMode>0755</fileMode>
+    </file>
+    <file>
+      <!-- cmd.exe misreads a batch file with LF line endings, whatever the checkout gave us. -->
+      <source>src/dist/bin/alang.cmd</source>
+      <outputDirectory>bin</outputDirectory>
+      <lineEnding>crlf</lineEnding>
       <fileMode>0755</fileMode>
     </file>
   </files>

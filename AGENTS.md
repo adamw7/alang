@@ -18,7 +18,7 @@ Fix the **first** diagnostic first, using its `hint`, and re-run `check` after e
 deterministic: a test that fails once fails every time, identically.
 
 No `bin/alang` yet? Unpack `alang-VERSION.tar.gz` from <https://github.com/adamw7/alang/releases/latest>
-and use its `bin/alang`; it needs only Java 21 or newer.
+and use its `bin/alang` (`bin\alang.cmd` on Windows); it needs only Java 21 or newer.
 
 ## A complete program
 
