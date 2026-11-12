@@ -40,8 +40,9 @@ program
     ;
 
 // import "helpers.al";  (a path relative to this file; its declarations join the program)
+// import "lib/text.al" as text;  keeps that file's declarations apart: text.trim_all(s), text.Point(x: 1)
 importDecl
-    : IMPORT STRING_LIT SEMI
+    : IMPORT STRING_LIT (AS identifier)? SEMI
     ;
 
 item
@@ -116,7 +117,7 @@ type
     | MAP LBRACK type COMMA type SEMI capacity RBRACK  # mapTypeRef  // map[str[16], i64; 64]: up to 64 entries, in key order
     | SET LBRACK type SEMI capacity RBRACK       # setTypeRef      // set[i64; 32]: up to 32 distinct values, in order
     | FN LPAREN (type (COMMA type)*)? RPAREN (ARROW type)?  # fnTypeRef  // fn(i64) -> bool: a function, as a parameter
-    | identifier                                 # namedTypeRef    // struct or enum name
+    | (qual=identifier DOT)? identifier          # namedTypeRef    // struct or enum name, or ns.Name from an import ... as ns
     ;
 
 // A constant capacity or length. In the type of a function parameter, `_` accepts any:
@@ -212,7 +213,7 @@ matchArm
     ;
 
 pattern
-    : identifier DOT identifier (LPAREN binding (COMMA binding)* COMMA? RPAREN)?   # variantPattern
+    : (qual=identifier DOT)? identifier DOT identifier (LPAREN binding (COMMA binding)* COMMA? RPAREN)?   # variantPattern
     | MINUS? INT_LIT                                                              # intPattern
     | CHAR_LIT                                                                    # charPattern
     | STRING_LIT                                                                  # stringPattern
@@ -306,6 +307,8 @@ primary
     | STR LBRACK expression RBRACK LPAREN expression RPAREN               # strResizeExpr
     | LIST LBRACK type SEMI expression RBRACK LPAREN expression RPAREN    # listResizeExpr
     | identifier LPAREN fieldInit (COMMA fieldInit)* COMMA? RPAREN      # structExpr
+    | identifier DOT identifier LPAREN fieldInit (COMMA fieldInit)* COMMA? RPAREN   # qualifiedStructExpr
+    | identifier DOT identifier DOT identifier LPAREN argList? RPAREN    # qualifiedVariantExpr
     | identifier DOT identifier LPAREN argList? RPAREN                  # variantExpr
     | identifier LPAREN argList? RPAREN                                 # callExpr
     | identifier                                                        # nameExpr
@@ -338,7 +341,7 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map` and `set` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set` and `as` are contextual keywords and remain usable as names.
 identifier
     : IDENT
     | LIMIT
@@ -350,6 +353,7 @@ identifier
     | THEN
     | MAP
     | SET
+    | AS
     ;
 
 // =====================================================================
@@ -370,6 +374,7 @@ ELSE      : 'else' ;
 WHILE     : 'while' ;
 LIMIT     : 'limit' ;
 STEP      : 'step' ;
+AS        : 'as' ;
 MAP       : 'map' ;
 SET       : 'set' ;
 THEN      : 'then' ;

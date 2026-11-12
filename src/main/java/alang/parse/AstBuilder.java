@@ -67,7 +67,9 @@ final class AstBuilder {
         List<Import> imports = new ArrayList<>();
         for (ImportDeclContext ic : ctx.importDecl()) {
             Token path = ic.STRING_LIT().getSymbol();
-            imports.add(new Import(span(path), new String(unescape(path), StandardCharsets.UTF_8)));
+            IdentifierContext alias = ic.identifier();
+            imports.add(new Import(span(path), new String(unescape(path), StandardCharsets.UTF_8),
+                alias == null ? null : alias.getText(), alias == null ? null : span(alias)));
         }
         List<Item> items = new ArrayList<>();
         for (ItemContext ic : ctx.item()) {
@@ -220,7 +222,8 @@ final class AstBuilder {
             for (TypeContext e : t.type()) elems.add(type(e));
             return new TupleRef(sp, elems);
         }
-        return new NamedRef(sp, ((NamedTypeRefContext) ctx).identifier().getText());
+        NamedTypeRefContext n = (NamedTypeRefContext) ctx;
+        return new NamedRef(sp, n.identifier(n.identifier().size() - 1).getText(), n.qual == null ? null : n.qual.getText());
     }
 
     /** A capacity or length: its expression, or null for `_` (any capacity, in a parameter's type). */
@@ -369,7 +372,10 @@ final class AstBuilder {
                     spans.add(span(b));
                 }
             }
-            return new VariantPat(sp, v.identifier(0).getText(), v.identifier(1).getText(), names, spans);
+            int k = v.qual == null ? 0 : 1;
+            VariantPat vp = new VariantPat(sp, v.identifier(k).getText(), v.identifier(k + 1).getText(), names, spans);
+            if (v.qual != null) vp.qualifier = v.qual.getText();
+            return vp;
         }
         if (ctx instanceof IntPatternContext i) {
             BigInteger val = parseInt(i.INT_LIT().getText());
@@ -551,6 +557,20 @@ final class AstBuilder {
                 inits.add(new FieldInit(span(f.identifier()), f.identifier().getText(), expr(f.expression())));
             }
             return new StructLit(sp, s.identifier().getText(), inits);
+        }
+        if (ctx instanceof QualifiedStructExprContext s) {
+            List<FieldInit> inits = new ArrayList<>();
+            for (FieldInitContext f : s.fieldInit()) {
+                inits.add(new FieldInit(span(f.identifier()), f.identifier().getText(), expr(f.expression())));
+            }
+            StructLit lit = new StructLit(sp, s.identifier(1).getText(), inits);
+            lit.qualifier = s.identifier(0).getText();
+            return lit;
+        }
+        if (ctx instanceof QualifiedVariantExprContext v) {
+            VariantCall vc = new VariantCall(sp, v.identifier(1).getText(), v.identifier(2).getText(), args(v.argList()));
+            vc.qualifier = v.identifier(0).getText();
+            return vc;
         }
         if (ctx instanceof VariantExprContext v) {
             return new VariantCall(sp, v.identifier(0).getText(), v.identifier(1).getText(), args(v.argList()));

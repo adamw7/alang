@@ -40,13 +40,57 @@ public final class Checker {
     /** Where diagnostics go; while an instance is checked, somewhere else (see {@link #instance}). */
     private Diagnostics diags;
 
-    private final Map<String, StructDecl> structs = new LinkedHashMap<>();
-    private final Map<String, EnumDecl> enums = new LinkedHashMap<>();
-    private final Map<String, ConstDecl> consts = new LinkedHashMap<>();
-    private final Map<String, FnDecl> fns = new LinkedHashMap<>();
+    /**
+     * The declarations of one kind, by scope and name. A plain name is looked up in the scope of the code being
+     * checked ({@link Ctx#scope}); `ns.name` in the scope that ns names (see {@link Program#aliases}).
+     */
+    private final class Table<T extends Item> {
+        private final Map<String, T> byKey = new LinkedHashMap<>();
+
+        private String key(int scope, String name) {
+            return scope + ":" + name;
+        }
+
+        T get(String name) {
+            return byKey.get(key(ctx.scope, name));
+        }
+
+        T in(int scope, String name) {
+            return byKey.get(key(scope, name));
+        }
+
+        boolean containsKey(String name) {
+            return get(name) != null;
+        }
+
+        void put(T item) {
+            byKey.put(key(item.scope, item.name), item);
+        }
+
+        Collection<T> values() {
+            return byKey.values();
+        }
+
+        /** The names in the current scope. */
+        List<String> keySet() {
+            List<String> out = new ArrayList<>();
+            for (T t : byKey.values()) {
+                if (t.scope == ctx.scope) out.add(t.name);
+            }
+            return out;
+        }
+    }
+
+    private final Table<StructDecl> structs = new Table<>();
+    private final Table<EnumDecl> enums = new Table<>();
+    private final Table<ConstDecl> consts = new Table<>();
+    private final Table<FnDecl> fns = new Table<>();
 
     /** Per-routine checking context; swapped out while checking constants lazily. */
     private static final class Ctx {
+        /** The scope of the declarations that plain names name here, and the file, whose aliases qualified ones use. */
+        int scope;
+        alang.diag.Source file;
         Routine routine;
         FnDecl fn;
         final Deque<Map<String, LocalVar>> scopes = new ArrayDeque<>();
@@ -93,6 +137,9 @@ public final class Checker {
     }
 
     private CheckResult run() {
+        for (Item item : program.items) {
+            item.scope = item.span.file() == null ? 0 : program.scopes.getOrDefault(item.span.file(), 0);
+        }
         collect();
         for (StructDecl s : structs.values()) ensureStruct(s);
         for (EnumDecl e : enums.values()) ensureEnum(e);
@@ -102,6 +149,7 @@ public final class Checker {
         Set<FnDecl> failed = new HashSet<>();
         for (Item item : program.items) {
             int before = diags.errorCount();
+            enterScope(item);
             if (item instanceof FnDecl f && fns.get(f.name) == f) body(f);
             if (item instanceof TestDecl t) testBody(t);
             if (item instanceof FnDecl f && diags.errorCount() != before) failed.add(f);
@@ -134,10 +182,11 @@ public final class Checker {
     private void collect() {
         Set<String> testNames = new HashSet<>();
         for (Item item : program.items) {
+            enterScope(item);
             switch (item) {
                 case StructDecl s -> {
                     if (typeExists(s.name)) duplicate(s.span, "type", s.name, typeSpan(s.name));
-                    else structs.put(s.name, s);
+                    else structs.put(s);
                     Set<String> seen = new HashSet<>();
                     for (Field f : s.fields) {
                         if (!seen.add(f.name)) duplicate(f.span, "field", f.name);
@@ -145,7 +194,7 @@ public final class Checker {
                 }
                 case EnumDecl e -> {
                     if (typeExists(e.name)) duplicate(e.span, "type", e.name, typeSpan(e.name));
-                    else enums.put(e.name, e);
+                    else enums.put(e);
                     Set<String> seen = new HashSet<>();
                     for (Variant v : e.variants) {
                         if (!seen.add(v.name)) duplicate(v.span, "variant", v.name);
@@ -153,7 +202,7 @@ public final class Checker {
                 }
                 case ConstDecl c -> {
                     if (consts.containsKey(c.name)) duplicate(c.span, "constant", c.name, consts.get(c.name).span);
-                    else consts.put(c.name, c);
+                    else consts.put(c);
                 }
                 case FnDecl f -> {
                     Builtin b = Builtin.byName(f.name);
@@ -164,7 +213,7 @@ public final class Checker {
                     } else if (fns.containsKey(f.name)) {
                         duplicate(f.nameSpan, "function", f.name, fns.get(f.name).nameSpan);
                     } else {
-                        fns.put(f.name, f);
+                        fns.put(f);
                     }
                 }
                 case TestDecl t -> {
@@ -173,12 +222,14 @@ public final class Checker {
             }
         }
         for (ConstDecl c : consts.values()) {
+            enterScope(c);
             if (typeExists(c.name)) {
                 diags.error(Code.E0104, c.span, "constant `" + c.name + "` has the same name as a type");
             }
         }
         // Items share one namespace (SPEC §3), even where the syntax would tell them apart: Color() and Color.Red.
         for (FnDecl f : fns.values()) {
+            enterScope(f);
             if (structs.containsKey(f.name)) {
                 diags.error(Code.E0104, f.nameSpan, "function `" + f.name + "` has the same name as a struct",
                     "struct literals and calls share syntax; rename one of them");
@@ -191,6 +242,32 @@ public final class Checker {
                     "names are unique across functions, types and constants; rename one of them");
             }
         }
+    }
+
+    /** Plain names in {@code item}'s code are those of its scope, qualified ones the aliases of its file. */
+    private void enterScope(Item item) {
+        ctx.scope = item.scope;
+        ctx.file = item.span.file();
+    }
+
+    /** The scope that `alias.` names in the file being checked, or null if it is no alias there. */
+    private Integer aliasScope(String alias) {
+        Map<String, Integer> m = ctx.file == null ? null : program.aliases.get(ctx.file);
+        return m == null ? null : m.get(alias);
+    }
+
+    /**
+     * The scope that the qualifier of `ns.name` names, or null after reporting that ns names no import of this file.
+     */
+    private Integer qualifierScope(String alias, Span at) {
+        Integer s = aliasScope(alias);
+        if (s == null) {
+            Map<String, Integer> m = ctx.file == null ? null : program.aliases.get(ctx.file);
+            diags.error(Code.E0101, at, "`" + alias + "` names no import of this file",
+                m == null || m.isEmpty() ? "import a file under a name to use its declarations as " + alias
+                    + ".name: import \"lib.al\" as " + alias + ";" : didYouMean(alias, m.keySet()));
+        }
+        return s;
     }
 
     private boolean typeExists(String name) {
@@ -215,7 +292,7 @@ public final class Checker {
     private void ensureStruct(StructDecl s) {
         if (s.state != State.NEW) return;
         s.state = State.IN_PROGRESS;
-        Ctx saved = enterTopLevel();
+        Ctx saved = enterTopLevel(s);
         for (Field f : s.fields) f.type = resolveType(f.typeRef);
         ctx = saved;
         s.state = State.DONE;
@@ -224,7 +301,7 @@ public final class Checker {
     private void ensureEnum(EnumDecl e) {
         if (e.state != State.NEW) return;
         e.state = State.IN_PROGRESS;
-        Ctx saved = enterTopLevel();
+        Ctx saved = enterTopLevel(e);
         for (Variant v : e.variants) {
             v.payload.clear();
             for (TypeRef r : v.payloadRefs) v.payload.add(resolveType(r));
@@ -233,9 +310,10 @@ public final class Checker {
         e.state = State.DONE;
     }
 
-    private Ctx enterTopLevel() {
+    private Ctx enterTopLevel(Item item) {
         Ctx saved = ctx;
         ctx = new Ctx();
+        enterScope(item);
         return saved;
     }
 
@@ -246,7 +324,7 @@ public final class Checker {
             return;
         }
         c.state = State.IN_PROGRESS;
-        Ctx saved = enterTopLevel();
+        Ctx saved = enterTopLevel(c);
         // Count errors from the declared type too: a constant whose type is unknown must not get a
         // value, or constants computed from it would be evaluated with an error type.
         int before = diags.errorCount();
@@ -358,6 +436,14 @@ public final class Checker {
                     yield Type.ERROR;
                 }
                 yield bad || Type.isError(ret) ? Type.ERROR : new Type.FnT(ps, ret);
+            }
+            case NamedRef n when n.qualifier() != null -> {
+                Integer s = qualifierScope(n.qualifier(), n.span());
+                if (s == null) yield Type.ERROR;
+                if (structs.in(s, n.name()) != null) yield new Type.StructT(structs.in(s, n.name()));
+                if (enums.in(s, n.name()) != null) yield new Type.EnumT(enums.in(s, n.name()));
+                diags.error(Code.E0103, n.span(), "`" + n.qualifier() + "` has no type `" + n.name() + "`");
+                yield Type.ERROR;
             }
             case NamedRef n -> {
                 if (ctx.typeParams.containsKey(n.name())) yield ctx.typeParams.get(n.name());
@@ -534,6 +620,7 @@ public final class Checker {
         if (!signed.add(f)) return;
         Ctx saved = ctx;
         ctx = new Ctx();
+        enterScope(f);
         ctx.routine = f;
         ctx.fn = f;
         ctx.typeParams = typeParamsOf(f);
@@ -651,6 +738,7 @@ public final class Checker {
 
     private void body(FnDecl f) {
         ctx = new Ctx();
+        enterScope(f);
         ctx.routine = f;
         ctx.fn = f;
         ctx.typeParams = typeParamsOf(f);
@@ -671,6 +759,7 @@ public final class Checker {
 
     private void testBody(TestDecl t) {
         ctx = new Ctx();
+        enterScope(t);
         ctx.routine = t;
         ctx.scopes.push(new HashMap<>());
         block(t.body);
@@ -1207,6 +1296,22 @@ public final class Checker {
             }
             return false;
         }
+        if (e instanceof VariantCall vc) {
+            // ns.f(...) is a call of a function of an imported file.
+            ctx.mutCallAllowed = vc;
+            Type t = expr(vc, null);
+            ctx.mutCallAllowed = null;
+            if (vc.asCall != null) {
+                if (!(t instanceof Type.Void) && !Type.isError(t)) {
+                    diags.warning(Code.W0302, vc.span, "the result of `" + exprText(vc) + "` (" + t + ") is not used",
+                        "store it: let value: " + t + " = " + exprText(vc) + ";");
+                }
+                return false;
+            }
+            if (Type.isError(t)) return false;
+            diags.error(Code.E0305, e.span, "this expression has no effect", "only function calls can be used as statements");
+            return false;
+        }
         Type t = expr(e, null);
         // `xs.push(1);` and `show(n: 1);` are calls written the wrong way. Their own error already says how
         // to write them, and "only function calls can be used as statements" would mislead.
@@ -1310,7 +1415,9 @@ public final class Checker {
             return;
         }
         EnumDecl d = et.decl();
-        if (!v.enumName.equals(d.name)) {
+        EnumDecl named = v.qualifier == null ? enums.get(v.enumName)
+            : aliasScope(v.qualifier) == null ? null : enums.in(aliasScope(v.qualifier), v.enumName);
+        if (!v.enumName.equals(d.name) || named != null && named != d) {
             diags.error(Code.E0308, v.span, "pattern of enum `" + v.enumName + "` cannot match a value of type " + d.name,
                 "write " + d.name + "." + v.variantName);
             return;
@@ -1484,6 +1591,39 @@ public final class Checker {
     }
 
     private Type fieldAccess(FieldAccess f) {
+        // ns.NAME, a constant of the file imported as ns, and ns.Enum.Variant.
+        if (f.target instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name) && !enums.containsKey(n.name)
+            && aliasScope(n.name) != null) {
+            int s = aliasScope(n.name);
+            ConstDecl c = consts.in(s, f.name);
+            if (c == null) {
+                diags.error(Code.E0101, f.span, "`" + n.name + "` has no constant `" + f.name + "`",
+                    fns.in(s, f.name) != null ? "`" + f.name + "` is a function: call it, " + n.name + "." + f.name + "(...)" : null);
+                return Type.ERROR;
+            }
+            ensureConst(c);
+            f.constant = c;
+            return c.type;
+        }
+        if (f.target instanceof FieldAccess q && q.target instanceof Name n && lookupLocal(n.name) == null
+            && !consts.containsKey(n.name) && !enums.containsKey(n.name) && aliasScope(n.name) != null) {
+            EnumDecl d = enums.in(aliasScope(n.name), q.name);
+            if (d == null) {
+                diags.error(Code.E0103, q.span, "`" + n.name + "` has no enum `" + q.name + "`");
+                return Type.ERROR;
+            }
+            Variant v = d.variant(f.name);
+            if (v == null) {
+                diags.error(Code.E0107, f.nameSpan, "enum `" + d.name + "` has no variant `" + f.name + "`", didYouMean(f.name, variantNames(d)));
+                return Type.ERROR;
+            }
+            if (!v.payload.isEmpty()) {
+                diags.error(Code.E0204, f.span, d.name + "." + v.name + " needs " + v.payload.size() + " value(s)",
+                    "write " + n.name + "." + d.name + "." + v.name + "(" + joinTypes(v.payload) + ")");
+            }
+            f.variant = v;
+            return new Type.EnumT(d);
+        }
         if (f.target instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name)) {
             EnumDecl d = enums.get(n.name);
             if (d != null) {
@@ -1732,6 +1872,19 @@ public final class Checker {
      * a function checked as written) or after reporting an error.
      */
     private FnDecl functionValue(Arg a, Type.FnT want, FnDecl owner, Map<Integer, Integer> caps, Map<Integer, Type> types) {
+        if (a.expr() instanceof FieldAccess fa && fa.target instanceof Name q && lookupLocal(q.name) == null
+            && aliasScope(q.name) != null && fns.in(aliasScope(q.name), fa.name) != null) {
+            // ns.f: a function of the file imported as ns.
+            FnDecl d = fns.in(aliasScope(q.name), fa.name);
+            Name n = new Name(fa.span, fa.name);
+            Arg plain = new Arg(a.span(), a.mut(), n);
+            int saved = ctx.scope;
+            ctx.scope = d.scope;
+            FnDecl got = functionValue(plain, want, owner, caps, types);
+            ctx.scope = saved;
+            fa.type = n.type;
+            return got;
+        }
         if (!(a.expr() instanceof Name n)) {
             Type t = expr(a.expr(), null);
             if (!Type.isError(t)) {
@@ -1853,6 +2006,7 @@ public final class Checker {
         inst.origin = g;
         inst.capacities = List.copyOf(caps);
         inst.typeArgs = List.copyOf(typeArgs);
+        inst.scope = g.scope;
         inst.fnArgs = java.util.Collections.unmodifiableList(new ArrayList<>(fnArgs));
         inst.doc = g.doc;
         g.instances.put(key, inst);
@@ -2872,7 +3026,32 @@ public final class Checker {
     }
 
     private Type variantCall(VariantCall v) {
-        EnumDecl d = enums.get(v.enumName);
+        EnumDecl d;
+        if (v.qualifier != null) {
+            Integer s = qualifierScope(v.qualifier, v.span);
+            d = s == null ? null : enums.in(s, v.enumName);
+            if (d == null) {
+                for (Arg a : v.args) expr(a.expr(), null);
+                if (s != null) diags.error(Code.E0103, v.span, "`" + v.qualifier + "` has no enum `" + v.enumName + "`");
+                return Type.ERROR;
+            }
+        } else if (lookupLocal(v.enumName) == null && !consts.containsKey(v.enumName) && !enums.containsKey(v.enumName)
+            && aliasScope(v.enumName) != null) {
+            // ns.f(args): a function of the file imported as ns.
+            FnDecl f = fns.in(aliasScope(v.enumName), v.variantName);
+            if (f == null) {
+                for (Arg a : v.args) expr(a.expr(), null);
+                diags.error(Code.E0102, v.span, "`" + v.enumName + "` has no function `" + v.variantName + "`");
+                return Type.ERROR;
+            }
+            v.asCall = new Call(v.span, v.variantName, v.span, v.args);
+            ctx.mutCallAllowed = ctx.mutCallAllowed == v ? v.asCall : ctx.mutCallAllowed;
+            Type t = callFunction(v.asCall, f);
+            v.asCall.type = t;
+            return t;
+        } else {
+            d = enums.get(v.enumName);
+        }
         if (d == null) {
             for (Arg a : v.args) expr(a.expr(), null);
             if (lookupLocal(v.enumName) != null || consts.containsKey(v.enumName)) {
@@ -2914,7 +3093,18 @@ public final class Checker {
     }
 
     private Type structLit(StructLit s) {
-        StructDecl d = structs.get(s.name);
+        StructDecl d;
+        if (s.qualifier != null) {
+            Integer sc = qualifierScope(s.qualifier, s.span);
+            d = sc == null ? null : structs.in(sc, s.name);
+            if (d == null) {
+                for (FieldInit f : s.fields) expr(f.value(), null);
+                if (sc != null) diags.error(Code.E0103, s.span, "`" + s.qualifier + "` has no struct `" + s.name + "`");
+                return Type.ERROR;
+            }
+        } else {
+            d = structs.get(s.name);
+        }
         if (d == null) {
             for (FieldInit f : s.fields) expr(f.value(), null);
             if (fns.containsKey(s.name) || Builtin.byName(s.name) != null) {
@@ -3511,10 +3701,10 @@ public final class Checker {
             case StrLit s -> true;
             case BoolLit b -> true;
             case Name n -> n.constant != null && n.constant.value != null;
-            case FieldAccess f -> f.variant != null || isConst(f.target);
+            case FieldAccess f -> f.constant != null ? f.constant.value != null : f.variant != null || isConst(f.target);
             case Index i -> isConst(i.target) && isConst(i.index);
             case Call c -> c.builtin != null && c.builtin.pure && c.args.stream().allMatch(a -> isConst(a.expr()));
-            case VariantCall v -> v.args.stream().allMatch(a -> isConst(a.expr()));
+            case VariantCall v -> v.asCall == null && v.args.stream().allMatch(a -> isConst(a.expr()));
             case StructLit s -> s.fields.stream().allMatch(f -> isConst(f.value()));
             case Convert c -> isConst(c.arg);
             case Resize r -> isConst(r.arg);

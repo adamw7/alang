@@ -101,7 +101,7 @@ public final class CGen {
         sb.append("int main(void) {\n");
         sb.append("    al_source_path = ").append(cString(source.path.getBytes(StandardCharsets.UTF_8))).append(";\n");
         if (!imported.isEmpty()) sb.append("    al_import_paths = al_imported;\n");
-        for (ConstDecl c : program.itemsOf(ConstDecl.class)) sb.append("    (void)al_c_").append(c.name).append(";\n");
+        for (ConstDecl c : program.itemsOf(ConstDecl.class)) sb.append("    (void)al_c_").append(scoped(c)).append(";\n");
         if (main != null) {
             List<String> args = new ArrayList<>();
             if (!main.paramVars.isEmpty()) {
@@ -289,14 +289,19 @@ public final class CGen {
 
     // =================================================================== types
 
+    /** A declaration's name, after the number of its scope when it is in one of its own (import ... as ns): n2_Point. */
+    static String scoped(Item item) {
+        return item.scope == 0 ? item.name : "n" + item.scope + "_" + item.name;
+    }
+
     static String mangle(Type t) {
         return switch (t) {
             case Type.Prim p -> p.kind().name;
             case Type.Str s -> "s" + s.cap();
             case Type.ArrayT a -> "a" + a.len() + "_" + mangle(a.elem());
             case Type.ListT l -> "l" + l.cap() + "_" + mangle(l.elem());
-            case Type.StructT s -> "S" + s.decl().name.length() + s.decl().name;
-            case Type.EnumT e -> "E" + e.decl().name.length() + e.decl().name;
+            case Type.StructT s -> "S" + scoped(s.decl()).length() + scoped(s.decl());
+            case Type.EnumT e -> "E" + scoped(e.decl()).length() + scoped(e.decl());
             // m, the capacity, then the key's name after its length, then the value's: map[i64, s8; 4] is m4_3i64s8.
             case Type.MapT m -> {
                 String k = mangle(m.key());
@@ -572,7 +577,7 @@ public final class CGen {
 
     private void constant(ConstDecl c) {
         String ty = ct(c.type);
-        statics.append("static const ").append(ty).append(" al_c_").append(c.name).append(" = ")
+        statics.append("static const ").append(ty).append(" al_c_").append(scoped(c)).append(" = ")
             .append(init(c.value, c.type)).append(";\n");
     }
 
@@ -704,14 +709,14 @@ public final class CGen {
      * and its capacities: al_g5total_4 for total(list[i64; 4]), which no other function or instance can have.
      */
     private static String fnName(FnDecl f) {
-        if (f.origin == null) return "al_f_" + f.name;
+        if (f.origin == null) return "al_f_" + scoped(f);
         // The instances of a function with type parameters or function arguments are numbered in the order the checker
         // made them; the others keep their capacities in the name.
         if (!f.typeArgs.isEmpty() || f.fnArgs.stream().anyMatch(java.util.Objects::nonNull)) {
             int i = new ArrayList<>(f.origin.instances.values()).indexOf(f);
-            return "al_g" + f.name.length() + f.name + "_n" + i;
+            return "al_g" + scoped(f).length() + scoped(f) + "_n" + i;
         }
-        StringBuilder sb = new StringBuilder("al_g").append(f.name.length()).append(f.name);
+        StringBuilder sb = new StringBuilder("al_g").append(scoped(f).length()).append(scoped(f));
         for (int cap : f.capacities) sb.append('_').append(cap);
         return sb.toString();
     }
@@ -1330,7 +1335,9 @@ public final class CGen {
             case FloatLit f -> floatLiteral(f.valueAs(Type.kind(f.type)), Type.kind(f.type));
             case StrLit s -> strLiteral(s.value);
             case BoolLit b -> b.value ? "true" : "false";
-            case Name n -> n.local != null ? varRef(n.local) : "al_c_" + n.constant.name;
+            case Name n -> n.local != null ? varRef(n.local) : "al_c_" + scoped(n.constant);
+            case FieldAccess f when f.constant != null -> "al_c_" + scoped(f.constant);
+            case VariantCall v when v.asCall != null -> lower(v.asCall);
             case FieldAccess f -> {
                 if (f.variant == null && f.target.type instanceof Type.TupleT) {
                     yield "(" + lower(f.target) + ").e" + f.fieldIndex;

@@ -111,9 +111,10 @@ final class Temporaries {
             case StrLit s -> 0;
             case BoolLit b -> 0;
             case Name n -> 0;
-            case FieldAccess f -> f.variant != null ? 0 : expr(f.target);
+            case FieldAccess f -> f.variant != null || f.constant != null ? 0 : expr(f.target);
             case Index i -> Layout.add(expr(i.target), expr(i.index));
             case Call c -> call(c);
+            case VariantCall v when v.asCall != null -> call(v.asCall);
             case VariantCall v -> {
                 long t = 0;
                 for (int i = 0; i < v.args.size(); i++) {

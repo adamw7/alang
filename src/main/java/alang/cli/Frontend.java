@@ -80,6 +80,13 @@ public final class Frontend {
         Deque<Pending> path = new ArrayDeque<>();
         path.push(new Pending(first, rootKey));
         boolean failed = false;
+        // The scope of each file: 0 for the main file and the files that join it without `as`; a file imported with
+        // `as` has one of its own, which the files it imports without `as` join.
+        Map<String, Integer> scopeOf = new HashMap<>();
+        Map<String, Integer> ownScope = new HashMap<>();
+        Map<Source, Map<String, Integer>> aliases = new HashMap<>();
+        Map<Source, Integer> fileScopes = new HashMap<>();
+        scopeOf.put(rootKey, 0);
         while (!path.isEmpty()) {
             Pending at = path.peek();
             List<Import> imports = at.parsed.program.imports;
@@ -98,6 +105,26 @@ public final class Frontend {
             }
             String file = resolve(from.path, imp.path());
             String key = key(file);
+            int want = imp.alias() == null ? scopeOf.get(at.key) : ownScope.computeIfAbsent(key, k -> ownScope.size() + 1);
+            if (imp.alias() != null) {
+                Map<String, Integer> mine = aliases.computeIfAbsent(from, k -> new HashMap<>());
+                if (mine.containsKey(imp.alias())) {
+                    diags.error(Code.E0702, imp.aliasSpan(), "`" + imp.alias() + "` already names another import of this file",
+                        "give each import its own name after `as`");
+                    failed = true;
+                    continue;
+                }
+                mine.put(imp.alias(), want);
+            }
+            Integer had = scopeOf.get(key);
+            if (had != null && had != want) {
+                diags.error(Code.E0702, imp.span(), "`" + file + "` is imported " + (imp.alias() == null ? "without" : "with")
+                        + " `as` here, but another import puts its names " + (imp.alias() == null ? "under a name" : "among the importer's"),
+                    "import a file that several files share with `as` in each of them: import \"" + imp.path() + "\" as name;");
+                failed = true;
+                continue;
+            }
+            scopeOf.put(key, want);
             Import before = at.imported.putIfAbsent(key, imp);
             if (before != null) {
                 diags.error(Code.E0702, imp.span(), "`" + file + "` is already imported on line " + before.span().line(),
@@ -131,6 +158,7 @@ public final class Frontend {
                 continue;
             }
             parsed.add(p);
+            fileScopes.put(src, want);
             path.push(new Pending(p, key));
         }
         if (failed || !Parser.checkChains(parsed, diags)) return null;
@@ -144,7 +172,7 @@ public final class Frontend {
             files.add(p.program.source);
         }
         items.addAll(first.program.items);
-        return new Program(root, items, first.program.imports, files);
+        return new Program(root, items, first.program.imports, files, aliases, fileScopes);
     }
 
     /** Why an import path is not one, or null if it is: relative, with '/' between names, naming a .al file. */

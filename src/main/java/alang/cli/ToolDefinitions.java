@@ -88,11 +88,11 @@ final class ToolDefinitions {
             case Binary b -> isConstant(b.left) && isConstant(b.right);
             case Convert c -> isConstant(c.arg);
             case Resize z -> isConstant(z.arg);
-            case FieldAccess fa -> fa.variant != null || isConstant(fa.target);
+            case FieldAccess fa -> fa.constant != null || fa.variant != null || isConstant(fa.target);
             case Index ix -> isConstant(ix.target) && isConstant(ix.index);
             case Call c -> c.fn == null && c.builtin != null && c.builtin.pure
                 && c.args.stream().allMatch(a -> !a.mut() && isConstant(a.expr()));
-            case VariantCall vc -> vc.args.stream().allMatch(a -> isConstant(a.expr()));
+            case VariantCall vc -> vc.asCall == null && vc.args.stream().allMatch(a -> isConstant(a.expr()));
             case StructLit s -> s.fields.stream().allMatch(fi -> isConstant(fi.value()));
             case ArrayLit a -> a.elems.stream().allMatch(ToolDefinitions::isConstant);
             case Repeat r -> isConstant(r.value) && isConstant(r.count);

@@ -656,6 +656,8 @@ public final class Interpreter {
                 Object v = slots[n.local.slot];
                 yield n.local.byRef ? ((Ref) v).get() : v;
             }
+            case FieldAccess f when f.constant != null -> f.constant.value;
+            case VariantCall v when v.asCall != null -> callUser(v.asCall, slots);
             case FieldAccess f -> f.variant != null ? new EnumV(f.variant.index, new Object[0])
                 : ((StructV) eval(f.target, slots)).fields[f.fieldIndex];
             case Index ix -> {

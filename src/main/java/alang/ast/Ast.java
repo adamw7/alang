@@ -33,16 +33,26 @@ public final class Ast {
         public final List<Item> items;
         public final List<Import> imports;
         public final List<Source> files;
+        /**
+         * For each file that imports with `as`: its aliases and the scope each names. A file imported with `as` has a
+         * scope of its own (shared with the files it imports without `as`), whose names do not clash with others'.
+         */
+        public final Map<Source, Map<String, Integer>> aliases;
+        /** The scope of each file's declarations; a file not listed is in scope 0. */
+        public final Map<Source, Integer> scopes;
 
         public Program(Source source, List<Item> items, List<Import> imports) {
-            this(source, items, imports, List.of(source));
+            this(source, items, imports, List.of(source), Map.of(), Map.of());
         }
 
-        public Program(Source source, List<Item> items, List<Import> imports, List<Source> files) {
+        public Program(Source source, List<Item> items, List<Import> imports, List<Source> files,
+                       Map<Source, Map<String, Integer>> aliases, Map<Source, Integer> scopes) {
             this.source = source;
             this.items = items;
             this.imports = imports;
             this.files = files;
+            this.aliases = aliases;
+            this.scopes = scopes;
         }
 
         public <T extends Item> List<T> itemsOf(Class<T> cls) {
@@ -61,14 +71,19 @@ public final class Ast {
         }
     }
 
-    /** `import "path";` at the top of a file: {@code span} is the path's string literal. */
-    public record Import(Span span, String path) {}
+    /**
+     * `import "path";` or `import "path" as alias;` at the top of a file: {@code span} is the path's string literal;
+     * {@code alias} is null without `as`.
+     */
+    public record Import(Span span, String path, String alias, Span aliasSpan) {}
 
     public abstract static sealed class Item {
         public final Span span;
         public final String name;
         /** Text of the `///` doc comment directly above the item, or "". */
         public String doc = "";
+        /** The scope of its names: 0 for the main file and what it imports without `as` (see {@link Program#aliases}). */
+        public int scope;
 
         Item(Span span, String name) {
             this.span = span;
@@ -282,7 +297,8 @@ public final class Ast {
     /** {@code len} is null for `_`: any length, in the type of a function parameter. */
     public record ArrayRef(Span span, TypeRef elem, Expr len) implements TypeRef {}
 
-    public record NamedRef(Span span, String name) implements TypeRef {}
+    /** A struct or enum by name; {@code qualifier} is the alias of `ns.Name`, or null. */
+    public record NamedRef(Span span, String name, String qualifier) implements TypeRef {}
 
     /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
     public record MapRef(Span span, TypeRef key, TypeRef value, Expr cap) implements TypeRef {}
@@ -554,6 +570,8 @@ public final class Ast {
     }
 
     public static final class VariantPat extends Pattern {
+        /** The alias of `ns.Enum.Variant`, or null. */
+        public String qualifier;
         public final String enumName;
         public final String variantName;
         /** Binding names (null entries for `_`), or null if the pattern has no parentheses. */
@@ -665,7 +683,7 @@ public final class Ast {
 
         /** Places evaluate to the storage they name; everything else builds a new value. */
         public boolean isPlace() {
-            return this instanceof Name || this instanceof Index || (this instanceof FieldAccess f && f.variant == null);
+            return this instanceof Name || this instanceof Index || (this instanceof FieldAccess f && f.variant == null && f.constant == null);
         }
     }
 
@@ -743,6 +761,8 @@ public final class Ast {
         public final Span nameSpan;
         public int fieldIndex = -1;
         public Variant variant;
+        /** `ns.NAME`: a constant of the file imported as ns. */
+        public ConstDecl constant;
 
         public FieldAccess(Span span, Expr target, String name, Span nameSpan) {
             super(span);
@@ -813,6 +833,10 @@ public final class Ast {
 
     /** `Enum.Variant(args)`. */
     public static final class VariantCall extends Expr {
+        /** The alias of `ns.Enum.Variant(...)`, or null. */
+        public String qualifier;
+        /** `ns.f(...)`, which reads as Enum.Variant(...): the call of the function f of the file imported as ns. */
+        public Call asCall;
         public final String enumName;
         public final String variantName;
         public final List<Arg> args;
@@ -831,6 +855,8 @@ public final class Ast {
 
     /** `Point(x: 1, y: 2)`. */
     public static final class StructLit extends Expr {
+        /** The alias of `ns.Point(...)`, or null. */
+        public String qualifier;
         public final String name;
         public final List<FieldInit> fields;
         public StructDecl decl;

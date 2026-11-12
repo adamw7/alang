@@ -127,6 +127,7 @@ test "counts repeated words" {
     Split a line into a list with `try_split(mut fields, line, ',')`: false, not a trap, when it does not fit.
 20. **`import "lib/text.al";` at the top of a file** adds that file's declarations, by their plain names.
     The path is relative to the importing file, with `/`. Its `fn main`, tests and tools stay its own.
+    `import "lib/text.al" as text;` keeps them apart instead: `text.pad(s)`, `text.WIDTH`, `text.Cell(...)`.
 
 ## Translating habits from other languages
 
@@ -170,6 +171,7 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `case x if x > 0 =>`, `Some(v) if v > 0 =>` | `_ if x > 0 => { }`, `MaybeI64.Some(v) if v > 0 => { }` (guards) |
 | `sys.stdin.read()`, `open(path).read()`, `input()` | `fn main(input: str[4096])`, run with `< path`; split it into lines |
 | `import utils`, `#include "utils.h"`, `use crate::utils` | `import "utils.al";` before any declaration |
+| `import utils as u`, `u.f(x)`, `utils::f(x)` | `import "utils.al" as u;` then `u.f(x)`, `u.CONST`, `u.Type` |
 | `if x { }` with `x: i32` | `if x != 0 { }` |
 
 ## The standard library
@@ -403,7 +405,9 @@ fn main() {
 ```
 
 `bin/alang check report.al` checks both files; a diagnostic or trap in `lib/fmt.al` names that file (a
-`"file"` key in JSON). There are no namespaces: every name in the program must be unique.
+`"file"` key in JSON). Every name of the importer and of the files it imports this way must be unique; to use
+two libraries that declare the same names, import each under a name of its own,
+`import "lib/fmt.al" as fmt;`, and write `fmt.pad("42")`, `fmt.WIDTH`.
 
 **Contracts document and check intent**
 

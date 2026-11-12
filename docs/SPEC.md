@@ -154,9 +154,16 @@ a file, before any declaration (E0001), and:
   `.al` file: `import "lib/text.al";`, `import "../shared/geometry.al";`. Absolute paths and backslashes
   are E0702, so a program means the same wherever it is copied. A file that cannot be read, or is not
   UTF-8, is E0701.
-- **One namespace.** The imported constants, structs, enums and functions are used by their plain names,
-  as if declared in the importing file, and every name in the program is unique (E0104 names both files).
-  There are no modules, qualified names or private declarations.
+- **One namespace, or a name of its own.** The constants, structs, enums and functions of a file imported
+  plainly are used by their plain names, as if declared in the importing file, and its names and the
+  importer's are unique together (E0104 names both files). `import "lib/geo.al" as geo;` instead keeps the
+  file's declarations apart, in a scope of their own: the importer reaches them as `geo.describe(p)`,
+  `geo.SCALE`, `geo.Point(x: 1, y: 2)`, `geo.Kind.Origin`, `geo.Shape.Circle(2.0)`, the type `geo.Point`, the
+  pattern `geo.Kind.Axis(d) =>` and the function value `geo.is_far`, and only so, while their names may be
+  the same as the importer's or another library's. Inside geo.al, and in the files it imports plainly, the
+  plain names are geo's own. A file shared by files of different scopes is imported with `as` in each, under
+  any name; importing it with `as` in one place and plainly in another is E0702, as is giving two imports of
+  one file the same name. There are no private declarations.
 - **Each file once.** A file reached through several imports is read once; importing the same file twice
   from one file is E0702. Files may not import each other, directly or through others (E0703, the import
   cycle).
