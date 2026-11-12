@@ -197,8 +197,9 @@ fn shift(p: mut Point, dx: f64) {               // p refers to the caller's vari
   site says so: `shift(mut origin, 1.0)` (E0207), with a mutable place of exactly the parameter type.
 - `mut` references cannot be stored, returned or captured, so they never dangle.
 - **Exclusive access (E0208):** a variable passed as `mut` may not appear in another argument of the
-  same call that is an aggregate: `append(mut s, s)` is rejected; copy first. A number or bool is a copy
-  made before the call, so `remove(mut xs, len(xs) - 1)` is fine.
+  same call that is an aggregate or is itself passed as `mut`: `append(mut s, s)` is rejected, and so is
+  `swap(mut xs[i], mut xs[j])`, since `i` and `j` may be equal; copy first. A read-only number or bool
+  is a copy made before the call, so `remove(mut xs, len(xs) - 1)` is fine.
 - **Mutating calls are statements (E0215):** a call with a `mut` argument is a statement of its own or the
   whole right-hand side of `let`/`var`/assignment/`return`, so every mutation is at a visible point.
 - **No recursion (E0401):** the call graph, contracts included, must be acyclic. Use a loop and a

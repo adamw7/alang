@@ -60,7 +60,7 @@ public enum Code {
         "fn inc(x: mut i32) { x += 1; }\ninc(mut n);  // ok\ninc(n);      // error: write `mut n`"),
     E0208("aliased mut argument",
         "A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access.",
-        "append(mut s, s);  // error: copy first: let t: str[16] = s; append(mut s, t);"),
+        "append(mut s, s);            // error: copy first: let t: str[16] = s; append(mut s, t);\nswap(mut xs[i], mut xs[j]);  // error: i and j may be equal"),
     E0209("not a constant expression",
         "Constants, array sizes, capacities and repeat counts must be computable at compile time: literals, other constants, operators, conversions and literals of structs, enums and arrays. Function calls are not allowed.",
         "const N: i32 = f();  // error"),

@@ -1,0 +1,28 @@
+error[E0208]: `xs` is passed as `mut` twice in the same call
+  --> tests/errors/E0208_mut_twice.al:23:21
+   |
+23 |     swap(mut xs[i], mut xs[j]);
+   |                     ^^^^^^^^^
+  = hint: the function could change one value through two parameters; copy one into a variable, pass that, and store it back after the call: var copy: i64 = xs[j]; pass `mut copy` instead of `mut xs[j]`; then xs[j] = copy;
+
+error[E0208]: `n` is passed as `mut` twice in the same call
+  --> tests/errors/E0208_mut_twice.al:25:17
+   |
+25 |     bump(mut n, mut n);
+   |                 ^^^^^
+  = hint: the function could change one value through two parameters; copy one into a variable, pass that, and store it back after the call: var copy: i64 = n; pass `mut copy` instead of `mut n`; then n = copy;
+
+error[E0208]: `p` is passed as `mut` twice in the same call
+  --> tests/errors/E0208_mut_twice.al:27:19
+   |
+27 |     bump(mut p.a, mut p.b);
+   |                   ^^^^^^^
+  = hint: the function could change one value through two parameters; copy one into a variable, pass that, and store it back after the call: var copy: i64 = p.b; pass `mut copy` instead of `mut p.b`; then p.b = copy;
+
+error[E0208]: `n` is passed as `mut` and also used in another argument of the same call
+  --> tests/errors/E0208_mut_twice.al:28:10
+   |
+28 |     bump(mut xs[n], mut n);
+   |          ^^^^^^^^^
+  = hint: copy the value into a separate variable first, then pass the copy
+

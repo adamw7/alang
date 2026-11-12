@@ -1323,9 +1323,10 @@ public final class Checker {
 
     /**
      * A variable passed as `mut` must not appear in any other argument of the same call that is an
-     * aggregate: the callee could see it change while it reads it (the C backend passes a read-only
-     * aggregate by address). A number or bool is a copy made before the call, so remove(mut xs, len(xs) - 1)
-     * is fine.
+     * aggregate or is itself `mut`: the callee could see it change while it reads it (the C backend passes
+     * a read-only aggregate by address), or change it through two parameters, as swap(mut xs[i], mut xs[j])
+     * does when i == j. A read-only number or bool is a copy made before the call, so
+     * remove(mut xs, len(xs) - 1) is fine; a `mut` one is a reference, not a copy.
      */
     private void checkAliasing(List<Arg> args) {
         for (int i = 0; i < args.size(); i++) {
@@ -1334,14 +1335,23 @@ public final class Checker {
             Name root = rootName(a.expr());
             if (root == null || root.local == null) continue;
             for (int j = 0; j < args.size(); j++) {
-                Expr other = args.get(j).expr();
-                boolean copied = other.type instanceof Type.Prim;
-                if (j != i && !copied && mentions(other, root.local)) {
-                    diags.error(Code.E0208, args.get(j).span(), "`" + root.name + "` is passed as `mut` and also used in "
+                Arg b = args.get(j);
+                Expr other = b.expr();
+                boolean copied = !b.mut() && other.type instanceof Type.Prim;
+                if (j == i || copied || !mentions(other, root.local)) continue;
+                Name otherRoot = b.mut() ? rootName(other) : null;
+                if (otherRoot != null && otherRoot.local == root.local) {
+                    String place = exprText(other);
+                    diags.error(Code.E0208, b.span(), "`" + root.name + "` is passed as `mut` twice in the same call",
+                        "the function could change one value through two parameters; copy one into a variable, pass "
+                            + "that, and store it back after the call: var copy: " + other.type + " = " + place
+                            + "; pass `mut copy` instead of `mut " + place + "`; then " + place + " = copy;");
+                } else {
+                    diags.error(Code.E0208, b.span(), "`" + root.name + "` is passed as `mut` and also used in "
                         + "another argument of the same call",
                         "copy the value into a separate variable first, then pass the copy");
-                    return;
                 }
+                return;
             }
         }
     }

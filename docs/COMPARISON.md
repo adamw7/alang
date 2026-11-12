@@ -319,8 +319,8 @@ test "only arguments marked mut change" {
 ```
 
 `mut` references cannot be stored or returned, so they never dangle: Rust's guarantee, without lifetimes
-or a borrow checker. A variable passed as `mut` cannot appear twice in a call (`append(mut s, s)` is
-E0208), and a call with a `mut` argument is its own statement (E0215), so the order of side effects is
+or a borrow checker. A variable passed as `mut` cannot appear twice in a call (`append(mut s, s)` and
+`swap(mut xs[i], mut xs[j])` are E0208), and a call with a `mut` argument is its own statement (E0215), so the order of side effects is
 always visible.
 
 ## 6. One way to write it, and errors that say which way

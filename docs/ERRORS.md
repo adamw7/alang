@@ -215,7 +215,8 @@ inc(n);      // error: write `mut n`
 **aliased mut argument**: A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access.
 
 ```
-append(mut s, s);  // error: copy first: let t: str[16] = s; append(mut s, t);
+append(mut s, s);            // error: copy first: let t: str[16] = s; append(mut s, t);
+swap(mut xs[i], mut xs[j]);  // error: i and j may be equal
 ```
 
 ## E0209
