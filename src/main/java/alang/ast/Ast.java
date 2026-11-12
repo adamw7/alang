@@ -359,9 +359,14 @@ public final class Ast {
             return to != null;
         }
 
-        /** The split or words call whose pieces the loop goes through, or null for a range or a collection. */
+        /**
+         * The split or words call whose pieces the loop goes through, or null for a range or a collection. A
+         * call with the wrong number of arguments is neither: the checker reports it, and the loop never runs.
+         */
         public Call pieces() {
-            return to == null && from instanceof Call c && (c.builtin == Builtin.SPLIT || c.builtin == Builtin.WORDS) ? c : null;
+            if (to != null || !(from instanceof Call c)) return null;
+            int arity = c.builtin == Builtin.SPLIT ? 2 : c.builtin == Builtin.WORDS ? 1 : -1;
+            return c.args.size() == arity ? c : null;
         }
 
         /** What the loop takes its values from: the text of split and words, otherwise the collection. */
