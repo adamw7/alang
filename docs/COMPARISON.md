@@ -134,9 +134,10 @@ $ gcc -O2 -march=haswell fma.c && ./a.out
 5.55112e-17
 ```
 
-In ALang `a * b + c` always rounds twice: the C backend turns contraction off and refuses `-ffast-math`
-and x87 excess precision, and the tests compare its output byte for byte with the interpreter under gcc
-and clang at `-O0` to `-O3`, even with `-ffp-contract=fast` forced on.
+In ALang `a * b + c` always rounds twice: the C backend turns contraction off, rounds every product on its
+own where a compiler would fuse it anyway, and refuses `-ffast-math` and x87 excess precision. The tests
+compare its output byte for byte with the interpreter under gcc and clang at `-O0` to `-O3`, even with
+`-ffp-contract=fast` forced on and a multiply-add instruction to fuse into (arm64, or x86 with `-mfma`).
 
 ```alang
 fn mul_add(a: f64, b: f64, c: f64) -> f64 {

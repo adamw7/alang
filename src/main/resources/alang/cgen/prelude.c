@@ -33,6 +33,30 @@
 #elif defined(__GNUC__)
 #pragma GCC optimize ("fp-contract=off")
 #endif
+/*
+ * Every floating-point product is rounded on its own, through al_rnd (double) or al_rndf (float). clang's
+ * -ffp-contract=fast fuses a product and a sum into one fused multiply-add, which rounds once, and disregards
+ * FP_CONTRACT OFF; an empty asm statement hides the product from it, at no cost. GCC honours its pragma above,
+ * and a target without fused multiply-add has nothing to fuse into.
+ */
+#if defined(__clang__) && (defined(__x86_64__) || defined(__i386__))
+#if defined(__FMA__) || defined(__FMA4__)
+static inline double al_rnd(double x) { __asm__("" : "+x"(x)); return x; }
+static inline float al_rndf(float x) { __asm__("" : "+x"(x)); return x; }
+#else
+#define al_rnd(x) (x)
+#define al_rndf(x) (x)
+#endif
+#elif defined(__clang__) && defined(__aarch64__)
+static inline double al_rnd(double x) { __asm__("" : "+w"(x)); return x; }
+static inline float al_rndf(float x) { __asm__("" : "+w"(x)); return x; }
+#elif defined(__clang__)
+static inline double al_rnd(double x) { volatile double v = x; return v; }
+static inline float al_rndf(float x) { volatile float v = x; return v; }
+#else
+#define al_rnd(x) (x)
+#define al_rndf(x) (x)
+#endif
 
 #ifdef AL_WRITE
 /*
@@ -520,12 +544,12 @@ static double al_f2i_check(double d, double lo, double hi_excl, const char *type
 
 /* u64 -> float, correctly rounded and identical to the interpreter (halve with sticky bit). */
 static double al_u64_to_f64(uint64_t v) {
-    if (v >> 63) return (double)(int64_t)((v >> 1) | (v & 1)) * 2.0;
+    if (v >> 63) return al_rnd((double)(int64_t)((v >> 1) | (v & 1)) * 2.0);
     return (double)(int64_t)v;
 }
 
 static float al_u64_to_f32(uint64_t v) {
-    if (v >> 63) return (float)(int64_t)((v >> 1) | (v & 1)) * 2.0f;
+    if (v >> 63) return al_rndf((float)(int64_t)((v >> 1) | (v & 1)) * 2.0f);
     return (float)(int64_t)v;
 }
 
@@ -807,14 +831,14 @@ static int32_t al_asr20(int32_t v) {
 
 /* The rounding error of p = a * b: a * b - p exactly (Dekker). */
 static double al_prod_err(double a, double b, double p) {
-    double c = AL_SPLITTER * a;
+    double c = al_rnd(AL_SPLITTER * a);
     double ah = c - (c - a);
     double al = a - ah;
     double bh, bl;
-    c = AL_SPLITTER * b;
+    c = al_rnd(AL_SPLITTER * b);
     bh = c - (c - b);
     bl = b - bh;
-    return ((ah * bh - p) + ah * bl + al * bh) + al * bl;
+    return ((al_rnd(ah * bh) - p) + al_rnd(ah * bl) + al_rnd(al * bh)) + al_rnd(al * bl);
 }
 
 /* The rounding error of s = a + b (Knuth). */
@@ -854,21 +878,21 @@ static double al_m_exp(double x) {
             lo = al_m_ln2lo[xsb];
             k = 1 - xsb - xsb;
         } else {
-            k = (int)(AL_INVLN2 * x + al_m_half[xsb]);
+            k = (int)(al_rnd(AL_INVLN2 * x) + al_m_half[xsb]);
             t = k;
-            hi = x - t * al_m_ln2hi[0];
-            lo = t * al_m_ln2lo[0];
+            hi = x - al_rnd(t * al_m_ln2hi[0]);
+            lo = al_rnd(t * al_m_ln2lo[0]);
         }
         x = hi - lo;
     } else if (hx < 0x3e300000) {
         return 1.0 + x;
     }
-    t = x * x;
-    c = x - t * (AL_EP1 + t * (AL_EP2 + t * (AL_EP3 + t * (AL_EP4 + t * AL_EP5))));
-    if (k == 0) return 1.0 - ((x * c) / (c - 2.0) - x);
-    y = 1.0 - ((lo - (x * c) / (2.0 - c)) - hi);
+    t = al_rnd(x * x);
+    c = x - al_rnd(t * (AL_EP1 + al_rnd(t * (AL_EP2 + al_rnd(t * (AL_EP3 + al_rnd(t * (AL_EP4 + al_rnd(t * AL_EP5)))))))));
+    if (k == 0) return 1.0 - ((al_rnd(x * c)) / (c - 2.0) - x);
+    y = 1.0 - ((lo - (al_rnd(x * c)) / (2.0 - c)) - hi);
     if (k >= -1021) return al_with_hi(y, al_hiw(y) + k * 0x100000);
-    return al_with_hi(y, al_hiw(y) + (k + 1000) * 0x100000) * AL_TWOM1000;
+    return al_rnd(al_with_hi(y, al_hiw(y) + (k + 1000) * 0x100000) * AL_TWOM1000);
 }
 
 #define AL_LN2_HI 6.93147180369123816490e-01
@@ -889,7 +913,7 @@ static double al_m_log(double x) {
         if (((hx & 0x7fffffff) | lx) == 0) return -INFINITY;
         if (hx < 0) return NAN;
         k -= 54;
-        x *= AL_TWO54;
+        x = al_rnd(x * AL_TWO54);
         hx = al_hiw(x);
     }
     if (hx >= 0x7ff00000) return x + x;
@@ -903,30 +927,30 @@ static double al_m_log(double x) {
         if (f == 0.0) {
             if (k == 0) return 0.0;
             dk = k;
-            return dk * AL_LN2_HI + dk * AL_LN2_LO;
+            return al_rnd(dk * AL_LN2_HI) + al_rnd(dk * AL_LN2_LO);
         }
-        r = f * f * (0.5 - 0.33333333333333333 * f);
+        r = al_rnd(al_rnd(f * f) * (0.5 - al_rnd(0.33333333333333333 * f)));
         if (k == 0) return f - r;
         dk = k;
-        return dk * AL_LN2_HI - ((r - dk * AL_LN2_LO) - f);
+        return al_rnd(dk * AL_LN2_HI) - ((r - al_rnd(dk * AL_LN2_LO)) - f);
     }
     s = f / (2.0 + f);
     dk = k;
-    z = s * s;
+    z = al_rnd(s * s);
     i2 = hx - 0x6147a;
-    w = z * z;
+    w = al_rnd(z * z);
     j = 0x6b851 - hx;
-    t1 = w * (AL_LG2 + w * (AL_LG4 + w * AL_LG6));
-    t2 = z * (AL_LG1 + w * (AL_LG3 + w * (AL_LG5 + w * AL_LG7)));
+    t1 = al_rnd(w * (AL_LG2 + al_rnd(w * (AL_LG4 + al_rnd(w * AL_LG6)))));
+    t2 = al_rnd(z * (AL_LG1 + al_rnd(w * (AL_LG3 + al_rnd(w * (AL_LG5 + al_rnd(w * AL_LG7)))))));
     i2 |= j;
     r = t2 + t1;
     if (i2 > 0) {
-        hfsq = 0.5 * f * f;
-        if (k == 0) return f - (hfsq - s * (hfsq + r));
-        return dk * AL_LN2_HI - ((hfsq - (s * (hfsq + r) + dk * AL_LN2_LO)) - f);
+        hfsq = al_rnd(al_rnd(0.5 * f) * f);
+        if (k == 0) return f - (hfsq - al_rnd(s * (hfsq + r)));
+        return al_rnd(dk * AL_LN2_HI) - ((hfsq - (al_rnd(s * (hfsq + r)) + al_rnd(dk * AL_LN2_LO))) - f);
     }
-    if (k == 0) return f - s * (f - r);
-    return dk * AL_LN2_HI - ((s * (f - r) - dk * AL_LN2_LO) - f);
+    if (k == 0) return f - al_rnd(s * (f - r));
+    return al_rnd(dk * AL_LN2_HI) - ((al_rnd(s * (f - r)) - al_rnd(dk * AL_LN2_LO)) - f);
 }
 
 static double al_m_log10(double x) {
@@ -937,7 +961,7 @@ static double al_m_log10(double x) {
         if (((hx & 0x7fffffff) | lx) == 0) return -INFINITY;
         if (hx < 0) return NAN;
         k -= 54;
-        x *= AL_TWO54;
+        x = al_rnd(x * AL_TWO54);
         hx = al_hiw(x);
     }
     if (hx >= 0x7ff00000) return x + x;
@@ -946,8 +970,8 @@ static double al_m_log10(double x) {
     hx = (hx & 0x000fffff) | ((0x3ff - i) << 20);
     y = (double)(k + i);
     x = al_with_hi(x, hx);
-    z = y * 3.69423907715893078616e-13 + 4.34294481903251816668e-01 * al_m_log(x);
-    return z + y * 3.01029995663611771306e-01;
+    z = al_rnd(y * 3.69423907715893078616e-13) + al_rnd(4.34294481903251816668e-01 * al_m_log(x));
+    return z + al_rnd(y * 3.01029995663611771306e-01);
 }
 
 /* ---- sin, cos, tan */
@@ -956,26 +980,26 @@ static double al_k_sin(double x, double y, int tail) {
     int32_t ix = al_hiw(x) & 0x7fffffff;
     double z, v, r;
     if (ix < 0x3e400000) return x;
-    z = x * x;
-    v = z * x;
-    r = 8.33333333332248946124e-03 + z * (-1.98412698298579493134e-04 + z * (2.75573137070700676789e-06
-        + z * (-2.50507602534068634195e-08 + z * 1.58969099521155010221e-10)));
-    if (!tail) return x + v * (-1.66666666666666324348e-01 + z * r);
-    return x - ((z * (0.5 * y - v * r) - y) - v * -1.66666666666666324348e-01);
+    z = al_rnd(x * x);
+    v = al_rnd(z * x);
+    r = 8.33333333332248946124e-03 + al_rnd(z * (-1.98412698298579493134e-04 + al_rnd(z * (2.75573137070700676789e-06
+        + al_rnd(z * (-2.50507602534068634195e-08 + al_rnd(z * 1.58969099521155010221e-10)))))));
+    if (!tail) return x + al_rnd(v * (-1.66666666666666324348e-01 + al_rnd(z * r)));
+    return x - ((al_rnd(z * (al_rnd(0.5 * y) - al_rnd(v * r))) - y) - al_rnd(v * -1.66666666666666324348e-01));
 }
 
 static double al_k_cos(double x, double y) {
     int32_t ix = al_hiw(x) & 0x7fffffff;
     double z, r, qx, hz, a;
     if (ix < 0x3e400000) return 1.0;
-    z = x * x;
-    r = z * (4.16666666666666019037e-02 + z * (-1.38888888888741095749e-03 + z * (2.48015872894767294178e-05
-        + z * (-2.75573143513906633035e-07 + z * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11)))));
-    if (ix < 0x3FD33333) return 1.0 - (0.5 * z - (z * r - x * y));
+    z = al_rnd(x * x);
+    r = al_rnd(z * (4.16666666666666019037e-02 + al_rnd(z * (-1.38888888888741095749e-03 + al_rnd(z * (2.48015872894767294178e-05
+        + al_rnd(z * (-2.75573143513906633035e-07 + al_rnd(z * (2.08757232129817482790e-09 + al_rnd(z * -1.13596475577881948265e-11)))))))))));
+    if (ix < 0x3FD33333) return 1.0 - (al_rnd(0.5 * z) - (al_rnd(z * r) - al_rnd(x * y)));
     qx = ix > 0x3fe90000 ? 0.28125 : al_words(ix - 0x00200000, 0);
-    hz = 0.5 * z - qx;
+    hz = al_rnd(0.5 * z) - qx;
     a = 1.0 - qx;
-    return a - (hz - (z * r - x * y));
+    return a - (hz - (al_rnd(z * r) - al_rnd(x * y)));
 }
 
 #define AL_PIO2_1 1.57079632673412561417e+00
@@ -1035,10 +1059,10 @@ static int al_rem_pio2_large(double x, double *y) {
         flo = (uint64_t)0 - flo;
         fhi = ~fhi + (flo == 0 ? 1u : 0u);
     }
-    a1 = (double)(fhi >> 32) * 0x1p-32;
-    a2 = (double)(fhi & 0xffffffffu) * 0x1p-64;
-    a3 = (double)(flo >> 32) * 0x1p-96;
-    a4 = (double)(flo & 0xffffffffu) * 0x1p-128;
+    a1 = al_rnd((double)(fhi >> 32) * 0x1p-32);
+    a2 = al_rnd((double)(fhi & 0xffffffffu) * 0x1p-64);
+    a3 = al_rnd((double)(flo >> 32) * 0x1p-96);
+    a4 = al_rnd((double)(flo & 0xffffffffu) * 0x1p-128);
     s = a1 + a2;
     err = al_sum_err(a1, a2, s);
     s2 = s + a3;
@@ -1047,8 +1071,8 @@ static int al_rem_pio2_large(double x, double *y) {
     err += al_sum_err(s2, a4, s3);
     fh = s3 + err;
     fl = err - (fh - s3);
-    p = fh * AL_PIO2_HI;
-    q = al_prod_err(fh, AL_PIO2_HI, p) + (fh * AL_PIO2_LO + fl * AL_PIO2_HI);
+    p = al_rnd(fh * AL_PIO2_HI);
+    q = al_prod_err(fh, AL_PIO2_HI, p) + (al_rnd(fh * AL_PIO2_LO) + al_rnd(fl * AL_PIO2_HI));
     y0 = p + q;
     y1 = q - (y0 - p);
     y[0] = neg ? -y0 : y0;
@@ -1091,25 +1115,25 @@ static int al_rem_pio2(double x, double *y) {
     }
     if (ix <= 0x413921fb) {
         t = fabs(x);
-        n = (int)(t * 6.36619772367581382433e-01 + 0.5);
+        n = (int)(al_rnd(t * 6.36619772367581382433e-01) + 0.5);
         fn = n;
-        r = t - fn * AL_PIO2_1;
-        w = fn * AL_PIO2_1T;
+        r = t - al_rnd(fn * AL_PIO2_1);
+        w = al_rnd(fn * AL_PIO2_1T);
         j = (int32_t)((uint32_t)ix >> 20);
         y[0] = r - w;
         i = j - (int32_t)(((uint32_t)al_hiw(y[0]) >> 20) & 0x7ffu);
         if (i > 16) {
             t = r;
-            w = fn * AL_PIO2_2;
+            w = al_rnd(fn * AL_PIO2_2);
             r = t - w;
-            w = fn * AL_PIO2_2T - ((t - r) - w);
+            w = al_rnd(fn * AL_PIO2_2T) - ((t - r) - w);
             y[0] = r - w;
             i = j - (int32_t)(((uint32_t)al_hiw(y[0]) >> 20) & 0x7ffu);
             if (i > 49) {
                 t = r;
-                w = fn * AL_PIO2_3;
+                w = al_rnd(fn * AL_PIO2_3);
                 r = t - w;
-                w = fn * AL_PIO2_3T - ((t - r) - w);
+                w = al_rnd(fn * AL_PIO2_3T) - ((t - r) - w);
                 y[0] = r - w;
             }
         }
@@ -1207,25 +1231,25 @@ static double al_m_atan(double x) {
         if (ix < 0x3ff30000) {
             if (ix < 0x3fe60000) {
                 id = 0;
-                x = (2.0 * x - 1.0) / (2.0 + x);
+                x = (al_rnd(2.0 * x) - 1.0) / (2.0 + x);
             } else {
                 id = 1;
                 x = (x - 1.0) / (x + 1.0);
             }
         } else if (ix < 0x40038000) {
             id = 2;
-            x = (x - 1.5) / (1.0 + 1.5 * x);
+            x = (x - 1.5) / (1.0 + al_rnd(1.5 * x));
         } else {
             id = 3;
             x = -1.0 / x;
         }
     }
-    z = x * x;
-    w = z * z;
-    s1 = z * (al_at[0] + w * (al_at[2] + w * (al_at[4] + w * (al_at[6] + w * (al_at[8] + w * al_at[10])))));
-    s2 = w * (al_at[1] + w * (al_at[3] + w * (al_at[5] + w * (al_at[7] + w * al_at[9]))));
-    if (id < 0) return x - x * (s1 + s2);
-    z = al_atanhi[id] - ((x * (s1 + s2) - al_atanlo[id]) - x);
+    z = al_rnd(x * x);
+    w = al_rnd(z * z);
+    s1 = al_rnd(z * (al_at[0] + al_rnd(w * (al_at[2] + al_rnd(w * (al_at[4] + al_rnd(w * (al_at[6] + al_rnd(w * (al_at[8] + al_rnd(w * al_at[10])))))))))));
+    s2 = al_rnd(w * (al_at[1] + al_rnd(w * (al_at[3] + al_rnd(w * (al_at[5] + al_rnd(w * (al_at[7] + al_rnd(w * al_at[9])))))))));
+    if (id < 0) return x - al_rnd(x * (s1 + s2));
+    z = al_atanhi[id] - ((al_rnd(x * (s1 + s2)) - al_atanlo[id]) - x);
     return hx < 0 ? -z : z;
 }
 
@@ -1260,8 +1284,8 @@ static double al_m_atan2(double y, double x) {
             switch (m) {
                 case 0: return AL_PI_O_4;
                 case 1: return -AL_PI_O_4;
-                case 2: return 3.0 * AL_PI_O_4;
-                default: return -3.0 * AL_PI_O_4;
+                case 2: return al_rnd(3.0 * AL_PI_O_4);
+                default: return al_rnd(-3.0 * AL_PI_O_4);
             }
         }
         switch (m) {
@@ -1273,7 +1297,7 @@ static double al_m_atan2(double y, double x) {
     }
     if (iy == 0x7ff00000) return hy < 0 ? -AL_PI_O_2 : AL_PI_O_2;
     k = al_asr20(iy - ix);
-    if (k > 60) z = AL_PI_O_2 + 0.5 * AL_PI_LO;
+    if (k > 60) z = AL_PI_O_2 + al_rnd(0.5 * AL_PI_LO);
     else if (hx < 0 && k < -60) z = 0.0;
     else z = al_m_atan(fabs(y / x));
     switch (m) {
@@ -1285,10 +1309,10 @@ static double al_m_atan2(double y, double x) {
 }
 
 static double al_asin_ratio(double t) {
-    double p = t * (1.66666666666666657415e-01 + t * (-3.25565818622400915405e-01 + t * (2.01212532134862925881e-01
-        + t * (-4.00555345006794114027e-02 + t * (7.91534994289814532176e-04 + t * 3.47933107596021167570e-05)))));
-    double q = 1.0 + t * (-2.40339491173441421878e+00 + t * (2.02094576023350569471e+00 + t * (-6.88283971605453293030e-01
-        + t * 7.70381505559019352791e-02)));
+    double p = al_rnd(t * (1.66666666666666657415e-01 + al_rnd(t * (-3.25565818622400915405e-01 + al_rnd(t * (2.01212532134862925881e-01
+        + al_rnd(t * (-4.00555345006794114027e-02 + al_rnd(t * (7.91534994289814532176e-04 + al_rnd(t * 3.47933107596021167570e-05)))))))))));
+    double q = 1.0 + al_rnd(t * (-2.40339491173441421878e+00 + al_rnd(t * (2.02094576023350569471e+00 + al_rnd(t * (-6.88283971605453293030e-01
+        + al_rnd(t * 7.70381505559019352791e-02)))))));
     return p / q;
 }
 
@@ -1298,24 +1322,24 @@ static double al_m_asin(double x) {
     int32_t hx = al_hiw(x), ix = hx & 0x7fffffff;
     double w, t, s, r, ws, c, p, q;
     if (ix >= 0x3ff00000) {
-        if (((ix - 0x3ff00000) | al_low(x)) == 0) return x * AL_PIO2_HI + x * AL_PIO2_LO;
+        if (((ix - 0x3ff00000) | al_low(x)) == 0) return al_rnd(x * AL_PIO2_HI) + al_rnd(x * AL_PIO2_LO);
         return NAN;
     }
     if (ix < 0x3fe00000) {
         if (ix < 0x3e400000) return x;
-        return x + x * al_asin_ratio(x * x);
+        return x + al_rnd(x * al_asin_ratio(al_rnd(x * x)));
     }
     w = 1.0 - fabs(x);
-    t = w * 0.5;
+    t = al_rnd(w * 0.5);
     s = sqrt(t);
     if (ix >= 0x3FEF3333) {
-        t = AL_PIO2_HI - (2.0 * (s + s * al_asin_ratio(t)) - AL_PIO2_LO);
+        t = AL_PIO2_HI - (al_rnd(2.0 * (s + al_rnd(s * al_asin_ratio(t)))) - AL_PIO2_LO);
     } else {
         r = al_asin_ratio(t);
         ws = al_words(al_hiw(s), 0);
-        c = (t - ws * ws) / (s + ws);
-        p = 2.0 * s * r - (AL_PIO2_LO - 2.0 * c);
-        q = AL_PIO4_HI - 2.0 * ws;
+        c = (t - al_rnd(ws * ws)) / (s + ws);
+        p = al_rnd(al_rnd(2.0 * s) * r) - (AL_PIO2_LO - al_rnd(2.0 * c));
+        q = AL_PIO4_HI - al_rnd(2.0 * ws);
         t = AL_PIO4_HI - (p - q);
     }
     return hx > 0 ? t : -t;
@@ -1325,25 +1349,25 @@ static double al_m_acos(double x) {
     int32_t hx = al_hiw(x), ix = hx & 0x7fffffff;
     double z, s, w, df, c;
     if (ix >= 0x3ff00000) {
-        if (((ix - 0x3ff00000) | al_low(x)) == 0) return hx > 0 ? 0.0 : AL_PI + 2.0 * AL_PIO2_LO;
+        if (((ix - 0x3ff00000) | al_low(x)) == 0) return hx > 0 ? 0.0 : AL_PI + al_rnd(2.0 * AL_PIO2_LO);
         return NAN;
     }
     if (ix < 0x3fe00000) {
         if (ix <= 0x3c600000) return AL_PIO2_HI + AL_PIO2_LO;
-        return AL_PIO2_HI - (x - (AL_PIO2_LO - x * al_asin_ratio(x * x)));
+        return AL_PIO2_HI - (x - (AL_PIO2_LO - al_rnd(x * al_asin_ratio(al_rnd(x * x)))));
     }
     if (hx < 0) {
-        z = (1.0 + x) * 0.5;
+        z = al_rnd((1.0 + x) * 0.5);
         s = sqrt(z);
-        w = al_asin_ratio(z) * s - AL_PIO2_LO;
-        return AL_PI - 2.0 * (s + w);
+        w = al_rnd(al_asin_ratio(z) * s) - AL_PIO2_LO;
+        return AL_PI - al_rnd(2.0 * (s + w));
     }
-    z = (1.0 - x) * 0.5;
+    z = al_rnd((1.0 - x) * 0.5);
     s = sqrt(z);
     df = al_words(al_hiw(s), 0);
-    c = (z - df * df) / (s + df);
-    w = al_asin_ratio(z) * s + c;
-    return 2.0 * (df + w);
+    c = (z - al_rnd(df * df)) / (s + df);
+    w = al_rnd(al_asin_ratio(z) * s) + c;
+    return al_rnd(2.0 * (df + w));
 }
 
 /* ---- log2 and pow */
@@ -1352,13 +1376,13 @@ static double al_m_acos(double x) {
 static int al_exponent_of(double x) {
     int e = (int)((al_dbl_bits(x) >> 52) & 0x7ffu);
     if (e != 0) return e - 1023;
-    return (int)((al_dbl_bits(x * AL_TWO54) >> 52) & 0x7ffu) - 1023 - 54;
+    return (int)((al_dbl_bits(al_rnd(x * AL_TWO54)) >> 52) & 0x7ffu) - 1023 - 54;
 }
 
 /* x * 2^k, exact where the result is normal. */
 static double al_mul_pow2(double x, int k) {
     int half = k / 2;
-    return x * al_pow2(half) * al_pow2(k - half);
+    return al_rnd(al_rnd(x * al_pow2(half)) * al_pow2(k - half));
 }
 
 /* x * 2^e for a nonzero finite x, rounded once. */
@@ -1366,14 +1390,14 @@ static double al_scale(double x, int64_t e) {
     int k = al_exponent_of(x);
     x = al_mul_pow2(x, -k);
     e += k;
-    if (e > 2100) return x * INFINITY;
+    if (e > 2100) return al_rnd(x * INFINITY);
     while (e > 1023) {
-        x *= al_pow2(1023);
+        x = al_rnd(x * al_pow2(1023));
         e -= 1023;
     }
-    if (e >= -1022) return x * al_pow2((int)e);
-    if (e < -2044) return x * 0.0;
-    return x * al_pow2((int)(e + 1022)) * al_pow2(-1022);
+    if (e >= -1022) return al_rnd(x * al_pow2((int)e));
+    if (e < -2044) return al_rnd(x * 0.0);
+    return al_rnd(al_rnd(x * al_pow2((int)(e + 1022))) * al_pow2(-1022));
 }
 
 static double al_pow_int(double ax, double y) {
@@ -1383,34 +1407,34 @@ static double al_pow_int(double ax, double y) {
     uint64_t n;
     if (y < 0) {
         bh = 1.0 / m;
-        p = bh * m;
+        p = al_rnd(bh * m);
         bl = ((1.0 - p) - al_prod_err(bh, m, p)) / m;
         k = al_exponent_of(bh);
-        bh *= al_pow2(-k);
-        bl *= al_pow2(-k);
+        bh = al_rnd(bh * al_pow2(-k));
+        bl = al_rnd(bl * al_pow2(-k));
         be = k - e0;
     }
     n = (uint64_t)fabs(y);
     for (;;) {
         if ((n & 1u) != 0) {
-            p = rh * bh;
-            q = al_prod_err(rh, bh, p) + (rh * bl + rl * bh);
+            p = al_rnd(rh * bh);
+            q = al_prod_err(rh, bh, p) + (al_rnd(rh * bl) + al_rnd(rl * bh));
             rh = p + q;
             rl = q - (rh - p);
             k = al_exponent_of(rh);
-            rh *= al_pow2(-k);
-            rl *= al_pow2(-k);
+            rh = al_rnd(rh * al_pow2(-k));
+            rl = al_rnd(rl * al_pow2(-k));
             re += be + k;
         }
         n >>= 1;
         if (n == 0) break;
-        p = bh * bh;
-        q = al_prod_err(bh, bh, p) + 2.0 * (bh * bl);
+        p = al_rnd(bh * bh);
+        q = al_prod_err(bh, bh, p) + al_rnd(2.0 * (al_rnd(bh * bl)));
         bh = p + q;
         bl = q - (bh - p);
         k = al_exponent_of(bh);
-        bh *= al_pow2(-k);
-        bl *= al_pow2(-k);
+        bh = al_rnd(bh * al_pow2(-k));
+        bl = al_rnd(bl * al_pow2(-k));
         be = 2 * be + k;
         if (be > 4000) return INFINITY;
         if (be < -4000) return 0.0;
@@ -1423,7 +1447,7 @@ static void al_log_dd(double x, double *out) {
     int k = 0, hx, i;
     double f, dh, dl, sh, p, sl, zh, zl, z2, ch, cl, c2, th, tl, z, rest, a, h, l, dk, kh, hh, ll;
     if (x < 0x1p-1022) {
-        x *= AL_TWO54;
+        x = al_rnd(x * AL_TWO54);
         k = -54;
     }
     hx = al_hiw(x);
@@ -1436,30 +1460,30 @@ static void al_log_dd(double x, double *out) {
     dh = 2.0 + f;
     dl = f - (dh - 2.0);
     sh = f / dh;
-    p = sh * dh;
-    sl = (((f - p) - al_prod_err(sh, dh, p)) - sh * dl) / dh;
-    zh = sh * sh;
-    zl = al_prod_err(sh, sh, zh) + 2.0 * (sh * sl);
+    p = al_rnd(sh * dh);
+    sl = (((f - p) - al_prod_err(sh, dh, p)) - al_rnd(sh * dl)) / dh;
+    zh = al_rnd(sh * sh);
+    zl = al_prod_err(sh, sh, zh) + al_rnd(2.0 * (al_rnd(sh * sl)));
     z2 = zh + zl;
     zl = zl - (z2 - zh);
     zh = z2;
-    ch = zh * sh;
-    cl = al_prod_err(zh, sh, ch) + (zh * sl + zl * sh);
+    ch = al_rnd(zh * sh);
+    cl = al_prod_err(zh, sh, ch) + (al_rnd(zh * sl) + al_rnd(zl * sh));
     c2 = ch + cl;
     cl = cl - (c2 - ch);
     ch = c2;
-    th = ch * 6.66666666666666629659e-01;
-    tl = al_prod_err(ch, 6.66666666666666629659e-01, th) + (ch * 0x1.5555555555555p-55 + cl * 6.66666666666666629659e-01);
+    th = al_rnd(ch * 6.66666666666666629659e-01);
+    tl = al_prod_err(ch, 6.66666666666666629659e-01, th) + (al_rnd(ch * 0x1.5555555555555p-55) + al_rnd(cl * 6.66666666666666629659e-01));
     z = zh;
-    rest = ch * z * (0.4 + z * (2.0 / 7 + z * (2.0 / 9 + z * (2.0 / 11 + z * (2.0 / 13 + z * (2.0 / 15
-        + z * (2.0 / 17 + z * (2.0 / 19 + z * (2.0 / 21 + z * (2.0 / 23 + z * (2.0 / 25 + z * (2.0 / 27))))))))))));
-    a = 2.0 * sh;
+    rest = al_rnd(al_rnd(ch * z) * (0.4 + al_rnd(z * (2.0 / 7 + al_rnd(z * (2.0 / 9 + al_rnd(z * (2.0 / 11 + al_rnd(z * (2.0 / 13 + al_rnd(z * (2.0 / 15
+        + al_rnd(z * (2.0 / 17 + al_rnd(z * (2.0 / 19 + al_rnd(z * (2.0 / 21 + al_rnd(z * (2.0 / 23 + al_rnd(z * (2.0 / 25 + al_rnd(z * (2.0 / 27))))))))))))))))))))))));
+    a = al_rnd(2.0 * sh);
     h = a + th;
-    l = (th - (h - a)) + (2.0 * sl + tl + rest);
+    l = (th - (h - a)) + (al_rnd(2.0 * sl) + tl + rest);
     dk = k;
-    kh = dk * AL_LN2_HI;
+    kh = al_rnd(dk * AL_LN2_HI);
     hh = kh + h;
-    ll = al_sum_err(kh, h, hh) + (l + dk * AL_LN2_LO);
+    ll = al_sum_err(kh, h, hh) + (l + al_rnd(dk * AL_LN2_LO));
     out[0] = hh + ll;
     out[1] = ll - (out[0] - hh);
 }
@@ -1473,20 +1497,20 @@ static double al_m_log2(double x) {
     k = al_exponent_of(x);
     if (al_mul_pow2(x, -k) == 1.0) return k;
     al_log_dd(x, l);
-    p = l[0] * 0x1.71547652b82fep0;
-    return p + (al_prod_err(l[0], 0x1.71547652b82fep0, p) + (l[0] * 0x1.777d0ffda0d24p-56 + l[1] * 0x1.71547652b82fep0));
+    p = al_rnd(l[0] * 0x1.71547652b82fep0);
+    return p + (al_prod_err(l[0], 0x1.71547652b82fep0, p) + (al_rnd(l[0] * 0x1.777d0ffda0d24p-56) + al_rnd(l[1] * 0x1.71547652b82fep0)));
 }
 
 static double al_exp_dd(double xh, double xl) {
     int xsb = (int)((uint32_t)al_hiw(xh) >> 31);
-    int k = (int)(AL_INVLN2 * xh + al_m_half[xsb]);
+    int k = (int)(al_rnd(AL_INVLN2 * xh) + al_m_half[xsb]);
     double t = k, hi, lo, x, z, c, y;
-    hi = xh - t * al_m_ln2hi[0];
-    lo = t * al_m_ln2lo[0] - xl;
+    hi = xh - al_rnd(t * al_m_ln2hi[0]);
+    lo = al_rnd(t * al_m_ln2lo[0]) - xl;
     x = hi - lo;
-    z = x * x;
-    c = x - z * (AL_EP1 + z * (AL_EP2 + z * (AL_EP3 + z * (AL_EP4 + z * AL_EP5))));
-    y = 1.0 - ((lo - (x * c) / (2.0 - c)) - hi);
+    z = al_rnd(x * x);
+    c = x - al_rnd(z * (AL_EP1 + al_rnd(z * (AL_EP2 + al_rnd(z * (AL_EP3 + al_rnd(z * (AL_EP4 + al_rnd(z * AL_EP5)))))))));
+    y = 1.0 - ((lo - (al_rnd(x * c)) / (2.0 - c)) - hi);
     return al_scale(y, k);
 }
 
@@ -1494,16 +1518,16 @@ static double al_pow_general(double ax, double y) {
     double l[2], th, tl, t;
     if (fabs(y) > 0x1p900) return (ax > 1.0) == (y > 0) ? INFINITY : 0.0;
     al_log_dd(ax, l);
-    th = y * l[0];
+    th = al_rnd(y * l[0]);
     if (th > 710.0) return INFINITY;
     if (th < -746.0) return 0.0;
-    tl = al_prod_err(y, l[0], th) + y * l[1];
+    tl = al_prod_err(y, l[0], th) + al_rnd(y * l[1]);
     t = th + tl;
     return al_exp_dd(t, tl - (t - th));
 }
 
 static int al_is_odd(double y) {
-    return fabs(y) < 9007199254740992.0 && floor(y * 0.5) * 2.0 != y;
+    return fabs(y) < 9007199254740992.0 && al_rnd(floor(al_rnd(y * 0.5)) * 2.0) != y;
 }
 
 static double al_m_pow(double x, double y) {
@@ -1882,14 +1906,14 @@ static int al_parse_f64(const uint8_t *b, uint32_t n, double *out) {
         if (e < -22) return 1;
         v = (double)m / al_pow10[-e];
     } else if (e <= 22) {
-        v = (double)m * al_pow10[e];
+        v = al_rnd((double)m * al_pow10[e]);
     } else {
         if (e > 22 + 16) return 1;
         for (k = e - 22; k > 0; k--) {
             m *= 10u;
             if (m > ((uint64_t)1 << 53)) return 1;
         }
-        v = (double)m * al_pow10[22];
+        v = al_rnd((double)m * al_pow10[22]);
     }
     *out = negative ? -v : v;
     return 2;

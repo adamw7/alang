@@ -1622,7 +1622,10 @@ public final class CGen {
     private String arith(BinOp op, PrimKind k, PrimKind rk, String l, String r, Span at) {
         if (k.isFloat) {
             String t = cPrim(k);
-            return "((" + t + ")((" + l + ") " + op.text + " (" + r + ")))";
+            String v = "((" + t + ")((" + l + ") " + op.text + " (" + r + ")))";
+            // A product rounds on its own: al_rnd keeps clang from fusing it into a later sum (see the prelude).
+            if (op == BinOp.MUL) return (k == PrimKind.F32 ? "al_rndf(" : "al_rnd(") + v + ")";
+            return v;
         }
         String n = k.name;
         return switch (op) {
