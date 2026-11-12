@@ -103,7 +103,7 @@ solutions play the model.
 | `--no-fallbacks` | off | see below |
 
 **Cost.** One sample of the full set is 40 conversations of one to three replies. ALang conversations also
-send the language guide ([AGENTS.md](../AGENTS.md), about 2,500 tokens); the harness caches the prompt
+send the language guide ([AGENTS.md](../AGENTS.md), about 4,500 tokens); the harness caches the prompt
 prefix, so later replies read it from the cache. The report shows input and output tokens per language.
 Run a single task first and scale from there.
 

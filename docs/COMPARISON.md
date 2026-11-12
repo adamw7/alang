@@ -93,9 +93,9 @@ trap[R0001]: integer overflow: result of `+` does not fit in i32
   --> midpoint.al:2:13
 ```
 
-Out-of-range indexes (R0003), division by zero (R0002), lossy conversions such as `u8(300)` (R0009) and
-invalid shifts (R0012) work the same way: no undefined behavior, no silent wraparound, and no Python-style
-`xs[i - 1]` quietly reading the last element when `i == 0`.
+Out-of-range indexes (R0003), division by zero (R0002), lossy conversions such as `u8(n)` with
+`n = 300` (R0009) and invalid shifts (R0012) work the same way: no undefined behavior, no silent
+wraparound, and no Python-style `xs[i - 1]` quietly reading the last element when `i == 0`.
 
 ## 2. The same answer on every run and every machine
 
@@ -260,11 +260,11 @@ temporaries its statements build:
 ```
 $ bin/alang check examples/maze_bfs.al --memory
 ok: examples/maze_bfs.al: 3 function(s), 1 test(s), 0 warning(s)
-memory: heap 0 B, static 96 B, worst-case stack 2810 B
+memory: heap 0 B, static 96 B, worst-case stack 2738 B
   routine                                     frame (B)    stack (B)
   fn find                                            77           77
   fn shortest_path                                 2617         2694
-  fn main                                           116         2810  (entry)
+  fn main                                            44         2738  (entry)
   test "finds the shortest path"                      0         2694  (entry)
 ```
 
