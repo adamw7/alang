@@ -10,13 +10,16 @@ with a concrete fix. This page covers everything you need; the full rules are in
 ```sh
 bin/alang check prog.al --json    # 1. diagnostics: code, line, column, message, hint
 bin/alang test  prog.al --json    # 2. run every `test "..." { }` block
-bin/alang run   prog.al           # 3. run fn main()
+bin/alang fuzz  prog.al           # 3. call each tool fn, and a main that reads input, at its limits
+bin/alang run   prog.al           # 4. run fn main()
 bin/alang run   prog.al < in.txt  #    a fn main(input: str[N]) gets all of stdin
 bin/alang explain E0215           #    explain any code
 ```
 
 Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. Results are
-deterministic: a test that fails once fails every time, identically.
+deterministic: a test that fails once fails every time, identically. `fuzz` tries the inputs your tests
+did not: empty and full strs of many shapes, full lists, the smallest and largest numbers. Each trap it
+reports comes with the arguments that caused it; handle that input, or narrow it with `requires`.
 
 No `bin/alang` yet? Unpack `alang-VERSION.tar.gz` from <https://github.com/adamw7/alang/releases/latest>
 and use its `bin/alang` (`bin\alang.cmd` on Windows); it needs only Java 21 or newer.
@@ -49,11 +52,15 @@ fn find(entries: list[Entry; MAX_WORDS], word: str[16]) -> Found {
 fn add_word(entries: mut list[Entry; MAX_WORDS], word: str[16]) {
     match find(entries, word) {
         Found.At(i) => { entries[i].count += 1; }
-        Found.Missing => { push(mut entries, Entry(word: word, count: 1)); }
+        Found.Missing => {
+            if len(entries) < MAX_WORDS {
+                push(mut entries, Entry(word: word, count: 1));
+            }
+        }
     }
 }
 
-/// Counts how often each space-separated word occurs (at most 16 distinct words).
+/// Counts how often each space-separated word occurs: the first 16 distinct words, each cut to 16 bytes.
 tool fn word_counts(text: str[256]) -> list[Entry; MAX_WORDS] {
     var entries: list[Entry; MAX_WORDS] = [];
     var word: str[16] = "";
@@ -63,7 +70,7 @@ tool fn word_counts(text: str[256]) -> list[Entry; MAX_WORDS] {
                 add_word(mut entries, word);
                 clear(mut word);
             }
-        } else {
+        } else if len(word) < cap(word) {
             push(mut word, c);
         }
     }
@@ -92,7 +99,8 @@ test "counts repeated words" {
 2. **No implicit conversions.** `i64(x)`, `f64(n)`, `u8(c)`. Integer literals adapt to context and default to `i64`; `for i in 0..n` gives `i: i64` when the bounds are literals. `len()` returns `i64`.
 3. **No heap, no null, no pointers.** Fixed-capacity types: `str[64]`, `list[T; 16]`, `[T; 4]`. Capacity overflow traps.
    A smaller capacity widens on its own; to narrow, convert: `str[16](s)`, `list[T; 8](xs)` (traps if it
-   does not fit, so check `len` first).
+   does not fit, so check `len` first). A parameter takes any capacity with `_`: `fn total(xs: list[i64; _])`,
+   `fn shout(s: mut str[_])` work on every list of i64 and every str; inside, `cap(s)` is the caller's.
 4. **Structs use named arguments**: `Point(x: 1, y: 2)`. Never `Point { x: 1 }`.
 5. **Enum variants are qualified with a dot**: `Color.Red`, `Shape.Circle(2.0)`. Never `Color::Red`.
 6. **Logic uses words**: `and`, `or`, `not`. `&&`, `||`, `!x` are errors (`!=` is fine).
@@ -108,11 +116,12 @@ test "counts repeated words" {
 14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings.
 15. **Functions with a return type return on every path.** Add a final `return` after loops.
 16. **No methods.** `len(xs)`, not `xs.len()`; `push(mut xs, v)`, not `xs.push(v)`; `trim(s)`, not `s.trim()`.
-17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`.
+17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`. Two strs compare with `==` and order with `<`, byte by byte.
 18. **No exceptions.** Return an enum for recoverable failures; `panic("...")` or `assert` for bugs.
 19. **Input arrives whole; nothing else is read.** `fn main(input: str[4096])` gets all of stdin as bytes
     (`bin/alang run prog.al < data.txt`; more than 4096 bytes traps), a `tool fn` gets JSON. No files.
     Go through it with `for line in split(input, '\n') { }`: one line at a time, never a trap on a long one.
+    Split a line into a list with `try_split(mut fields, line, ',')`: false, not a trap, when it does not fit.
 20. **`import "lib/text.al";` at the top of a file** adds that file's declarations, by their plain names.
     The path is relative to the importing file, with `/`. Its `fn main`, tests and tools stay its own.
 
@@ -131,8 +140,13 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `s.push_str("a")`, `format!("{} {}", a, b)` | `append(mut s, "a")`, `var s: str[64] = ""; append(mut s, a, " ", b);` |
 | `for line in text.splitlines()`, `for w in s.split()` | `for line in split(text, '\n') { }`, `for w in words(s) { }` |
 | `s.split(",")`, `s.split()`, `", ".join(xs)` | `let parts: list[str[16]; 8] = split(s, ",");`, `words(s)`, `let line: str[64] = join(xs, ", ");` |
+| the same on input that may not fit | `var parts: list[str[16]; 8] = []; let ok: bool = try_split(mut parts, s, ",");` |
 | `s.count(",")`, `xs.count(x)` | `count(s, ',')`, `count(xs, x)` |
 | `int(s)`, `s.parse::<i64>()` | `i64(trim(s))`, after checking `is_int(trim(s))`: bad text traps |
+| `float(s)`, `s.parse::<f64>()` | `f64(trim(s))`, after checking `is_float(trim(s))`: digits and one `.`, no exponent |
+| `f"{x:.2f}"`, `format!("{:.2}", x)`, `x.toFixed(2)` | `fixed(x, 2)`, in `print`/`append` or stored in a typed str |
+| `f"{n:03}"`, `s.rjust(8)`, `s.ljust(8)`, `padStart` | `pad_left(n, 3, '0')`, `pad_left(s, 8, ' ')`, `pad_right(s, 8, ' ')` |
+| `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
 | `s[a:b]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `slice(s, a, b)`, `trim(s)`, `to_upper(s)` |
 | a `str[256]` passed where `str[16]` is wanted | `str[16](s)` after checking `len(s) <= 16` |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
@@ -147,28 +161,34 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 ## The standard library
 
 Builtins that work on any type and capacity. Their names are reserved: call `gcd`, do not define it. For
-what it leaves out (ordering strs with a `<`, padding, parsing into an enum instead of trapping,
-pseudo-random numbers, a map as a list of structs), [examples/helpers.al](examples/helpers.al) has tested
-helpers to import or copy.
+what it leaves out (parsing into an enum instead of trapping, pseudo-random numbers, a map as a list of
+structs), [examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
 
 | Area | Functions |
 |------|-----------|
 | Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers) `gcd` `lcm` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `join(parts, sep)` `replace(s, from, to)` `is_int` |
+| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` |
 | Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays |
 
 - `split`, `words`, `join` and `replace` take their type from the variable they are stored in, so make the
   call the whole right side of a typed `let`/`var`, assignment or `return`:
-  `let parts: list[str[16]; 8] = split(line, ",");`. Too many or too long pieces trap (R0004).
+  `let parts: list[str[16]; 8] = split(line, ",");`. Too many or too long pieces trap (R0004), so when the
+  text is not a constant and may not fit, `check` warns (W0307). `try_split(mut parts, s, sep)` and
+  `try_words(mut parts, s)` fill the list instead and return false, leaving it empty, when it does not fit.
 - `for p in split(s, sep) { }` and `for w in words(s) { }` go through the pieces one at a time instead:
   no list, and no trap however long or many they are. Each piece has the capacity of `s`, and so would
   `trim(p)` or `slice(p, ...)`: check `len(p)` and narrow it with `str[16](p)` first, then work on that.
   Use this for anything read from input.
 - A separator or search pattern is a str or a character: `split(line, ',')`, `contains(s, "ab")`.
-- `i64(s)` parses decimal text and traps on anything else; `trim` it and check `is_int` first.
+- `i64(s)` and `f64(s)` parse decimal text and trap on anything else; `trim` it and check `is_int` or
+  `is_float` first. `f64` takes digits with at most one `.` and no exponent (`19.99`, `-0.5`, `3`), and
+  converts up to 15 significant digits exactly.
+- `fixed(x, 2)`, `pad_left(v, width, fill)` and `pad_right(...)` make text for `print` and `append`, or for
+  a typed str: `append(mut s, "$", cents / 100, ".", pad_left(cents % 100, 2, '0'));`,
+  `let cell: str[8] = pad_left(n, 6, ' ');`. Widths count bytes; longer text is kept whole.
 - `index_of` returns -1 when nothing is found.
-- `sort` orders every type: numbers, then strs by bytes, structs field by field, enums by variant. To
+- `sort` orders every type: numbers, then strs by bytes (as `<` does), structs field by field, enums by variant. To
   sort records by a key, make the key the first field; for descending order, `reverse` afterwards.
 
 ```alang
@@ -177,13 +197,14 @@ struct Score {
     name: str[32],
 }
 
-/// Parses "name:points" lines and ranks them, best first; lines that do not parse are skipped.
+/// Parses "name:points" lines and ranks them, best first; lines that do not parse are skipped, and
+/// the first 16 that do are kept.
 tool fn rank(text: str[512]) -> list[Score; 16] {
     var scores: list[Score; 16] = [];
-    let lines: list[str[32]; 16] = split(text, '\n');
-    for line in lines {
-        let parts: list[str[32]; 2] = split(line, ':');
-        if len(parts) == 2 and is_int(trim(parts[1])) {
+    for line in split(text, '\n') {
+        var parts: list[str[32]; 2] = [];
+        let ok: bool = try_split(mut parts, line, ':');
+        if ok and len(parts) == 2 and is_int(trim(parts[1])) and len(scores) < cap(scores) {
             push(mut scores, Score(points: i64(trim(parts[1])), name: trim(parts[0])));
         }
     }
@@ -204,6 +225,32 @@ test "best first, bad lines skipped" {
 ```
 
 ## Patterns
+
+**One function for every capacity**
+
+```alang
+// A `_` in a parameter's type takes any capacity: each call runs a copy made for its arguments.
+fn total(xs: list[i64; _]) -> i64 {
+    var sum: i64 = 0;
+    for x in xs {
+        sum += x;
+    }
+    return sum;
+}
+
+fn shout(s: mut str[_]) {
+    s = to_upper(s);
+    push(mut s, '!');    // traps when s is full: the capacity is the caller's variable's
+}
+
+fn main() {
+    let few: list[i64; 4] = [1, 2, 3];
+    let many: list[i64; 1000] = [10, 20];
+    var name: str[16] = "ann";
+    shout(mut name);
+    print(total(few), " ", total(many), " ", name);
+}
+```
 
 **Optional value**
 
@@ -344,6 +391,20 @@ The definitions are all the calling model knows about your tool, so give them so
   `requires people > 0 and people <= 16` become schema bounds (`"minimum": 1, "maximum": 16`).
 - Calls in your `test` blocks with literal arguments, such as `word_counts("a b a")`, become
   `input_examples`.
+
+Before handing tools over, run `bin/alang fuzz prog.al`. It calls each tool with arguments at the limits
+its schema allows and reports every trap with the arguments that caused it; for a word_counts that
+pushed a 17th word into its list of 16, it prints:
+
+```text
+tool word_counts: 23 call(s), 1 trap(s)
+trap[R0004]: push to a full list (capacity 16)
+  ...
+  = arguments: {"text": "a b c d e f g h i j k l m n o p q r s t u v w x … (256 bytes)"}
+```
+
+Each is input a caller can send: handle it (`try_split`, a `len` or `cap` check before a `push`), or rule
+it out with `requires`, which the schema then shows too.
 
 JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string of at most N UTF-8
 bytes (a non-ASCII character takes 2 to 4, so size N in bytes, not characters), arrays and lists as

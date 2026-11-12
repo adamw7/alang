@@ -61,13 +61,6 @@ error[E0201]: cannot compare [i64; 2] with i64
 21 |     let a10: bool = [0; 2] == 5;
    |                     ^^^^^^^^^^^
 
-error[E0203]: `<` needs numbers, found str[4] and str[4]
-  --> tests/errors/operand_types.al:22:21
-   |
-22 |     let a11: bool = s < s;
-   |                     ^^^^^
-  = hint: strings are compared only with == and !=; to order them, compare byte by byte in a loop (s[i] is a u8)
-
 error[E0203]: `+` needs numbers, found str[4] and i64
   --> tests/errors/operand_types.al:23:20
    |
@@ -112,13 +105,6 @@ error[E0212]: index must be an integer, found bool
    |
 29 |     let a18: i64 = xs[b];
    |                       ^
-
-error[E0214]: cannot convert str[4] to f64
-  --> tests/errors/operand_types.al:30:20
-   |
-30 |     let a19: f64 = f64(s);
-   |                    ^^^^^^
-  = hint: text converts only to integers; there is no float parsing: f64(i64(s)), checked with is_int(s) first
 
 error[E0202]: literal 300 does not fit in u8
   --> tests/errors/operand_types.al:31:22

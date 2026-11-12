@@ -1,9 +1,10 @@
-// Tallies "name points" lines from the standard input and ranks the names, with the map, the parser and
-// the padding of helpers.al, imported instead of copied. Run it on a file, or on your own input:
+// Tallies "name points" lines from the standard input and ranks the names, with the map and the parser of
+// helpers.al, imported instead of copied. Run it on a file, or on your own input:
 //     bin/alang run examples/tally.al < examples/tally.in
 import "helpers.al";
 
 const INPUT: i64 = 1024;
+const ITEMS: i64 = 16;
 
 struct Total {
     points: i64,
@@ -18,28 +19,35 @@ struct Tally {
 }
 
 /// Adds up the points of each name in `text`, one "name points" pair per line, and ranks the names, most
-/// points first (a tie puts the name that sorts last first). Blank lines are ignored, and other lines that
-/// are not a name and a whole number are counted as skipped. At most 64 lines of 64 bytes, 16 names.
+/// points first (a tie puts the name that sorts last first). Blank lines are ignored; lines that are not a
+/// name of up to 64 bytes and a whole number, and lines with a new name once there are 16, are counted as
+/// skipped.
 tool fn tally(text: str[INPUT]) -> Tally {
     var points: list[Entry; ITEMS] = [];
     var skipped: i64 = 0;
-    let lines: list[str[TEXT]; 64] = split(text, '\n');
-    for line in lines {
-        let parts: list[str[TEXT]; 8] = words(line);
-        if len(parts) == 0 {
+    // Line by line, and with try_words, so that no input traps: a line of three words makes `fits` false.
+    for line in split(text, '\n') {
+        var parts: list[str[TEXT]; 2] = [];
+        let fits: bool = try_words(mut parts, line);
+        if fits and len(parts) == 0 {
             continue;
         }
         var counted: bool = false;
-        if len(parts) == 2 {
+        if fits and len(parts) == 2 {
             match parse_i64(parts[1]) {
                 ParsedI64.Ok(n) => {
-                    var sum: i64 = n;
                     match lookup(points, parts[0]) {
-                        MaybeI64.Some(before) => { sum += before; }
-                        MaybeI64.None => { }
+                        MaybeI64.Some(before) => {
+                            store(mut points, parts[0], before + n);
+                            counted = true;
+                        }
+                        MaybeI64.None => {
+                            if len(points) < ITEMS {
+                                store(mut points, parts[0], n);
+                                counted = true;
+                            }
+                        }
                     }
-                    store(mut points, parts[0], sum);
-                    counted = true;
                 }
                 ParsedI64.Bad => { }
             }
@@ -60,9 +68,7 @@ tool fn tally(text: str[INPUT]) -> Tally {
 fn main(input: str[INPUT]) {
     let result: Tally = tally(input);
     for t in result.ranking {
-        var score: str[TEXT] = "";
-        append(mut score, t.points);
-        print(pad_left(score, 6, ' '), "  ", t.name);
+        print(pad_left(t.points, 6, ' '), "  ", t.name);
     }
     if result.skipped > 0 {
         print(result.skipped, " line(s) skipped");

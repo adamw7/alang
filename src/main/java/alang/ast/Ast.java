@@ -6,9 +6,12 @@ import alang.types.PrimKind;
 import alang.types.Type;
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * The ALang abstract syntax tree. Nodes are created by {@code alang.parse.AstBuilder}
@@ -186,6 +189,22 @@ public final class Ast {
         public Type ret = Type.VOID;
         public final List<LocalVar> paramVars = new ArrayList<>();
         public LocalVar resultVar;
+        /**
+         * For a function with a `_` capacity in a parameter's type, such as fn total(xs: list[i64; _]): builds a
+         * fresh, unchecked copy of it, which the checker turns into an instance for the capacities of a call.
+         * Null for every other function.
+         */
+        public Supplier<FnDecl> copy;
+        /** For an instance: the function it is a copy of, and the capacities its `_`s stand for, in order. */
+        public FnDecl origin;
+        public List<Integer> capacities = List.of();
+        /** For a function with `_` capacities: its instances, by their capacities, in the order they were made. */
+        public final Map<List<Integer>, FnDecl> instances = new LinkedHashMap<>();
+
+        /** Whether the function takes any capacity somewhere: it runs and compiles only as its instances. */
+        public boolean generic() {
+            return copy != null && origin == null;
+        }
 
         public FnDecl(Span span, Span nameSpan, String name, boolean tool, List<Param> params, TypeRef retRef,
                       List<Expr> requires, List<Expr> ensures, List<String> requiresText, List<String> ensuresText,
@@ -239,10 +258,13 @@ public final class Ast {
 
     public record PrimRef(Span span, PrimKind kind) implements TypeRef {}
 
+    /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
     public record StrRef(Span span, Expr cap) implements TypeRef {}
 
+    /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
     public record ListRef(Span span, TypeRef elem, Expr cap) implements TypeRef {}
 
+    /** {@code len} is null for `_`: any length, in the type of a function parameter. */
     public record ArrayRef(Span span, TypeRef elem, Expr len) implements TypeRef {}
 
     public record NamedRef(Span span, String name) implements TypeRef {}
@@ -660,6 +682,11 @@ public final class Ast {
         public final List<Arg> args;
         public FnDecl fn;
         public Builtin builtin;
+        /**
+         * A fixed, pad_left or pad_right call whose text print or append writes out directly, or pad_left or
+         * pad_right pads: it builds no str, and its type is a nominal str[0].
+         */
+        public boolean asText;
 
         public Call(Span span, String name, Span nameSpan, List<Arg> args) {
             super(span);

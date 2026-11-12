@@ -1,0 +1,7 @@
+error[E0201]: pad_left() fills with one u8 byte, found str[1]
+ --> tests/errors/E0201_pad_fill.al:4:26
+  |
+4 |     print(pad_left(n, 3, "0"));
+  |                          ^^^
+  = hint: write a character: ' ' or '0'
+

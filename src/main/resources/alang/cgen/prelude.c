@@ -208,10 +208,11 @@ static void al_big_inc(al_big *b) {
 }
 
 /*
- * Prints |d| rounded to 6 decimals (round-half-even on the exact binary value), with
- * trailing zeros removed but at least one decimal kept: 1.5, 2.0, 0.333333, -0.0, nan, inf.
+ * Prints d with `decimals` digits after the point (none, and no point, for 0; at most 20): its exact
+ * binary value rounded half to even, as the interpreter's Format.formatFixed does. With trim, trailing
+ * zeros are dropped but one decimal is kept, print's form: 1.5, 2.0, 0.333333, -0.0. nan, inf, -inf.
  */
-static void al_fmt_f64(al_out *o, double d) {
+static void al_fmt_dec(al_out *o, double d, int decimals, int trim) {
     al_big b;
     int e, i, half = 0, sticky = 0, len = 0, end;
     double fr;
@@ -235,7 +236,7 @@ static void al_fmt_f64(al_out *o, double d) {
         b.d[b.n++] = (uint32_t)(m % 1000000000u);
         m /= 1000000000u;
     }
-    al_big_mul(&b, 1000000u);
+    for (i = 0; i < decimals; i++) al_big_mul(&b, 10u);
     if (e >= 0) {
         for (i = 0; i < e; i++) al_big_mul(&b, 2);
     } else {
@@ -272,18 +273,36 @@ static void al_fmt_f64(al_out *o, double d) {
             len += 9;
         }
     }
-    /* at least 7 digits: one before the point and six after */
-    if (len < 7) {
-        int pad = 7 - len;
+    /* at least one digit before the point and `decimals` after it */
+    if (len < decimals + 1) {
+        int pad = decimals + 1 - len;
         for (i = len - 1; i >= 0; i--) digits[i + pad] = digits[i];
         for (i = 0; i < pad; i++) digits[i] = '0';
-        len = 7;
+        len = decimals + 1;
     }
-    al_put(o, digits, (uint32_t)(len - 6));
+    al_put(o, digits, (uint32_t)(len - decimals));
+    if (decimals == 0) return;
     AL_PUTS(o, ".");
     end = len;
-    while (end > len - 5 && digits[end - 1] == '0') end--;
-    al_put(o, digits + len - 6, (uint32_t)(end - (len - 6)));
+    if (trim) {
+        while (end > len - decimals + 1 && digits[end - 1] == '0') end--;
+    }
+    al_put(o, digits + len - decimals, (uint32_t)(end - (len - decimals)));
+}
+
+static void al_fmt_f64(al_out *o, double d) {
+    al_fmt_dec(o, d, 6, 1);
+}
+
+/* fixed(d, decimals) after its range check: exactly that many decimals. */
+static void al_fmt_fixed(al_out *o, double d, int64_t decimals) {
+    al_fmt_dec(o, d, (int)decimals, 0);
+}
+
+/* The fill bytes that pad text of n bytes to width (pad_left and pad_right); none if it is that long already. */
+static void al_pad(al_out *o, uint8_t fill, int64_t width, uint32_t n) {
+    int64_t i;
+    for (i = (int64_t)n; i < width; i++) al_put(o, &fill, 1);
 }
 
 static const char al_hex[] = "0123456789abcdef";
@@ -854,6 +873,88 @@ static void al_parse_trap(const uint8_t *b, uint32_t n, const char *type, int ra
     if (range) AL_PUTS(&e, ": out of range");
     else AL_PUTS(&e, ": not a decimal integer");
     al_trap_end(&e, line, col);
+}
+
+/*
+ * Decimal text as a double, the algorithm of the interpreter's Stdlib.decimalFloat: an optional + or -,
+ * then digits with at most one '.' among them. With M the digits between the first and last that are not 0
+ * and the value M * 10^E, it converts when M <= 2^53 and 10^E (or M * 10^(E - 22) and 10^22) is a double,
+ * so that one multiplication or division rounds the exact value to the nearest double.
+ * Returns 0 for text of another form, 1 for a number too precise to convert exactly, 2 with *out set.
+ */
+static const double al_pow10[23] = {
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18,
+    1e19, 1e20, 1e21, 1e22};
+
+static int al_parse_f64(const uint8_t *b, uint32_t n, double *out) {
+    uint32_t i = 0, j;
+    int negative = n > 0 && b[0] == '-';
+    int64_t digits = 0, before = -1, first = -1, last = -1, k = 0, e;
+    uint64_t m = 0;
+    double v;
+    if (n > 0 && (b[0] == '+' || b[0] == '-')) i = 1;
+    for (j = i; j < n; j++) {
+        if (b[j] == '.') {
+            if (before >= 0) return 0;
+            before = digits;
+        } else if (b[j] >= '0' && b[j] <= '9') {
+            if (b[j] != '0') {
+                if (first < 0) first = digits;
+                last = digits;
+            }
+            digits++;
+        } else {
+            return 0;
+        }
+    }
+    if (digits == 0) return 0;
+    if (before < 0) before = digits;
+    if (first < 0) {
+        *out = negative ? -0.0 : 0.0;
+        return 2;
+    }
+    if (last - first >= 16) return 1;
+    for (j = i; j < n; j++) {
+        if (b[j] == '.') continue;
+        if (k >= first && k <= last) m = m * 10u + (uint64_t)(b[j] - '0');
+        k++;
+    }
+    if (m > ((uint64_t)1 << 53)) return 1;
+    e = before - 1 - last;
+    if (e < 0) {
+        if (e < -22) return 1;
+        v = (double)m / al_pow10[-e];
+    } else if (e <= 22) {
+        v = (double)m * al_pow10[e];
+    } else {
+        if (e > 22 + 16) return 1;
+        for (k = e - 22; k > 0; k--) {
+            m *= 10u;
+            if (m > ((uint64_t)1 << 53)) return 1;
+        }
+        v = (double)m * al_pow10[22];
+    }
+    *out = negative ? -v : v;
+    return 2;
+}
+
+static bool al_is_float(const uint8_t *b, uint32_t n) {
+    double v;
+    return al_parse_f64(b, n, &v) == 2;
+}
+
+static double al_str_to_f64(const uint8_t *b, uint32_t n, int line, int col) {
+    double v = 0.0;
+    int kind = al_parse_f64(b, n, &v);
+    if (kind != 2) {
+        al_out e = al_trap_begin("R0009");
+        AL_PUTS(&e, "cannot convert ");
+        al_fmt_str(&e, b, n, 1);
+        if (kind == 0) AL_PUTS(&e, " to f64: not a decimal number");
+        else AL_PUTS(&e, " to f64: more digits than an f64 converts exactly");
+        al_trap_end(&e, line, col);
+    }
+    return v;
 }
 
 /* Text to a signed type whose largest value is max (its smallest is -max - 1). */

@@ -1,0 +1,7 @@
+error[E0201]: type mismatch: expected str[16], found str[_]
+ --> tests/errors/E0201_any_capacity_narrow.al:7:25
+  |
+7 |     return Person(name: name);
+  |                         ^^^^
+  = hint: a str[_] may not fit in str[16]; convert it: str[16](name), which traps (R0004) if it is longer than 16 bytes (check len(name) first), or increase the capacity of the target
+

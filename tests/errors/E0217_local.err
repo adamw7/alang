@@ -1,0 +1,7 @@
+error[E0217]: `_` stands for any capacity only in the type of a function parameter
+ --> tests/errors/E0217_local.al:3:12
+  |
+3 |     let s: str[_] = "abc";
+  |            ^^^^^^
+  = hint: write a constant here, e.g. str[64]; a parameter s: str[_] fits it with str[64](s), which traps (R0004) if it is longer
+

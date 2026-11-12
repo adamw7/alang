@@ -36,6 +36,7 @@ Codes are never reused for a different meaning.
 | [E0214](#e0214) | invalid conversion |
 | [E0215](#e0215) | mut call not allowed here |
 | [E0216](#e0216) | type cannot be inferred |
+| [E0217](#e0217) | `_` capacity not allowed here |
 | [E0301](#e0301) | missing return |
 | [E0302](#e0302) | break/continue outside loop |
 | [E0303](#e0303) | bad return |
@@ -60,6 +61,7 @@ Codes are never reused for a different meaning.
 | [W0304](#w0304) | unused variable |
 | [W0305](#w0305) | variable changed but never read |
 | [W0306](#w0306) | unused function |
+| [W0307](#w0307) | split or words may trap |
 | [R0001](#r0001) | integer overflow |
 | [R0002](#r0002) | division by zero |
 | [R0003](#r0003) | index out of bounds |
@@ -266,7 +268,7 @@ let p: Point = Point(x: 1);  // error: missing field `y`
 
 ## E0214
 
-**invalid conversion**: Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers. Nothing converts to bool: compare instead (x != 0). str[N](s) and list[T; N](xs) change only the capacity of a str or of a list of T.
+**invalid conversion**: Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers; a str converts to integers and to f64 (i64("42"), f64("2.5")). Nothing converts to bool: compare instead (x != 0). str[N](s) and list[T; N](xs) change only the capacity of a str or of a list of T.
 
 ```
 let b: bool = bool(1);  // error: write 1 != 0
@@ -288,6 +290,15 @@ print(top);
 
 ```
 print([]);  // error
+```
+
+## E0217
+
+**`_` capacity not allowed here**: A `_` in place of a capacity or length, as in str[_], list[T; _] or [T; _], is allowed only in the type of a function parameter: the function then takes a str, list or array of any capacity there, and each call runs a copy of it made for the capacities of its arguments. Variables, fields, return values and conversions need a constant, and so do the parameters of a tool fn (its JSON schema states them) and of main.
+
+```
+fn total(xs: list[i64; _]) -> i64 { ... }  // ok: takes any list of i64
+let s: str[_] = "a";                 // error: write str[64]
 ```
 
 ## E0301
@@ -493,6 +504,16 @@ it.qty += 1;  // warning: items[0] is unchanged
 fn helper() -> i64 { return 1; }  // warning: never called
 ```
 
+## W0307
+
+**split or words may trap**: split(s, sep) or words(s) is stored in a list that the pieces of s may not fit: there may be more of them than its capacity, or one longer than its str capacity. That traps (R0004), so one unexpected line of input stops the whole program. try_split and try_words fill a list without a trap and return false when the pieces do not fit; a for loop over split(s, sep) or words(s) takes the pieces one at a time and never traps on their number or size. Text that is a constant, and test blocks, are left alone.
+
+```
+let parts: list[str[16]; 3] = split(line, ',');  // warning when line is a str[4096]
+var parts: list[str[16]; 3] = [];
+let ok: bool = try_split(mut parts, line, ',');  // false if it does not fit
+```
+
 ## R0001
 
 **integer overflow**: An arithmetic result does not fit its type. ALang never wraps silently. Use a wider type, or check before computing.
@@ -562,11 +583,12 @@ while true limit 10 { }  // trap after 10 iterations
 
 ## R0009
 
-**conversion out of range**: A conversion such as u8(x), i32(f) or i64(s) received a value that the target type cannot represent: a number out of its range, NaN, or a str that is not a decimal integer (check it first with is_int(s)).
+**conversion out of range**: A conversion such as u8(x), i32(f), i64(s) or f64(s) received a value that the target type cannot represent: a number out of its range, NaN, a str that is not a decimal integer (check it first with is_int(s)), or one that is not a decimal number f64 converts exactly (check it first with is_float(s)).
 
 ```
 let b: u8 = u8(-1);  // trap
 let n: i64 = i64("12a");  // trap
+let x: f64 = f64("1e5");  // trap: no exponents
 ```
 
 ## R0010
@@ -663,10 +685,16 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `trim(s) -> str[N]` | s without the ASCII whitespace at its start and end. |
 | `split(s, sep) -> list[str[K]; M]` | The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. Its type is that of the variable it is stored in. Traps if a piece or the count does not fit; for p in split(s, sep) goes through the pieces one at a time instead, each a str of the capacity of s, and never traps on their size or number. |
 | `words(s) -> list[str[K]; M]` | The pieces of s between runs of ASCII whitespace, never empty. Its type is that of the variable it is stored in. Traps if a word or the count does not fit; for w in words(s) goes through the words one at a time instead, and never traps on their size or number. |
+| `try_split(mut parts, s, sep) -> bool` | split(s, sep) into the list parts, replacing what it held: true if every piece fits, otherwise false with parts left empty, never a trap. For text that may not fit, such as input: var parts: list[str[16]; 4] = []; let ok: bool = try_split(mut parts, line, ','); |
+| `try_words(mut parts, s) -> bool` | words(s) into the list parts, replacing what it held: true if every word fits, otherwise false with parts left empty, never a trap. |
 | `join(parts, sep) -> str[N]` | The strs of an array or list with sep (a str or u8 byte) between them. Its type is that of the variable it is stored in. Traps if the result does not fit. |
 | `replace(s, from, to) -> str[N]` | s with every occurrence of from (a non-empty str or a u8 byte) replaced by to, left to right. Its type is that of the variable it is stored in. Traps if the result does not fit. |
+| `fixed(x, decimals) -> str[N]` | The text of the f32/f64 x with exactly `decimals` digits after the point, 0 to 20 (traps (R0013) otherwise), rounded half to even on its exact value as print rounds: fixed(3.14159, 2) is "3.14", fixed(2.5, 0) is "2", fixed(0.125, 2) is "0.12". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
+| `pad_left(value, width, fill) -> str[N]` | The text of a number, bool, str or fixed(...) as print writes it, with the u8 byte fill added in front until it is width bytes long: pad_left(7, 3, '0') is "007", pad_left("ab", 4, ' ') is "  ab". Longer text is kept whole; a width above 1048576 traps (R0013). Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
+| `pad_right(value, width, fill) -> str[N]` | As pad_left, with the fill added after the text: pad_right("ab", 4, '.') is "ab..". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
 | `count(xs, x) -> i64` | How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right (traps (R0013) if the str is empty); in an array or list, the elements equal to x. |
 | `is_int(s) -> bool` | Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it. |
+| `is_float(s) -> bool` | Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. No exponents. |
 
 ### Collections
 

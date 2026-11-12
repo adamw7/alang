@@ -69,17 +69,38 @@ public enum Builtin {
         "The pieces of s between runs of ASCII whitespace, never empty. Its type is that of the variable it is "
             + "stored in. Traps if a word or the count does not fit; for w in words(s) goes through the words "
             + "one at a time instead, and never traps on their size or number."),
+    TRY_SPLIT(Group.TEXT, false, "try_split", "try_split(mut parts, s, sep) -> bool",
+        "split(s, sep) into the list parts, replacing what it held: true if every piece fits, otherwise false with parts "
+            + "left empty, never a trap. For text that may not fit, such as input: var parts: list[str[16]; 4] = []; "
+            + "let ok: bool = try_split(mut parts, line, ',');"),
+    TRY_WORDS(Group.TEXT, false, "try_words", "try_words(mut parts, s) -> bool",
+        "words(s) into the list parts, replacing what it held: true if every word fits, otherwise false with parts left "
+            + "empty, never a trap."),
     JOIN(Group.TEXT, true, "join", "join(parts, sep) -> str[N]",
         "The strs of an array or list with sep (a str or u8 byte) between them. Its type is that of the variable "
             + "it is stored in. Traps if the result does not fit."),
     REPLACE(Group.TEXT, true, "replace", "replace(s, from, to) -> str[N]",
         "s with every occurrence of from (a non-empty str or a u8 byte) replaced by to, left to right. Its type is "
             + "that of the variable it is stored in. Traps if the result does not fit."),
+    FIXED(Group.TEXT, true, "fixed", "fixed(x, decimals) -> str[N]",
+        "The text of the f32/f64 x with exactly `decimals` digits after the point, 0 to 20 (traps (R0013) otherwise), "
+            + "rounded half to even on its exact value as print rounds: fixed(3.14159, 2) is \"3.14\", fixed(2.5, 0) is "
+            + "\"2\", fixed(0.125, 2) is \"0.12\". " + Builtin.TEXT_USE),
+    PAD_LEFT(Group.TEXT, true, "pad_left", "pad_left(value, width, fill) -> str[N]",
+        "The text of a number, bool, str or fixed(...) as print writes it, with the u8 byte fill added in front until it "
+            + "is width bytes long: pad_left(7, 3, '0') is \"007\", pad_left(\"ab\", 4, ' ') is \"  ab\". Longer text is "
+            + "kept whole; a width above 1048576 traps (R0013). " + Builtin.TEXT_USE),
+    PAD_RIGHT(Group.TEXT, true, "pad_right", "pad_right(value, width, fill) -> str[N]",
+        "As pad_left, with the fill added after the text: pad_right(\"ab\", 4, '.') is \"ab..\". " + Builtin.TEXT_USE),
     COUNT(Group.TEXT, true, "count", "count(xs, x) -> i64",
         "How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right "
             + "(traps (R0013) if the str is empty); in an array or list, the elements equal to x."),
     IS_INT(Group.TEXT, true, "is_int", "is_int(s) -> bool",
         "Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it."),
+    IS_FLOAT(Group.TEXT, true, "is_float", "is_float(s) -> bool",
+        "Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then "
+            + "digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are "
+            + "left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. No exponents."),
 
     // ---- collections
     SORT(Group.COLLECTIONS, false, "sort", "sort(mut xs)",
@@ -93,6 +114,10 @@ public enum Builtin {
     REMOVE(Group.COLLECTIONS, false, "remove", "remove(mut xs, i) -> T",
         "Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. "
             + "Traps unless 0 <= i < len(xs).");
+
+    /** Where fixed, pad_left and pad_right may be used. */
+    private static final String TEXT_USE = "Pass it to print or append, as the value of pad_left or pad_right, or store it "
+        + "in a typed str, whose capacity it then has (traps (R0004) if it does not fit).";
 
     /** Where the documentation lists a builtin. */
     public enum Group {
@@ -134,15 +159,23 @@ public enum Builtin {
         return null;
     }
 
-    /** Whether the result's capacity comes from where it is stored: split, words, join and replace. */
+    /**
+     * Whether the result's capacity comes from where it is stored: split, words, join and replace, and the
+     * text that fixed, pad_left and pad_right make when it is not written out at once (see {@link #formats}).
+     */
     public boolean typedByTarget() {
-        return this == SPLIT || this == WORDS || this == JOIN || this == REPLACE;
+        return this == SPLIT || this == WORDS || this == JOIN || this == REPLACE || formats();
+    }
+
+    /** Whether it formats a value as text: fixed, pad_left and pad_right, which print and append write out directly. */
+    public boolean formats() {
+        return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT;
     }
 
     /** Whether the first argument is modified, and so passed as `mut`. */
     public boolean modifiesFirst() {
         return switch (this) {
-            case PUSH, POP, CLEAR, APPEND, SORT, REVERSE, INSERT, REMOVE -> true;
+            case PUSH, POP, CLEAR, APPEND, SORT, REVERSE, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
             default -> false;
         };
     }

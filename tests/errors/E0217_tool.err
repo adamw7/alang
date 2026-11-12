@@ -1,0 +1,7 @@
+error[E0217]: a tool's parameters need a constant capacity, not `_`
+ --> tests/errors/E0217_tool.al:3:20
+  |
+3 | tool fn size(text: str[_]) -> i64 {
+  |                    ^^^^^^
+  = hint: the tool's JSON schema states it (maxLength, maxItems); write the most it accepts, e.g. text: str[256]
+

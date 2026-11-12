@@ -10,7 +10,7 @@ error[E0102]: unknown function `int`
   |
 6 |     let k: i64 = int(2.5);
   |                  ^^^
-  = hint: convert with the target type's name: i64(x), f64(x), u8(x); i64(s) also reads an integer from text
+  = hint: convert with the target type's name: i64(x), f64(x), u8(x); i64(s) and f64(s) also read a number from text
 
 error[E0102]: unknown function `splitlines`
  --> tests/errors/E0102_missing_library.al:7:5

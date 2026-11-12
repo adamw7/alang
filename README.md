@@ -110,18 +110,19 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `alang test FILE [--json] [--filter TEXT] [--max-steps N] [--max-stack B]` | Run all `test "..." { }` blocks; a filter that matches no test fails |
 | `alang tools FILE [--json] [--max-steps N] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema, and input_examples from the tests' calls) |
 | `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B]` | Call a tool with JSON arguments; `-` reads them from stdin, none means `{}` |
+| `alang fuzz FILE [--json] [--max-steps N] [--max-stack B]` | Call every `tool fn`, and a `fn main(input: str[N])`, with arguments at their limits (empty and full strs of many shapes, full lists, the smallest and largest numbers); report each trap with the arguments that hit it |
 | `alang serve FILE [--max-steps N] [--max-stack B]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout) |
 | `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
 | `alang explain CODE \| --all \| --markdown` | Explain a diagnostic or trap code, or all of them |
 
-Exit codes: `0` success, `1` errors, traps or failing tests, `2` usage errors (including an option the
+Exit codes: `0` success, `1` errors, traps (also those `fuzz` finds) or failing tests, `2` usage errors (including an option the
 command does not take, or an extra argument). With `--json`, and always for `call`, errors are JSON on
 stdout too; `call`'s error codes are `usage_error`, `compile_error`, `bad_tool`, `bad_json`,
 `bad_arguments`, `bad_result` and the trap codes (`R....`).
 
 ## Standard library
 
-Without generics, the standard library is a set of builtins that work on any type and capacity, in the
+Without type parameters, the standard library is a set of builtins that work on any type and capacity, in the
 interpreter and the C backend alike, traps included
 ([SPEC.md §9](docs/SPEC.md#9-builtins-and-the-standard-library)):
 
@@ -130,20 +131,21 @@ interpreter and the C backend alike, traps included
 | Core | `print` `len` `cap` `push` `pop` `clear` `append` `panic` |
 | Math | `abs` `min` `max` `clamp` `pow` `gcd` `lcm` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
 | Characters | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` |
-| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice` `trim` `split` `words` `join` `replace` `is_int`, and `i64(s)` to parse |
+| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice` `trim` `split` `words` `try_split` `try_words` `join` `replace` `is_int` `is_float` `fixed` `pad_left` `pad_right`, and `i64(s)`, `f64(s)` to parse |
 | Collections | `sort` `reverse` `insert` `remove` (and `contains`, `index_of`, `count`, `slice` on lists and arrays) |
 
+A user function takes any capacity with a `_` in a parameter's type: `fn total(xs: list[i64; _])`.
+
 ```alang
-/// The distinct words of a text in alphabetical order, lower-cased.
+/// The distinct words of a text in alphabetical order, lower-cased: the first 32, of up to 16 bytes.
 tool fn vocabulary(text: str[256]) -> list[str[16]; 32] {
-    var all: list[str[16]; 32] = words(to_lower(text));
-    sort(mut all);
     var unique: list[str[16]; 32] = [];
-    for w in all {
-        if not contains(unique, w) {
-            push(mut unique, w);
+    for w in words(to_lower(text)) {
+        if len(w) <= 16 and len(unique) < cap(unique) and not contains(unique, w) {
+            push(mut unique, str[16](w));
         }
     }
+    sort(mut unique);
     return unique;
 }
 
@@ -232,9 +234,9 @@ same, so measure before switching a harness over. `--delimiter tab` saves a litt
 - [bench/](bench): do models write more correct tools in ALang or in Python?
 - [harness/toon.py](harness/toon.py): tool results as TOON for a model's prompt
 - [examples/](examples): complete programs, each with tests
-- [examples/helpers.al](examples/helpers.al): tested helpers the standard library leaves out (str
-  ordering, padding, parsing into an enum, pseudo-random numbers, a map), to import (`import "helpers.al";`,
-  as [examples/tally.al](examples/tally.al) does) or copy into a program
+- [examples/helpers.al](examples/helpers.al): tested helpers the standard library leaves out (parsing
+  into an enum, pseudo-random numbers, a map), for lists and strs of any capacity, to import
+  (`import "helpers.al";`, as [examples/tally.al](examples/tally.al) does) or copy into a program
 
 `src/main/java/alang/` holds the toolchain, one package per component (see the architecture);
 `tests/run/` has programs with golden output (`.out`), expected traps (`.trap`) and standard input
@@ -284,7 +286,8 @@ published once; to redo one, delete its release and package first.
 
 ## Status
 
-Version 0.2. Not yet included: generics, slices, namespaces and a formatter. A program can span several
+Version 0.2. Not yet included: type parameters (functions take any capacity with `_`, but not any
+element type), slices, namespaces and a formatter. A program can span several
 files with `import "file.al";` ([SPEC.md §3.1](docs/SPEC.md#31-imports)).
 
 ## License

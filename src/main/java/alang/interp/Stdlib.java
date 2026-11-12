@@ -248,15 +248,30 @@ final class Stdlib {
      * type t. Each piece is checked in turn: first that the list has room for it, then that it fits.
      */
     static ListV split(String name, StrV s, byte[] sep, Type.ListT t, Span at) {
-        int k = ((Type.Str) t.elem()).cap();
         ListV r = new ListV(new Object[t.cap()], 0);
+        fill(name, r, s, sep, t, false, at);
+        return r;
+    }
+
+    /**
+     * try_split and try_words: the pieces of {@code s} into the list {@code r} of type {@code t}, replacing what
+     * it held. Returns false, and leaves the list empty, when they do not fit.
+     */
+    static boolean trySplit(ListV r, StrV s, byte[] sep, Type.ListT t, Span at) {
+        return fill(sep != null ? "split" : "words", r, s, sep, t, true, at);
+    }
+
+    /** split (a null {@code sep}: words) into {@code r}; with {@code tryOnly}, false instead of a trap when it does not fit. */
+    private static boolean fill(String name, ListV r, StrV s, byte[] sep, Type.ListT t, boolean tryOnly, Span at) {
+        int k = ((Type.Str) t.elem()).cap();
+        r.len = 0;
         if (sep != null) {
             if (sep.length == 0) throw new Trap(Code.R0013, at, "split separator is empty");
             int pos = 0;
             while (true) {
                 int hit = find(s.b, s.len, sep, pos);
                 int end = hit < 0 ? s.len : hit;
-                piece(name, r, s, pos, end, k, t, at);
+                if (!piece(name, r, s, pos, end, k, t, tryOnly, at)) return false;
                 if (hit < 0) break;
                 pos = end + sep.length;
             }
@@ -267,13 +282,17 @@ final class Stdlib {
                 if (i == s.len) break;
                 int start = i;
                 while (i < s.len && !isSpace(s.b[i] & 0xFF)) i++;
-                piece(name, r, s, start, i, k, t, at);
+                if (!piece(name, r, s, start, i, k, t, tryOnly, at)) return false;
             }
         }
-        return r;
+        return true;
     }
 
-    private static void piece(String name, ListV r, StrV s, int from, int to, int k, Type.ListT t, Span at) {
+    private static boolean piece(String name, ListV r, StrV s, int from, int to, int k, Type.ListT t, boolean tryOnly, Span at) {
+        if (tryOnly && (r.len == r.items.length || to - from > k)) {
+            r.len = 0;
+            return false;
+        }
         if (r.len == r.items.length) {
             throw new Trap(Code.R0004, at, name + " makes more than " + r.items.length + " pieces, the capacity of " + t);
         }
@@ -283,6 +302,7 @@ final class Stdlib {
         byte[] b = new byte[k];
         System.arraycopy(s.b, from, b, 0, to - from);
         r.items[r.len++] = new StrV(b, to - from);
+        return true;
     }
 
     static StrV join(Object parts, byte[] sep, Type.Str t, Span at) {
@@ -359,6 +379,103 @@ final class Stdlib {
             throw new Trap(Code.R0009, at, msg.toByteArray());
         }
         return v.longValue();
+    }
+
+    /** 2^53: every integer up to it is an f64. */
+    private static final long EXACT_MAX = 1L << 53;
+
+    /** The powers of ten that are f64s: 1e0 to 1e22. */
+    private static final double[] POW10 = {
+        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18,
+        1e19, 1e20, 1e21, 1e22};
+
+    /** What {@link #decimalFloat} found: no decimal number, one too precise to convert exactly, or its value. */
+    private static final int NOT_DECIMAL = 0;
+    private static final int TOO_PRECISE = 1;
+    private static final int EXACT = 2;
+
+    /**
+     * Decimal text as an f64: an optional + or -, then digits with at most one `.` among them. It is
+     * M * 10^E with M the digits between the first and last that are not 0; the text converts when M is at
+     * most 2^53 and 10^E (or M * 10^(E - 22) and 10^22) is an f64 too, so that one multiplication or division
+     * rounds the exact value to the nearest f64. The C backend's al_parse_f64 is the same algorithm. Returns
+     * the kind, and the value in {@code out[0]}.
+     */
+    private static int decimalFloat(StrV s, double[] out) {
+        int i = 0;
+        boolean negative = s.len > 0 && s.b[0] == '-';
+        if (s.len > 0 && (s.b[0] == '+' || s.b[0] == '-')) i = 1;
+        int digits = 0;
+        int beforePoint = -1;
+        int first = -1;
+        int last = -1;
+        for (int j = i; j < s.len; j++) {
+            byte c = s.b[j];
+            if (c == '.') {
+                if (beforePoint >= 0) return NOT_DECIMAL;
+                beforePoint = digits;
+            } else if (isDigit(c)) {
+                if (c != '0') {
+                    if (first < 0) first = digits;
+                    last = digits;
+                }
+                digits++;
+            } else {
+                return NOT_DECIMAL;
+            }
+        }
+        if (digits == 0) return NOT_DECIMAL;
+        if (beforePoint < 0) beforePoint = digits;
+        if (first < 0) {
+            out[0] = negative ? -0.0 : 0.0;
+            return EXACT;
+        }
+        if (last - first >= 16) return TOO_PRECISE;
+        long m = 0;
+        int k = 0;
+        for (int j = i; j < s.len; j++) {
+            if (s.b[j] == '.') continue;
+            if (k >= first && k <= last) m = m * 10 + (s.b[j] - '0');
+            k++;
+        }
+        if (m > EXACT_MAX) return TOO_PRECISE;
+        // The value is m * 10^e.
+        long e = (long) beforePoint - 1 - last;
+        double v;
+        if (e < 0) {
+            if (e < -22) return TOO_PRECISE;
+            v = (double) m / POW10[(int) -e];
+        } else if (e <= 22) {
+            v = (double) m * POW10[(int) e];
+        } else {
+            if (e > 22 + 16) return TOO_PRECISE;
+            for (long n = e - 22; n > 0; n--) {
+                m *= 10;
+                if (m > EXACT_MAX) return TOO_PRECISE;
+            }
+            v = (double) m * POW10[22];
+        }
+        out[0] = negative ? -v : v;
+        return EXACT;
+    }
+
+    static boolean isFloat(StrV s) {
+        return decimalFloat(s, new double[1]) == EXACT;
+    }
+
+    /** The conversion of text to f64: R0009 unless {@link #isFloat}. */
+    static double parseFloat(StrV s, Span at) {
+        double[] v = new double[1];
+        int kind = decimalFloat(s, v);
+        if (kind != EXACT) {
+            ByteArrayOutputStream msg = new ByteArrayOutputStream();
+            msg.writeBytes("cannot convert ".getBytes(StandardCharsets.UTF_8));
+            Format.format(ByteSink.of(msg), s, new Type.Str(s.b.length), true);
+            msg.writeBytes((" to f64" + (kind == NOT_DECIMAL ? ": not a decimal number"
+                : ": more digits than an f64 converts exactly")).getBytes(StandardCharsets.UTF_8));
+            throw new Trap(Code.R0009, at, msg.toByteArray());
+        }
+        return v[0];
     }
 
     // =================================================================== collections

@@ -1,0 +1,7 @@
+error[E0216]: fixed() makes text: write it out, or store it in a typed str
+ --> tests/errors/E0216_fixed.al:5:26
+  |
+5 |     let width: i64 = len(fixed(price, 2));
+  |                          ^^^^^^^^^^^^^^^
+  = hint: pass it to print or append, as in append(mut s, fixed(price, 2)), or make it the whole right-hand side of a typed let/var, an assignment or a return: let text: str[32] = fixed(price, 2);
+

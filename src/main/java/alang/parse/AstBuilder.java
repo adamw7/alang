@@ -149,8 +149,14 @@ final class AstBuilder {
             (pre ? requiresText : ensuresText).add(oneLine(c.expression()));
         }
         TypeRef ret = f.type() == null ? null : type(f.type());
-        return new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null && !imported, params, ret,
-            requires, ensures, requiresText, ensuresText, block(f.block()));
+        FnDecl fn = new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null && !imported, params,
+            ret, requires, ensures, requiresText, ensuresText, block(f.block()));
+        if (params.stream().anyMatch(p -> anyCapacity(p.typeRef()))) {
+            // A function that takes any capacity is checked once as written, then once more for each set of
+            // capacities it is called with, on a fresh copy of its tree; the syntax errors were reported already.
+            fn.copy = () -> new AstBuilder(new Diagnostics(file), file, tokens, imported).function(f);
+        }
+        return fn;
     }
 
     /**
@@ -179,15 +185,30 @@ final class AstBuilder {
             return new PrimRef(sp, PrimKind.byName(p.primitiveType().getText()));
         }
         if (ctx instanceof StrTypeRefContext s) {
-            return new StrRef(sp, expr(s.expression()));
+            return new StrRef(sp, capacity(s.capacity()));
         }
         if (ctx instanceof ListTypeRefContext l) {
-            return new ListRef(sp, type(l.type()), expr(l.expression()));
+            return new ListRef(sp, type(l.type()), capacity(l.capacity()));
         }
         if (ctx instanceof ArrayTypeRefContext a) {
-            return new ArrayRef(sp, type(a.type()), expr(a.expression()));
+            return new ArrayRef(sp, type(a.type()), capacity(a.capacity()));
         }
         return new NamedRef(sp, ((NamedTypeRefContext) ctx).identifier().getText());
+    }
+
+    /** A capacity or length: its expression, or null for `_` (any capacity, in a parameter's type). */
+    private Expr capacity(CapacityContext ctx) {
+        return ctx.UNDERSCORE() != null ? null : expr(ctx.expression());
+    }
+
+    /** Whether a type has a `_` capacity or length anywhere in it. */
+    private static boolean anyCapacity(TypeRef t) {
+        return switch (t) {
+            case StrRef s -> s.cap() == null;
+            case ListRef l -> l.cap() == null || anyCapacity(l.elem());
+            case ArrayRef a -> a.len() == null || anyCapacity(a.elem());
+            default -> false;
+        };
     }
 
     // ------------------------------------------------------------------ statements

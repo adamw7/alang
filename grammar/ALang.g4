@@ -104,10 +104,17 @@ testDecl
 
 type
     : primitiveType                              # primitiveTypeRef
-    | STR LBRACK expression RBRACK               # strTypeRef      // str[64]: text, up to 64 bytes
-    | LIST LBRACK type SEMI expression RBRACK    # listTypeRef     // list[i32; 16]: up to 16 items
-    | LBRACK type SEMI expression RBRACK         # arrayTypeRef    // [i32; 16]: exactly 16 items
+    | STR LBRACK capacity RBRACK                 # strTypeRef      // str[64]: text, up to 64 bytes
+    | LIST LBRACK type SEMI capacity RBRACK      # listTypeRef     // list[i32; 16]: up to 16 items
+    | LBRACK type SEMI capacity RBRACK           # arrayTypeRef    // [i32; 16]: exactly 16 items
     | identifier                                 # namedTypeRef    // struct or enum name
+    ;
+
+// A constant capacity or length. In the type of a function parameter, `_` accepts any:
+// fn total(xs: list[i64; _]) takes a list of i64 of every capacity.
+capacity
+    : expression
+    | UNDERSCORE
     ;
 
 primitiveType

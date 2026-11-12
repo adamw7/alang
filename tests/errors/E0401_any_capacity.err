@@ -1,0 +1,7 @@
+error[E0401]: recursion is not allowed: count_down -> count_down
+ --> tests/errors/E0401_any_capacity.al:2:4
+  |
+2 | fn count_down(s: str[_]) -> i64 {
+  |    ^^^^^^^^^^
+  = hint: rewrite with a loop; keep pending work in a fixed-capacity list (a stack) if needed
+

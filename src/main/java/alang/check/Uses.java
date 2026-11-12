@@ -40,7 +40,10 @@ final class Uses {
     static void warnUnused(Program program, Diagnostics diags, Function<Expr, String> text) {
         Set<FnDecl> called = new HashSet<>();
         for (Item item : program.items) {
-            if (item instanceof Routine r) called.addAll(r.callees);
+            if (item instanceof Routine r) {
+                // A call of a function that takes any capacity runs an instance of it.
+                for (FnDecl f : r.callees) called.add(f.origin != null ? f.origin : f);
+            }
         }
         for (Item item : program.items) {
             if (!(item instanceof Routine r)) continue;

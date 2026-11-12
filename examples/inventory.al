@@ -85,7 +85,9 @@ fn demo_inventory() -> Inventory {
 
 /// Places an order against the demo inventory and reports the outcome.
 /// Accepted orders return the total price in cents.
-tool fn place_order(sku: str[16], quantity: i32) -> OrderResult {
+tool fn place_order(sku: str[16], quantity: i32) -> OrderResult
+    requires quantity > 0
+{
     var inv: Inventory = demo_inventory();
     return order(mut inv, sku, quantity);
 }

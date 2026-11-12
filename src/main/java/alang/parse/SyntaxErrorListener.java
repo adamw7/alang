@@ -288,8 +288,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if ((t == ALangLexer.LT || t == ALangLexer.LBRACK && prev2 != null
                 && (prev2.getType() == ALangLexer.COLON || prev2.getType() == ALangLexer.ARROW))
             && p == ALangLexer.IDENT && !expectsOperator(expected)) {
-            return "there are no generics; write a function or type for each element type, "
-                + "e.g. fn max_i64(a: i64, b: i64) -> i64, and use list[T; N] instead of Vec<T>";
+            return "there are no type parameters; write a function or type for each element type, "
+                + "e.g. fn max_i64(a: i64, b: i64) -> i64, and use list[T; N] instead of Vec<T>; a parameter can take "
+                + "any capacity: fn total(xs: list[i64; _]) -> i64";
         }
         if (expected.contains(ALangLexer.FAT_ARROW)) {
             // After a pattern, where `=>` should come.

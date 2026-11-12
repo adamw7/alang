@@ -1,6 +1,8 @@
 package alang.types;
 
 import alang.ast.Ast;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Semantic types. Every type has a size known at compile time: there are no pointers,
@@ -15,28 +17,91 @@ public sealed interface Type {
         }
     }
 
-    /** Text of up to {@code cap} bytes (UTF-8), stored inline. */
+    /**
+     * Text of up to {@code cap} bytes (UTF-8), stored inline. A negative {@code cap} is a `_` of a parameter's
+     * type, any capacity (see {@link #anyCapacity}).
+     */
     record Str(int cap) implements Type {
         @Override
         public String toString() {
-            return "str[" + cap + "]";
+            return "str[" + capText(cap) + "]";
         }
     }
 
-    /** Between 0 and {@code cap} elements, stored inline. */
+    /** Between 0 and {@code cap} elements, stored inline; a negative {@code cap} is a `_`, as for {@link Str}. */
     record ListT(Type elem, int cap) implements Type {
         @Override
         public String toString() {
-            return "list[" + elem + "; " + cap + "]";
+            return "list[" + elem + "; " + capText(cap) + "]";
         }
     }
 
-    /** Exactly {@code len} elements, stored inline. */
+    /** Exactly {@code len} elements, stored inline; a negative {@code len} is a `_`, as for {@link Str}. */
     record ArrayT(Type elem, int len) implements Type {
         @Override
         public String toString() {
-            return "[" + elem + "; " + len + "]";
+            return "[" + elem + "; " + capText(len) + "]";
         }
+    }
+
+    /**
+     * The capacity that the {@code i}-th `_` (from 0) of a function's parameter types stands for: inside the
+     * function it is unknown, and each call fixes it.
+     */
+    static int anyCapacity(int i) {
+        return -1 - i;
+    }
+
+    private static String capText(int cap) {
+        return cap < 0 ? "_" : String.valueOf(cap);
+    }
+
+    /** Whether a `_` capacity or length occurs anywhere in {@code t}. */
+    static boolean hasAnyCapacity(Type t) {
+        return switch (t) {
+            case Str s -> s.cap() < 0;
+            case ListT l -> l.cap() < 0 || hasAnyCapacity(l.elem());
+            case ArrayT a -> a.len() < 0 || hasAnyCapacity(a.elem());
+            default -> false;
+        };
+    }
+
+    /** {@code t} with the {@code i}-th `_` replaced by {@code caps.get(i)}. */
+    static Type substitute(Type t, List<Integer> caps) {
+        return switch (t) {
+            case Str s -> s.cap() < 0 ? new Str(caps.get(-1 - s.cap())) : s;
+            case ListT l -> new ListT(substitute(l.elem(), caps), l.cap() < 0 ? caps.get(-1 - l.cap()) : l.cap());
+            case ArrayT a -> new ArrayT(substitute(a.elem(), caps), a.len() < 0 ? caps.get(-1 - a.len()) : a.len());
+            default -> t;
+        };
+    }
+
+    /**
+     * Matches the type of an argument against that of a parameter with `_`s, and records in {@code caps} what
+     * each `_` stands for. A `mut` argument must have exactly the parameter's type, apart from its `_`s; a
+     * read-only one may also have a smaller capacity where the parameter's is a number, as for {@link #assignable}.
+     * The elements of a list or array always have exactly the element type.
+     */
+    static boolean bind(Type param, Type arg, boolean exact, Map<Integer, Integer> caps) {
+        if (isError(param) || isError(arg)) return true;
+        if (!hasAnyCapacity(param)) return exact ? param.equals(arg) : assignable(arg, param);
+        return switch (param) {
+            case Str p when arg instanceof Str a -> {
+                caps.put(-1 - p.cap(), a.cap());
+                yield true;
+            }
+            case ListT p when arg instanceof ListT a -> bind(p.elem(), a.elem(), true, caps) && bindCap(p.cap(), a.cap(), exact, caps);
+            case ArrayT p when arg instanceof ArrayT a -> bind(p.elem(), a.elem(), true, caps) && bindCap(p.len(), a.len(), true, caps);
+            default -> false;
+        };
+    }
+
+    private static boolean bindCap(int param, int arg, boolean exact, Map<Integer, Integer> caps) {
+        if (param < 0) {
+            caps.put(-1 - param, arg);
+            return true;
+        }
+        return exact ? param == arg : arg >= 0 && arg <= param;
     }
 
     record StructT(Ast.StructDecl decl) implements Type {
@@ -118,9 +183,18 @@ public sealed interface Type {
     static boolean assignable(Type from, Type to) {
         if (isError(from) || isError(to)) return true;
         if (from.equals(to)) return true;
-        if (from instanceof Str a && to instanceof Str b) return a.cap() <= b.cap();
-        if (from instanceof ListT a && to instanceof ListT b) return a.elem().equals(b.elem()) && a.cap() <= b.cap();
+        if (from instanceof Str a && to instanceof Str b) return fits(a.cap(), b.cap());
+        if (from instanceof ListT a && to instanceof ListT b) return a.elem().equals(b.elem()) && fits(a.cap(), b.cap());
         return false;
+    }
+
+    /**
+     * Whether every value of capacity {@code from} fits capacity {@code to}. A `_` capacity is unknown: only
+     * an empty value (capacity 0) is sure to fit it, and it fits nothing but itself.
+     */
+    private static boolean fits(int from, int to) {
+        if (to < 0) return from == to || from == 0;
+        return from >= 0 && from <= to;
     }
 
     /** Can values of these two types be compared with == and != ? */

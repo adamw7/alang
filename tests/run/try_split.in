@@ -1,0 +1,5 @@
+north, widget, 120
+south, gadget, 75, extra
+north, a-very-long-product-name, 30
+
+east, gizmo, 9

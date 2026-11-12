@@ -1,4 +1,4 @@
-// expect: E0101 E0201 E0202 E0203 E0211 E0212 E0214
+// expect: E0101 E0201 E0202 E0203 E0211 E0212
 // Operators, conversions, literals and assignments with the wrong types; operand_types.err pins every
 // message and hint.
 fn main() {

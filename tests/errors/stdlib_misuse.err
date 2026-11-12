@@ -83,13 +83,6 @@ error[E0201]: gcd() needs two integers of the same type, found i32 and i64
 21 |     let g: i64 = gcd(i32(4), i64(6));
    |                  ^^^^^^^^^^^^^^^^^^^
 
-error[E0214]: cannot convert str[3] to f64
-  --> tests/errors/stdlib_misuse.al:22:18
-   |
-22 |     let f: f64 = f64("1.5");
-   |                  ^^^^^^^^^^
-  = hint: text converts only to integers; there is no float parsing: f64(i64("1.5")), checked with is_int("1.5") first
-
 error[E0204]: clamp() takes 3 argument(s) but 2 were given
   --> tests/errors/stdlib_misuse.al:23:18
    |
@@ -115,6 +108,13 @@ error[E0201]: replace() needs a str or a u8 byte for what it replaces, found f64
    |
 26 |     let r: str[16] = replace(s, 1.5, "x");
    |                                 ^^^
+
+warning[W0307]: words() may not fit list[str[8]; 4]: from a str[16] it can make up to 8 words of up to 16 bytes, and one that does not fit traps (R0004)
+  --> tests/errors/stdlib_misuse.al:28:10
+   |
+28 |     ws = words(s);
+   |          ^^^^^^^^
+  = hint: to handle any text, use try_words, which returns false instead of trapping: var ws: list[str[8]; 4] = []; let ok: bool = try_words(mut ws, s); or go through the pieces one at a time: for p in words(s) { }
 
 error[E0204]: split() takes 2 argument(s) but 1 were given
   --> tests/errors/stdlib_misuse.al:29:10

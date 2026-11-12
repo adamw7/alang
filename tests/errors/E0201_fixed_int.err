@@ -1,0 +1,7 @@
+error[E0201]: fixed() needs an f32 or f64, found i64
+ --> tests/errors/E0201_fixed_int.al:4:17
+  |
+4 |     print(fixed(cents, 2));
+  |                 ^^^^^
+  = hint: convert it: fixed(f64(cents), 2), or pad an integer with pad_left(n, width, '0')
+

@@ -30,14 +30,27 @@ public final class Format {
 
     private static final String HEX = "0123456789abcdef";
 
+    /** The most decimals fixed() writes, and the widest pad_left and pad_right make. */
+    public static final int MAX_DECIMALS = 20;
+    public static final int MAX_PAD = 1 << 20;
+
     public static String formatFloat(double d) {
+        String s = formatFixed(d, 6);
+        if (s.indexOf('.') < 0) return s;
+        int end = s.length();
+        while (s.charAt(end - 1) == '0' && s.charAt(end - 2) != '.') end--;
+        return s.substring(0, end);
+    }
+
+    /**
+     * {@code d} with exactly {@code decimals} digits after the point (none and no point for 0), its exact binary
+     * value rounded half to even, as the C backend's al_fmt_dec does: nan, inf and -inf as print writes them.
+     */
+    public static String formatFixed(double d, int decimals) {
         if (Double.isNaN(d)) return "nan";
         if (Double.isInfinite(d)) return d > 0 ? "inf" : "-inf";
         boolean negative = Math.copySign(1.0, d) < 0;
-        String s = new BigDecimal(Math.abs(d)).setScale(6, RoundingMode.HALF_EVEN).toPlainString();
-        int end = s.length();
-        while (s.charAt(end - 1) == '0' && s.charAt(end - 2) != '.') end--;
-        return (negative ? "-" : "") + s.substring(0, end);
+        return (negative ? "-" : "") + new BigDecimal(Math.abs(d)).setScale(decimals, RoundingMode.HALF_EVEN).toPlainString();
     }
 
     public static void format(ByteSink out, Object v, Type t, boolean nested) {
