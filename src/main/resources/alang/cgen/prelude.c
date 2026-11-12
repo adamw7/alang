@@ -680,6 +680,44 @@ static uint64_t al_lcm(uint64_t a, uint64_t b, uint64_t hi, const char *type, in
     return q * b;
 }
 
+/*
+ * wrapping_add, wrapping_sub and wrapping_mul (op 0, 1, 2) in 64 unsigned bits, which wrap without undefined
+ * behavior; the caller keeps the low bits of the type.
+ */
+static uint64_t al_wrapping(uint64_t a, uint64_t b, int op) {
+    return op == 0 ? a + b : op == 1 ? a - b : a * b;
+}
+
+/*
+ * saturating_add, saturating_sub and saturating_mul (op 0, 1, 2) of two values of a signed type with limits
+ * lo..hi: each test decides overflow without computing a result that could overflow int64_t.
+ */
+static int64_t al_sat_s(int64_t a, int64_t b, int op, int64_t lo, int64_t hi) {
+    if (op == 0) {
+        if (b > 0 && a > hi - b) return hi;
+        if (b < 0 && a < lo - b) return lo;
+        return a + b;
+    }
+    if (op == 1) {
+        if (b < 0 && a > hi + b) return hi;
+        if (b > 0 && a < lo + b) return lo;
+        return a - b;
+    }
+    if (a == 0 || b == 0) return 0;
+    if (a > 0) {
+        if (b > 0) return a > hi / b ? hi : a * b;
+        return b < lo / a ? lo : a * b;
+    }
+    if (b > 0) return a < lo / b ? lo : a * b;
+    return b < hi / a ? hi : a * b;
+}
+
+static uint64_t al_sat_u(uint64_t a, uint64_t b, int op, uint64_t hi) {
+    if (op == 0) return a > hi - b ? hi : a + b;
+    if (op == 1) return a < b ? 0 : a - b;
+    return a != 0 && b > hi / a ? hi : a * b;
+}
+
 static double al_trunc(double d) {
     return d < 0 ? ceil(d) : floor(d);
 }

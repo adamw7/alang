@@ -1,6 +1,7 @@
 package alang.interp;
 
 import alang.ast.Ast.Variant;
+import alang.ast.Builtin;
 import alang.diag.Code;
 import alang.diag.Span;
 import alang.interp.Values.ArrV;
@@ -77,6 +78,29 @@ final class Stdlib {
         // q * mb must fit in 64 unsigned bits before it is checked against k.
         if (Long.compareUnsigned(mb, Long.divideUnsigned(-1L, q)) > 0) throw IntOps.overflow(at, k, "lcm");
         return fit(k, q * mb, at, "lcm");
+    }
+
+    /**
+     * wrapping_add/sub/mul and saturating_add/sub/mul: the exact result, then either its low k.bits bits (as a
+     * value of k) or the nearest value of k. Neither traps.
+     */
+    static long wrapOrSaturate(Builtin b, PrimKind k, long a, long y) {
+        BigInteger x = IntOps.toBig(k, a);
+        BigInteger z = IntOps.toBig(k, y);
+        BigInteger r = switch (b) {
+            case WRAPPING_ADD, SATURATING_ADD -> x.add(z);
+            case WRAPPING_SUB, SATURATING_SUB -> x.subtract(z);
+            default -> x.multiply(z);
+        };
+        boolean wrap = b == Builtin.WRAPPING_ADD || b == Builtin.WRAPPING_SUB || b == Builtin.WRAPPING_MUL;
+        if (wrap) {
+            long low = r.longValue();
+            if (k.bits == 64) return low;
+            return k.signed ? (low << (64 - k.bits)) >> (64 - k.bits) : low & ((1L << k.bits) - 1);
+        }
+        if (r.compareTo(k.max()) > 0) r = k.max();
+        if (r.compareTo(k.min()) < 0) r = k.min();
+        return r.longValue();
     }
 
     static Object clamp(Type t, Object x, Object lo, Object hi, Span at) {

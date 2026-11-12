@@ -1446,6 +1446,25 @@ public final class CGen {
                 return tmp(c.type, "(" + cPrim(k) + ")al_" + c.builtin.name + "(" + ma + ", " + mb + ", " + hi + ", \""
                     + k.name + "\", " + at + ")");
             }
+            case WRAPPING_ADD, WRAPPING_SUB, WRAPPING_MUL, SATURATING_ADD, SATURATING_SUB, SATURATING_MUL -> {
+                PrimKind k = Type.kind(c.type);
+                String a = tmp(c.type, lower(args.get(0).expr()));
+                String b = tmp(c.type, lower(args.get(1).expr()));
+                int op = switch (c.builtin) {
+                    case WRAPPING_ADD, SATURATING_ADD -> 0;
+                    case WRAPPING_SUB, SATURATING_SUB -> 1;
+                    default -> 2;
+                };
+                boolean wrap = c.builtin.name.startsWith("wrapping");
+                String s = k.signed ? "(int64_t)" : "";
+                if (wrap) {
+                    String r = "al_wrapping((uint64_t)" + s + a + ", (uint64_t)" + s + b + ", " + op + ")";
+                    return tmp(c.type, k.signed ? "al_wrap_" + k.name + "((uint" + k.bits + "_t)" + r + ")" : "(" + cPrim(k) + ")" + r);
+                }
+                return tmp(c.type, "(" + cPrim(k) + ")" + (k.signed
+                    ? "al_sat_s((int64_t)" + a + ", (int64_t)" + b + ", " + op + ", INT" + k.bits + "_MIN, INT" + k.bits + "_MAX)"
+                    : "al_sat_u((uint64_t)" + a + ", (uint64_t)" + b + ", " + op + ", UINT" + k.bits + "_MAX)"));
+            }
             case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
                 String ch = tmp(Type.U8, lower(args.get(0).expr()));
                 String digit = "(" + ch + " >= 48 && " + ch + " <= 57)";

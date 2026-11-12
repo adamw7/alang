@@ -166,7 +166,7 @@ structs), [examples/helpers.al](examples/helpers.al) has tested helpers to impor
 
 | Area | Functions |
 |------|-----------|
-| Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers) `gcd` `lcm` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
+| Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
 | Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` |
 | Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays |

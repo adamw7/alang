@@ -652,6 +652,12 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `pow(x, n) -> T` | x to the power n, for an integer x and an integer n >= 0; pow(0, 0) is 1. Traps on overflow, and (R0013) if n < 0. |
 | `gcd(a, b) -> T` | Greatest common divisor of two integers of the same type, never negative; gcd(0, 0) is 0. Traps if it does not fit. |
 | `lcm(a, b) -> T` | Least common multiple of two integers of the same type, never negative; 0 if either is 0. Traps on overflow. |
+| `wrapping_add(a, b) -> T` | a + b for two integers of the same type, wrapped around to fit (modulo 2^bits): wrapping_add(u8(250), 10) is 4. Never traps; for hashes and checksums. |
+| `wrapping_sub(a, b) -> T` | a - b for two integers of the same type, wrapped around to fit: wrapping_sub(u8(0), 1) is 255. Never traps. |
+| `wrapping_mul(a, b) -> T` | a * b for two integers of the same type, wrapped around to fit: the low bits of the product, as FNV and other hashes need. Never traps. |
+| `saturating_add(a, b) -> T` | a + b for two integers of the same type, or the type's largest or smallest value if it does not fit: saturating_add(u8(250), 10) is 255. Never traps. |
+| `saturating_sub(a, b) -> T` | a - b for two integers of the same type, held to the type's range: saturating_sub(u8(3), 5) is 0. Never traps. |
+| `saturating_mul(a, b) -> T` | a * b for two integers of the same type, held to the type's range. Never traps. |
 | `sqrt(x) -> f` | Square root of an f32/f64. |
 | `floor(x) -> f` | Largest integral value not greater than x (f32/f64). |
 | `ceil(x) -> f` | Smallest integral value not less than x (f32/f64). |

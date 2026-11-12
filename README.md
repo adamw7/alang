@@ -129,7 +129,7 @@ interpreter and the C backend alike, traps included
 | Area | Functions |
 |------|-----------|
 | Core | `print` `len` `cap` `push` `pop` `clear` `append` `panic` |
-| Math | `abs` `min` `max` `clamp` `pow` `gcd` `lcm` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
+| Math | `abs` `min` `max` `clamp` `pow` `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
 | Characters | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` |
 | Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice` `trim` `split` `words` `try_split` `try_words` `join` `replace` `is_int` `is_float` `fixed` `pad_left` `pad_right`, and `i64(s)`, `f64(s)` to parse |
 | Collections | `sort` `reverse` `insert` `remove` (and `contains`, `index_of`, `count`, `slice` on lists and arrays) |

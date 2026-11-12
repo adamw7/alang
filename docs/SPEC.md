@@ -277,6 +277,8 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 - `< <= > >=` take two numbers of the same type, or two strs of any capacities, ordered byte by byte
   (unsigned), a prefix first: the order of `sort`, C's `strcmp` and `<` on strs in Python or Rust.
 - Integer arithmetic is **checked**: overflow traps (R0001), division or remainder by zero traps (R0002).
+  Where wrapping around is wanted, as in a hash, say so: `wrapping_mul(h, k)`; `saturating_add(a, b)` stops at
+  the type's limits instead (§9.2).
   Division truncates toward zero; `%` has the dividend's sign; `MIN / -1` overflows and `MIN % -1` is `0`.
 - Shifts: the left operand gives the type; the amount may be any integer type and must be in
   `0..bits-1` (R0012). Bits shifted out are discarded. `>>` is arithmetic for signed types, logical for
@@ -401,12 +403,14 @@ them all.
 | `pow(x, n) -> T` | `x` (any integer type) to the power `n` (any integer type); `pow(0, 0)` is 1. Traps if `n < 0` (R0013) or the result does not fit (R0001). There is no float `pow`. |
 | `gcd(a, b) -> T` | Greatest common divisor of same-type integers, never negative; `gcd(0, 0)` is 0. `gcd(x, 0)` for the minimum `x` does not fit and traps (R0001). |
 | `lcm(a, b) -> T` | Least common multiple, never negative; 0 if either is 0. Traps if it does not fit (R0001). |
+| `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | Same-type integers; the exact result wrapped around to the type (modulo 2^bits), so they never trap: `wrapping_add(u8(250), 10)` is `4`, `wrapping_mul(h, 16777619)` is the multiply of 32-bit FNV. |
+| `saturating_add(a, b)`, `saturating_sub(a, b)`, `saturating_mul(a, b)` | Same-type integers; the exact result, or the type's largest or smallest value when it does not fit: `saturating_sub(u8(3), 5)` is `0`. Never trap. |
 | `sqrt(x)`, `floor(x)`, `ceil(x)` | On `f32`/`f64`, correctly rounded. |
 | `round(x)`, `trunc(x)` | On `f32`/`f64`, exact: `round` halves away from zero (`round(2.5)` is `3.0`, `round(-0.5)` is `-1.0`); `trunc` drops the fraction (`trunc(-2.7)` is `-2.0`). |
 | `is_nan(x)`, `is_finite(x)` | On `f32`/`f64`. |
 
-A literal argument takes the type of the other arguments or, for `min`, `max`, `clamp`, `pow`, `gcd` and
-`lcm`, of the variable the result is stored in: `let b: u8 = pow(2, 7);`.
+A literal argument takes the type of the other arguments or, for `min`, `max`, `clamp`, `pow`, `gcd`,
+`lcm` and the wrapping and saturating functions, of the variable the result is stored in: `let b: u8 = pow(2, 7);`.
 
 ### 9.3 Characters
 

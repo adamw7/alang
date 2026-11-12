@@ -28,6 +28,21 @@ public enum Builtin {
         "Greatest common divisor of two integers of the same type, never negative; gcd(0, 0) is 0. Traps if it does not fit."),
     LCM(Group.MATH, true, "lcm", "lcm(a, b) -> T",
         "Least common multiple of two integers of the same type, never negative; 0 if either is 0. Traps on overflow."),
+    WRAPPING_ADD(Group.MATH, true, "wrapping_add", "wrapping_add(a, b) -> T",
+        "a + b for two integers of the same type, wrapped around to fit (modulo 2^bits): wrapping_add(u8(250), 10) is 4. "
+            + "Never traps; for hashes and checksums."),
+    WRAPPING_SUB(Group.MATH, true, "wrapping_sub", "wrapping_sub(a, b) -> T",
+        "a - b for two integers of the same type, wrapped around to fit: wrapping_sub(u8(0), 1) is 255. Never traps."),
+    WRAPPING_MUL(Group.MATH, true, "wrapping_mul", "wrapping_mul(a, b) -> T",
+        "a * b for two integers of the same type, wrapped around to fit: the low bits of the product, as FNV and other "
+            + "hashes need. Never traps."),
+    SATURATING_ADD(Group.MATH, true, "saturating_add", "saturating_add(a, b) -> T",
+        "a + b for two integers of the same type, or the type's largest or smallest value if it does not fit: "
+            + "saturating_add(u8(250), 10) is 255. Never traps."),
+    SATURATING_SUB(Group.MATH, true, "saturating_sub", "saturating_sub(a, b) -> T",
+        "a - b for two integers of the same type, held to the type's range: saturating_sub(u8(3), 5) is 0. Never traps."),
+    SATURATING_MUL(Group.MATH, true, "saturating_mul", "saturating_mul(a, b) -> T",
+        "a * b for two integers of the same type, held to the type's range. Never traps."),
     SQRT(Group.MATH, true, "sqrt", "sqrt(x) -> f", "Square root of an f32/f64."),
     FLOOR(Group.MATH, true, "floor", "floor(x) -> f", "Largest integral value not greater than x (f32/f64)."),
     CEIL(Group.MATH, true, "ceil", "ceil(x) -> f", "Smallest integral value not less than x (f32/f64)."),

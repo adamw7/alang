@@ -1723,7 +1723,7 @@ public final class Checker {
                 }
                 return x;
             }
-            case GCD, LCM -> {
+            case GCD, LCM, WRAPPING_ADD, WRAPPING_SUB, WRAPPING_MUL, SATURATING_ADD, SATURATING_SUB, SATURATING_MUL -> {
                 if (!arity(c, 2)) return Type.ERROR;
                 noMut(args.get(0));
                 noMut(args.get(1));

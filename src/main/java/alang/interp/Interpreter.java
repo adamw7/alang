@@ -866,6 +866,11 @@ public final class Interpreter {
                 PrimKind k = Type.kind(c.type);
                 return c.builtin == Builtin.GCD ? Stdlib.gcd(k, a, b, c.span) : Stdlib.lcm(k, a, b, c.span);
             }
+            case WRAPPING_ADD, WRAPPING_SUB, WRAPPING_MUL, SATURATING_ADD, SATURATING_SUB, SATURATING_MUL -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                long b = (Long) eval(args.get(1).expr(), slots);
+                return Stdlib.wrapOrSaturate(c.builtin, Type.kind(c.type), a, b);
+            }
             case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
                 long ch = (Long) eval(args.get(0).expr(), slots);
                 return switch (c.builtin) {
