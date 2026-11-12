@@ -1,0 +1,7 @@
+error[E0201]: type mismatch: expected str[_], found str[32]
+ --> tests/errors/E0201_any_capacity_assign.al:4:12
+  |
+4 |     name = value;
+  |            ^^^^^
+  = hint: the capacity of str[_] is not known here, so only an empty str is sure to fit; to copy the text, clear it and append: clear(mut name); append(mut name, value); append traps (R0004) if it does not fit
+

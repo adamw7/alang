@@ -1,4 +1,4 @@
-// expect: E0102 E0108 E0201 E0203 E0204 E0207 E0212 E0214 E0215 E0216
+// expect: E0102 E0108 E0201 E0203 E0204 E0207 E0212 E0215 E0216 W0307
 // Misused standard library functions: each diagnostic names the call to write instead.
 fn trim(s: str[8]) -> str[8] {
     return s;

@@ -1,0 +1,7 @@
+warning[W0306]: function `total` is never called
+ --> tests/errors/W0306_any_capacity.al:2:4
+  |
+2 | fn total(xs: list[i64; _]) -> i64 {
+  |    ^^^^^
+  = hint: call it, test it from a test block, or remove it
+

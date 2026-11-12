@@ -1,0 +1,7 @@
+error[E0217]: `_` stands for any capacity only in the type of a function parameter
+ --> tests/errors/E0217_return.al:2:31
+  |
+2 | fn first(xs: list[i64; _]) -> list[i64; _] {
+  |                               ^^^^^^^^^^^^
+  = hint: write a constant here, e.g. list[i64; 16]; a parameter xs: list[T; _] fits a list[T; 16] with list[T; 16](xs), which traps (R0004) if it is longer
+

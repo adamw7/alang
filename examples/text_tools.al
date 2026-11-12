@@ -58,16 +58,17 @@ tool fn is_palindrome(text: str[256]) -> bool {
     return letters == backwards;
 }
 
-/// The words of a text, without repeats, in alphabetical order (at most 32 words of up to 24 bytes).
+/// The words of a text, without repeats, in alphabetical order. Words longer than 24 bytes are left out,
+/// and so are new words once there are 32.
 tool fn vocabulary(text: str[1024]) -> list[str[24]; 32] {
-    var all: list[str[24]; 32] = words(to_lower(text));
-    sort(mut all);
     var unique: list[str[24]; 32] = [];
-    for w in all {
-        if not contains(unique, w) {
-            push(mut unique, w);
+    // One word at a time: however many words the text has, and however long, nothing traps.
+    for w in words(to_lower(text)) {
+        if len(w) <= 24 and len(unique) < cap(unique) and not contains(unique, w) {
+            push(mut unique, str[24](w));
         }
     }
+    sort(mut unique);
     return unique;
 }
 

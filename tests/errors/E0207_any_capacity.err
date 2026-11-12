@@ -1,0 +1,7 @@
+error[E0207]: `mut` argument must have exactly type list[i64; _], found list[i32; 4]
+ --> tests/errors/E0207_any_capacity.al:9:13
+  |
+9 |     add_one(mut xs);
+  |             ^^^^^^
+  = hint: `mut` parameters cannot convert or widen; only the `_` capacities of list[i64; _] take any value
+

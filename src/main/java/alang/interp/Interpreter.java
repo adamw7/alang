@@ -618,9 +618,39 @@ public final class Interpreter {
         return arith(b.op, Type.kind(b.left.type), Type.kind(b.right.type), l, r, b.span);
     }
 
+    /**
+     * Whether the integer {@code v} of kind {@code k} is between 0 and {@code max}; a u64 above 2^63 is negative
+     * as a long, and so out of range too.
+     */
+    private static boolean inRange(PrimKind k, long v, long max) {
+        return v >= 0 && v <= max;
+    }
+
+    /**
+     * The text fixed, pad_left or pad_right made: as it is when it is written out (see {@link Call#asText}),
+     * otherwise a str of the capacity of where it is stored, which it must fit.
+     */
+    private static StrV text(Call c, byte[] bytes) {
+        if (c.asText) return new StrV(bytes, bytes.length);
+        int cap = ((Type.Str) c.type).cap();
+        if (bytes.length > cap) {
+            throw new Trap(Code.R0004, c.span, c.name + " needs " + bytes.length + " bytes, more than str capacity " + cap);
+        }
+        return new StrV(Arrays.copyOf(bytes, cap), bytes.length);
+    }
+
     private boolean compare(Binary b, Object l, Object r) {
         Type t = b.left.type;
         if (b.op.isEquality()) return Values.equal(l, r, t) == (b.op == BinOp.EQ);
+        if (t instanceof Type.Str) {
+            int c = Stdlib.compare(l, r, t);
+            return switch (b.op) {
+                case LT -> c < 0;
+                case LE -> c <= 0;
+                case GT -> c > 0;
+                default -> c >= 0;
+            };
+        }
         if (Type.isFloat(t)) {
             double x = (Double) l;
             double y = (Double) r;
@@ -690,7 +720,11 @@ public final class Interpreter {
     }
 
     private Object convert(Convert c, Object v) {
-        if (v instanceof StrV s) return Stdlib.parseInt(s, c.target, c.span);
+        if (v instanceof StrV s) {
+            // Not a ?: expression, which would turn the long of an integer into a double.
+            if (c.target.isFloat) return Stdlib.parseFloat(s, c.span);
+            return Stdlib.parseInt(s, c.target, c.span);
+        }
         PrimKind from = Type.kind(c.arg.type);
         PrimKind to = c.target;
         if (from == to) return v;
@@ -876,6 +910,44 @@ public final class Interpreter {
             }
             case TRIM -> {
                 return Stdlib.trim((StrV) eval(args.get(0).expr(), slots));
+            }
+            case TRY_SPLIT, TRY_WORDS -> {
+                ListV parts = (ListV) ref(args.get(0).expr(), slots).get();
+                StrV s = (StrV) eval(args.get(1).expr(), slots);
+                byte[] sep = c.builtin == Builtin.TRY_SPLIT ? Stdlib.pattern(eval(args.get(2).expr(), slots)) : null;
+                return Stdlib.trySplit(parts, s, sep, (Type.ListT) args.get(0).expr().type, c.span);
+            }
+            case FIXED -> {
+                double x = (Double) eval(args.get(0).expr(), slots);
+                long d = (Long) eval(args.get(1).expr(), slots);
+                PrimKind k = Type.kind(args.get(1).expr().type);
+                if (!inRange(k, d, Format.MAX_DECIMALS)) {
+                    throw new Trap(Code.R0013, c.span, "fixed() needs 0 to " + Format.MAX_DECIMALS + " decimals, found "
+                        + IntOps.toString(k, d));
+                }
+                return text(c, Format.formatFixed(x, (int) d).getBytes(StandardCharsets.US_ASCII));
+            }
+            case PAD_LEFT, PAD_RIGHT -> {
+                Expr value = args.get(0).expr();
+                ByteArrayOutputStream text = new ByteArrayOutputStream();
+                Format.format(ByteSink.of(text), eval(value, slots), value.type, false);
+                long width = (Long) eval(args.get(1).expr(), slots);
+                byte fill = (byte) (long) (Long) eval(args.get(2).expr(), slots);
+                PrimKind k = Type.kind(args.get(1).expr().type);
+                if (!(k.signed && width < 0) && !inRange(k, width, Format.MAX_PAD)) {
+                    throw new Trap(Code.R0013, c.span, c.name + "() width must be at most " + Format.MAX_PAD + ", found "
+                        + IntOps.toString(k, width));
+                }
+                byte[] t = text.toByteArray();
+                int pad = (int) Math.max(0, width - t.length);
+                byte[] out = new byte[t.length + pad];
+                int at = c.builtin == Builtin.PAD_LEFT ? pad : 0;
+                System.arraycopy(t, 0, out, at, t.length);
+                Arrays.fill(out, at == 0 ? t.length : 0, at == 0 ? out.length : pad, fill);
+                return text(c, out);
+            }
+            case IS_FLOAT -> {
+                return Stdlib.isFloat((StrV) eval(args.get(0).expr(), slots));
             }
             case IS_INT -> {
                 return Stdlib.isInt((StrV) eval(args.get(0).expr(), slots));

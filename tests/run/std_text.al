@@ -11,10 +11,13 @@ struct Pair {
 /// Parses `key=value` pairs separated by `;`, skipping malformed ones.
 fn parse_pairs(text: str[64]) -> list[Pair; 8] {
     var out: list[Pair; 8] = [];
-    let items: list[str[32]; 8] = split(text, ';');
+    var items: list[str[32]; 8] = [];
+    let fits: bool = try_split(mut items, text, ';');
+    assert fits;
     for item in items {
-        let kv: list[str[32]; 2] = split(trim(item), "=");
-        if len(kv) == 2 and is_int(trim(kv[1])) {
+        var kv: list[str[32]; 2] = [];
+        let ok: bool = try_split(mut kv, trim(item), "=");
+        if ok and len(kv) == 2 and is_int(trim(kv[1])) {
             let key: str[32] = trim(kv[0]);
             push(mut out, Pair(key: slice(key, 0, min(len(key), 8)), value: i64(trim(kv[1]))));
         }

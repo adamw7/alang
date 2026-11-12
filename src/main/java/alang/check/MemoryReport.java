@@ -42,6 +42,13 @@ public final class MemoryReport {
         for (ConstDecl c : program.itemsOf(ConstDecl.class)) statics = Layout.add(statics, Layout.size(c.type));
         MemoryReport r = new MemoryReport(statics);
         for (FnDecl f : program.itemsOf(FnDecl.class)) {
+            if (f.generic()) {
+                // Its frame depends on the capacities: each instance has its own, and the calls run those.
+                for (FnDecl inst : f.instances.values()) {
+                    r.routines.add(new Entry("fn " + Checker.instanceLabel(inst), inst, r.frame(inst), r.stack(inst)));
+                }
+                continue;
+            }
             Entry e = new Entry("fn " + f.name, f, r.frame(f), r.stack(f));
             r.routines.add(e);
             if (f.tool || f.name.equals("main")) r.roots.add(e);

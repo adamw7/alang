@@ -1,7 +1,7 @@
-error[E0203]: `<` needs numbers, found [i64; 2] and [i64; 2]
+error[E0203]: `<` needs two numbers or two strs, found [i64; 2] and [i64; 2]
  --> tests/errors/E0203_array_order.al:5:23
   |
 5 |     let first: bool = a < b;
   |                       ^^^^^
-  = hint: only numbers are ordered; other values are compared with == and !=, so compare the numbers in them
+  = hint: only numbers and strs are ordered; other values are compared with == and !=, so compare the numbers in them
 

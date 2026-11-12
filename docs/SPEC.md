@@ -56,8 +56,9 @@ nearest-even, directly to `f32` or `f64`; one that would round to `inf` is E0202
 | `list[T; N]` | list of 0..N elements, stored inline | 4 + N × size(T) (aligned) |
 | `Name` | a declared `struct` or `enum` | sum of fields / tag + largest payload |
 
-`N` is a compile-time integer constant (a literal or a `const`) from 1 to 1 048 576. There are no
-pointer, reference, function, generic or dynamically sized types.
+`N` is a compile-time integer constant (a literal or a `const`) from 1 to 1 048 576; only in the type of
+a function parameter may it be `_`, any capacity (§5). There are no pointer, reference, function, generic
+or dynamically sized types.
 
 All types are **values**: assigning, passing, returning, storing in a field or element, and iterating
 all copy, so two variables never share storage (except through a `mut` parameter, §5).
@@ -215,6 +216,32 @@ fn shift(p: mut Point, dx: f64) {               // p refers to the caller's vari
 - **No recursion (E0401):** the call graph, contracts included, must be acyclic. Use a loop and a
   fixed-capacity work list.
 
+**Any capacity.** A `_` in place of a capacity or length in the type of a parameter, as in
+`fn total(xs: list[i64; _])`, `fn shout(s: mut str[_])` or `fn longest(rows: [str[_]; _])`, makes the
+function take a str, list or array of any capacity there; each `_` stands for its own. A call fixes them
+from its arguments: a read-only argument gives its capacity, and a `mut` one must have exactly the
+parameter's type apart from the `_`s. Element types never change: a `list[i32; 4]` does not fit a
+`list[i64; _]` (E0201, E0207).
+
+Inside the function the capacity is not known. `cap(s)` is the caller's, and `push` and `append` trap
+(R0004) when it is full, as they would in the caller. To keep the value in a variable, field or return
+value, which have constant capacities, convert it, `str[64](s)`, which traps (R0004) if it is longer; only
+an empty value (`""`, `[]`) or one of the same parameter can be assigned to it. The checker checks the
+function once, as written; each call with new capacities then runs a copy of it made for them, an
+**instance**, which the interpreter runs, the C backend compiles and `alang check --memory` lists:
+`total(list[i64; 4])`. A `_` anywhere else is E0217: in a variable, field, return type, constant or
+conversion, in a parameter of a `tool fn` (its JSON schema states the capacity) and in the input of `main`.
+
+```
+fn total(xs: list[i64; _]) -> i64 {
+    var sum: i64 = 0;
+    for x in xs {
+        sum += x;
+    }
+    return sum;
+}
+```
+
 **Contracts.** `requires` clauses are checked on entry, in order; a failure is trap R0006, reported **at
 the call site** (the caller broke the contract). `ensures` clauses are checked on every return, with
 `result` as the return value and `mut` parameters at their final values; a failure is trap R0007,
@@ -247,6 +274,8 @@ So `a + b * c`, `x < y and y < z`, `not done`, `(flags & MASK) == 0` and `(a and
 while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax errors with a fix hint.
 
 - `+ - * /` take two numbers of the **same type**, `%` two integers; mixing types is an error.
+- `< <= > >=` take two numbers of the same type, or two strs of any capacities, ordered byte by byte
+  (unsigned), a prefix first: the order of `sort`, C's `strcmp` and `<` on strs in Python or Rust.
 - Integer arithmetic is **checked**: overflow traps (R0001), division or remainder by zero traps (R0002).
   Division truncates toward zero; `%` has the dividend's sign; `MIN / -1` overflows and `MIN % -1` is `0`.
 - Shifts: the left operand gives the type; the amount may be any integer type and must be in
@@ -268,7 +297,7 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 | f32 → f64 | exact |
 | bool → integer | `true` → 1, `false` → 0 |
 | str → integer | decimal text: an optional `+` or `-`, then digits; other text or out of range traps (R0009) |
-| str → float | not allowed (E0214); there is no float parsing: `f64(i64(s))` |
+| str → f64 | decimal text: an optional `+` or `-`, then digits with at most one `.` among them (`2.5`, `-0.5`, `3.`, `.25`; no exponent); the nearest f64. It converts when the digits from the first to the last that is not 0 make a number of at most 2^53, between about 1e-22 and 1e37 in size, so that one correctly rounded operation gives that f64 on every backend: 15 significant digits always do. Other text traps (R0009); `is_float(s)` says first. For an f32, `f32(f64(s))`. |
 | anything → bool | not allowed (E0214); compare instead |
 | `str[M]` → `str[N]` | the same bytes; more than N bytes traps (R0004) |
 | `list[T; M]` → `list[T; N]` | the same elements, of the same type T; more than N traps (R0004) |
@@ -342,8 +371,9 @@ for byte with the interpreter under several compilers and optimization levels.
 
 ## 9. Builtins and the standard library
 
-Builtin functions come with the language. They are polymorphic where a user function cannot be (there
-are no generics): `len` takes any array, list or str, `sort` any list. The core builtins print and change
+Builtin functions come with the language. They are polymorphic where a user function cannot be (a user
+function takes any capacity, §5, but not any element type): `len` takes any array, list or str, `sort`
+any list. The core builtins print and change
 lists and strings; the rest are the standard library: math, characters, text and collections. Each
 behaves the same in the interpreter and the C backend, traps and messages included, and each checks its
 arguments in a fixed order, so the same bad call always gives the same trap. `alang explain --all` lists
@@ -408,10 +438,14 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `words(s) -> list[str[K]; M]` | The pieces of `s` between runs of ASCII whitespace; never empty pieces. |
 | `join(parts, sep) -> str[N]` | The strs of an array or list, with the pattern `sep` between them. |
 | `replace(s, from, to) -> str[N]` | `s` with every occurrence of the pattern `from`, left to right and not overlapping, replaced by the pattern `to`. Traps if `from` is empty (R0013). |
+| `try_split(mut parts, s, sep) -> bool` | `split(s, sep)` into the list `parts`, replacing what it held: true if every piece fits, otherwise false with `parts` left empty, never a trap. |
+| `try_words(mut parts, s) -> bool` | `words(s)` into the list `parts`, as `try_split` does. |
 | `is_int(s) -> bool` | Whether `i64(s)` would succeed: decimal text that fits an `i64`. |
+| `is_float(s) -> bool` | Whether `f64(s)` would succeed: decimal text that converts exactly (§6). |
+| `fixed(x, n)`, `pad_left(v, w, fill)`, `pad_right(v, w, fill)` | Formatted text (§9.6). |
 
 **Results typed by where they are stored.** The size of what `split`, `words`, `join` and `replace`
-build depends on the data, so each takes its type, capacities included, from the variable it initializes
+(and `fixed`, `pad_left` and `pad_right` when they are not written out at once, §9.6) build depends on the data, so each takes its type, capacities included, from the variable it initializes
 or is assigned to, or from the function's return type. The call must be the whole right-hand side of a
 typed `let`/`var`, a constant, an assignment with `=`, or a `return`, or for `split` and `words`, what a
 `for` loop goes through; anywhere else is E0216. A result that does not fit traps (R0004): `split` and
@@ -447,21 +481,42 @@ test "an overlong line is counted, not trapped on" {
 }
 ```
 
-To keep the pieces in a list, `count(s, sep) + 1` is how many `split` makes, and a `list[str[K]; M]`
-whose K is the capacity of `s` fits any piece.
+To keep the pieces in a list, use `try_split` (or `try_words`): it returns false, and leaves the list
+empty, when they do not fit, instead of trapping. `split` or `words` of text that is not a constant,
+stored in a list its pieces may not fit, is warning W0307: a `str[K]` splits into up to K / L + 1 pieces
+on a separator of L bytes, and into up to (K + 1) / 2 words, each of up to K bytes.
 
-**Text to integers.** A conversion from a str to an integer type (§6) reads decimal text: an optional `+`
+```alang
+/// The second field of each "a,b,c" line; lines with another number of fields are left out.
+tool fn second_fields(text: str[1024]) -> list[str[16]; 32] {
+    var out: list[str[16]; 32] = [];
+    for line in split(text, '\n') {
+        var fields: list[str[16]; 3] = [];
+        let ok: bool = try_split(mut fields, line, ',');
+        if ok and len(fields) == 3 and len(out) < cap(out) {
+            push(mut out, fields[1]);
+        }
+    }
+    return out;
+}
+
+test "lines that do not fit are left out" {
+    assert second_fields("a,b,c\nd,e\nf,g,h,i\nj,k,l") == ["b", "k"];
+}
+```
+
+**Text to numbers.** A conversion from a str to an integer type (§6) reads decimal text: an optional `+`
 or `-`, then at least one ASCII digit, and nothing else, so `trim` it first. Other text, or a value out of
 the type's range, traps (R0009). `is_int(s)` says whether `i64(s)` succeeds; for a narrower type, convert
-to `i64` and check the range.
+to `i64` and check the range. `f64(s)` reads a decimal number such as `19.99` (§6), and `is_float(s)`
+says whether it succeeds.
 
 ```alang
 /// Sums the integers in a comma-separated list, skipping empty items; -1 if an item is not an integer.
 tool fn sum_csv(line: str[256]) -> i64 {
-    let items: list[str[32]; 64] = split(line, ',');
     var total: i64 = 0;
-    for item in items {
-        let t: str[32] = trim(item);
+    for item in split(line, ',') {
+        let t: str[256] = trim(item);
         if len(t) == 0 {
             continue;
         }
@@ -518,6 +573,20 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
 - a `u8` (a character literal too) as a number: add a character to a string with `push(mut s, 'a')`;
   `append(mut s, 'a')` appends `97` (warning W0303).
 
+Three functions format text with a width or a number of decimals:
+
+| Function | Text |
+|----------|------|
+| `fixed(x, n)` | The f32 or f64 `x` with exactly `n` digits after the point, 0 to 20 (otherwise R0013), and no point for 0: its exact binary value rounded half to even, as above. `fixed(3.14159, 2)` is `3.14`, `fixed(2.5, 0)` is `2`, `fixed(2.675, 2)` is `2.67` (2.675 is stored as 2.67499...); `nan`, `inf`, `-inf`. |
+| `pad_left(v, w, fill)` | The text of the number, bool, str or `fixed(...)` `v`, as `print` writes it, with the `u8` byte `fill` in front up to `w` bytes; longer text is kept whole. `pad_left(7, 3, '0')` is `007`, `pad_left(-42, 6, '0')` is `000-42`. A width above 1 048 576 traps (R0013). |
+| `pad_right(v, w, fill)` | The same with the fill after the text: `pad_right("ab", 4, '.')` is `ab..`. |
+
+They build no str when they are an argument of `print` or `append`, or the value `pad_left` or
+`pad_right` pads: the text is written straight out, `append(mut s, "$", c / 100, ".", pad_left(c % 100, 2, '0'))`.
+Anywhere else they take the type of a typed str they are stored in, as `join` does (§9.4), and trap
+(R0004) when the text does not fit it: `let cell: str[8] = pad_left(n, 6, ' ');`. Elsewhere they are
+E0216. Their arguments are evaluated and checked before any of the text is written.
+
 ## 10. Tools: calling ALang from an agent
 
 A `tool fn` can be called with JSON; only those of the file given on the command line are tools, not
@@ -549,6 +618,17 @@ UTF-8; other bytes are an error); with nothing they are `{}`. `stdout` keeps the
 past that, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are added. `steps` is the
 number of statements the call executed (as for `--max-steps`), a cost that is the same on every run;
 a call that ran into a trap or `bad_result` reports it too, one refused before it ran does not.
+
+`alang fuzz file.al` calls every tool, and a `fn main(input: str[N])` with its input, with arguments at
+the limits of the schema: the plainest arguments (those of the first `input_examples`, if any), then one
+parameter at a time over values of its type within its bounds: the smallest and largest numbers, `0`, `1`
+and `-1`; empty and full strs of many shapes (one long word, words that all differ separated by spaces,
+commas, semicolons, tabs or lines, "name number" and "key: value" lines, rows of 1 to 6 fields, numbers,
+separators alone); empty, one-element and full lists and arrays; every enum variant; each struct field in
+turn. It reports each distinct trap, by code and place, with the first arguments that hit it, and exits
+with 1 if there is one. A failed `requires` of the tool itself is the caller's fault and is left out; one
+of a function it calls is not. The calls are the same on every run, at most 200 per tool, each within
+`--max-steps`.
 
 | ALang type | JSON |
 |------------|------|

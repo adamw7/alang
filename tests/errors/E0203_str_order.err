@@ -1,7 +1,7 @@
-error[E0203]: `<` needs numbers, found str[8] and str[8]
+error[E0203]: `<` needs two numbers or two strs, found str[8] and i64
  --> tests/errors/E0203_str_order.al:5:23
   |
-5 |     let first: bool = a < b;
-  |                       ^^^^^
-  = hint: strings are compared only with == and !=; to order them, compare byte by byte in a loop (s[i] is a u8)
+5 |     let first: bool = a < 'b';
+  |                       ^^^^^^^
+  = hint: a str is ordered only against another str; compare one byte, s[i], with a character such as 'a'
 

@@ -1,0 +1,16 @@
+$19.05 $59.97 $0.07
+3.14 2 4 0.12 2.67
+-0.00 0.1000000015 100000000000000000000.000 123.45600000000000306954
+nan inf -inf -0
+[   ab] [ab...] [toolong]
+[   20.00] [true--] [000-42]
+<<x>>> ____2.5 7
+007 0.3333333333 3 8
+apple      1.50
+kiwi      12.25
+fig        0.33
+not a number f64 converts: 1e5
+not a number f64 converts: 1.2.3
+not a number f64 converts: 12345678901234567
+29.865
+true true true true true false

@@ -383,7 +383,7 @@ class CliTest {
     void mainReadsTheStandardInput() throws IOException {
         Path p = write("count.al", """
             fn main(input: str[8]) {
-                let lines: list[str[8]; 4] = split(trim(input), '\\n');
+                let lines: list[str[8]; 9] = split(trim(input), '\\n');
                 print(len(input), " bytes, ", len(lines), " lines");
             }
             """);
@@ -1143,5 +1143,134 @@ class CliTest {
         Result r = run("run", p.toString());
         assertEquals(0, r.code(), r.err());
         assertEquals(expected.toString(), r.out());
+    }
+
+    @Test
+    void fuzzFindsATrapTheTestsMiss() throws IOException {
+        // The test passes, but a text of more than 8 different words fills the list: the trap the tool's
+        // callers would hit with input its schema accepts.
+        Path p = write("count.al", """
+            struct Count {
+                word: str[16],
+                n: i64,
+            }
+
+            /// Counts each word.
+            tool fn counts(text: str[256]) -> list[Count; 8] {
+                var out: list[Count; 8] = [];
+                for w in words(text) {
+                    if len(w) > 16 {
+                        continue;
+                    }
+                    var found: bool = false;
+                    for i in 0..len(out) {
+                        if out[i].word == w {
+                            out[i].n += 1;
+                            found = true;
+                        }
+                    }
+                    if not found {
+                        push(mut out, Count(word: str[16](w), n: 1));
+                    }
+                }
+                return out;
+            }
+
+            test "counts" {
+                assert len(counts("a b a")) == 2;
+            }
+            """);
+        Result r = run("fuzz", p.toString());
+        assertEquals(1, r.code(), r.out() + r.err());
+        assertTrue(r.out().startsWith("tool counts: "), r.out());
+        assertTrue(r.out().contains("trap[R0004]: push to a full list (capacity 8)\n"), r.out());
+        assertTrue(r.out().contains("  = arguments: {\"text\": \"a b c d e f g h i j k l m n o p q r s t u v w x … (255 bytes)\"}\n"),
+            r.out());
+        assertTrue(r.out().matches("(?s).*\nfuzz: 1 trap\\(s\\) in \\d+ call\\(s\\)\n"), r.out());
+
+        Result j = run("fuzz", p.toString(), "--json");
+        assertEquals(1, j.code());
+        Map<?, ?> report = (Map<?, ?>) Json.parse(j.out());
+        assertEquals(false, report.get("ok"));
+        Map<?, ?> entry = (Map<?, ?>) ((List<?>) report.get("entries")).get(0);
+        assertEquals("counts", entry.get("name"));
+        assertEquals("tool", entry.get("kind"));
+        Map<?, ?> trap = (Map<?, ?>) ((List<?>) entry.get("traps")).get(0);
+        assertEquals("R0004", trap.get("code"));
+        String text = (String) ((Map<?, ?>) trap.get("arguments")).get("text");
+        assertTrue(text.length() <= 256 && text.startsWith("a b c d "), text);
+    }
+
+    @Test
+    void fuzzLeavesOutTheToolsOwnPreconditionButNotANestedOne() throws IOException {
+        Path p = write("pre.al", """
+            fn halve(n: i64) -> i64
+                requires n % 2 == 0
+            {
+                return n / 2;
+            }
+
+            /// Halves an even count of at most 100.
+            tool fn half(n: i64) -> i64
+                requires n >= 0 and n <= 100
+            {
+                return halve(n);
+            }
+            """);
+        Result r = run("fuzz", p.toString(), "--json");
+        assertEquals(1, r.code(), r.out());
+        Map<?, ?> entry = (Map<?, ?>) ((List<?>) ((Map<?, ?>) Json.parse(r.out())).get("entries")).get(0);
+        List<?> traps = (List<?>) entry.get("traps");
+        assertEquals(1, traps.size(), r.out());
+        Map<?, ?> trap = (Map<?, ?>) traps.get(0);
+        assertEquals("R0006", trap.get("code"));
+        assertEquals("precondition of `halve` failed: requires n % 2 == 0", trap.get("message"));
+        // Only arguments within the tool's own bounds are tried.
+        BigInteger n = (BigInteger) ((Map<?, ?>) trap.get("arguments")).get("n");
+        assertTrue(n.signum() >= 0 && n.intValue() <= 100 && n.intValue() % 2 == 1, n.toString());
+    }
+
+    @Test
+    void fuzzFeedsInputToMainAndPassesARobustProgram() throws IOException {
+        Path naive = write("naive.al", """
+            fn main(input: str[512]) {
+                for line in split(input, '\\n') {
+                    var parts: list[str[16]; 2] = [];
+                    let ok: bool = try_split(mut parts, line, ',');
+                    if ok and len(parts) == 2 {
+                        print(parts[0]);
+                    }
+                }
+                let all: list[str[512]; 8] = split(input, '\\n');
+                print(len(all));
+            }
+            """);
+        Result r = run("fuzz", naive.toString());
+        assertEquals(1, r.code(), r.out() + r.err());
+        assertTrue(r.out().startsWith("fn main: "), r.out());
+        assertTrue(r.out().contains("trap[R0004]: split makes more than 8 pieces"), r.out());
+        assertTrue(r.out().contains("  = input: \""), r.out());
+
+        Path robust = write("robust.al", """
+            fn main(input: str[512]) {
+                var n: i64 = 0;
+                for line in split(input, '\\n') {
+                    var parts: list[str[16]; 2] = [];
+                    let ok: bool = try_split(mut parts, line, ',');
+                    if ok and len(parts) == 2 {
+                        n += 1;
+                    }
+                }
+                print(n);
+            }
+            """);
+        Result ok = run("fuzz", robust.toString());
+        assertEquals(0, ok.code(), ok.out() + ok.err());
+        assertTrue(ok.out().matches("fn main: \\d+ call\\(s\\), no traps\nfuzz: no traps in \\d+ call\\(s\\)\n"), ok.out());
+
+        Path none = write("none.al", "fn main() {\n    print(1);\n}\n");
+        Result n = run("fuzz", none.toString());
+        assertEquals(0, n.code());
+        assertEquals("fuzz: " + none + " has no `tool fn` and no fn main(input: str[N]) to call\n", n.out());
     }
 }

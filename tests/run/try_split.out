@@ -1,0 +1,10 @@
+north | widget | 120
+skipped (false, 0): south, gadget, 75, extra
+skipped (false, 0): north, a-very-long-product-name, 30
+skipped (true, 1): 
+east | gizmo | 9
+skipped (true, 1): 
+2 good, 4 skipped
+true ["ab", "cd"]
+false []
+false [] 2 -1 -1 1

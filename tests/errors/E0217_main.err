@@ -1,0 +1,7 @@
+error[E0217]: the input of `main` needs a constant capacity, not `_`
+ --> tests/errors/E0217_main.al:2:16
+  |
+2 | fn main(input: str[_]) {
+  |                ^^^^^^
+  = hint: write the most bytes of input the program accepts: input: str[4096]
+

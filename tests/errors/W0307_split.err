@@ -1,0 +1,21 @@
+warning[W0307]: split() may not fit list[str[80]; 64]: from a str[4096] it can make up to 4097 pieces of up to 4096 bytes, and one that does not fit traps (R0004)
+ --> tests/errors/W0307_split.al:4:36
+  |
+4 |     let lines: list[str[80]; 64] = split(input, '\n');
+  |                                    ^^^^^^^^^^^^^^^^^^
+  = hint: to handle any text, use try_split, which returns false instead of trapping: var parts: list[str[80]; 64] = []; let ok: bool = try_split(mut parts, input, '\n'); or go through the pieces one at a time: for p in split(input, '\n') { }
+
+warning[W0307]: split() may not fit list[str[16]; 3]: from a str[80] it can make up to 41 pieces of up to 80 bytes, and one that does not fit traps (R0004)
+ --> tests/errors/W0307_split.al:6:40
+  |
+6 |         let fields: list[str[16]; 3] = split(line, ", ");
+  |                                        ^^^^^^^^^^^^^^^^^
+  = hint: to handle any text, use try_split, which returns false instead of trapping: var parts: list[str[16]; 3] = []; let ok: bool = try_split(mut parts, line, ", "); or go through the pieces one at a time: for p in split(line, ", ") { }
+
+warning[W0307]: words() may not fit list[str[16]; 8]: from a str[80] it can make up to 40 words of up to 80 bytes, and one that does not fit traps (R0004)
+ --> tests/errors/W0307_split.al:7:36
+  |
+7 |         let ws: list[str[16]; 8] = words(line);
+  |                                    ^^^^^^^^^^^
+  = hint: to handle any text, use try_words, which returns false instead of trapping: var ws: list[str[16]; 8] = []; let ok: bool = try_words(mut ws, line); or go through the pieces one at a time: for p in words(line) { }
+

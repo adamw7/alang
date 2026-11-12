@@ -57,6 +57,9 @@ public final class Main {
                                        example arguments from the tests' calls
           call <file.al> <tool> [json] call a tool with a JSON object of arguments (`-`: read it from
                                        stdin; omitted: {}, for a tool without parameters)
+          fuzz <file.al>               call every `tool fn`, and a fn main that takes input, with arguments
+                                       at their limits (empty and full strs and lists of many shapes, the
+                                       smallest and largest numbers); report each trap and what hit it
           serve <file.al>              serve the `tool fn` functions to an agent host over MCP: JSON-RPC
                                        messages, one per line, on stdin and stdout
           build <file.al> [-o out.c]   compile to heap-free C99 (no malloc; stack and static data only)
@@ -65,11 +68,11 @@ public final class Main {
           version                      print the version
 
         options (an option a command does not take is a usage error):
-          --json             machine-readable output (check, run, test, tools; call always prints JSON)
-          --max-steps N      interpreter statement budget (run, test, call, tools, serve; default %d,
+          --json             machine-readable output (check, run, test, tools, fuzz; call always prints JSON)
+          --max-steps N      interpreter statement budget (run, test, call, tools, fuzz, serve; default %d,
                              0 = unlimited)
           --max-stack BYTES  memory budget: the worst-case stack of each entry point, and the
-                             constants (check, run, test, tools, call, serve, build; default %d = 8 MiB,
+                             constants (check, run, test, tools, call, fuzz, serve, build; default %d = 8 MiB,
                              0 = unlimited)
           --filter TEXT      only run tests whose name contains TEXT (test)
           --memory           print the per-function memory table (check)
@@ -88,6 +91,7 @@ public final class Main {
         Map.entry("test", Set.of("--json", "--filter", "--max-steps", "--max-stack")),
         Map.entry("tools", Set.of("--json", "--max-steps", "--max-stack")),
         Map.entry("call", Set.of("--json", "--max-steps", "--max-stack")),
+        Map.entry("fuzz", Set.of("--json", "--max-steps", "--max-stack")),
         Map.entry("serve", Set.of("--max-steps", "--max-stack")),
         Map.entry("build", Set.of("-o", "--max-stack")),
         Map.entry("explain", Set.of()),
@@ -183,6 +187,7 @@ public final class Main {
                 case "test" -> test(file());
                 case "tools" -> tools(file());
                 case "call" -> call(file());
+                case "fuzz" -> fuzz(file());
                 case "serve" -> serve(file());
                 case "build" -> build(file());
                 case "explain" -> explain();
@@ -689,6 +694,75 @@ public final class Main {
         // The statements the call executed: a deterministic measure of its cost, as `run --json` reports.
         j.put("steps", in.steps());
         return j;
+    }
+
+    /**
+     * Calls the tools, and a main that takes input, at their limits ({@link Fuzz}). Exit code 1 when a call
+     * traps: each distinct trap is reported once, with the first arguments that hit it.
+     */
+    private int fuzz(Source src) {
+        Frontend.Result r = compile(src);
+        Map<String, Object> j = new LinkedHashMap<>();
+        j.put("ok", false);
+        j.put("file", src.path);
+        if (!report(r, j)) return failCompile(r, j);
+        List<Fuzz.Entry> entries = Fuzz.run(r.program(), src, maxSteps);
+        int calls = 0;
+        int traps = 0;
+        List<Object> list = new ArrayList<>();
+        StringBuilder text = new StringBuilder();
+        for (Fuzz.Entry e : entries) {
+            calls += e.calls();
+            traps += e.findings().size();
+            List<Object> found = new ArrayList<>();
+            text.append(e.tool() ? "tool " : "fn ").append(e.name()).append(": ").append(e.calls()).append(" call(s), ")
+                .append(e.findings().isEmpty() ? "no traps" : e.findings().size() + " trap(s)").append('\n');
+            for (Fuzz.Finding f : e.findings()) {
+                Map<String, Object> t = trapJson(src, f.trap());
+                t.put(e.tool() ? "arguments" : "input", f.input());
+                found.add(t);
+                String trap = renderTrap(src, f.trap());
+                text.append(trap.endsWith("\n") ? trap : trap + "\n");
+                text.append("  = ").append(e.tool() ? "arguments: " : "input: ").append(abbreviated(f.input())).append("\n\n");
+            }
+            list.add(Json.obj("name", e.name(), "kind", e.tool() ? "tool" : "main", "calls", e.calls(), "traps", found));
+        }
+        if (json) {
+            j.put("ok", traps == 0);
+            j.put("calls", calls);
+            j.put("entries", list);
+            line(out, Json.write(j));
+        } else if (entries.isEmpty()) {
+            line(out, "fuzz: " + src.path + " has no `tool fn` and no fn main(input: str[N]) to call");
+        } else {
+            out.print(text);
+            line(out, "fuzz: " + (traps == 0 ? "no traps" : traps + " trap(s)") + " in " + calls + " call(s)");
+        }
+        return traps == 0 ? 0 : 1;
+    }
+
+    /** JSON with each string of more than 60 characters cut short: "a b c d … (1024 bytes)". */
+    private static String abbreviated(Object v) {
+        return Json.write(shorten(v));
+    }
+
+    private static Object shorten(Object v) {
+        if (v instanceof String s && s.length() > 60) {
+            return s.substring(0, 48) + "… (" + s.getBytes(StandardCharsets.UTF_8).length + " bytes)";
+        }
+        if (v instanceof List<?> l && l.size() > 8) {
+            List<Object> out = new ArrayList<>();
+            for (int i = 0; i < 6; i++) out.add(shorten(l.get(i)));
+            out.add("… (" + l.size() + " elements)");
+            return out;
+        }
+        if (v instanceof List<?> l) return l.stream().map(Main::shorten).toList();
+        if (v instanceof Map<?, ?> m) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : m.entrySet()) out.put(String.valueOf(e.getKey()), shorten(e.getValue()));
+            return out;
+        }
+        return v;
     }
 
     /**
