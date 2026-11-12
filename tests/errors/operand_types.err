@@ -163,7 +163,7 @@ error[E0201]: type mismatch: expected list[i64; 2], found list[i64; 4]
    |
 37 |     let a26: list[i64; 2] = big;
    |                             ^^^
-  = hint: lists convert only to lists of the same element type with equal or larger capacity
+  = hint: a list[i64; 4] may not fit in list[i64; 2]; convert it: list[i64; 2](big), which traps (R0004) if it has more than 2 elements, or increase the capacity of the target
 
 error[E0201]: type mismatch: expected list[i64; 2], found [i64; 2]
   --> tests/errors/operand_types.al:38:29

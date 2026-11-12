@@ -1,11 +1,12 @@
 // expect: E0402
-// max-stack: 1000
-// `show` gets xs by address (8 bytes), but the loop iterates over a 504-byte copy of it. With main's
-// 504-byte literal that is 1024 bytes; without counting the copy it would be 520.
-fn show(xs: [i64; 63]) {
+// max-stack: 1400
+// The loop changes `xs`, so it goes through a 504-byte copy of it, taken before the first iteration.
+// With xs itself and the literal that fills it (504 bytes each) that is 1512 bytes; without counting the
+// copy it would be 1008. A loop that leaves its collection alone needs no copy (tests/stack/loops.al).
+fn main() {
+    var xs: [i64; 63] = [0; 63];
     for x in xs {
-        print(x);
+        xs[0] += x;
     }
+    print(xs[0]);
 }
-
-fn main() { show([0; 63]); }

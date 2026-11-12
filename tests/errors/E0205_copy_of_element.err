@@ -1,0 +1,21 @@
+error[E0205]: cannot assign to `it`, it is immutable
+  --> tests/errors/E0205_copy_of_element.al:11:5
+   |
+11 |     it.qty += 1;
+   |     ^^
+  = hint: `it` is a copy of `items[0]`; to change `items[0]` itself, write `items[0].qty` instead of `it.qty` (declaring `it` with `var` would change only the copy)
+
+error[E0205]: `it` is immutable and cannot be passed as `mut`
+  --> tests/errors/E0205_copy_of_element.al:12:14
+   |
+12 |     push(mut it.tags, "sale");
+   |              ^^
+  = hint: `it` is a copy of `items[0]`; to change `items[0]` itself, write `items[0].tags` instead of `it.tags` (declaring `it` with `var` would change only the copy)
+
+error[E0205]: cannot assign to `n`, it is immutable
+  --> tests/errors/E0205_copy_of_element.al:14:5
+   |
+14 |     n = 2;
+   |     ^
+  = hint: declare it with `var` instead of `let`
+

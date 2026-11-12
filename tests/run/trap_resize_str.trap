@@ -1,0 +1,2 @@
+R0004 3:25
+a str of 12 bytes does not fit in str[4]

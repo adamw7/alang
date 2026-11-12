@@ -57,6 +57,9 @@ Codes are never reused for a different meaning.
 | [W0301](#w0301) | unreachable code |
 | [W0302](#w0302) | unused result |
 | [W0303](#w0303) | character literal printed as a number |
+| [W0304](#w0304) | unused variable |
+| [W0305](#w0305) | variable changed but never read |
+| [W0306](#w0306) | unused function |
 | [R0001](#r0001) | integer overflow |
 | [R0002](#r0002) | division by zero |
 | [R0003](#r0003) | index out of bounds |
@@ -263,7 +266,7 @@ let p: Point = Point(x: 1);  // error: missing field `y`
 
 ## E0214
 
-**invalid conversion**: Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers. Nothing converts to bool: compare instead (x != 0).
+**invalid conversion**: Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers. Nothing converts to bool: compare instead (x != 0). str[N](s) and list[T; N](xs) change only the capacity of a str or of a list of T.
 
 ```
 let b: bool = bool(1);  // error: write 1 != 0
@@ -281,7 +284,7 @@ print(top);
 
 ## E0216
 
-**type cannot be inferred**: The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list.
+**type cannot be inferred**: The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list. split, words, join and replace take their type from the variable they are stored in; split and words may also be what a for loop goes through.
 
 ```
 print([]);  // error
@@ -465,6 +468,31 @@ append(mut s, 'a');  // appends "97"
 push(mut s, 'a');    // appends "a"
 ```
 
+## W0304
+
+**unused variable**: A local variable or match binding is never used. Remove it; in a match pattern, write _ in its place. Unused-code warnings (W0304-W0306) come once the program has no errors, and leave alone names that start with _.
+
+```
+let total: i64 = 0;  // warning: never used
+```
+
+## W0305
+
+**variable changed but never read**: A variable is assigned or changed, but its value is never read, so the work is lost. Often it is a copy: `var p: Item = items[0]; p.qty += 1;` changes the copy, not items[0]; write items[0].qty += 1 instead.
+
+```
+var it: Item = items[0];
+it.qty += 1;  // warning: items[0] is unchanged
+```
+
+## W0306
+
+**unused function**: A function of the file being checked is never called: not by main, a tool, a test or another function. Call it, test it, or remove it. Functions of imported files, `main` and tool fns are left alone.
+
+```
+fn helper() -> i64 { return 1; }  // warning: never called
+```
+
 ## R0001
 
 **integer overflow**: An arithmetic result does not fit its type. ALang never wraps silently. Use a wider type, or check before computing.
@@ -493,7 +521,7 @@ let x: i32 = a[3];  // trap
 
 ## R0004
 
-**capacity exceeded**: A push/append does not fit in the list or string capacity, or the standard input is longer than the `str[N]` parameter of fn main. Capacities are part of the type: list[T; N], str[N].
+**capacity exceeded**: A push/append does not fit in the list or string capacity, a str[N](s) or list[T; N](xs) conversion gets more than N bytes or elements, or the standard input is longer than the `str[N]` parameter of fn main. Capacities are part of the type: list[T; N], str[N].
 
 ```
 var s: str[4] = "abc";
@@ -633,10 +661,11 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `ends_with(s, suffix) -> bool` | Whether a str ends with a str or u8 byte. |
 | `slice(xs, from, to) -> T` | A copy of the elements from..to (half-open) of a str, list or array, of the same type (a list for an array). Traps (R0003) unless 0 <= from <= to <= len(xs). |
 | `trim(s) -> str[N]` | s without the ASCII whitespace at its start and end. |
-| `split(s, sep) -> list[str[K]; M]` | The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. Its type is that of the variable it is stored in. Traps if a piece or the count does not fit. |
-| `words(s) -> list[str[K]; M]` | The pieces of s between runs of ASCII whitespace, never empty. Its type is that of the variable it is stored in. Traps if a word or the count does not fit. |
+| `split(s, sep) -> list[str[K]; M]` | The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. Its type is that of the variable it is stored in. Traps if a piece or the count does not fit; for p in split(s, sep) goes through the pieces one at a time instead, each a str of the capacity of s, and never traps on their size or number. |
+| `words(s) -> list[str[K]; M]` | The pieces of s between runs of ASCII whitespace, never empty. Its type is that of the variable it is stored in. Traps if a word or the count does not fit; for w in words(s) goes through the words one at a time instead, and never traps on their size or number. |
 | `join(parts, sep) -> str[N]` | The strs of an array or list with sep (a str or u8 byte) between them. Its type is that of the variable it is stored in. Traps if the result does not fit. |
 | `replace(s, from, to) -> str[N]` | s with every occurrence of from (a non-empty str or a u8 byte) replaced by to, left to right. Its type is that of the variable it is stored in. Traps if the result does not fit. |
+| `count(xs, x) -> i64` | How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right (traps (R0013) if the str is empty); in an array or list, the elements equal to x. |
 | `is_int(s) -> bool` | Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it. |
 
 ### Collections

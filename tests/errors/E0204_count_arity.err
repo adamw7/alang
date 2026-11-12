@@ -1,0 +1,7 @@
+error[E0204]: count() takes 2 argument(s) but 1 were given
+ --> tests/errors/E0204_count_arity.al:4:11
+  |
+4 |     print(count(xs));
+  |           ^^^^^^^^^
+  = hint: count(xs, x) counts the occurrences of x; the number of elements or bytes is len(xs)
+

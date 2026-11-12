@@ -275,6 +275,16 @@ public final class Ast {
             this.typeRef = typeRef;
             this.init = init;
         }
+
+        /**
+         * Whether the initializer is built straight into the variable: split, words, join and replace take
+         * the variable's type, and the C backend fills the variable itself rather than a temporary that is
+         * then copied, so the memory bound counts the value once. The variable is new, so the arguments
+         * cannot refer to it.
+         */
+        public boolean builtInPlace() {
+            return init instanceof Call c && c.builtin != null && c.builtin.typedByTarget() && c.type.equals(var.type);
+        }
     }
 
     public static final class Assign extends Stmt {
@@ -317,7 +327,10 @@ public final class Ast {
         }
     }
 
-    /** `for x in a..b` (to != null) or `for x in collection` (to == null). */
+    /**
+     * `for x in a..b` (to != null), `for x in collection` (to == null), or `for x in split(s, sep)` /
+     * `for x in words(s)`, which goes through the pieces of s one at a time without building a list.
+     */
     public static final class For extends Stmt {
         public final String name;
         public final Span nameSpan;
@@ -325,6 +338,13 @@ public final class Ast {
         public final Expr to;
         public final Block body;
         public LocalVar var;
+        /**
+         * Set by the checker: whether the loop goes through a copy of what it iterates, taken before the
+         * first iteration. Only a variable (the collection, or the text that split and words cut up) needs
+         * one, and only when the body may change it; anything else is a value of its own already, and a
+         * variable the body leaves alone holds the same value all along.
+         */
+        public boolean snapshot;
 
         public For(Span span, String name, Span nameSpan, Expr from, Expr to, Block body) {
             super(span);
@@ -337,6 +357,17 @@ public final class Ast {
 
         public boolean isRange() {
             return to != null;
+        }
+
+        /** The split or words call whose pieces the loop goes through, or null for a range or a collection. */
+        public Call pieces() {
+            return to == null && from instanceof Call c && (c.builtin == Builtin.SPLIT || c.builtin == Builtin.WORDS) ? c : null;
+        }
+
+        /** What the loop takes its values from: the text of split and words, otherwise the collection. */
+        public Expr source() {
+            Call c = pieces();
+            return c != null ? c.args.get(0).expr() : from;
         }
     }
 
@@ -678,6 +709,21 @@ public final class Ast {
         public Convert(Span span, PrimKind target, Expr arg) {
             super(span);
             this.target = target;
+            this.arg = arg;
+        }
+    }
+
+    /**
+     * `str[N](s)` or `list[T; N](xs)`: the same text or elements with capacity N. Checked: a value longer
+     * than N traps (R0004).
+     */
+    public static final class Resize extends Expr {
+        public final TypeRef targetRef;
+        public final Expr arg;
+
+        public Resize(Span span, TypeRef targetRef, Expr arg) {
+            super(span);
+            this.targetRef = targetRef;
             this.arg = arg;
         }
     }

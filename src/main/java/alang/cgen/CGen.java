@@ -56,6 +56,8 @@ public final class CGen {
     private StringBuilder out;
     private int indent;
     private int tmpCount;
+    /** The variable a let/var builds its value in (see {@link Let#builtInPlace}), until a builtin takes it. */
+    private String into;
     private FnDecl fn;
 
     private CGen(Program program) {
@@ -686,6 +688,16 @@ public final class CGen {
         emit(line);
     }
 
+    /**
+     * Where split, words, join or replace builds its value: the variable {@code target} that a let/var
+     * declares, or else a new temporary. Each takes {@link #into} before it lowers its arguments.
+     */
+    private String dest(Type t, String target) {
+        if (target == null) return tmp(t, "{0}");
+        emit(ct(t) + " " + target + " = {0};");
+        return target;
+    }
+
     private String tmp(Type t, String init) {
         String name = "t" + ++tmpCount;
         emit(ct(t) + " " + name + " = " + init + ";");
@@ -707,8 +719,13 @@ public final class CGen {
     private void stmt(Stmt s) {
         switch (s) {
             case Let l -> {
-                String v = lower(l.init);
-                emit(ct(l.var.type) + " " + cName(l.var) + " = " + coerce(v, l.init.type, l.var.type) + ";");
+                if (l.builtInPlace()) {
+                    into = cName(l.var);
+                    lower(l.init);
+                } else {
+                    String v = lower(l.init);
+                    emit(ct(l.var.type) + " " + cName(l.var) + " = " + coerce(v, l.init.type, l.var.type) + ";");
+                }
                 emit("(void)" + cName(l.var) + ";");
             }
             case Assign a -> assign(a);
@@ -833,11 +850,15 @@ public final class CGen {
     }
 
     private void eachLoop(For f) {
+        if (f.pieces() != null) {
+            pieceLoop(f, f.pieces());
+            return;
+        }
         Type ct = f.from.type;
         open("{");
-        // The snapshot: a variable is copied, since the body may change it; any other value already is a
-        // temporary of its own.
-        String coll = f.from.isPlace() ? tmp(ct, lower(f.from)) : lower(f.from);
+        // The snapshot: a variable the body may change is copied; any other value already is a temporary of
+        // its own, or a variable that keeps its value through the loop.
+        String coll = f.snapshot ? tmp(ct, lower(f.from)) : lower(f.from);
         String i = "t" + ++tmpCount;
         String n = ct instanceof Type.ArrayT a ? a.len() + "u" : coll + ".len";
         String elem = ct instanceof Type.Str ? coll + ".b[" + i + "]" : coll + ".v[" + i + "]";
@@ -845,6 +866,38 @@ public final class CGen {
         open("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
         emit(ct(f.var.type) + " " + cName(f.var) + " = " + elem + ";");
         emit("(void)" + cName(f.var) + ";");
+        block(f.body);
+        close("}");
+        close("}");
+    }
+
+    /**
+     * `for x in split(s, sep)` and `for x in words(s)`: each piece is copied into the loop variable, a str of
+     * the capacity of s, in turn. Like the text, a separator is read once, before the first piece: one in a
+     * variable is copied, since the body may change it.
+     */
+    private void pieceLoop(For f, Call c) {
+        Expr src = c.args.get(0).expr();
+        open("{");
+        String s = f.snapshot ? tmp(src.type, lower(src)) : lowerLvalue(src);
+        boolean words = c.builtin == Builtin.WORDS;
+        String[] p;
+        if (words) {
+            p = new String[] {"0", "0u"};
+        } else {
+            Expr sep = c.args.get(1).expr();
+            p = sep.isPlace() && sep.type instanceof Type.Str ? strPattern(tmp(sep.type, lower(sep))) : pattern(sep);
+            emit("if (" + p[1] + " == 0u) AL_TRAP(\"R0013\", \"split separator is empty\", " + loc(c.span) + ");");
+        }
+        String pos = "t" + ++tmpCount;
+        String from = "t" + ++tmpCount;
+        String to = "t" + ++tmpCount;
+        emit("uint32_t " + pos + " = 0, " + from + ", " + to + ";");
+        String x = cName(f.var);
+        emit(ct(f.var.type) + " " + x + " = {0};");
+        open("while (al_next_piece((" + s + ").b, (" + s + ").len, &" + pos + ", " + p[0] + ", " + p[1] + ", " + (words ? 1 : 0)
+            + ", &" + from + ", &" + to + ")) {");
+        emit(x + ".len = al_copy_bytes(" + x + ".b, (" + s + ").b + " + from + ", " + to + " - " + from + ");");
         block(f.body);
         close("}");
         close("}");
@@ -976,6 +1029,7 @@ public final class CGen {
                 yield t;
             }
             case Convert c -> convert(c);
+            case Resize r -> resize(r);
             case Unary u -> {
                 String v = lower(u.operand);
                 PrimKind k = Type.kind(u.type);
@@ -1123,6 +1177,16 @@ public final class CGen {
             }
             default -> throw new IllegalStateException(op.name());
         };
+    }
+
+    /** `str[N](s)` or `list[T; N](xs)`: R0004 if the value is longer than N, else a copy with capacity N. */
+    private String resize(Resize r) {
+        String v = lowerLvalue(r.arg);
+        boolean str = r.type instanceof Type.Str;
+        int cap = str ? ((Type.Str) r.type).cap() : ((Type.ListT) r.type).cap();
+        emit("if ((" + v + ").len > " + cap + "u) al_resize_trap(" + (str ? 1 : 0) + ", (" + v + ").len, "
+            + cString(utf8(r.type.toString())) + ", " + loc(r.span) + ");");
+        return coerce(v, r.arg.type, r.type);
     }
 
     private String convert(Convert c) {
@@ -1321,6 +1385,27 @@ public final class CGen {
                 return tmp(Type.U8, up ? "(uint8_t)(" + ch + " >= 97 && " + ch + " <= 122 ? " + ch + " - 32 : " + ch + ")"
                     : "(uint8_t)(" + ch + " >= 65 && " + ch + " <= 90 ? " + ch + " + 32 : " + ch + ")");
             }
+            case COUNT -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                if (xs.type instanceof Type.Str) {
+                    String[] p = pattern(args.get(1).expr());
+                    return tmp(Type.I64, "al_count_bytes((" + h + ").b, (" + h + ").len, " + p[0] + ", " + p[1] + ", " + at + ")");
+                }
+                Expr needle = args.get(1).expr();
+                String x = lowerLvalue(needle);
+                Type elem = Type.elementOf(xs.type);
+                String n = xs.type instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + h + ").len";
+                String k = tmp(Type.I64, "0");
+                String i = "t" + ++tmpCount;
+                open("{");
+                emit("uint32_t " + i + ";");
+                open("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                emit("if (" + eqExpr(elem, needle.type, "(" + h + ").v[" + i + "]", x) + " != 0) " + k + "++;");
+                close("}");
+                close("}");
+                return k;
+            }
             case CONTAINS, INDEX_OF -> {
                 Expr xs = args.get(0).expr();
                 String h = lowerLvalue(xs);
@@ -1385,27 +1470,33 @@ public final class CGen {
                 return tmp(Type.BOOL, "al_is_int((" + v + ").b, (" + v + ").len)");
             }
             case SPLIT, WORDS -> {
+                String target = into;
+                into = null;
                 String v = lowerLvalue(args.get(0).expr());
                 boolean words = c.builtin == Builtin.WORDS;
                 String[] p = words ? new String[] {"0", "0u"} : pattern(args.get(1).expr());
-                String r = tmp(c.type, "{0}");
+                String r = dest(c.type, target);
                 emit(splitFn((Type.ListT) c.type) + "(&" + r + ", (" + v + ").b, (" + v + ").len, " + p[0] + ", " + p[1] + ", "
                     + (words ? 1 : 0) + ", " + at + ");");
                 return r;
             }
             case JOIN -> {
+                String target = into;
+                into = null;
                 Type pt = args.get(0).expr().type;
                 String parts = lowerLvalue(args.get(0).expr());
                 String[] p = pattern(args.get(1).expr());
-                String r = tmp(c.type, "{0}");
+                String r = dest(c.type, target);
                 emit(joinFn((Type.Str) c.type, pt) + "(&" + r + ", &(" + parts + "), " + p[0] + ", " + p[1] + ", " + at + ");");
                 return r;
             }
             case REPLACE -> {
+                String target = into;
+                into = null;
                 String v = lowerLvalue(args.get(0).expr());
                 String[] f = pattern(args.get(1).expr());
                 String[] t = pattern(args.get(2).expr());
-                String r = tmp(c.type, "{0}");
+                String r = dest(c.type, target);
                 emit(r + ".len = al_replace_into(" + r + ".b, " + ((Type.Str) c.type).cap() + "u, (" + v + ").b, (" + v + ").len, "
                     + f[0] + ", " + f[1] + ", " + t[0] + ", " + t[1] + ", " + at + ");");
                 return r;
@@ -1478,12 +1569,14 @@ public final class CGen {
 
     /** A str or a u8 byte as a C pointer and length: the str's bytes, or the byte in a temporary. */
     private String[] pattern(Expr e) {
-        if (e.type instanceof Type.Str) {
-            String v = lowerLvalue(e);
-            return new String[] {"(" + v + ").b", "(" + v + ").len"};
-        }
+        if (e.type instanceof Type.Str) return strPattern(lowerLvalue(e));
         String t = tmp(Type.U8, lower(e));
         return new String[] {"&" + t, "1u"};
+    }
+
+    /** A pattern str whose value is in the lvalue v. */
+    private static String[] strPattern(String v) {
+        return new String[] {"(" + v + ").b", "(" + v + ").len"};
     }
 
     /** A position argument of any integer type, as an al_pos in a temporary. */

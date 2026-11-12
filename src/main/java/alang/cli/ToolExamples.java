@@ -27,6 +27,7 @@ import alang.ast.Ast.Match;
 import alang.ast.Ast.Name;
 import alang.ast.Ast.Program;
 import alang.ast.Ast.Repeat;
+import alang.ast.Ast.Resize;
 import alang.ast.Ast.Return;
 import alang.ast.Ast.Stmt;
 import alang.ast.Ast.StrLit;
@@ -169,6 +170,7 @@ final class ToolExamples {
                 calls(b.right, out);
             }
             case Convert c -> calls(c.arg, out);
+            case Resize z -> calls(z.arg, out);
             case FieldAccess fa -> calls(fa.target, out);
             case Index ix -> {
                 calls(ix.target, out);

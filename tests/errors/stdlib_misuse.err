@@ -10,7 +10,7 @@ error[E0216]: split() takes its type, and so its capacity, from the variable it 
    |
 10 |     print(split(s, ","));
    |           ^^^^^^^^^^^^^
-  = hint: make the call the whole right-hand side of a typed let/var, an assignment or a return: let parts: list[str[32]; 16] = split(s, ",");
+  = hint: make the call the whole right-hand side of a typed let/var, an assignment or a return: let parts: list[str[32]; 16] = split(s, ","); or, to go through the pieces one at a time without a list: for p in split(s, ",") { }
 
 error[E0201]: split() builds a list[str[K]; M], but str[8] is expected
   --> tests/errors/stdlib_misuse.al:11:21

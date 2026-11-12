@@ -1,0 +1,21 @@
+warning[W0305]: `it` is changed but never read
+ --> tests/errors/W0305_changed_never_read.al:9:9
+  |
+9 |     var it: Item = items[0];
+  |         ^^
+  = hint: `it` is a copy of `items[0]`, so changing it leaves `items[0]` as it was; change `items[0]` itself instead
+
+warning[W0305]: `log` is changed but never read
+  --> tests/errors/W0305_changed_never_read.al:11:9
+   |
+11 |     var log: str[32] = "";
+   |         ^^^
+  = hint: what it is given is lost: use its value, or remove it
+
+warning[W0305]: `n` is changed but never read
+  --> tests/errors/W0305_changed_never_read.al:13:9
+   |
+13 |     var n: i64 = 0;
+   |         ^
+  = hint: what it is given is lost: use its value, or remove it
+

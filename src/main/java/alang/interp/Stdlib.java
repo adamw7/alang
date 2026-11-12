@@ -185,6 +185,25 @@ final class Stdlib {
         return -1;
     }
 
+    /** The non-overlapping occurrences of p in s, left to right; R0013 if p is empty. */
+    static long count(StrV s, byte[] p, Span at) {
+        if (p.length == 0) throw new Trap(Code.R0013, at, "count pattern is empty");
+        long n = 0;
+        for (int hit = find(s.b, s.len, p, 0); hit >= 0; hit = find(s.b, s.len, p, hit + p.length)) n++;
+        return n;
+    }
+
+    /** The elements of a list or array equal to x. */
+    static long count(Object xs, Object x, Type elem) {
+        Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+        int n = xs instanceof ListV l ? l.len : items.length;
+        long k = 0;
+        for (int i = 0; i < n; i++) {
+            if (Values.equal(items[i], x, elem)) k++;
+        }
+        return k;
+    }
+
     static StrV trim(StrV s) {
         int start = 0;
         int end = s.len;

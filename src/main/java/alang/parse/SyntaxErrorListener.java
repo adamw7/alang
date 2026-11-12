@@ -230,6 +230,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
         return null;
     }
 
+    private static final String NO_STR_CONVERSION = "there is no str() conversion; build text with append(mut s, value) "
+        + "into a str[N] variable, and change the capacity of a str with str[N](s)";
+
     private static final String TUPLES = "there are no tuples; declare a struct with named fields, "
         + "e.g. struct Pair { a: i64, b: i64 }, and build it with Pair(a: 1, b: 2)";
 
@@ -239,12 +242,12 @@ final class SyntaxErrorListener extends BaseErrorListener {
         int t = tok.getType();
         int p = prev == null ? -1 : prev.getType();
         String word = tok.getText();
+        if ((p == ALangLexer.STR && t == ALangLexer.LPAREN) || (t == ALangLexer.STR && expected.contains(ALangLexer.INT_LIT))) {
+            // `str(x)`: a value turned into text, or a str whose capacity is left out.
+            return NO_STR_CONVERSION;
+        }
         String capacity = missingCapacity(ts, tok, p, expected);
         if (capacity != null) return capacity;
-        if (t == ALangLexer.STR && expected.contains(ALangLexer.INT_LIT)) {
-            // `str(x)` where a value must start.
-            return "there is no str() conversion; build text with append(mut s, value) into a str[N] variable";
-        }
         if (p == ALangLexer.WHILE && t == ALangLexer.LBRACE) {
             return "a while loop needs a condition and a limit: while i < n limit 1000 { ... }";
         }

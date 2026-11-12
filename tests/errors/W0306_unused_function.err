@@ -1,0 +1,7 @@
+warning[W0306]: function `helper` is never called
+ --> tests/errors/W0306_unused_function.al:4:4
+  |
+4 | fn helper() -> i64 {
+  |    ^^^^^^
+  = hint: call it, test it from a test block, or remove it
+

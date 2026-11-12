@@ -64,9 +64,10 @@ all copy, so two variables never share storage (except through a `mut` parameter
 
 **Assignability.** A value of type `A` can be stored where `B` is expected only if `A` and `B` are the
 same type, or both are `str[M]`/`str[N]`, or both are `list[T; M]`/`list[T; N]`, with `M <= N`
-(widening). Everything else needs an explicit conversion: arrays never convert to lists, but an array
-**literal** `[a, b, c]` (or `[v; n]`) can initialize a list with enough capacity, and `[]` is the empty
-list.
+(widening). Everything else needs an explicit conversion: `str[N](s)` and `list[T; N](xs)` give a str or
+list of capacity N, larger or smaller, and trap (R0004) when the value does not fit (§6). Arrays never
+convert to lists, but an array **literal** `[a, b, c]` (or `[v; n]`) can initialize a list with enough
+capacity, and `[]` is the empty list.
 
 **Structs** are built with named arguments, every field exactly once, in any order:
 `Point(x: 1.0, y: 2.0)`; fields are read and written with `p.x`. A struct cannot contain itself,
@@ -155,7 +156,7 @@ a file, before any declaration (E0001), and:
 | binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable) |
 | assignment | `place = expr;` and `+= -= *= /= %=` |
 | condition | `if c { } else if c { } else { }` |
-| loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for x in xs { }` (array, list or str: `u8` bytes) |
+| loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for x in xs { }` (array, list or str: `u8` bytes), `for p in split(s, sep) { }`, `for w in words(s) { }` |
 | match | `match e { Pattern => { } ... }` |
 | jumps | `break;` `continue;` `return;` `return expr;` |
 | assertion | `assert cond;` `assert cond, "message";` |
@@ -169,10 +170,19 @@ a file, before any declaration (E0001), and:
   traps (R0008) when the body is about to run for the `n + 1`-th time. The limit is a promise about the
   algorithm, e.g. `limit 64` for a binary search over a 64-bit range.
 - `for i in a..b`: `a` and `b` are evaluated once and are integers of the same type, which `i` has
-  (`i64` for literals). `for x in xs` iterates a snapshot of `xs` taken once: changing `xs` in the loop
-  does not affect it.
+  (`i64` for literals). `for x in xs` goes through what `xs` held before the first iteration: changing
+  `xs` in the loop does not affect it. (Only a variable that the body changes, by assigning to it or passing
+  it as `mut`, is copied for this, §7; any other collection is used where it is.)
+- `for p in split(s, sep)` and `for w in words(s)` go through the pieces of `s` one at a time (§9.4),
+  without building a list: each piece is a `str` of the capacity of `s`, which no piece can outgrow, so the
+  loop never traps on the size or number of the pieces. `s` and `sep` are evaluated once, before the first
+  piece, like a collection. Narrow a piece with `str[N](p)` after checking `len(p)`.
 - Loop variables, match bindings and `let` bindings are immutable.
 - Only calls may be expression statements (E0305); ignoring a non-void result is warning W0302.
+- A program without errors is also checked for work that is lost: a local or match binding that is never
+  used (W0304; write `_` for a binding), a variable that is changed but never read (W0305), often a copy
+  such as `var it: Item = items[0]; it.qty += 1;` that leaves `items[0]` as it was, and a function of the
+  checked file that nothing calls (W0306). Names that start with `_` are left alone.
 - A function with a return type must return on every path; loops never count as returning (E0301).
 
 **Match** patterns: `Enum.Variant`, `Enum.Variant(a, b)` (bindings; `_` ignores one), integer and
@@ -246,7 +256,8 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 - Float arithmetic is IEEE 754, round-to-nearest-even, without fused multiply-add. Division by zero gives
   `inf`/`nan`, never a trap.
 
-**Conversions** are calls to a primitive type: `i64(x)`, `u8(n)`, `f64(count)`.
+**Conversions** are calls to a primitive type: `i64(x)`, `u8(n)`, `f64(count)`; and to a capacity:
+`str[16](s)`, `list[i64; 8](xs)`.
 
 | From → To | Behavior |
 |-----------|----------|
@@ -259,6 +270,8 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 | str → integer | decimal text: an optional `+` or `-`, then digits; other text or out of range traps (R0009) |
 | str → float | not allowed (E0214); there is no float parsing: `f64(i64(s))` |
 | anything → bool | not allowed (E0214); compare instead |
+| `str[M]` → `str[N]` | the same bytes; more than N bytes traps (R0004) |
+| `list[T; M]` → `list[T; N]` | the same elements, of the same type T; more than N traps (R0004) |
 
 **Evaluation order** is fully specified, so side effects (`print`, traps) always happen in the same
 order:
@@ -277,9 +290,12 @@ order:
 - Without recursion the call graph is a DAG, so the worst-case stack is computable:
   `stack(f) = frame(f) + max(stack(g) for g called by f)`. A frame counts the parameters (aggregates and
   `mut` parameters by address), the locals, the return value and the aggregate temporaries of all its
-  statements (literals, call results, copies, the snapshot of `for x in xs`), so the figure is an upper
-  bound: temporaries of different statements are added up, because the C backend gives each its own
-  variable and a C compiler need not reuse a dead one's stack slot. `alang check` prints the bound, and
+  statements (literals, call results, copies, the copy a `for x in xs` loop makes of a variable its body
+  changes), so the figure is an upper bound: temporaries of different statements are added up, because
+  the C backend gives each its own variable and a C compiler need not reuse a dead one's stack slot. Two
+  values are counted once, as they are built where they are kept: what `split`, `words`, `join` and
+  `replace` build for the variable a `let`/`var` declares, and the pieces of `for p in split(s, sep)`, made
+  one at a time in the loop variable. `alang check` prints the bound, and
   `--memory` prints it per function.
 - Every command checks the program against a **memory budget**: 8 MiB (8 388 608 bytes) unless
   `--max-stack BYTES` sets another (`0`: none). An entry point (`main`, a tool or a test) whose worst-case
@@ -384,6 +400,7 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 |----------|-------------|
 | `contains(xs, x) -> bool` | In a str, whether the pattern `x` occurs (the empty str always does); in an array or list, whether an element `== x`. |
 | `index_of(xs, x) -> i64` | Where the first occurrence starts, as for `contains`, or -1. |
+| `count(xs, x) -> i64` | In a str, the non-overlapping occurrences of the pattern `x`, left to right (`count("aaaa", "aa")` is 2); traps (R0013) if `x` is an empty str. In an array or list, the elements `== x`. |
 | `starts_with(s, p) -> bool`, `ends_with(s, p) -> bool` | Whether the str `s` begins or ends with the pattern `p`. |
 | `slice(xs, from, to) -> T` | A copy of the elements `from..to` (half-open) of a str or list, of the same type, or of an array, as a `list[T; N]`. Traps (R0003) unless `0 <= from <= to <= len(xs)`. |
 | `trim(s) -> str[N]` | `s` without the ASCII whitespace at its start and end. |
@@ -396,9 +413,42 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 **Results typed by where they are stored.** The size of what `split`, `words`, `join` and `replace`
 build depends on the data, so each takes its type, capacities included, from the variable it initializes
 or is assigned to, or from the function's return type. The call must be the whole right-hand side of a
-typed `let`/`var`, a constant, an assignment with `=`, or a `return`; anywhere else is E0216. A result
-that does not fit traps (R0004): `split` and `words` check each piece in turn, first that the list has
-room for it, then that it fits a `str[K]`; `join` and `replace` check the whole length first.
+typed `let`/`var`, a constant, an assignment with `=`, or a `return`, or for `split` and `words`, what a
+`for` loop goes through; anywhere else is E0216. A result that does not fit traps (R0004): `split` and
+`words` check each piece in turn, first that the list has room for it, then that it fits a `str[K]`;
+`join` and `replace` check the whole length first.
+
+**Text that may not fit.** Input is untrusted, and one overlong line should not stop a program. A loop
+over the pieces never traps on their size or number, so it can skip or report what does not fit, and it
+builds no list, so it scales to an input of any size the program accepts:
+
+```alang
+/// Sums the integers on the lines of `text`; lines too long or not integers are counted as bad.
+tool fn sum_lines(text: str[4096]) -> [i64; 2] {
+    var total: i64 = 0;
+    var bad: i64 = 0;
+    for line in split(text, '\n') {
+        if len(line) > 20 {
+            bad += 1;
+            continue;
+        }
+        let t: str[20] = trim(str[20](line));
+        if is_int(t) {
+            total += i64(t);
+        } else if len(t) > 0 {
+            bad += 1;
+        }
+    }
+    return [total, bad];
+}
+
+test "an overlong line is counted, not trapped on" {
+    assert sum_lines("1\n2\n999999999999999999999999999999\nx\n") == [3, 2];
+}
+```
+
+To keep the pieces in a list, `count(s, sep) + 1` is how many `split` makes, and a `list[str[K]; M]`
+whose K is the capacity of `s` fits any piece.
 
 **Text to integers.** A conversion from a str to an integer type (§6) reads decimal text: an optional `+`
 or `-`, then at least one ASCII digit, and nothing else, so `trim` it first. Other text, or a value out of
@@ -442,7 +492,7 @@ test "empty items are skipped and bad ones reported" {
 | `insert(mut xs, i, v)` | Inserts `v` into a list (a `u8` into a str) at position `i`, moving the rest up. Traps unless `0 <= i <= len(xs)` (R0003), then if full (R0004). |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position `i` of a list (a byte of a str), moving the rest down. Traps unless `0 <= i < len(xs)` (R0003). Like `pop`, it may be a statement of its own. |
 
-`contains`, `index_of` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
+`contains`, `index_of`, `count` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
 be of any integer type, as indexes may.
 
 **The order of `sort`** is defined for every type: numbers by value, with `-0.0` before `0.0` and every

@@ -15,6 +15,7 @@ import alang.ast.Ast.IntLit;
 import alang.ast.Ast.LocalVar;
 import alang.ast.Ast.Name;
 import alang.ast.Ast.Repeat;
+import alang.ast.Ast.Resize;
 import alang.ast.Ast.StrLit;
 import alang.ast.Ast.StructLit;
 import alang.ast.Ast.Unary;
@@ -83,6 +84,7 @@ final class ToolDefinitions {
             case Unary u -> isConstant(u.operand);
             case Binary b -> isConstant(b.left) && isConstant(b.right);
             case Convert c -> isConstant(c.arg);
+            case Resize z -> isConstant(z.arg);
             case FieldAccess fa -> fa.variant != null || isConstant(fa.target);
             case Index ix -> isConstant(ix.target) && isConstant(ix.index);
             case Call c -> c.fn == null && c.builtin != null && c.builtin.pure
