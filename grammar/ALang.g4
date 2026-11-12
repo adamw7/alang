@@ -492,8 +492,9 @@ DOC_COMMENT
     : '///' ~[\r\n]* -> channel(HIDDEN)
     ;
 
+// Kept off the parser's channel, like doc comments, so that `alang fmt` can keep them.
 LINE_COMMENT
-    : '//' ~[\r\n]* -> skip
+    : '//' ~[\r\n]* -> channel(HIDDEN)
     ;
 
 WS

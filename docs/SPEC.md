@@ -23,9 +23,14 @@ syntax; this document describes semantics. Diagnostic codes are listed in [ERROR
 - Identifiers: `[a-zA-Z_][a-zA-Z0-9_]*`. `_` alone is the wildcard, not a name.
 - Reserved words: `fn let var const struct enum if else while for in match break continue return assert
   requires ensures mut and or not true false bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str list`.
-  `limit`, `step`, `rev`, `test`, `tool`, `import` and `result` are contextual and may be used as names.
+  `limit`, `step`, `rev`, `then`, `map`, `set`, `as`, `test`, `tool`, `import` and `result` are contextual
+  and may be used as names.
 - The names of the builtin functions, the standard library included (§9), cannot be redefined (E0108),
   but may be variable names.
+- Whitespace between tokens has no meaning. `alang fmt` lays a file out the one way: four spaces per
+  block, four more for a line that continues a statement or a bracket opened on an earlier line, one space
+  around binary operators and after `,` and `:`, none inside brackets, and at most one blank line in a row.
+  It keeps the lines the author broke the code into and every comment, and changes no token.
 
 | Literal | Examples | Notes |
 |---------|----------|-------|

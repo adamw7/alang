@@ -14,6 +14,7 @@ bin/alang fuzz  prog.al           # 3. call each tool fn, and a main that reads 
 bin/alang run   prog.al           # 4. run fn main()
 bin/alang run   prog.al < in.txt  #    a fn main(input: str[N]) gets all of stdin
 bin/alang explain E0215           #    explain any code
+bin/alang fmt   prog.al --write   #    lay the file out the one way
 ```
 
 Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. Results are

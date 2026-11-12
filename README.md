@@ -113,6 +113,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `alang fuzz FILE [--json] [--max-steps N] [--max-stack B]` | Call every `tool fn`, and a `fn main(input: str[N])`, with arguments at their limits (empty and full strs of many shapes, full lists, the smallest and largest numbers); report each trap with the arguments that hit it |
 | `alang serve FILE [--max-steps N] [--max-stack B]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout) |
 | `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
+| `alang fmt FILE [--write \| --check]` | Print the file laid out the one way (indentation, spaces between tokens, blank lines; the lines you broke stay broken); `--write` rewrites it, `--check` fails if it is not formatted |
 | `alang explain CODE \| --all \| --markdown` | Explain a diagnostic or trap code, or all of them |
 
 Exit codes: `0` success, `1` errors, traps (also those `fuzz` finds) or failing tests, `2` usage errors (including an option the
@@ -285,9 +286,11 @@ published once; to redo one, delete its release and package first.
 
 ## Status
 
-Version 0.2. Not yet included: type parameters (functions take any capacity with `_`, but not any
-element type), slices, namespaces and a formatter. A program can span several
-files with `import "file.al";` ([SPEC.md §3.1](docs/SPEC.md#31-imports)).
+Version 0.2. A program can span several files with `import "file.al";`, or keep each file's names
+apart with `import "file.al" as name;` ([SPEC.md §3.1](docs/SPEC.md#31-imports)). Functions take type
+parameters and function values (no closures), and the language has tuples, maps and sets, slices,
+labelled loops, match guards, `if ... then ... else` expressions, UTF-8 text functions, wrapping and
+saturating arithmetic, and the elementary float functions, bit-identical on every backend.
 
 ## License
 

@@ -449,8 +449,8 @@ code runs, and its failures carry a code, a location and a fix.
   [AGENTS.md](../AGENTS.md#patterns)).
 - **No I/O beyond `print`:** the host reads files and calls the network, then passes the data to a
   `tool fn`, or to `fn main` on stdin (`alang run prog.al < data.txt`).
-- **A small language:** version 0.2 has imports but no namespaces, generics or slices,
-  and a small standard library (text, math, sorting; [SPEC.md](SPEC.md#9-builtins-and-the-standard-library)).
+- **A small language:** version 0.2 has generics without closures, maps and sets with a fixed
+  capacity, and a small standard library (text, math, sorting; [SPEC.md](SPEC.md#9-builtins-and-the-standard-library)).
 - **No ecosystem:** no packages to install, and none to vet.
 
 Use Python, Go or Rust to build applications, talk to the outside world and reuse libraries. Use ALang
