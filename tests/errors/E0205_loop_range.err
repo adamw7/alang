@@ -1,0 +1,14 @@
+error[E0205]: cannot assign to `i`, it is immutable
+ --> tests/errors/E0205_loop_range.al:6:13
+  |
+6 |             i += 1;
+  |             ^
+  = hint: `i` steps through the range by itself; to move it yourself, use a while loop instead: var i: i64 = 0; while i < len(text) limit len(text) { ... i += 1; }
+
+error[E0205]: cannot assign to `j`, it is immutable
+  --> tests/errors/E0205_loop_range.al:10:9
+   |
+10 |         j = j + 2;
+   |         ^
+  = hint: `j` steps through the range by itself; to move it yourself, use a while loop instead: var j: i64 = 2; while j < len(text) limit <iterations> { ... j += 1; }
+
