@@ -1,0 +1,18 @@
+1: [hello world] 1 space(s)
+3: [] 0 space(s)
+4: [a b c] 2 space(s)
+5: [stop] 0 space(s)
+lines read: 5, too long: 1
+only piece: []
+<><a><><b><>
+<a><b:c><>
+one|two|three|
+p = a
+p = b
+p = c
+text now [], sep now [;]
+w = x
+w = y
+cells sum to 21
+5
+[x] []

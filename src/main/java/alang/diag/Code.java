@@ -77,13 +77,14 @@ public enum Code {
         "A struct literal must name every field exactly once: Point(x: 1, y: 2).",
         "let p: Point = Point(x: 1);  // error: missing field `y`"),
     E0214("invalid conversion",
-        "Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers. Nothing converts to bool: compare instead (x != 0).",
+        "Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers. Nothing converts to bool: compare instead (x != 0). str[N](s) and list[T; N](xs) change only the capacity of a str or of a list of T.",
         "let b: bool = bool(1);  // error: write 1 != 0"),
     E0215("mut call not allowed here",
         "A call that passes a `mut` argument must be a statement on its own, or the whole right-hand side of a let/var/assignment. This keeps evaluation order obvious.",
         "print(pop(mut xs));          // error\nlet top: i32 = pop(mut xs);  // ok\nprint(top);"),
     E0216("type cannot be inferred",
-        "The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list.",
+        "The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list. "
+            + "split, words, join and replace take their type from the variable they are stored in; split and words may also be what a for loop goes through.",
         "print([]);  // error"),
 
     // ---- control flow ----
@@ -164,6 +165,19 @@ public enum Code {
     W0303("character literal printed as a number",
         "Character literals such as 'a' are u8 integers, so print() and append() write their decimal value (97). To add the character itself to a str, use push(mut s, 'a').",
         "append(mut s, 'a');  // appends \"97\"\npush(mut s, 'a');    // appends \"a\""),
+    W0304("unused variable",
+        "A local variable or match binding is never used. Remove it; in a match pattern, write _ in its place. "
+            + "Unused-code warnings (W0304-W0306) come once the program has no errors, and leave alone names that "
+            + "start with _.",
+        "let total: i64 = 0;  // warning: never used"),
+    W0305("variable changed but never read",
+        "A variable is assigned or changed, but its value is never read, so the work is lost. Often it is a copy: "
+            + "`var p: Item = items[0]; p.qty += 1;` changes the copy, not items[0]; write items[0].qty += 1 instead.",
+        "var it: Item = items[0];\nit.qty += 1;  // warning: items[0] is unchanged"),
+    W0306("unused function",
+        "A function of the file being checked is never called: not by main, a tool, a test or another function. "
+            + "Call it, test it, or remove it. Functions of imported files, `main` and tool fns are left alone.",
+        "fn helper() -> i64 { return 1; }  // warning: never called"),
 
     // ---- runtime traps ----
     R0001("integer overflow",
@@ -176,8 +190,9 @@ public enum Code {
         "An index is negative or not smaller than the length of the array, list or string.",
         "let a: [i32; 3] = [1, 2, 3];\nlet x: i32 = a[3];  // trap"),
     R0004("capacity exceeded",
-        "A push/append does not fit in the list or string capacity, or the standard input is longer than the `str[N]` "
-            + "parameter of fn main. Capacities are part of the type: list[T; N], str[N].",
+        "A push/append does not fit in the list or string capacity, a str[N](s) or list[T; N](xs) conversion gets "
+            + "more than N bytes or elements, or the standard input is longer than the `str[N]` parameter of fn main. "
+            + "Capacities are part of the type: list[T; N], str[N].",
         "var s: str[4] = \"abc\";\nappend(mut s, \"de\");  // trap"),
     R0005("assertion failed",
         "An `assert` condition evaluated to false.",

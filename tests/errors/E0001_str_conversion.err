@@ -1,7 +1,7 @@
-error[E0001]: unexpected 'str', expected a statement or expression
- --> tests/errors/E0001_str_conversion.al:4:19
+error[E0001]: unexpected '(', expected a statement or expression
+ --> tests/errors/E0001_str_conversion.al:4:22
   |
 4 |     append(mut s, str(42));
-  |                   ^^^
-  = hint: there is no str() conversion; build text with append(mut s, value) into a str[N] variable
+  |                      ^
+  = hint: there is no str() conversion; build text with append(mut s, value) into a str[N] variable, and change the capacity of a str with str[N](s)
 

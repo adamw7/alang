@@ -1,0 +1,28 @@
+error[E0214]: cannot convert i64 to str[8]
+ --> tests/errors/E0214_resize.al:6:11
+  |
+6 |     print(str[8](n));
+  |           ^^^^^^^^^
+  = hint: str[8](s) changes the capacity of a str; to turn a value into text, append it: var s: str[8] = ""; append(mut s, n);
+
+error[E0214]: cannot convert [i64; 3] to list[i64; 4]
+ --> tests/errors/E0214_resize.al:7:11
+  |
+7 |     print(list[i64; 4](arr));
+  |           ^^^^^^^^^^^^^^^^^
+  = hint: an array is not a list; slice(arr, 0, 3) makes a list of its elements
+
+error[E0214]: cannot convert list[i32; 3] to list[i64; 4]
+ --> tests/errors/E0214_resize.al:8:11
+  |
+8 |     print(list[i64; 4](small));
+  |           ^^^^^^^^^^^^^^^^^^^
+  = hint: the conversion changes only the capacity, and the elements are i32, not i64; to convert each element, push them into a list[i64; 4] in a loop
+
+error[E0214]: cannot convert str[3] to list[i64; 4]
+ --> tests/errors/E0214_resize.al:9:11
+  |
+9 |     print(list[i64; 4]("abc"));
+  |           ^^^^^^^^^^^^^^^^^^^
+  = hint: list[i64; 4](xs) changes the capacity of a list of i64
+

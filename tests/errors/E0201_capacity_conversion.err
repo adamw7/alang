@@ -1,0 +1,21 @@
+error[E0201]: type mismatch: expected str[16], found str[256]
+ --> tests/errors/E0201_capacity_conversion.al:8:17
+  |
+8 |     print(label(big));
+  |                 ^^^
+  = hint: a str[256] may not fit in str[16]; convert it: str[16](big), which traps (R0004) if it is longer than 16 bytes (check len(big) first), or increase the capacity of the target
+
+error[E0201]: type mismatch: expected list[i64; 4], found list[i64; 32]
+  --> tests/errors/E0201_capacity_conversion.al:10:29
+   |
+10 |     let few: list[i64; 4] = xs;
+   |                             ^^
+  = hint: a list[i64; 32] may not fit in list[i64; 4]; convert it: list[i64; 4](xs), which traps (R0004) if it has more than 4 elements, or increase the capacity of the target
+
+error[E0201]: type mismatch: expected str[4], found str[7]
+  --> tests/errors/E0201_capacity_conversion.al:11:23
+   |
+11 |     let lit: str[4] = "toolong";
+   |                       ^^^^^^^^^
+  = hint: a str[7] may not fit in str[4]; increase the capacity of the target
+

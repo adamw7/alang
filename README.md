@@ -130,8 +130,8 @@ interpreter and the C backend alike, traps included
 | Core | `print` `len` `cap` `push` `pop` `clear` `append` `panic` |
 | Math | `abs` `min` `max` `clamp` `pow` `gcd` `lcm` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
 | Characters | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` |
-| Text | `contains` `index_of` `starts_with` `ends_with` `slice` `trim` `split` `words` `join` `replace` `is_int`, and `i64(s)` to parse |
-| Collections | `sort` `reverse` `insert` `remove` (and `contains`, `index_of`, `slice` on lists and arrays) |
+| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice` `trim` `split` `words` `join` `replace` `is_int`, and `i64(s)` to parse |
+| Collections | `sort` `reverse` `insert` `remove` (and `contains`, `index_of`, `count`, `slice` on lists and arrays) |
 
 ```alang
 /// The distinct words of a text in alphabetical order, lower-cased.

@@ -297,6 +297,7 @@ test "rows are independent values" {
 
     var copy: [[i64; 3]; 3] = grid;
     copy[2][2] = 9;
+    assert copy[2][2] == 9;
     assert grid[2][2] == 0;
 }
 ```

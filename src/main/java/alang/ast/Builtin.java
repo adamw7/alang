@@ -62,16 +62,22 @@ public enum Builtin {
     TRIM(Group.TEXT, true, "trim", "trim(s) -> str[N]", "s without the ASCII whitespace at its start and end."),
     SPLIT(Group.TEXT, true, "split", "split(s, sep) -> list[str[K]; M]",
         "The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. "
-            + "Its type is that of the variable it is stored in. Traps if a piece or the count does not fit."),
+            + "Its type is that of the variable it is stored in. Traps if a piece or the count does not fit; "
+            + "for p in split(s, sep) goes through the pieces one at a time instead, each a str of the capacity of s, "
+            + "and never traps on their size or number."),
     WORDS(Group.TEXT, true, "words", "words(s) -> list[str[K]; M]",
         "The pieces of s between runs of ASCII whitespace, never empty. Its type is that of the variable it is "
-            + "stored in. Traps if a word or the count does not fit."),
+            + "stored in. Traps if a word or the count does not fit; for w in words(s) goes through the words "
+            + "one at a time instead, and never traps on their size or number."),
     JOIN(Group.TEXT, true, "join", "join(parts, sep) -> str[N]",
         "The strs of an array or list with sep (a str or u8 byte) between them. Its type is that of the variable "
             + "it is stored in. Traps if the result does not fit."),
     REPLACE(Group.TEXT, true, "replace", "replace(s, from, to) -> str[N]",
         "s with every occurrence of from (a non-empty str or a u8 byte) replaced by to, left to right. Its type is "
             + "that of the variable it is stored in. Traps if the result does not fit."),
+    COUNT(Group.TEXT, true, "count", "count(xs, x) -> i64",
+        "How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right "
+            + "(traps (R0013) if the str is empty); in an array or list, the elements equal to x."),
     IS_INT(Group.TEXT, true, "is_int", "is_int(s) -> bool",
         "Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it."),
 

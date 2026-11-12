@@ -91,6 +91,8 @@ test "counts repeated words" {
 1. **Every variable has a type and a value**: `let x: i32 = 0;` (immutable) or `var x: i32 = 0;` (mutable).
 2. **No implicit conversions.** `i64(x)`, `f64(n)`, `u8(c)`. Integer literals adapt to context and default to `i64`; `for i in 0..n` gives `i: i64` when the bounds are literals. `len()` returns `i64`.
 3. **No heap, no null, no pointers.** Fixed-capacity types: `str[64]`, `list[T; 16]`, `[T; 4]`. Capacity overflow traps.
+   A smaller capacity widens on its own; to narrow, convert: `str[16](s)`, `list[T; 8](xs)` (traps if it
+   does not fit, so check `len` first).
 4. **Structs use named arguments**: `Point(x: 1, y: 2)`. Never `Point { x: 1 }`.
 5. **Enum variants are qualified with a dot**: `Color.Red`, `Shape.Circle(2.0)`. Never `Color::Red`.
 6. **Logic uses words**: `and`, `or`, `not`. `&&`, `||`, `!x` are errors (`!=` is fine).
@@ -98,6 +100,8 @@ test "counts repeated words" {
 8. **`while` needs a limit**: `while lo < hi limit 64 { }`. Exceeding it traps. Prefer `for i in 0..n` or `for x in xs` when you can.
 9. **No recursion.** Use a loop with an explicit work list (`list[T; N]` as a stack or queue).
 10. **`mut` is explicit on both sides**: `fn grow(xs: mut list[i32; 8])` and `grow(mut xs)`. Plain parameters are read-only copies.
+    So is every variable: `var it: Item = items[0]; it.qty += 1;` changes the copy, not the list (warning
+    W0305); write `items[0].qty += 1;`.
 11. **A call with a `mut` argument is its own statement** or the whole right side of `let`/assignment/`return`: `let top: i32 = pop(mut stack);` then use `top`.
 12. **A `mut` variable cannot appear twice in one call**: `append(mut s, s)` and `swap(mut xs[i], mut xs[j])` are errors. Numbers passed without `mut` are copied first, so `remove(mut xs, len(xs) - 1)` is fine.
 13. **No shadowing.** Pick a new name instead of redeclaring one in an inner block.
@@ -108,6 +112,7 @@ test "counts repeated words" {
 18. **No exceptions.** Return an enum for recoverable failures; `panic("...")` or `assert` for bugs.
 19. **Input arrives whole; nothing else is read.** `fn main(input: str[4096])` gets all of stdin as bytes
     (`bin/alang run prog.al < data.txt`; more than 4096 bytes traps), a `tool fn` gets JSON. No files.
+    Go through it with `for line in split(input, '\n') { }`: one line at a time, never a trap on a long one.
 20. **`import "lib/text.al";` at the top of a file** adds that file's declarations, by their plain names.
     The path is relative to the importing file, with `/`. Its `fn main`, tests and tools stay its own.
 
@@ -124,9 +129,12 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `for (i = 0; i < n; i++)` | `for i in 0..n { }` |
 | `loop { }` | `while true limit 1000 { ... break; }` |
 | `s.push_str("a")`, `format!("{} {}", a, b)` | `append(mut s, "a")`, `var s: str[64] = ""; append(mut s, a, " ", b);` |
+| `for line in text.splitlines()`, `for w in s.split()` | `for line in split(text, '\n') { }`, `for w in words(s) { }` |
 | `s.split(",")`, `s.split()`, `", ".join(xs)` | `let parts: list[str[16]; 8] = split(s, ",");`, `words(s)`, `let line: str[64] = join(xs, ", ");` |
+| `s.count(",")`, `xs.count(x)` | `count(s, ',')`, `count(xs, x)` |
 | `int(s)`, `s.parse::<i64>()` | `i64(trim(s))`, after checking `is_int(trim(s))`: bad text traps |
 | `s[a:b]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `slice(s, a, b)`, `trim(s)`, `to_upper(s)` |
+| a `str[256]` passed where `str[16]` is wanted | `str[16](s)` after checking `len(s) <= 16` |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
 | `xs.sort()`, `sorted(xs, reverse=True)` | `sort(mut xs);` then `reverse(mut xs);` |
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
@@ -147,12 +155,16 @@ helpers to import or copy.
 |------|-----------|
 | Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers) `gcd` `lcm` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `join(parts, sep)` `replace(s, from, to)` `is_int` |
-| Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `slice` on lists and arrays |
+| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `join(parts, sep)` `replace(s, from, to)` `is_int` |
+| Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays |
 
 - `split`, `words`, `join` and `replace` take their type from the variable they are stored in, so make the
   call the whole right side of a typed `let`/`var`, assignment or `return`:
   `let parts: list[str[16]; 8] = split(line, ",");`. Too many or too long pieces trap (R0004).
+- `for p in split(s, sep) { }` and `for w in words(s) { }` go through the pieces one at a time instead:
+  no list, and no trap however long or many they are. Each piece has the capacity of `s`, and so would
+  `trim(p)` or `slice(p, ...)`: check `len(p)` and narrow it with `str[16](p)` first, then work on that.
+  Use this for anything read from input.
 - A separator or search pattern is a str or a character: `split(line, ',')`, `contains(s, "ab")`.
 - `i64(s)` parses decimal text and traps on anything else; `trim` it and check `is_int` first.
 - `index_of` returns -1 when nothing is found.
@@ -252,11 +264,14 @@ fn main() {
 
 ```alang
 // bin/alang run total.al < numbers.txt: one integer per line; anything else is reported, not trapped on.
-fn main(input: str[4096]) {
-    let lines: list[str[32]; 128] = split(input, '\n');
+fn main(input: str[65536]) {
     var total: i64 = 0;
-    for line in lines {
-        let t: str[32] = trim(line);
+    for line in split(input, '\n') {
+        if len(line) > 32 {
+            print("line too long: ", len(line), " bytes");
+            continue;
+        }
+        let t: str[32] = trim(str[32](line));
         if is_int(t) {
             total += i64(t);
         } else if len(t) > 0 {
@@ -266,6 +281,9 @@ fn main(input: str[4096]) {
     print(total);
 }
 ```
+
+The loop builds no list, so the input can be as large as `fn main` accepts (up to 1 MiB); a
+`let lines: list[str[512]; 8192] = split(input, '\n')` would need 4 MB of stack and trap on one long line.
 
 **Splitting a program into files**
 

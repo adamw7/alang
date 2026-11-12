@@ -269,6 +269,9 @@ postfixOp
 primary
     : literal                                                           # literalExpr
     | primitiveType LPAREN expression RPAREN                            # conversionExpr
+    // str[16](s), list[i64; 8](xs): the same text or elements with another capacity; traps if too long.
+    | STR LBRACK expression RBRACK LPAREN expression RPAREN               # strResizeExpr
+    | LIST LBRACK type SEMI expression RBRACK LPAREN expression RPAREN    # listResizeExpr
     | identifier LPAREN fieldInit (COMMA fieldInit)* COMMA? RPAREN      # structExpr
     | identifier DOT identifier LPAREN argList? RPAREN                  # variantExpr
     | identifier LPAREN argList? RPAREN                                 # callExpr

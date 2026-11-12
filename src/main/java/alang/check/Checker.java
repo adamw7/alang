@@ -56,6 +56,8 @@ public final class Checker {
          * then takes: split, words, join and replace build a value of that type.
          */
         Expr stored;
+        /** The split or words call of the `for` loop being checked, which goes through its pieces one at a time. */
+        Call pieces;
     }
 
     private Ctx ctx = new Ctx();
@@ -63,6 +65,8 @@ public final class Checker {
     /** The loop that declares each `for` variable, and every match binding: E0205 hints differ for them. */
     private final Map<LocalVar, For> loopVars = new HashMap<>();
     private final Set<LocalVar> matchBindings = new HashSet<>();
+    /** What each let/var was initialized with: E0205 says when a variable is a copy of another's element or field. */
+    private final Map<LocalVar, Expr> letInits = new HashMap<>();
 
     /** The memory budget in bytes (0: none), and the bytes of the constants evaluated so far. */
     private final long maxStack;
@@ -94,6 +98,8 @@ public final class Checker {
         boolean recursion = checkRecursion();
         MemoryReport memory = null;
         if (!diags.hasErrors() && !recursiveTypes && !recursion) {
+            // Only now: in a program with errors, a name can look unused because the code using it failed to check.
+            Uses.warnUnused(program, diags, this::exprText);
             memory = MemoryReport.compute(program);
             if (maxStack > 0) {
                 for (MemoryReport.Entry e : memory.roots) {
@@ -602,6 +608,7 @@ public final class Checker {
                 ctx.stored = null;
                 requireAssignable(l.init, it, t);
                 l.var = declare(l.name, l.nameSpan, t, l.mutable);
+                letInits.put(l.var, l.init);
                 yield false;
             }
             case Assign a -> {
@@ -736,6 +743,15 @@ public final class Checker {
             return "`" + v.name + "` is a read-only copy " + what + "; to change it, copy it into a variable: var "
                 + freshName(v.name) + ": " + v.type + " = " + v.name + ";";
         }
+        Expr init = letInits.get(v);
+        if (init != null && init.isPlace() && Type.isAggregate(init.type) && !(place instanceof Name)) {
+            // `let it: Item = items[0]; it.qty += 1;`: with `var`, the change would be made to the copy and lost.
+            String from = exprText(init);
+            String text = exprText(place);
+            String rest = text.startsWith(v.name) ? text.substring(v.name.length()) : "";
+            return "`" + v.name + "` is a copy of `" + from + "`; to change `" + from + "` itself, write `" + from + rest
+                + "` instead of `" + text + "` (declaring `" + v.name + "` with `var` would change only the copy)";
+        }
         return "declare it with `var` instead of `let`";
     }
 
@@ -764,7 +780,11 @@ public final class Checker {
                 }
             }
         } else {
+            // split and words in a for loop make one piece at a time: there is no list for them to take a type from.
+            Builtin b = f.from instanceof Call c ? Builtin.byName(c.name) : null;
+            if (b == Builtin.SPLIT || b == Builtin.WORDS) ctx.pieces = (Call) f.from;
             Type ct = expr(f.from, null);
+            ctx.pieces = null;
             varType = Type.elementOf(ct);
             if (varType == null) {
                 if (!Type.isError(ct)) {
@@ -779,6 +799,11 @@ public final class Checker {
         loopVars.put(f.var, f);
         loop(f.body);
         ctx.scopes.pop();
+        if (!f.isRange()) {
+            Expr src = f.source();
+            Name root = src.isPlace() ? rootName(src) : null;
+            f.snapshot = root != null && root.local != null && Uses.changes(f.body, root.local);
+        }
     }
 
     private void returnStmt(Return r) {
@@ -986,6 +1011,7 @@ public final class Checker {
             case VariantCall v -> variantCall(v);
             case StructLit s -> structLit(s);
             case Convert c -> convert(c);
+            case Resize r -> resize(r);
             case Unary u -> unary(u, expected);
             case Binary b -> binary(b, expected);
             case ArrayLit a -> arrayLit(a, expected);
@@ -1187,7 +1213,7 @@ public final class Checker {
         // Names of builtins never get here: they are calls of the builtin (or E0108 when declared).
         return switch (name) {
             case "println", "printf", "printLn", "puts", "console_log", "echo" -> "use print(values...)";
-            case "length", "size", "count", "strlen" -> "use len(x)";
+            case "length", "size", "strlen" -> "use len(x)";
             case "capacity" -> "use cap(x)";
             case "format", "sprintf", "concat", "str_cat", "strcat", "to_string", "str", "string" ->
                 "build strings with append(mut s, values...) into a str[N] variable";
@@ -1365,6 +1391,7 @@ public final class Checker {
             case VariantCall c -> c.args.stream().anyMatch(a -> mentions(a.expr(), v));
             case StructLit s -> s.fields.stream().anyMatch(f -> mentions(f.value(), v));
             case Convert c -> mentions(c.arg, v);
+            case Resize r -> mentions(r.arg, v);
             case Unary u -> mentions(u.operand, v);
             case Binary b -> mentions(b.left, v) || mentions(b.right, v);
             case ArrayLit a -> a.elems.stream().anyMatch(x -> mentions(x, v));
@@ -1571,6 +1598,34 @@ public final class Checker {
                 }
                 return ret;
             }
+            case COUNT -> {
+                if (args.size() == 1) {
+                    diags.error(Code.E0204, c.span, "count() takes 2 argument(s) but 1 were given",
+                        "count(xs, x) counts the occurrences of x; the number of elements or bytes is len("
+                            + exprText(args.get(0).expr()) + ")");
+                    expr(args.get(0).expr(), null);
+                    return Type.I64;
+                }
+                if (!arity(c, 2)) return Type.I64;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                if (t instanceof Type.Str) {
+                    textPattern(b, args.get(1), "what it counts");
+                } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
+                    noMut(args.get(1));
+                    Type elem = Type.elementOf(t);
+                    Type x = expr(args.get(1).expr(), elem);
+                    if (!Type.comparable(x, elem)) {
+                        diags.error(Code.E0201, args.get(1).span(), "count() counts elements of type " + elem + ", found " + x);
+                    }
+                } else {
+                    expr(args.get(1).expr(), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, args.get(0).span(), "count() needs a str, array or list, found " + t);
+                    }
+                }
+                return Type.I64;
+            }
             case STARTS_WITH, ENDS_WITH -> {
                 if (!arity(c, 2)) return Type.BOOL;
                 textArg(b, args.get(0));
@@ -1605,8 +1660,13 @@ public final class Checker {
                     return Type.ERROR;
                 }
                 if (!arity(c, b == Builtin.SPLIT ? 2 : 1)) return Type.ERROR;
-                textArg(b, args.get(0));
+                Type text = textArg(b, args.get(0));
                 if (b == Builtin.SPLIT) textPattern(b, args.get(1), "the separator");
+                if (ctx.pieces == c) {
+                    // Each piece is a str of the capacity of the text, which no piece can outgrow. The list
+                    // type is nominal: the loop never builds it.
+                    return text instanceof Type.Str s ? new Type.ListT(s, s.cap() + 1) : Type.ERROR;
+                }
                 return storedType(c, b, expected);
             }
             case JOIN -> {
@@ -1767,7 +1827,8 @@ public final class Checker {
         if (expected != null && Type.isError(expected)) return Type.ERROR;
         if (ctx.stored != c || expected == null) {
             diags.error(Code.E0216, c.span, b.name + "() takes its type, and so its capacity, from the variable it is stored in",
-                "make the call the whole right-hand side of a typed let/var, an assignment or a return: " + example);
+                "make the call the whole right-hand side of a typed let/var, an assignment or a return: " + example
+                    + (list ? " or, to go through the pieces one at a time without a list: for p in " + exprText(c) + " { }" : ""));
             return Type.ERROR;
         }
         boolean ok = list ? expected instanceof Type.ListT l && l.elem() instanceof Type.Str : expected instanceof Type.Str;
@@ -1940,6 +2001,37 @@ public final class Checker {
         if (c.arg instanceof IntLit i && c.target.isInt() && !c.target.fits(i.value)) {
             diags.error(Code.E0202, c.arg.span, "literal " + i.value + " does not fit in " + target);
         }
+        return target;
+    }
+
+    /**
+     * `str[N](s)` and `list[T; N](xs)`: a str of any capacity, or a list of the same element type, with
+     * capacity N. A longer value traps (R0004) when the program runs.
+     */
+    private Type resize(Resize r) {
+        Type target = resolveType(r.targetRef);
+        Type t = expr(r.arg, Type.isError(target) ? null : target);
+        if (Type.isError(target) || Type.isError(t)) return target;
+        if (target instanceof Type.Str) {
+            if (!(t instanceof Type.Str)) {
+                diags.error(Code.E0214, r.span, "cannot convert " + t + " to " + target,
+                    target + "(s) changes the capacity of a str; to turn a value into text, append it: var s: " + target
+                        + " = \"\"; append(mut s, " + exprText(r.arg) + ");");
+            }
+            return target;
+        }
+        Type elem = Type.elementOf(target);
+        if (t instanceof Type.ListT l && l.elem().equals(elem)) return target;
+        String hint;
+        if (t instanceof Type.ArrayT a && a.elem().equals(elem)) {
+            hint = "an array is not a list; slice(" + exprText(r.arg) + ", 0, " + a.len() + ") makes a list of its elements";
+        } else if (t instanceof Type.ListT l) {
+            hint = "the conversion changes only the capacity, and the elements are " + l.elem() + ", not " + elem
+                + "; to convert each element, push them into a " + target + " in a loop";
+        } else {
+            hint = target + "(xs) changes the capacity of a list of " + elem;
+        }
+        diags.error(Code.E0214, r.span, "cannot convert " + t + " to " + target, hint);
         return target;
     }
 
@@ -2223,10 +2315,17 @@ public final class Checker {
             hint = "there is no truthiness; compare explicitly, e.g. " + exprText(e) + " != 0";
         } else if (Type.isBool(from) && Type.isInt(to)) {
             hint = "convert explicitly: " + to + "(" + exprText(e) + ")";
-        } else if (from instanceof Type.Str fs && to instanceof Type.Str ts) {
+        } else if (from instanceof Type.Str fs && to instanceof Type.Str ts && e instanceof StrLit) {
             hint = "a str[" + fs.cap() + "] may not fit in str[" + ts.cap() + "]; increase the capacity of the target";
+        } else if (from instanceof Type.Str fs && to instanceof Type.Str ts) {
+            hint = "a str[" + fs.cap() + "] may not fit in str[" + ts.cap() + "]; convert it: " + to + "(" + exprText(e)
+                + "), which traps (R0004) if it is longer than " + ts.cap() + " bytes"
+                + (e.isPlace() ? " (check len(" + exprText(e) + ") first)" : "") + ", or increase the capacity of the target";
+        } else if (from instanceof Type.ListT fl && to instanceof Type.ListT tl && fl.elem().equals(tl.elem())) {
+            hint = "a " + from + " may not fit in " + to + "; convert it: " + to + "(" + exprText(e)
+                + "), which traps (R0004) if it has more than " + tl.cap() + " elements, or increase the capacity of the target";
         } else if (from instanceof Type.ListT && to instanceof Type.ListT) {
-            hint = "lists convert only to lists of the same element type with equal or larger capacity";
+            hint = "lists convert only to lists of the same element type";
         } else if (from instanceof Type.ArrayT && to instanceof Type.ListT) {
             hint = "arrays and lists are different types; only array literals like [1, 2] can initialize a list";
         }
@@ -2252,6 +2351,7 @@ public final class Checker {
             case VariantCall v -> v.args.stream().allMatch(a -> isConst(a.expr()));
             case StructLit s -> s.fields.stream().allMatch(f -> isConst(f.value()));
             case Convert c -> isConst(c.arg);
+            case Resize r -> isConst(r.arg);
             case Unary u -> isConst(u.operand);
             case Binary b -> isConst(b.left) && isConst(b.right);
             case ArrayLit a -> a.elems.stream().allMatch(Checker::isConst);

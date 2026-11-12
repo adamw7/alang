@@ -11,7 +11,10 @@ import alang.types.Type;
  *
  * <p>Every aggregate value an expression builds counts: literals, call results, copies of variables that
  * are stored somewhere, and widened copies (a {@code str[8]} stored as a {@code str[16]}); so does the
- * snapshot of a {@code for x in xs} loop. The temporaries of all statements are added up, not just those
+ * snapshot a {@code for x in xs} loop takes of a variable its body may change. Two values are built where
+ * they are kept, and so are counted once: what split, words, join and replace build for the variable a
+ * let/var declares, and the pieces of {@code for x in split(s, sep)}, made one at a time in the loop
+ * variable. The temporaries of all statements are added up, not just those
  * of the largest one: the C backend gives each temporary its own variable, and a C compiler need not
  * reuse a variable's stack slot for another once it is dead (clang -O0 never does), so they can all be
  * on the stack at once. Scalars are not counted, and a value a statement then stores counts both as the
@@ -38,7 +41,7 @@ final class Temporaries {
 
     private static long stmt(Stmt s, Routine r) {
         return switch (s) {
-            case Let l -> Layout.add(expr(l.init), stored(l.init, l.var.type));
+            case Let l -> l.builtInPlace() ? inner(l.init) : Layout.add(expr(l.init), stored(l.init, l.var.type));
             case Assign a -> {
                 long t = Layout.add(expr(a.target), expr(a.value));
                 yield a.op == null ? Layout.add(t, stored(a.value, a.target.type)) : t;
@@ -53,8 +56,17 @@ final class Temporaries {
             case For f -> {
                 if (f.isRange()) yield Layout.add(Layout.add(expr(f.from), expr(f.to)), block(f.body, r));
                 // The snapshot of the collection lives as long as the loop: the value itself when the
-                // collection is built by an expression (counted there), a copy when it is a variable.
-                long snapshot = Layout.add(expr(f.from), f.from.isPlace() ? Layout.size(f.from.type) : 0);
+                // collection is built by an expression (counted there), a copy when it is a variable the body
+                // may change. split and words in a loop build no list: only their arguments count.
+                Expr src = f.source();
+                long built = f.pieces() != null ? inner(f.from) : expr(f.from);
+                // A separator in a variable is copied before the first piece, as the body may change it.
+                Call pieces = f.pieces();
+                if (pieces != null && pieces.args.size() > 1) {
+                    Expr sep = pieces.args.get(1).expr();
+                    if (sep.isPlace() && sep.type instanceof Type.Str) built = Layout.add(built, Layout.size(sep.type));
+                }
+                long snapshot = Layout.add(built, f.snapshot ? Layout.size(src.type) : 0);
                 yield Layout.add(snapshot, block(f.body, r));
             }
             case Match m -> {
@@ -77,7 +89,12 @@ final class Temporaries {
     /** The aggregates that evaluating {@code e} builds, all of which may be alive at once. */
     static long expr(Expr e) {
         long own = Type.isAggregate(e.type) && !e.isPlace() ? Layout.size(e.type) : 0;
-        long inner = switch (e) {
+        return Layout.add(own, inner(e));
+    }
+
+    /** What {@link #expr} counts for {@code e} but the value of e itself: what its parts build. */
+    private static long inner(Expr e) {
+        return switch (e) {
             case IntLit i -> 0;
             case FloatLit f -> 0;
             case StrLit s -> 0;
@@ -103,6 +120,7 @@ final class Temporaries {
                 yield t;
             }
             case Convert c -> expr(c.arg);
+            case Resize z -> expr(z.arg);
             case Unary u -> expr(u.operand);
             case Binary b -> Layout.add(expr(b.left), expr(b.right));
             case ArrayLit a -> {
@@ -113,7 +131,6 @@ final class Temporaries {
             }
             case Repeat r -> Layout.add(expr(r.value), stored(r.value, Type.elementOf(r.type)));
         };
-        return Layout.add(own, inner);
     }
 
     private static long call(Call c) {

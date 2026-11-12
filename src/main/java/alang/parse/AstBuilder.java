@@ -44,8 +44,10 @@ final class AstBuilder {
     }
 
     private Span span(ParserRuleContext ctx) {
-        Token start = ctx.getStart();
-        Token stop = ctx.getStop();
+        return span(ctx.getStart(), ctx.getStop());
+    }
+
+    private Span span(Token start, Token stop) {
         int len = 1;
         if (stop != null && stop.getLine() == start.getLine() && stop.getStopIndex() >= start.getStartIndex()) {
             len = stop.getStopIndex() - start.getStartIndex() + 1;
@@ -422,6 +424,14 @@ final class AstBuilder {
         if (ctx instanceof LiteralExprContext l) return literal(l.literal());
         if (ctx instanceof ConversionExprContext c) {
             return new Convert(sp, PrimKind.byName(c.primitiveType().getText()), expr(c.expression()));
+        }
+        if (ctx instanceof StrResizeExprContext s) {
+            Span ts = span(s.STR().getSymbol(), s.RBRACK().getSymbol());
+            return new Resize(sp, new StrRef(ts, expr(s.expression(0))), expr(s.expression(1)));
+        }
+        if (ctx instanceof ListResizeExprContext l) {
+            Span ts = span(l.LIST().getSymbol(), l.RBRACK().getSymbol());
+            return new Resize(sp, new ListRef(ts, type(l.type()), expr(l.expression(0))), expr(l.expression(1)));
         }
         if (ctx instanceof StructExprContext s) {
             List<FieldInit> inits = new ArrayList<>();

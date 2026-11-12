@@ -332,8 +332,10 @@ public final class Interpreter {
     }
 
     private int eachLoop(For f, Object[] slots) {
-        // The collection is evaluated once and iterated as a snapshot.
-        Object coll = owned(f.from, slots);
+        if (f.pieces() != null) return pieceLoop(f, f.pieces(), slots);
+        // The collection is evaluated once and iterated as a snapshot: a copy, when it is a variable the body
+        // may change, else the value itself.
+        Object coll = f.snapshot ? owned(f.from, slots) : eval(f.from, slots);
         Object[] items = coll instanceof ArrV a ? a.items : coll instanceof ListV l ? l.items : null;
         int n = length(coll);
         for (int i = 0; i < n; i++) {
@@ -342,6 +344,47 @@ public final class Interpreter {
             int r = execBlock(f.body, slots);
             if (r == BREAK) break;
             if (r == RETURN) return r;
+        }
+        return NORMAL;
+    }
+
+    /**
+     * `for x in split(s, sep)` and `for x in words(s)`: the pieces of s, made one at a time into a str of
+     * the capacity of s, which no piece can outgrow. The loop variable is read-only and anything that stores
+     * it copies it, so one buffer serves every piece.
+     */
+    private int pieceLoop(For f, Call c, Object[] slots) {
+        Expr src = c.args.get(0).expr();
+        StrV s = (StrV) (f.snapshot ? owned(src, slots) : eval(src, slots));
+        byte[] sep = c.builtin == Builtin.SPLIT ? Stdlib.pattern(eval(c.args.get(1).expr(), slots)) : null;
+        if (sep != null && sep.length == 0) throw new Trap(Code.R0013, c.span, "split separator is empty");
+        StrV piece = new StrV(new byte[((Type.Str) src.type).cap()], 0);
+        int pos = 0;
+        while (true) {
+            int start;
+            int end;
+            if (sep != null) {
+                int hit = Stdlib.find(s.b, s.len, sep, pos);
+                start = pos;
+                end = hit < 0 ? s.len : hit;
+                pos = hit < 0 ? -1 : hit + sep.length;
+            } else {
+                while (pos < s.len && Stdlib.isSpace(s.b[pos] & 0xFF)) pos++;
+                if (pos == s.len) break;
+                start = pos;
+                while (pos < s.len && !Stdlib.isSpace(s.b[pos] & 0xFF)) pos++;
+                end = pos;
+            }
+            step(f.span);
+            int before = piece.len;
+            piece.len = end - start;
+            System.arraycopy(s.b, start, piece.b, 0, piece.len);
+            if (before > piece.len) Arrays.fill(piece.b, piece.len, before, (byte) 0);
+            slots[f.var.slot] = piece;
+            int r = execBlock(f.body, slots);
+            if (r == BREAK) break;
+            if (r == RETURN) return r;
+            if (pos < 0) break;
         }
         return NORMAL;
     }
@@ -522,6 +565,7 @@ public final class Interpreter {
                 yield new StructV(fields);
             }
             case Convert c -> convert(c, eval(c.arg, slots));
+            case Resize r -> resize(r, eval(r.arg, slots));
             case Unary u -> {
                 Object v = eval(u.operand, slots);
                 yield switch (u.op) {
@@ -624,6 +668,25 @@ public final class Interpreter {
             case SHR -> IntOps.shr(k, rk, x, y, at);
             default -> throw new IllegalStateException(op.name());
         };
+    }
+
+    /**
+     * `str[N](s)` or `list[T; N](xs)`: a new value of capacity N holding v's bytes or (copies of its)
+     * elements, or R0004 if v is longer. Only what v holds is copied, not the rest of its capacity.
+     */
+    private static Object resize(Resize r, Object v) {
+        int n = length(v);
+        int cap = r.type instanceof Type.Str s ? s.cap() : ((Type.ListT) r.type).cap();
+        if (n > cap) {
+            String what = v instanceof StrV ? n + " bytes" : n + " elements";
+            throw new Trap(Code.R0004, r.span, "a " + (v instanceof StrV ? "str" : "list") + " of " + what
+                + " does not fit in " + r.type);
+        }
+        if (v instanceof StrV s) return new StrV(Arrays.copyOf(s.b, cap), n);
+        ListV l = (ListV) v;
+        Object[] items = new Object[cap];
+        for (int i = 0; i < n; i++) items[i] = Values.copy(l.items[i]);
+        return new ListV(items, n);
     }
 
     private Object convert(Convert c, Object v) {
@@ -792,6 +855,12 @@ public final class Interpreter {
                 long at = xs instanceof StrV s ? Stdlib.find(s.b, s.len, Stdlib.pattern(x), 0)
                     : Stdlib.indexOf(xs, x, Type.elementOf(args.get(0).expr().type));
                 return c.builtin == Builtin.CONTAINS ? (Object) (at >= 0) : (Object) at;
+            }
+            case COUNT -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object x = eval(args.get(1).expr(), slots);
+                return xs instanceof StrV s ? Stdlib.count(s, Stdlib.pattern(x), c.span)
+                    : Stdlib.count(xs, x, Type.elementOf(args.get(0).expr().type));
             }
             case STARTS_WITH, ENDS_WITH -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);

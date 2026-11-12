@@ -725,6 +725,53 @@ static uint32_t al_case_into(uint8_t *dst, const uint8_t *s, uint32_t n, int upp
     return n;
 }
 
+/*
+ * The next piece of split (words = 0) or words (words = 1) of s, from *pos on: sets [*from, *to) and
+ * returns 1, or returns 0 when there are no more. After the last piece of split, *pos is n + 1.
+ */
+static int al_next_piece(const uint8_t *s, uint32_t n, uint32_t *pos, const uint8_t *sep, uint32_t sn, int words,
+                         uint32_t *from, uint32_t *to) {
+    uint32_t i = *pos;
+    if (words) {
+        while (i < n && al_is_space(s[i])) i++;
+        *pos = i;
+        if (i == n) return 0;
+        *from = i;
+        while (i < n && !al_is_space(s[i])) i++;
+        *to = i;
+        *pos = i;
+        return 1;
+    }
+    if (i > n) return 0;
+    {
+        int64_t hit = al_find_bytes(s, n, sep, sn, i);
+        *from = i;
+        *to = hit < 0 ? n : (uint32_t)hit;
+        *pos = hit < 0 ? n + 1 : (uint32_t)hit + sn;
+    }
+    return 1;
+}
+
+/* count() in a str: the non-overlapping occurrences of p, left to right. */
+static int64_t al_count_bytes(const uint8_t *s, uint32_t n, const uint8_t *p, uint32_t pn, int line, int col) {
+    int64_t hit, k = 0;
+    if (pn == 0) AL_TRAP("R0013", "count pattern is empty", line, col);
+    for (hit = al_find_bytes(s, n, p, pn, 0); hit >= 0; hit = al_find_bytes(s, n, p, pn, (uint32_t)hit + pn)) k++;
+    return k;
+}
+
+/* str[N](s) or list[T; N](xs) given a longer value. */
+static void al_resize_trap(int str, uint32_t n, const char *type, int line, int col) {
+    al_out e = al_trap_begin("R0004");
+    if (str) AL_PUTS(&e, "a str of ");
+    else AL_PUTS(&e, "a list of ");
+    al_fmt_u64(&e, n);
+    if (str) AL_PUTS(&e, " bytes does not fit in ");
+    else AL_PUTS(&e, " elements does not fit in ");
+    al_puts_c(&e, type);
+    al_trap_end(&e, line, col);
+}
+
 /* The part of a piece check that does not depend on the list's type: a piece too long for its str. */
 static void al_piece_trap(int words, uint32_t n, uint32_t k, int line, int col) {
     al_out e = al_trap_begin("R0004");
