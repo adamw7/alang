@@ -193,6 +193,11 @@ final class AstBuilder {
         if (ctx instanceof ArrayTypeRefContext a) {
             return new ArrayRef(sp, type(a.type()), capacity(a.capacity()));
         }
+        if (ctx instanceof TupleTypeRefContext t) {
+            List<TypeRef> elems = new ArrayList<>();
+            for (TypeContext e : t.type()) elems.add(type(e));
+            return new TupleRef(sp, elems);
+        }
         return new NamedRef(sp, ((NamedTypeRefContext) ctx).identifier().getText());
     }
 
@@ -223,8 +228,17 @@ final class AstBuilder {
         Span sp = span(ctx);
         if (ctx.letStmt() != null) {
             LetStmtContext l = ctx.letStmt();
-            return new Let(sp, l.kind.getType() == ALangLexer.VAR, l.identifier().getText(), span(l.identifier()),
-                type(l.type()), expr(l.expression()));
+            boolean mutable = l.kind.getType() == ALangLexer.VAR;
+            if (l.identifier() == null) {
+                List<String> names = new ArrayList<>();
+                List<Span> spans = new ArrayList<>();
+                for (BindingContext b : l.binding()) {
+                    names.add(b.UNDERSCORE() != null ? null : b.identifier().getText());
+                    spans.add(span(b));
+                }
+                return new Destructure(sp, mutable, names, spans, type(l.type()), expr(l.expression()));
+            }
+            return new Let(sp, mutable, l.identifier().getText(), span(l.identifier()), type(l.type()), expr(l.expression()));
         }
         if (ctx.assignStmt() != null) {
             AssignStmtContext a = ctx.assignStmt();
@@ -309,8 +323,10 @@ final class AstBuilder {
                 s.getStop().getStopIndex() - ctx.getStart().getStartIndex() + 1, file);
             if (s.identifier() != null) {
                 e = new FieldAccess(sp, e, s.identifier().getText(), span(s.identifier()));
-            } else {
+            } else if (s.expression() != null) {
                 e = new Index(sp, e, expr(s.expression()));
+            } else {
+                e = tupleAccess(sp, e, s.getStop());
             }
         }
         return e;
@@ -461,10 +477,30 @@ final class AstBuilder {
             Span sp = spanTo(e.span, op);
             if (op instanceof FieldAccessContext f) {
                 e = new FieldAccess(sp, e, f.identifier().getText(), span(f.identifier()));
+            } else if (op instanceof TupleAccessContext t) {
+                e = tupleAccess(sp, e, t.getStop());
             } else {
                 e = new Index(sp, e, expr(((IndexAccessContext) op).expression()));
             }
         }
+        return e;
+    }
+
+    /**
+     * t.0 (an INT_LIT after the dot), or t.0.1, which the lexer reads as t, a dot and the FLOAT_LIT 0.1: two
+     * element accesses. Anything else after the dot, such as 1e5, is not an element.
+     */
+    private Expr tupleAccess(Span sp, Expr target, Token t) {
+        String text = t.getText();
+        if (!text.matches("[0-9]+(\\.[0-9]+)?")) {
+            diags.error(Code.E0001, span(t), "`" + text + "` is not an element of a tuple",
+                "elements are numbered from 0: t.0, t.1, and t.0.1 for an element of an element");
+            return target;
+        }
+        Span first = new Span(sp.line(), sp.col(), Math.max(1, sp.length() - (text.contains(".") ? text.length() - text.indexOf('.') : 0)), file);
+        String[] parts = text.split("\\.");
+        Expr e = new FieldAccess(parts.length == 1 ? sp : first, target, parts[0], span(t));
+        if (parts.length == 2) e = new FieldAccess(sp, e, parts[1], span(t));
         return e;
     }
 
@@ -497,6 +533,11 @@ final class AstBuilder {
         }
         if (ctx instanceof NameExprContext n) return new Name(sp, n.identifier().getText());
         if (ctx instanceof ParenExprContext p) return expr(p.expression());
+        if (ctx instanceof TupleExprContext t) {
+            List<Expr> elems = new ArrayList<>();
+            for (ExpressionContext e : t.expression()) elems.add(expr(e));
+            return new TupleLit(sp, elems);
+        }
         if (ctx instanceof RepeatExprContext r) return new Repeat(sp, expr(r.expression(0)), expr(r.expression(1)));
         ArrayExprContext a = (ArrayExprContext) ctx;
         List<Expr> elems = new ArrayList<>();

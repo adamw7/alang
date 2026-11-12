@@ -316,6 +316,16 @@ public final class Checker {
                 int len = a.len() == null ? anyCapacity(a.span(), "[" + elem + "; _]") : typeSize(a.len(), "array length");
                 yield len == BAD_SIZE || Type.isError(elem) ? Type.ERROR : new Type.ArrayT(elem, len);
             }
+            case TupleRef t -> {
+                List<Type> elems = new ArrayList<>();
+                boolean bad = false;
+                for (TypeRef e : t.elems()) {
+                    Type et = resolveType(e);
+                    bad |= Type.isError(et);
+                    elems.add(et);
+                }
+                yield bad ? Type.ERROR : new Type.TupleT(elems);
+            }
             case NamedRef n -> {
                 if (structs.containsKey(n.name())) yield new Type.StructT(structs.get(n.name()));
                 if (enums.containsKey(n.name())) yield new Type.EnumT(enums.get(n.name()));
@@ -448,6 +458,7 @@ public final class Checker {
             }
             case Type.ArrayT a -> children.add(a.elem());
             case Type.ListT l -> children.add(l.elem());
+            case Type.TupleT tt -> children.addAll(tt.elems());
             default -> {
             }
         }
@@ -677,6 +688,10 @@ public final class Checker {
                 assign(a);
                 yield false;
             }
+            case Destructure d -> {
+                destructure(d);
+                yield false;
+            }
             case If i -> {
                 boolean all = i.elseBlock != null;
                 for (int k = 0; k < i.conds.size(); k++) {
@@ -758,6 +773,30 @@ public final class Checker {
         if (!Type.isBool(t) && !Type.isError(t)) {
             String hint = Type.isNumeric(t) ? "there is no truthiness; compare explicitly, e.g. x != 0" : null;
             diags.error(Code.E0211, e.span, "condition of `" + what + "` must be bool, found " + t, hint);
+        }
+    }
+
+    /** `let (a, b): (T1, T2) = e;`: e is a tuple of that type, and each name a variable of its element's type. */
+    private void destructure(Destructure d) {
+        Type t = resolveType(d.typeRef);
+        ctx.mutCallAllowed = d.init;
+        Type it = expr(d.init, t);
+        ctx.mutCallAllowed = null;
+        requireAssignable(d.init, it, t);
+        List<Type> elems = null;
+        if (t instanceof Type.TupleT tt && tt.elems().size() == d.names.size()) {
+            elems = tt.elems();
+        } else if (t instanceof Type.TupleT tt) {
+            diags.error(Code.E0201, d.typeRef.span(), d.names.size() + " names for a tuple of " + tt.elems().size() + " elements",
+                "give one name per element, and _ for one you do not need");
+        } else if (!Type.isError(t)) {
+            diags.error(Code.E0201, d.typeRef.span(), "let (...) takes a tuple apart, but " + t + " is not a tuple",
+                "declare one variable: let x: " + t + " = ...;");
+        }
+        for (int i = 0; i < d.names.size(); i++) {
+            String name = d.names.get(i);
+            Type et = elems == null ? Type.ERROR : elems.get(i);
+            d.vars.add(name == null ? null : declare(name, d.nameSpans.get(i), et, d.mutable));
         }
     }
 
@@ -1174,6 +1213,7 @@ public final class Checker {
             case ArrayLit a -> arrayLit(a, expected);
             case Repeat r -> repeat(r, expected);
             case IfExpr i -> ifExpr(i, expected);
+            case TupleLit t -> tupleLit(t, expected);
         };
     }
 
@@ -1278,6 +1318,17 @@ public final class Checker {
         }
         Type t = expr(f.target, null);
         if (Type.isError(t)) return Type.ERROR;
+        if (t instanceof Type.TupleT tt) {
+            int n = tt.elems().size();
+            int idx = f.name.matches("[0-9]{1,6}") ? Integer.parseInt(f.name) : -1;
+            if (idx < 0 || idx >= n) {
+                diags.error(Code.E0106, f.nameSpan, "a tuple of " + n + " elements has no element `" + f.name + "`",
+                    "its elements are numbered from 0 to " + (n - 1) + ": " + exprText(f.target) + ".0");
+                return Type.ERROR;
+            }
+            f.fieldIndex = idx;
+            return tt.elems().get(idx);
+        }
         if (t instanceof Type.StructT st) {
             int idx = st.decl().fieldIndex(f.name);
             if (idx < 0) {
@@ -1412,6 +1463,7 @@ public final class Checker {
             case Type.Str s -> Math.max(0, -s.cap());
             case Type.ListT l -> Math.max(Math.max(0, -l.cap()), anyCapacities(l.elem()));
             case Type.ArrayT a -> Math.max(Math.max(0, -a.len()), anyCapacities(a.elem()));
+            case Type.TupleT tt -> tt.elems().stream().mapToInt(Checker::anyCapacities).max().orElse(0);
             default -> 0;
         };
     }
@@ -1656,6 +1708,7 @@ public final class Checker {
             case ArrayLit a -> a.elems.stream().anyMatch(x -> mentions(x, v));
             case Repeat r -> mentions(r.value, v);
             case IfExpr i -> mentions(i.cond, v) || mentions(i.then, v) || mentions(i.otherwise, v);
+            case TupleLit t -> t.elems.stream().anyMatch(x -> mentions(x, v));
             default -> false;
         };
     }
@@ -2546,7 +2599,7 @@ public final class Checker {
 
     /** An array literal, [a, b] or [v; n], which can also build a list of the type its context expects. */
     private static boolean isArrayLiteral(Expr e) {
-        return e instanceof ArrayLit || e instanceof Repeat;
+        return e instanceof ArrayLit || e instanceof Repeat || e instanceof TupleLit;
     }
 
     /** True if an untyped expression contains a float literal, so that it must be a float. */
@@ -2811,6 +2864,31 @@ public final class Checker {
         return e instanceof Call c && Builtin.byName(c.name) != null && Builtin.byName(c.name).typedByTarget();
     }
 
+    /** `(a, b, ...)`: with an expected tuple type of as many elements, each element is checked against its type. */
+    private Type tupleLit(TupleLit t, Type expected) {
+        if (expected instanceof Type.TupleT et && et.elems().size() == t.elems.size()) {
+            for (int i = 0; i < t.elems.size(); i++) {
+                Expr e = t.elems.get(i);
+                Type want = et.elems().get(i);
+                requireAssignable(e, expr(e, want), want);
+            }
+            return expected;
+        }
+        List<Type> ts = new ArrayList<>();
+        boolean bad = false;
+        for (Expr e : t.elems) {
+            Type x = expr(e, null);
+            if (x instanceof Type.Void) {
+                diags.error(Code.E0201, e.span, "`" + exprText(e) + "` returns nothing, so it cannot be an element of a tuple",
+                    "call it as a statement of its own");
+                bad = true;
+            }
+            bad |= Type.isError(x);
+            ts.add(x);
+        }
+        return bad ? Type.ERROR : new Type.TupleT(ts);
+    }
+
     private Type repeat(Repeat r, Type expected) {
         if (unknownSize(r, expected, true)) {
             constSize(r.count, "repeat count");
@@ -2908,6 +2986,7 @@ public final class Checker {
             case ArrayLit a -> a.elems.stream().allMatch(Checker::isConst);
             case Repeat r -> isConst(r.value);
             case IfExpr i -> isConst(i.cond) && isConst(i.then) && isConst(i.otherwise);
+            case TupleLit t -> t.elems.stream().allMatch(Checker::isConst);
         };
     }
 

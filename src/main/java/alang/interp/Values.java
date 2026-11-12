@@ -104,6 +104,7 @@ public final class Values {
             case Type.ArrayT at -> allEqual(((ArrV) a).items, ((ArrV) b).items, ((ArrV) a).items.length, i -> at.elem());
             case Type.StructT st -> allEqual(((StructV) a).fields, ((StructV) b).fields, st.decl().fields.size(),
                 i -> st.decl().fields.get(i).type);
+            case Type.TupleT tt -> allEqual(((StructV) a).fields, ((StructV) b).fields, tt.elems().size(), i -> tt.elems().get(i));
             case Type.EnumT et -> {
                 EnumV x = (EnumV) a;
                 EnumV y = (EnumV) b;

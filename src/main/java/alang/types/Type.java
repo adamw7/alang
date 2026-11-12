@@ -44,6 +44,14 @@ public sealed interface Type {
         }
     }
 
+    /** A tuple of two or more values of the given types: (i64, str[8]). Its elements are read as t.0, t.1, ... */
+    record TupleT(List<Type> elems) implements Type {
+        @Override
+        public String toString() {
+            return "(" + String.join(", ", elems.stream().map(Type::toString).toList()) + ")";
+        }
+    }
+
     /**
      * The capacity that the {@code i}-th `_` (from 0) of a function's parameter types stands for: inside the
      * function it is unknown, and each call fixes it.
@@ -62,6 +70,7 @@ public sealed interface Type {
             case Str s -> s.cap() < 0;
             case ListT l -> l.cap() < 0 || hasAnyCapacity(l.elem());
             case ArrayT a -> a.len() < 0 || hasAnyCapacity(a.elem());
+            case TupleT tt -> tt.elems().stream().anyMatch(Type::hasAnyCapacity);
             default -> false;
         };
     }
@@ -72,6 +81,7 @@ public sealed interface Type {
             case Str s -> s.cap() < 0 ? new Str(caps.get(-1 - s.cap())) : s;
             case ListT l -> new ListT(substitute(l.elem(), caps), l.cap() < 0 ? caps.get(-1 - l.cap()) : l.cap());
             case ArrayT a -> new ArrayT(substitute(a.elem(), caps), a.len() < 0 ? caps.get(-1 - a.len()) : a.len());
+            case TupleT tt -> new TupleT(tt.elems().stream().map(e -> substitute(e, caps)).toList());
             default -> t;
         };
     }
@@ -92,6 +102,12 @@ public sealed interface Type {
             }
             case ListT p when arg instanceof ListT a -> bind(p.elem(), a.elem(), true, caps) && bindCap(p.cap(), a.cap(), exact, caps);
             case ArrayT p when arg instanceof ArrayT a -> bind(p.elem(), a.elem(), true, caps) && bindCap(p.len(), a.len(), true, caps);
+            case TupleT p when arg instanceof TupleT a && p.elems().size() == a.elems().size() -> {
+                for (int i = 0; i < p.elems().size(); i++) {
+                    if (!bind(p.elems().get(i), a.elems().get(i), true, caps)) yield false;
+                }
+                yield true;
+            }
             default -> false;
         };
     }

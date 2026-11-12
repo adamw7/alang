@@ -643,6 +643,15 @@ final class Stdlib {
                 }
                 yield 0;
             }
+            case Type.TupleT tt -> {
+                Object[] x = ((StructV) a).fields;
+                Object[] y = ((StructV) b).fields;
+                for (int i = 0; i < x.length; i++) {
+                    int c = compare(x[i], y[i], tt.elems().get(i));
+                    if (c != 0) yield c;
+                }
+                yield 0;
+            }
             case Type.EnumT et -> {
                 EnumV x = (EnumV) a;
                 EnumV y = (EnumV) b;

@@ -296,6 +296,15 @@ public final class CGen {
             case Type.ListT l -> "l" + l.cap() + "_" + mangle(l.elem());
             case Type.StructT s -> "S" + s.decl().name.length() + s.decl().name;
             case Type.EnumT e -> "E" + e.decl().name.length() + e.decl().name;
+            case Type.TupleT tt -> {
+                // T2, then each element's name after its length: (i64, str[8]) is T2_3i64_2s8.
+                StringBuilder sb = new StringBuilder("T").append(tt.elems().size());
+                for (Type e : tt.elems()) {
+                    String m = mangle(e);
+                    sb.append('_').append(m.length()).append(m);
+                }
+                yield sb.toString();
+            }
             default -> throw new IllegalStateException("no C type for " + t);
         };
     }
@@ -321,6 +330,13 @@ public final class CGen {
                 for (Field f : s.decl().fields) fields.add("    " + ct(f.type) + " f_" + f.name + ";\n");
                 sb.append("typedef struct {\n");
                 for (String f : fields) sb.append(f);
+                sb.append("} ");
+            }
+            case Type.TupleT tt -> {
+                List<String> elems = new ArrayList<>();
+                for (int i = 0; i < tt.elems().size(); i++) elems.add("    " + ct(tt.elems().get(i)) + " e" + i + ";\n");
+                sb.append("typedef struct {\n");
+                for (String e : elems) sb.append(e);
                 sb.append("} ");
             }
             case Type.EnumT e -> {
@@ -379,6 +395,15 @@ public final class CGen {
                     sb.append("    AL_PUTS(o, ").append(cString(utf8(label))).append(");\n");
                     sb.append("    ").append(parts.get(i)).append('\n');
                     i++;
+                }
+                sb.append("    AL_PUTS(o, \")\");\n}\n\n");
+            }
+            case Type.TupleT tt -> {
+                sb.append("static void ").append(name).append("(al_out *o, const ").append(ty).append(" *x) {\n")
+                    .append("    AL_PUTS(o, \"(\");\n");
+                for (int i = 0; i < tt.elems().size(); i++) {
+                    if (i > 0) sb.append("    AL_PUTS(o, \", \");\n");
+                    sb.append("    ").append(fmtStmt(tt.elems().get(i), "o", "x->e" + i, "1")).append('\n');
                 }
                 sb.append("    AL_PUTS(o, \")\");\n}\n\n");
             }
@@ -452,6 +477,13 @@ public final class CGen {
             case Type.StructT s -> {
                 for (Field f : s.decl().fields) {
                     body.append("    if (!").append(eqExpr(f.type, f.type, "a->f_" + f.name, "b->f_" + f.name)).append(") return false;\n");
+                }
+                body.append("    return true;\n");
+            }
+            case Type.TupleT tt -> {
+                for (int i = 0; i < tt.elems().size(); i++) {
+                    Type e = tt.elems().get(i);
+                    body.append("    if (!").append(eqExpr(e, e, "a->e" + i, "b->e" + i)).append(") return false;\n");
                 }
                 body.append("    return true;\n");
             }
@@ -536,6 +568,11 @@ public final class CGen {
             case Type.StructT s -> {
                 List<String> parts = new ArrayList<>();
                 for (int i = 0; i < s.decl().fields.size(); i++) parts.add(init(((StructV) v).fields[i], s.decl().fields.get(i).type));
+                yield "{" + String.join(", ", parts) + "}";
+            }
+            case Type.TupleT tt -> {
+                List<String> parts = new ArrayList<>();
+                for (int i = 0; i < tt.elems().size(); i++) parts.add(init(((StructV) v).fields[i], tt.elems().get(i)));
                 yield "{" + String.join(", ", parts) + "}";
             }
             case Type.EnumT e -> {
@@ -756,6 +793,15 @@ public final class CGen {
                 emit("(void)" + cName(l.var) + ";");
             }
             case Assign a -> assign(a);
+            case Destructure d -> {
+                String v = lower(d.init);
+                for (int i = 0; i < d.vars.size(); i++) {
+                    LocalVar lv = d.vars.get(i);
+                    if (lv == null) continue;
+                    emit(ct(lv.type) + " " + cName(lv) + " = (" + v + ").e" + i + ";");
+                    emit("(void)" + cName(lv) + ";");
+                }
+            }
             case If i -> ifStmt(i);
             case While w -> whileLoop(w);
             case For f -> {
@@ -1202,6 +1248,9 @@ public final class CGen {
             case BoolLit b -> b.value ? "true" : "false";
             case Name n -> n.local != null ? varRef(n.local) : "al_c_" + n.constant.name;
             case FieldAccess f -> {
+                if (f.variant == null && f.target.type instanceof Type.TupleT) {
+                    yield "(" + lower(f.target) + ").e" + f.fieldIndex;
+                }
                 if (f.variant == null) {
                     StructDecl d = ((Type.StructT) f.target.type).decl();
                     yield "(" + lower(f.target) + ").f_" + d.fields.get(f.fieldIndex).name;
@@ -1259,6 +1308,17 @@ public final class CGen {
                 for (int i = 0; i < vals.size(); i++) emit(t + ".v[" + i + "] = " + vals.get(i) + ";");
                 if (a.type instanceof Type.ListT) emit(t + ".len = " + vals.size() + "u;");
                 yield t;
+            }
+            case TupleLit t -> {
+                List<Type> elems = ((Type.TupleT) t.type).elems();
+                List<String> vals = new ArrayList<>();
+                for (int i = 0; i < t.elems.size(); i++) {
+                    Expr x = t.elems.get(i);
+                    vals.add(coerce(lower(x), x.type, elems.get(i)));
+                }
+                String r = tmp(t.type, "{0}");
+                for (int i = 0; i < vals.size(); i++) emit(r + ".e" + i + " = " + vals.get(i) + ";");
+                yield r;
             }
             case IfExpr i -> {
                 String r = tmp(i.type, zeroInit(i.type));
@@ -1990,6 +2050,14 @@ public final class CGen {
                 body.append("    int c;\n");
                 for (Field f : st.decl().fields) {
                     body.append("    c = ").append(cmpExpr(f.type, "a->f_" + f.name, "b->f_" + f.name)).append(";\n")
+                        .append("    if (c != 0) return c;\n");
+                }
+                body.append("    return 0;\n");
+            }
+            case Type.TupleT tt -> {
+                body.append("    int c;\n");
+                for (int i = 0; i < tt.elems().size(); i++) {
+                    body.append("    c = ").append(cmpExpr(tt.elems().get(i), "a->e" + i, "b->e" + i)).append(";\n")
                         .append("    if (c != 0) return c;\n");
                 }
                 body.append("    return 0;\n");

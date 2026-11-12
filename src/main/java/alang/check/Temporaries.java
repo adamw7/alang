@@ -3,6 +3,7 @@ package alang.check;
 import alang.ast.Ast.*;
 import alang.ast.Builtin;
 import alang.types.Type;
+import java.util.List;
 
 /**
  * An upper bound on the aggregate temporaries a routine builds, which {@link MemoryReport} adds to its
@@ -42,6 +43,8 @@ final class Temporaries {
     private static long stmt(Stmt s, Routine r) {
         return switch (s) {
             case Let l -> l.builtInPlace() ? inner(l.init) : Layout.add(expr(l.init), stored(l.init, l.var.type));
+            // The tuple is taken apart where it is: each variable copies its element.
+            case Destructure d -> expr(d.init);
             case Assign a -> {
                 long t = Layout.add(expr(a.target), expr(a.value));
                 yield a.op == null ? Layout.add(t, stored(a.value, a.target.type)) : t;
@@ -138,6 +141,15 @@ final class Temporaries {
             case Repeat r -> Layout.add(expr(r.value), stored(r.value, Type.elementOf(r.type)));
             case IfExpr i -> Layout.add(expr(i.cond), Layout.add(Layout.add(expr(i.then), stored(i.then, i.type)),
                 Layout.add(expr(i.otherwise), stored(i.otherwise, i.type))));
+            case TupleLit t -> {
+                List<Type> elems = ((Type.TupleT) t.type).elems();
+                long sum = 0;
+                for (int i = 0; i < t.elems.size(); i++) {
+                    Expr x = t.elems.get(i);
+                    sum = Layout.add(sum, Layout.add(expr(x), stored(x, elems.get(i))));
+                }
+                yield sum;
+            }
         };
     }
 

@@ -10,6 +10,7 @@ import alang.ast.Ast.BoolLit;
 import alang.ast.Ast.Break;
 import alang.ast.Ast.Call;
 import alang.ast.Ast.Continue;
+import alang.ast.Ast.Destructure;
 import alang.ast.Ast.Convert;
 import alang.ast.Ast.Expr;
 import alang.ast.Ast.ExprStmt;
@@ -34,6 +35,7 @@ import alang.ast.Ast.Stmt;
 import alang.ast.Ast.StrLit;
 import alang.ast.Ast.StructLit;
 import alang.ast.Ast.TestDecl;
+import alang.ast.Ast.TupleLit;
 import alang.ast.Ast.Unary;
 import alang.ast.Ast.VariantCall;
 import alang.ast.Ast.While;
@@ -114,6 +116,7 @@ final class ToolExamples {
     private static void calls(Stmt s, List<Call> out) {
         switch (s) {
             case Let l -> calls(l.init, out);
+            case Destructure d -> calls(d.init, out);
             case Assign a -> {
                 calls(a.value, out);
                 calls(a.target, out);
@@ -174,6 +177,7 @@ final class ToolExamples {
                 calls(i.then, out);
                 calls(i.otherwise, out);
             }
+            case TupleLit t -> t.elems.forEach(x -> calls(x, out));
             case Unary u -> calls(u.operand, out);
             case Binary b -> {
                 calls(b.left, out);

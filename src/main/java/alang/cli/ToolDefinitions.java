@@ -19,6 +19,7 @@ import alang.ast.Ast.Repeat;
 import alang.ast.Ast.Resize;
 import alang.ast.Ast.StrLit;
 import alang.ast.Ast.StructLit;
+import alang.ast.Ast.TupleLit;
 import alang.ast.Ast.Unary;
 import alang.ast.Ast.VariantCall;
 import alang.ast.Builtin;
@@ -95,6 +96,7 @@ final class ToolDefinitions {
             case ArrayLit a -> a.elems.stream().allMatch(ToolDefinitions::isConstant);
             case Repeat r -> isConstant(r.value) && isConstant(r.count);
             case IfExpr i -> isConstant(i.cond) && isConstant(i.then) && isConstant(i.otherwise);
+            case TupleLit t -> t.elems.stream().allMatch(ToolDefinitions::isConstant);
         };
     }
 
@@ -158,7 +160,12 @@ final class ToolDefinitions {
         }
         if (e instanceof FieldAccess fa && fa.variant == null) {
             Map<String, Object> outer = node(props, f, fa.target);
-            return outer == null ? null : map(map(outer.get("properties")).get(fa.name));
+            if (outer == null) return null;
+            if (fa.target.type instanceof Type.TupleT) {
+                // A tuple's element: the schema of its position in prefixItems.
+                return outer.get("prefixItems") instanceof List<?> items ? map(items.get(fa.fieldIndex)) : null;
+            }
+            return outer.get("properties") == null ? null : map(map(outer.get("properties")).get(fa.name));
         }
         return null;
     }

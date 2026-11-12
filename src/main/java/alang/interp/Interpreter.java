@@ -260,6 +260,13 @@ public final class Interpreter {
                 assign(a, slots);
                 yield NORMAL;
             }
+            case Destructure d -> {
+                StructV t = (StructV) Values.coerce(owned(d.init, slots), d.init.type);
+                for (int i = 0; i < d.vars.size(); i++) {
+                    if (d.vars.get(i) != null) slots[d.vars.get(i).slot] = t.fields[i];
+                }
+                yield NORMAL;
+            }
             case If i -> {
                 for (int k = 0; k < i.conds.size(); k++) {
                     if ((Boolean) eval(i.conds.get(k), slots)) yield execBlock(i.blocks.get(k), slots);
@@ -658,6 +665,12 @@ public final class Interpreter {
                 yield a.type instanceof Type.ListT l ? new ListV(Arrays.copyOf(vals, l.cap()), vals.length) : new ArrV(vals);
             }
             case IfExpr i -> Values.coerce(owned((Boolean) eval(i.cond, slots) ? i.then : i.otherwise, slots), i.type);
+            case TupleLit t -> {
+                List<Type> elems = ((Type.TupleT) t.type).elems();
+                Object[] vals = new Object[t.elems.size()];
+                for (int i = 0; i < vals.length; i++) vals[i] = Values.coerce(owned(t.elems.get(i), slots), elems.get(i));
+                yield new StructV(vals);
+            }
             case Repeat r -> {
                 Type elem = Type.elementOf(r.type);
                 Object v = Values.coerce(owned(r.value, slots), elem);

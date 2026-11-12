@@ -137,6 +137,7 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `let x = 5;` / `x := 5` | `let x: i64 = 5;` |
 | `int`, `usize`, `String`, `Vec<T>` | `i32`/`i64`, `i64`, `str[N]`, `list[T; N]` |
 | `Option<T>`, `null` | `enum MaybeT { None, Some(T) }` |
+| `return a, b`, `(a, b) = f()`, `let (q, r) = divmod(a, b)` | `return (a, b);` with `-> (i64, i64)`, then `let (q, r): (i64, i64) = divmod(a, b);` and `p.0`, `p.1` |
 | `i++` | `i += 1;` |
 | `for (i = 0; i < n; i++)` | `for i in 0..n { }` |
 | `for i in range(0, n + 1, 2)`, `(0..=n).step_by(2)` | `for i in 0..=n step 2 { }` |
@@ -417,7 +418,8 @@ it out with `requires`, which the schema then shows too.
 
 JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string of at most N UTF-8
 bytes (a non-ASCII character takes 2 to 4, so size N in bytes, not characters), arrays and lists as
-arrays, structs as objects (all fields required), enum variants as `"Name"` or `{"Name": [payload...]}`.
+arrays, tuples as arrays of fixed length, structs as objects (all fields required), enum variants as `"Name"` or
+`{"Name": [payload...]}`.
 Tools cannot take `mut` parameters. A trap inside a tool returns `{"ok": false, "error": {"code":
 "R....", ...}}` instead of crashing the caller. JSON has no NaN or infinity, so a float result holding one
 fails with `bad_result` (check for it in the tool); a `str` result must be UTF-8 text, so return raw

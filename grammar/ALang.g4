@@ -107,6 +107,7 @@ type
     | STR LBRACK capacity RBRACK                 # strTypeRef      // str[64]: text, up to 64 bytes
     | LIST LBRACK type SEMI capacity RBRACK      # listTypeRef     // list[i32; 16]: up to 16 items
     | LBRACK type SEMI capacity RBRACK           # arrayTypeRef    // [i32; 16]: exactly 16 items
+    | LPAREN type (COMMA type)+ COMMA? RPAREN    # tupleTypeRef    // (i64, str[8]): a pair
     | identifier                                 # namedTypeRef    // struct or enum name
     ;
 
@@ -148,8 +149,9 @@ statement
     ;
 
 // `let` is immutable, `var` is mutable. Both must be initialized.
+// let (q, r): (i64, i64) = divmod(a, b);  takes a tuple apart, one variable per element (`_` skips one)
 letStmt
-    : kind=(LET | VAR) identifier COLON type ASSIGN expression SEMI
+    : kind=(LET | VAR) (identifier | LPAREN binding (COMMA binding)+ COMMA? RPAREN) COLON type ASSIGN expression SEMI
     ;
 
 assignStmt
@@ -163,6 +165,8 @@ place
 
 placeSuffix
     : DOT identifier
+    | DOT INT_LIT                        // t.0: an element of a tuple
+    | DOT FLOAT_LIT                      // t.0.1, which the lexer reads as t . 0.1
     | LBRACK expression RBRACK
     ;
 
@@ -282,6 +286,7 @@ postfix
 
 postfixOp
     : DOT identifier                     # fieldAccess
+    | DOT (INT_LIT | FLOAT_LIT)          # tupleAccess   // t.0, and t.0.1 (lexed as t . 0.1)
     | LBRACK expression RBRACK           # indexAccess
     ;
 
@@ -296,6 +301,7 @@ primary
     | identifier LPAREN argList? RPAREN                                 # callExpr
     | identifier                                                        # nameExpr
     | LPAREN expression RPAREN                                          # parenExpr
+    | LPAREN expression (COMMA expression)+ COMMA? RPAREN               # tupleExpr
     | LBRACK expression SEMI expression RBRACK                          # repeatExpr
     | LBRACK (expression (COMMA expression)* COMMA?)? RBRACK            # arrayExpr
     ;

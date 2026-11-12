@@ -74,6 +74,13 @@ final class Uses {
                         "what it is given is lost: use its value, or remove it");
                 }
             }
+            for (Destructure d : s.destructures) {
+                for (int i = 0; i < d.vars.size(); i++) {
+                    LocalVar v = d.vars.get(i);
+                    if (v == null || v.name.startsWith("_") || s.read.contains(v)) continue;
+                    diags.warning(Code.W0304, d.nameSpans.get(i), "`" + v.name + "` is never used", "write _ in its place");
+                }
+            }
             for (VariantPat p : s.patterns) {
                 for (int i = 0; i < p.vars.size(); i++) {
                     LocalVar v = p.vars.get(i);
@@ -91,6 +98,7 @@ final class Uses {
         final Set<LocalVar> changed = new HashSet<>();
         final List<Let> lets = new ArrayList<>();
         final List<VariantPat> patterns = new ArrayList<>();
+        final List<Destructure> destructures = new ArrayList<>();
 
         void block(Block b) {
             for (Stmt s : b.stmts()) stmt(s);
@@ -101,6 +109,10 @@ final class Uses {
                 case Let l -> {
                     lets.add(l);
                     read(l.init);
+                }
+                case Destructure d -> {
+                    destructures.add(d);
+                    read(d.init);
                 }
                 case Assign a -> {
                     // `x += 1` uses x only to change it, so it is not a read of x.
@@ -200,6 +212,9 @@ final class Uses {
                     read(i.cond);
                     read(i.then);
                     read(i.otherwise);
+                }
+                case TupleLit t -> {
+                    for (Expr x : t.elems) read(x);
                 }
                 case IntLit i -> { }
                 case FloatLit f -> { }

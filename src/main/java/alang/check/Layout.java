@@ -49,6 +49,16 @@ public final class Layout {
                 }
                 yield align(Math.max(off, 1), al);
             }
+            case Type.TupleT tt -> {
+                long off = 0;
+                long al = 1;
+                for (Type e : tt.elems()) {
+                    long ea = align(e);
+                    off = add(align(off, ea), size(e));
+                    al = Math.max(al, ea);
+                }
+                yield align(Math.max(off, 1), al);
+            }
             case Type.EnumT e -> enumSize(e.decl());
             case Type.Void v -> 0;
             case Type.Error err -> 0;
@@ -80,6 +90,11 @@ public final class Layout {
             case Type.StructT s -> {
                 long al = 1;
                 for (Field f : s.decl().fields) al = Math.max(al, align(f.type));
+                yield al;
+            }
+            case Type.TupleT tt -> {
+                long al = 1;
+                for (Type e : tt.elems()) al = Math.max(al, align(e));
                 yield al;
             }
             case Type.EnumT e -> {

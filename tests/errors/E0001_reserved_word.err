@@ -1,4 +1,4 @@
-error[E0001]: unexpected 'fn', expected a name
+error[E0001]: unexpected 'fn', expected '(' or a name
  --> tests/errors/E0001_reserved_word.al:3:9
   |
 3 |     let fn: i64 = 1;

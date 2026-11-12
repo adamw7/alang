@@ -98,6 +98,12 @@ public final class JsonValues {
                 yield describe(Json.obj("type", "object", "properties", props, "required", required,
                     "additionalProperties", false), st.decl().doc);
             }
+            case Type.TupleT tt -> {
+                List<Object> items = new ArrayList<>();
+                for (Type e : tt.elems()) items.add(schema(e));
+                yield Json.obj("type", "array", "prefixItems", items, "items", false, "minItems", items.size(),
+                    "maxItems", items.size());
+            }
             case Type.EnumT et -> describe(enumSchema(et.decl()), et.decl().doc);
             default -> Json.obj();
         };
@@ -201,6 +207,11 @@ public final class JsonValues {
                         throw e.within("." + f.name);
                     }
                 }
+                yield out;
+            }
+            case Type.TupleT tt -> {
+                List<Object> out = new ArrayList<>();
+                for (int i = 0; i < tt.elems().size(); i++) out.add(element(((StructV) v).fields[i], tt.elems().get(i), i));
                 yield out;
             }
             case Type.EnumT et -> {
@@ -337,6 +348,14 @@ public final class JsonValues {
                     fields[i++] = fromJson(m.get(f.name), f.type, path + "." + f.name);
                 }
                 return new StructV(fields);
+            }
+            case Type.TupleT tt -> {
+                int n = tt.elems().size();
+                if (!(j instanceof List<?> l)) throw fail(path, "expected an array of " + n + " items");
+                if (l.size() != n) throw fail(path, "expected exactly " + n + " items, found " + l.size());
+                Object[] vals = new Object[n];
+                for (int i = 0; i < n; i++) vals[i] = fromJson(l.get(i), tt.elems().get(i), path + "[" + i + "]");
+                return new StructV(vals);
             }
             case Type.EnumT et -> {
                 EnumDecl d = et.decl();

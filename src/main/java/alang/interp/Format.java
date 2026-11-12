@@ -93,6 +93,15 @@ public final class Format {
                 }
                 out.write(')');
             }
+            case Type.TupleT tt -> {
+                StructV sv = (StructV) v;
+                out.write('(');
+                for (int i = 0; i < tt.elems().size(); i++) {
+                    if (i > 0) ascii(out, ", ");
+                    format(out, sv.fields[i], tt.elems().get(i), true);
+                }
+                out.write(')');
+            }
             case Type.EnumT et -> {
                 EnumV ev = (EnumV) v;
                 EnumDecl d = et.decl();

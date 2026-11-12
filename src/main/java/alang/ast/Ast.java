@@ -269,6 +269,9 @@ public final class Ast {
 
     public record NamedRef(Span span, String name) implements TypeRef {}
 
+    /** (T1, T2, ...): a tuple type. */
+    public record TupleRef(Span span, List<TypeRef> elems) implements TypeRef {}
+
     // =================================================================== statements
 
     public record Block(Span span, List<Stmt> stmts) {}
@@ -306,6 +309,26 @@ public final class Ast {
          */
         public boolean builtInPlace() {
             return init instanceof Call c && c.builtin != null && c.builtin.typedByTarget() && c.type.equals(var.type);
+        }
+    }
+
+    /** `let (a, b): (T1, T2) = e;`: one variable per element of a tuple; a null name is a `_`. */
+    public static final class Destructure extends Stmt {
+        public final boolean mutable;
+        public final List<String> names;
+        public final List<Span> nameSpans;
+        public final TypeRef typeRef;
+        public final Expr init;
+        /** One per element; null for a `_`. */
+        public final List<LocalVar> vars = new ArrayList<>();
+
+        public Destructure(Span span, boolean mutable, List<String> names, List<Span> nameSpans, TypeRef typeRef, Expr init) {
+            super(span);
+            this.mutable = mutable;
+            this.names = names;
+            this.nameSpans = nameSpans;
+            this.typeRef = typeRef;
+            this.init = init;
         }
     }
 
@@ -689,7 +712,7 @@ public final class Ast {
         }
     }
 
-    /** `target.name`: a struct field, or a unit enum variant when target names an enum. */
+    /** `target.name`: a struct field, a tuple element (name "0", "1", ...), or a unit enum variant when target names an enum. */
     public static final class FieldAccess extends Expr {
         public final Expr target;
         public final String name;
@@ -824,6 +847,16 @@ public final class Ast {
             this.op = op;
             this.left = left;
             this.right = right;
+        }
+    }
+
+    /** `(a, b, ...)`: a tuple. */
+    public static final class TupleLit extends Expr {
+        public final List<Expr> elems;
+
+        public TupleLit(Span span, List<Expr> elems) {
+            super(span);
+            this.elems = elems;
         }
     }
 

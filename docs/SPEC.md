@@ -54,6 +54,7 @@ nearest-even, directly to `f32` or `f64`; one that would round to `inf` is E0202
 | `str[N]` | text of 0..N bytes (UTF-8), stored inline | 4 + N (aligned) |
 | `[T; N]` | array of exactly N elements | N × size(T) |
 | `list[T; N]` | list of 0..N elements, stored inline | 4 + N × size(T) (aligned) |
+| `(T1, T2, ...)` | a tuple of two or more values, read as `t.0`, `t.1`, ... | as a struct of those fields |
 | `Name` | a declared `struct` or `enum` | sum of fields / tag + largest payload |
 
 `N` is a compile-time integer constant (a literal or a `const`) from 1 to 1 048 576; only in the type of
@@ -86,6 +87,13 @@ enum Shape {
     Empty,
 }
 ```
+
+**Tuples** group values without declaring a struct: `(1, "a")` is a `(i64, str[1])`, and a literal takes the
+tuple type its context expects, `let p: (str[8], i64) = ("ann", 7);`. Elements are read and written by position,
+`p.0`, `p.1` (and `t.0.1` for an element of an element), and `let (name, n): (str[8], i64) = p;` takes a tuple
+apart into new variables, with `_` for an element that is not needed. A function returns several values as a
+tuple: `fn divmod(a: i64, b: i64) -> (i64, i64)`. Tuples compare with `==` element by element, and `sort` orders
+them so; tuple types are equal only when every element type is (no widening, except in a literal).
 
 **Enum** variants are always qualified (`Shape.Empty`, `Shape.Circle(2.0)`), and payloads are read only
 with `match`. There is no `null`: model absence with an enum such as `enum MaybeI32 { None, Some(i32) }`.
@@ -154,7 +162,7 @@ a file, before any declaration (E0001), and:
 
 | Statement | Form |
 |-----------|------|
-| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable) |
+| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;` |
 | assignment | `place = expr;` and `+= -= *= /= %=` |
 | condition | `if c { } else if c { } else { }` |
 | loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`; `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
@@ -616,8 +624,8 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
   but one decimal kept: `1.5`, `2.0`, `0.333333`, `100000000000000000000.0` for `1e20`, `-0.0`, `nan`,
   `inf`, `-inf`;
 - a top-level `str` as its raw bytes; a `str` inside an aggregate quoted with escapes: `"a\n"`;
-- arrays and lists as `[1, 2, 3]`, structs as `Point(x: 1.0, y: 2.0)`, enums as `Shape.Empty` or
-  `Shape.Circle(2.0)`;
+- arrays and lists as `[1, 2, 3]`, tuples as `(1, "a")`, structs as `Point(x: 1.0, y: 2.0)`, enums as
+  `Shape.Empty` or `Shape.Circle(2.0)`;
 - a `u8` (a character literal too) as a number: add a character to a string with `push(mut s, 'a')`;
   `append(mut s, 'a')` appends `97` (warning W0303).
 
@@ -687,6 +695,7 @@ of a function it calls is not. The calls are the same on every run, at most 200 
 | `[T; N]` | array of exactly N items |
 | `list[T; N]` | array of at most N items |
 | struct | object with every field required, no extra fields |
+| `(T1, T2)` | array of exactly that many items, each of its element's type (`prefixItems`) |
 | enum | `"Variant"` without payload, `{"Variant": [v1, v2]}` with |
 
 Arguments must be strict JSON (RFC 8259: ASCII digits, no leading zeros, escaped control characters,

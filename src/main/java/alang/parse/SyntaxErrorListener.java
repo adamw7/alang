@@ -231,8 +231,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
     private static final String NO_STR_CONVERSION = "there is no str() conversion; build text with append(mut s, value) "
         + "into a str[N] variable, and change the capacity of a str with str[N](s)";
 
-    private static final String TUPLES = "there are no tuples; declare a struct with named fields, "
-        + "e.g. struct Pair { a: i64, b: i64 }, and build it with Pair(a: 1, b: 2)";
+    private static final String TUPLES = "a tuple is built as (a, b), read as t.0 and t.1, and taken apart with a typed "
+        + "let: let (a, b): (i64, i64) = pair;";
 
     /** Constructs common in other languages that ALang leaves out, each with the ALang way to write it. */
     private static String missingFeature(TokenStream ts, Token tok, Token prev, Token prev2, IntervalSet expected) {
@@ -319,9 +319,6 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 return "there are no function types or closures; call functions by name, and choose between "
                     + "behaviors with an enum and match";
             }
-        }
-        if (t == ALangLexer.LPAREN && expected.contains(ALangLexer.I64) && !expected.contains(ALangLexer.INT_LIT)) {
-            return TUPLES; // where a type must start
         }
         if (t == ALangLexer.COMMA) {
             // A comma inside parentheses that do not belong to a call, constructor, pattern or declaration.
