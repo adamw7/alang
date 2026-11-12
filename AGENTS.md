@@ -99,7 +99,7 @@ test "counts repeated words" {
 9. **No recursion.** Use a loop with an explicit work list (`list[T; N]` as a stack or queue).
 10. **`mut` is explicit on both sides**: `fn grow(xs: mut list[i32; 8])` and `grow(mut xs)`. Plain parameters are read-only copies.
 11. **A call with a `mut` argument is its own statement** or the whole right side of `let`/assignment/`return`: `let top: i32 = pop(mut stack);` then use `top`.
-12. **A `mut` variable cannot appear twice in one call**: `append(mut s, s)` is an error. Numbers are copied first, so `remove(mut xs, len(xs) - 1)` is fine.
+12. **A `mut` variable cannot appear twice in one call**: `append(mut s, s)` and `swap(mut xs[i], mut xs[j])` are errors. Numbers passed without `mut` are copied first, so `remove(mut xs, len(xs) - 1)` is fine.
 13. **No shadowing.** Pick a new name instead of redeclaring one in an inner block.
 14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings.
 15. **Functions with a return type return on every path.** Add a final `return` after loops.
