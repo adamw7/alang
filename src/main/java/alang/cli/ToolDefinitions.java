@@ -17,6 +17,7 @@ import alang.ast.Ast.LocalVar;
 import alang.ast.Ast.Name;
 import alang.ast.Ast.Repeat;
 import alang.ast.Ast.Resize;
+import alang.ast.Ast.SliceExpr;
 import alang.ast.Ast.StrLit;
 import alang.ast.Ast.StructLit;
 import alang.ast.Ast.TupleLit;
@@ -97,6 +98,7 @@ final class ToolDefinitions {
             case Repeat r -> isConstant(r.value) && isConstant(r.count);
             case IfExpr i -> isConstant(i.cond) && isConstant(i.then) && isConstant(i.otherwise);
             case TupleLit t -> t.elems.stream().allMatch(ToolDefinitions::isConstant);
+            case SliceExpr s -> isConstant(s.target) && (s.from == null || isConstant(s.from)) && (s.to == null || isConstant(s.to));
         };
     }
 

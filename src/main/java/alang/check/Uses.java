@@ -219,6 +219,11 @@ final class Uses {
                     read(i.then);
                     read(i.otherwise);
                 }
+                case SliceExpr s -> {
+                    read(s.target);
+                    if (s.from != null) read(s.from);
+                    if (s.to != null) read(s.to);
+                }
                 case TupleLit t -> {
                     for (Expr x : t.elems) read(x);
                 }

@@ -31,6 +31,7 @@ import alang.ast.Ast.Program;
 import alang.ast.Ast.Repeat;
 import alang.ast.Ast.Resize;
 import alang.ast.Ast.Return;
+import alang.ast.Ast.SliceExpr;
 import alang.ast.Ast.Stmt;
 import alang.ast.Ast.StrLit;
 import alang.ast.Ast.StructLit;
@@ -178,6 +179,11 @@ final class ToolExamples {
                 calls(i.otherwise, out);
             }
             case TupleLit t -> t.elems.forEach(x -> calls(x, out));
+            case SliceExpr s -> {
+                calls(s.target, out);
+                if (s.from != null) calls(s.from, out);
+                if (s.to != null) calls(s.to, out);
+            }
             case Unary u -> calls(u.operand, out);
             case Binary b -> {
                 calls(b.left, out);

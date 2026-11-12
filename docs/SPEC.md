@@ -369,6 +369,14 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 | `str[M]` → `str[N]` | the same bytes; more than N bytes traps (R0004) |
 | `list[T; M]` → `list[T; N]` | the same elements, of the same type T; more than N traps (R0004) |
 
+**Slices.** `xs[a..b]` is the elements (or bytes) `a..b` of a str, list or array, the value `slice(xs, a, b)`
+gives: a str or list of the capacity of `xs`, or a list for an array. A left-out end is 0 or `len(xs)`: `s[i + 1..]`,
+`xs[..3]`, `xs[..]`. The bounds are evaluated after `xs`, and the slice traps (R0003) unless
+`0 <= a <= b <= len(xs)`. A slice is a value, not a place: `xs[1..3] = ...` is an error. Where it is only read
+(a `for` loop over it whose body leaves its variable alone, `len`, `contains`, `index_of`, `count`, the text
+functions, a comparison or `print` of a str, a conversion `i64(s[2..5])`, a `match` on it), the C backend reads it
+where it is, through a pointer and a length, and the memory bound counts no copy of it.
+
 **If expressions.** `if c then a else b` is `a` when the `bool` `c` holds and `b` otherwise; only that branch is
 evaluated, so `if len(xs) > 0 then xs[0] else 0` never indexes an empty list. The branches have one type, as
 the operands of `+` do (literals take the other branch's type or the expected one), and a str or list branch
@@ -516,7 +524,7 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `index_of(xs, x) -> i64` | Where the first occurrence starts, as for `contains`, or -1. |
 | `count(xs, x) -> i64` | In a str, the non-overlapping occurrences of the pattern `x`, left to right (`count("aaaa", "aa")` is 2); traps (R0013) if `x` is an empty str. In an array or list, the elements `== x`. |
 | `starts_with(s, p) -> bool`, `ends_with(s, p) -> bool` | Whether the str `s` begins or ends with the pattern `p`. |
-| `slice(xs, from, to) -> T` | A copy of the elements `from..to` (half-open) of a str or list, of the same type, or of an array, as a `list[T; N]`. Traps (R0003) unless `0 <= from <= to <= len(xs)`. |
+| `slice(xs, from, to) -> T` | The elements `from..to` (half-open) of a str or list, of the same type, or of an array, as a `list[T; N]`. Traps (R0003) unless `0 <= from <= to <= len(xs)`. `xs[from..to]` is the same, and either end may be left out: `s[1..]`, `xs[..n]`, `xs[..]` (§6). |
 | `trim(s) -> str[N]` | `s` without the ASCII whitespace at its start and end. |
 | `split(s, sep) -> list[str[K]; M]` | The pieces of `s` between occurrences of the pattern `sep`, left to right, empty pieces included: `split("a,,b", ",")` is `["a", "", "b"]`, `split("", ",")` is `[""]`. Traps if `sep` is empty (R0013). |
 | `words(s) -> list[str[K]; M]` | The pieces of `s` between runs of ASCII whitespace; never empty pieces. |

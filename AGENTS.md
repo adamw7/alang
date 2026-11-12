@@ -159,7 +159,7 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
 | `fn first<T>(xs: &[T]) -> T`, `def first(xs)` | `fn first<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
 | `xs.filter(f)`, `map(f, xs)`, `sort(key=f)`, a callback | a parameter `f: fn(T) -> bool`, passed by name: `count_if(xs, is_even)`; no closures or lambdas |
-| `s[a:b]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `slice(s, a, b)`, `trim(s)`, `to_upper(s)` |
+| `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
 | a `str[256]` passed where `str[16]` is wanted | `str[16](s)` after checking `len(s) <= 16` |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
 | `xs.sort()`, `sorted(xs, reverse=True)` | `sort(mut xs);` then `reverse(mut xs);` |
@@ -182,7 +182,7 @@ the order its keys were added in), [examples/helpers.al](examples/helpers.al) ha
 |------|-----------|
 | Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
+| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
 | Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear` |
 
 - `split`, `words`, `join` and `replace` take their type from the variable they are stored in, so make the

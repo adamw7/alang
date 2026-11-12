@@ -763,6 +763,25 @@ public final class Ast {
         }
     }
 
+    /**
+     * `target[from..to]`, with either end left out for 0 or the length: the elements or bytes from..to, as a list
+     * (for an array) or a str or list of the target's capacity. Where it is only read, the C backend reads it where it
+     * is ({@code view}) instead of copying it.
+     */
+    public static final class SliceExpr extends Expr {
+        public final Expr target;
+        public final Expr from;
+        public final Expr to;
+        public boolean view;
+
+        public SliceExpr(Span span, Expr target, Expr from, Expr to) {
+            super(span);
+            this.target = target;
+            this.from = from;
+            this.to = to;
+        }
+    }
+
     public record Arg(Span span, boolean mut, Expr expr) {}
 
     /** A call of a user function or builtin. */

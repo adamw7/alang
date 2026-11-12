@@ -1409,6 +1409,7 @@ public final class CGen {
                 if (a.type instanceof Type.ListT) emit(t + ".len = " + vals.size() + "u;");
                 yield t;
             }
+            case SliceExpr s -> slice(s);
             case TupleLit t -> {
                 List<Type> elems = ((Type.TupleT) t.type).elems();
                 List<String> vals = new ArrayList<>();
@@ -1632,6 +1633,59 @@ public final class CGen {
             }
             default -> throw new IllegalStateException(op.name());
         };
+    }
+
+    /**
+     * `xs[from..to]`: checked as slice() is, then either read where it is, as a pointer to its first element and its
+     * length (a view, which every reader of a marked slice takes as it takes a str's b or a list's v, and len), or
+     * copied into a value of its type.
+     */
+    private String slice(SliceExpr s) {
+        Type tt = s.target.type;
+        String base = lower(s.target);
+        String from = s.from == null ? null : position(s.from);
+        String to = s.to == null ? null : position(s.to);
+        String len = tt instanceof Type.ArrayT a ? a.len() + "u" : "(" + base + ").len";
+        if (from == null) {
+            from = "t" + ++tmpCount;
+            emit("al_pos " + from + " = al_pos_s(0);");
+        }
+        if (to == null) {
+            to = "t" + ++tmpCount;
+            emit("al_pos " + to + " = al_pos_u((uint64_t)" + len + ");");
+        }
+        String f = tmp(Type.U32, "0");
+        String n = tmp(Type.U32, "al_slice(" + from + ", " + to + ", " + len + ", &" + f + ", " + loc(s.span) + ")");
+        boolean str = tt instanceof Type.Str;
+        String arr = str ? "b" : "v";
+        if (s.view) {
+            String v = "t" + ++tmpCount;
+            emit((str ? "al_view" : listView(Type.elementOf(tt))) + " " + v + " = {(" + base + ")." + arr + " + " + f + ", " + n + "};");
+            return v;
+        }
+        String r = tmp(s.type, "{0}");
+        if (str) {
+            emit(r + ".len = al_copy_bytes(" + r + ".b, (" + base + ").b + " + f + ", " + n + ");");
+        } else {
+            String i = "t" + ++tmpCount;
+            open("{");
+            emit("uint32_t " + i + ";");
+            emit("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) " + r + ".v[" + i + "] = (" + base + ").v[" + f + " + " + i + "];");
+            close("}");
+            emit(r + ".len = " + n + ";");
+        }
+        return r;
+    }
+
+    /** The view type of a slice of a list or array of {@code elem}: a pointer to its first element, and its length. */
+    private String listView(Type elem) {
+        String name = "al_lv_" + mangle(elem);
+        // The element's own typedef comes first.
+        String e = ct(elem);
+        if (doneTypes.add(name)) {
+            typeDefs.append("typedef struct {\n    const ").append(e).append(" *v;\n    uint32_t len;\n} ").append(name).append(";\n\n");
+        }
+        return name;
     }
 
     /** `str[N](s)` or `list[T; N](xs)`: R0004 if the value is longer than N, else a copy with capacity N. */

@@ -52,7 +52,7 @@ error[E0102]: unknown function `substring`
    |
 12 |     substring(s);
    |     ^^^^^^^^^
-  = hint: use slice(s, from, to): the bytes from..to as a copy
+  = hint: slice it: s[from..to], s[from..] or s[..to]
 
 error[E0102]: unknown function `isdigit`
   --> tests/errors/E0102_missing_library.al:13:5

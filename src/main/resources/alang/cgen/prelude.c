@@ -558,6 +558,12 @@ static al_pos al_pos_u(uint64_t v) {
     return p;
 }
 
+/* A slice of a str read where it is: its bytes and their number, as a str's b and len. */
+typedef struct {
+    const uint8_t *b;
+    uint32_t len;
+} al_view;
+
 /* Whether 0 <= p <= len. */
 static int al_pos_le(al_pos p, uint32_t len) {
     return p.u ? p.v <= (uint64_t)len : (p.s >= 0 && p.s <= (int64_t)len);

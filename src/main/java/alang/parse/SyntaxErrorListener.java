@@ -96,6 +96,22 @@ final class SyntaxErrorListener extends BaseErrorListener {
         };
     }
 
+    /** Whether the brackets that {@code close} ends hold a `..` of their own: they slice. */
+    private static boolean slicedBefore(TokenStream ts, Token close) {
+        int depth = 0;
+        for (int i = close.getTokenIndex() - 1; i >= 0; i--) {
+            int t = ts.get(i).getType();
+            if (t == ALangLexer.RBRACK || t == ALangLexer.RPAREN) depth++;
+            else if (t == ALangLexer.LBRACK || t == ALangLexer.LPAREN) {
+                if (depth == 0) return false;
+                depth--;
+            } else if (t == ALangLexer.DOTDOT && depth == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static Token previous(TokenStream ts, Token tok) {
         for (int i = tok.getTokenIndex() - 1; i >= 0; i--) {
             Token t = ts.get(i);
@@ -196,6 +212,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (expected != null && expected.contains(ALangLexer.LIMIT) && t == ALangLexer.LBRACE
             && !expected.contains(ALangLexer.INT_LIT)) {
             return "while loops must state an iteration limit: while cond limit 1000 { ... }";
+        }
+        if (t == ALangLexer.ASSIGN && p == ALangLexer.RBRACK && slicedBefore(ts, prev)) {
+            return "a slice is a value, not a place; set the elements one at a time: for i in a..b { xs[i] = v; }";
         }
         if (p == ALangLexer.FOR && t == ALangLexer.LPAREN) {
             return "for loops iterate a range or a collection: for i in 0..n { ... } or for x in xs { ... }";
@@ -332,8 +351,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (t == ALangLexer.DOTDOT) {
             Token open = opener(ts, tok);
             if (open != null && open.getType() == ALangLexer.LBRACK) {
-                return "there are no slices or range values; copy the part you need in a loop: "
-                    + "for i in a..b { push(mut part, xs[i]); }";
+                return "a range is not a value; a slice is xs[a..b], and a list of numbers is built in a loop: "
+                    + "for i in a..b { push(mut xs, i); }";
             }
         }
         if (t == ALangLexer.IDENT && (word.equals("by") || word.equals("step_by")) && expected.contains(ALangLexer.LBRACE)

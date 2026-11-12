@@ -296,6 +296,7 @@ postfixOp
     : DOT identifier                     # fieldAccess
     | DOT (INT_LIT | FLOAT_LIT)          # tupleAccess   // t.0, and t.0.1 (lexed as t . 0.1)
     | LBRACK expression RBRACK           # indexAccess
+    | LBRACK (from=expression)? DOTDOT (to=expression)? RBRACK   # sliceAccess  // s[1..], xs[a..b]: the elements from..to
     ;
 
 primary

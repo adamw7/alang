@@ -1157,6 +1157,11 @@ public final class Checker {
             Expr src = f.source();
             Name root = src.isPlace() ? rootName(src) : null;
             f.snapshot = root != null && root.local != null && Uses.changes(f.body, root.local);
+            if (src instanceof SliceExpr sl) {
+                // A slice is read where it is, unless the body may change what it is part of.
+                Name sliced = sl.target.isPlace() ? rootName(sl.target) : null;
+                sl.view = sliced == null || sliced.local == null || !Uses.changes(f.body, sliced.local);
+            }
         }
     }
 
@@ -1217,6 +1222,7 @@ public final class Checker {
 
     private boolean match(Match m) {
         Type t = expr(m.subject, null);
+        if (t instanceof Type.Str) readInPlace(m.subject);
         boolean allJump = true;
         boolean wildcard = false;
         Set<Object> seen = new HashSet<>();
@@ -1378,6 +1384,7 @@ public final class Checker {
             case Repeat r -> repeat(r, expected);
             case IfExpr i -> ifExpr(i, expected);
             case TupleLit t -> tupleLit(t, expected);
+            case SliceExpr s -> sliceExpr(s);
         };
     }
 
@@ -1910,7 +1917,7 @@ public final class Checker {
             case "find", "indexOf", "index", "position", "find_index", "search" -> "use index_of(xs, x), which is -1 when x is absent";
             case "startswith", "startsWith", "has_prefix" -> "use starts_with(s, prefix)";
             case "endswith", "endsWith", "has_suffix" -> "use ends_with(s, suffix)";
-            case "substr", "substring", "sub", "mid", "subslice" -> "use slice(s, from, to): the bytes from..to as a copy";
+            case "substr", "substring", "sub", "mid", "subslice" -> "slice it: s[from..to], s[from..] or s[..to]";
             case "strip", "trim_start", "trim_end", "lstrip", "rstrip", "trim_left", "trim_right", "trimStart", "trimEnd" ->
                 "use trim(s), which removes ASCII whitespace at both ends";
             case "upper", "uppercase", "toUpperCase", "toupper" -> "use to_upper(x), for a u8 byte or a str";
@@ -2082,6 +2089,7 @@ public final class Checker {
             case Repeat r -> mentions(r.value, v);
             case IfExpr i -> mentions(i.cond, v) || mentions(i.then, v) || mentions(i.otherwise, v);
             case TupleLit t -> t.elems.stream().anyMatch(x -> mentions(x, v));
+            case SliceExpr s -> mentions(s.target, v) || s.from != null && mentions(s.from, v) || s.to != null && mentions(s.to, v);
             default -> false;
         };
     }
@@ -2098,6 +2106,7 @@ public final class Checker {
                 Arg a = args.get(0);
                 noMut(a);
                 Type t = expr(a.expr(), null);
+                readInPlace(a.expr());
                 boolean keyed = t instanceof Type.MapT || t instanceof Type.SetT;
                 boolean ok = keyed || (b == Builtin.LEN ? Type.elementOf(t) != null : (t instanceof Type.ListT || t instanceof Type.Str));
                 if (!ok && !Type.isError(t)) {
@@ -2294,6 +2303,7 @@ public final class Checker {
                 if (!arity(c, 2)) return ret;
                 noMut(args.get(0));
                 Type t = expr(args.get(0).expr(), null);
+                readInPlace(args.get(0).expr());
                 if (b == Builtin.CONTAINS && (t instanceof Type.MapT || t instanceof Type.SetT)) {
                     keyArg(b, args.get(1), t instanceof Type.MapT mt ? mt.key() : ((Type.SetT) t).elem());
                     return ret;
@@ -2327,6 +2337,7 @@ public final class Checker {
                 if (!arity(c, 2)) return Type.I64;
                 noMut(args.get(0));
                 Type t = expr(args.get(0).expr(), null);
+                readInPlace(args.get(0).expr());
                 if (t instanceof Type.Str) {
                     textPattern(b, args.get(1), "what it counts");
                 } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
@@ -2599,6 +2610,7 @@ public final class Checker {
         ctx.text = a.expr();
         Type t = expr(a.expr(), null);
         ctx.text = outer;
+        if (t instanceof Type.Str) readInPlace(a.expr());
         if (t instanceof Type.Void) {
             diags.error(Code.E0201, a.span(), "cannot print a call that returns nothing");
         }
@@ -2687,6 +2699,7 @@ public final class Checker {
     private Type textArg(Builtin b, Arg a) {
         noMut(a);
         Type t = expr(a.expr(), null);
+        readInPlace(a.expr());
         if (Type.isError(t) || t instanceof Type.Str) return t;
         diags.error(Code.E0203, a.span(), b.name + "() needs a str, found " + t);
         return Type.ERROR;
@@ -2696,6 +2709,7 @@ public final class Checker {
     private void textPattern(Builtin b, Arg a, String what) {
         noMut(a);
         Type t = expr(a.expr(), isUntyped(a.expr()) ? Type.U8 : null);
+        readInPlace(a.expr());
         if (!Type.isError(t) && !(t instanceof Type.Str) && !t.equals(Type.U8)) {
             diags.error(Code.E0201, a.span(), b.name + "() needs a str or a u8 byte for " + what + ", found " + t,
                 Type.isInt(t) ? "convert it: u8(" + exprText(a.expr()) + ")" : null);
@@ -2953,6 +2967,7 @@ public final class Checker {
             return target;
         }
         if (t instanceof Type.Str) {
+            readInPlace(c.arg);
             // i64("42") and f64("2.5") trap unless the text is a decimal integer that fits, or a decimal number
             // that converts exactly; is_int and is_float say so first.
             if (c.target == PrimKind.F32) {
@@ -3122,6 +3137,11 @@ public final class Checker {
         Type lt = ts[0];
         Type rt = ts[1];
         if (Type.isError(lt) || Type.isError(rt)) return op.isArith() || op.isBitwise() ? Type.ERROR : Type.BOOL;
+        if ((op.isEquality() || op.isOrdering()) && lt instanceof Type.Str && rt instanceof Type.Str) {
+            // A failed assert prints the operands: a str as its bytes, which a slice read in place has.
+            readInPlace(b.left);
+            readInPlace(b.right);
+        }
         if (op.isEquality()) {
             if (!Type.comparable(lt, rt)) {
                 diags.error(Code.E0201, b.span, "cannot compare " + lt + " with " + rt,
@@ -3352,6 +3372,29 @@ public final class Checker {
         return e instanceof Call c && Builtin.byName(c.name) != null && Builtin.byName(c.name).typedByTarget();
     }
 
+    /** `xs[from..to]`: the type of slice(xs, from, to), a list for an array. */
+    private Type sliceExpr(SliceExpr s) {
+        Type t = expr(s.target, null);
+        for (Expr e : new Expr[] {s.from, s.to}) {
+            if (e == null) continue;
+            Type it = expr(e, Type.I64);
+            if (!Type.isInt(it) && !Type.isError(it)) diags.error(Code.E0212, e.span, "a slice's bounds are integers, found " + it);
+        }
+        if (Type.isError(t)) return t;
+        if (t instanceof Type.ArrayT a) return a.len() < 0 ? new Type.ListT(a.elem(), a.len()) : new Type.ListT(a.elem(), a.len());
+        if (t instanceof Type.Str || t instanceof Type.ListT) return t;
+        diags.error(Code.E0212, s.target.span, "cannot slice a value of type " + t, "a slice is part of a str, list or array: xs[1..3]");
+        return Type.ERROR;
+    }
+
+    /**
+     * Marks {@code e}, if it is a slice, as read where it is: its reader takes only its elements and length, at once,
+     * so the C backend need not copy it.
+     */
+    private static void readInPlace(Expr e) {
+        if (e instanceof SliceExpr s) s.view = true;
+    }
+
     /** `(a, b, ...)`: with an expected tuple type of as many elements, each element is checked against its type. */
     private Type tupleLit(TupleLit t, Type expected) {
         if (expected instanceof Type.TupleT et && et.elems().size() == t.elems.size()) {
@@ -3481,6 +3524,7 @@ public final class Checker {
             case Repeat r -> isConst(r.value);
             case IfExpr i -> isConst(i.cond) && isConst(i.then) && isConst(i.otherwise);
             case TupleLit t -> t.elems.stream().allMatch(Checker::isConst);
+            case SliceExpr s -> isConst(s.target) && (s.from == null || isConst(s.from)) && (s.to == null || isConst(s.to));
         };
     }
 

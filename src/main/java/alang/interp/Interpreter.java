@@ -716,6 +716,14 @@ public final class Interpreter {
                 yield a.type instanceof Type.ListT l ? new ListV(Arrays.copyOf(vals, l.cap()), vals.length) : new ArrV(vals);
             }
             case IfExpr i -> Values.coerce(owned((Boolean) eval(i.cond, slots) ? i.then : i.otherwise, slots), i.type);
+            case SliceExpr s -> {
+                Object xs = eval(s.target, slots);
+                long from = s.from == null ? 0L : (Long) eval(s.from, slots);
+                long to = s.to == null ? (long) length(xs) : (Long) eval(s.to, slots);
+                PrimKind fk = s.from == null ? PrimKind.I64 : Type.kind(s.from.type);
+                PrimKind tk = s.to == null ? PrimKind.I64 : Type.kind(s.to.type);
+                yield Stdlib.slice(xs, s.type, from, fk, to, tk, s.span);
+            }
             case TupleLit t -> {
                 List<Type> elems = ((Type.TupleT) t.type).elems();
                 Object[] vals = new Object[t.elems.size()];

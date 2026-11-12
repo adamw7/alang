@@ -96,7 +96,7 @@ error[E0102]: unknown function `substr`
    |
 24 |     let w: str[16] = substr(s, 0, 1);
    |                      ^^^^^^
-  = hint: use slice(s, from, to): the bytes from..to as a copy
+  = hint: slice it: s[from..to], s[from..] or s[..to]
 
 error[E0203]: starts_with() needs a str, found list[i64; 4]
   --> tests/errors/stdlib_misuse.al:25:31

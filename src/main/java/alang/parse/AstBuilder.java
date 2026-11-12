@@ -504,6 +504,8 @@ final class AstBuilder {
                 e = new FieldAccess(sp, e, f.identifier().getText(), span(f.identifier()));
             } else if (op instanceof TupleAccessContext t) {
                 e = tupleAccess(sp, e, t.getStop());
+            } else if (op instanceof SliceAccessContext sl) {
+                e = new SliceExpr(sp, e, sl.from == null ? null : expr(sl.from), sl.to == null ? null : expr(sl.to));
             } else {
                 e = new Index(sp, e, expr(((IndexAccessContext) op).expression()));
             }

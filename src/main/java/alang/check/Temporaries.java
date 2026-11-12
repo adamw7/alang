@@ -97,7 +97,9 @@ final class Temporaries {
 
     /** The aggregates that evaluating {@code e} builds, all of which may be alive at once. */
     static long expr(Expr e) {
-        long own = Type.isAggregate(e.type) && !e.isPlace() ? Layout.size(e.type) : 0;
+        // A slice read in place is a pointer and a length, not a copy.
+        boolean view = e instanceof SliceExpr s && s.view;
+        long own = Type.isAggregate(e.type) && !e.isPlace() && !view ? Layout.size(e.type) : 0;
         return Layout.add(own, inner(e));
     }
 
@@ -143,6 +145,7 @@ final class Temporaries {
             case Repeat r -> Layout.add(expr(r.value), stored(r.value, Type.elementOf(r.type)));
             case IfExpr i -> Layout.add(expr(i.cond), Layout.add(Layout.add(expr(i.then), stored(i.then, i.type)),
                 Layout.add(expr(i.otherwise), stored(i.otherwise, i.type))));
+            case SliceExpr s -> Layout.add(expr(s.target), Layout.add(s.from == null ? 0 : expr(s.from), s.to == null ? 0 : expr(s.to)));
             case TupleLit t -> {
                 List<Type> elems = ((Type.TupleT) t.type).elems();
                 long sum = 0;
