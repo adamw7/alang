@@ -724,5 +724,6 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 |-----------|-------------|
 | `sort(mut xs)` | Sorts a list, array or str in place, ascending. Every type is ordered: numbers by value (-0.0 before 0.0, NaN last), false before true, strs and lists element by element (a prefix first), structs field by field, enums by variant, then payload. |
 | `reverse(mut xs)` | Reverses a list, array or str in place. |
-| `insert(mut xs, i, value)` | Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. Traps unless 0 <= i <= len(xs), or if full. |
-| `remove(mut xs, i) -> T` | Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. Traps unless 0 <= i < len(xs). |
+| `insert(mut xs, i, value)` | Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and insert(mut s, x) adds x to a set; both trap (R0004) when a new key does not fit. |
+| `remove(mut xs, i) -> T` | Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether it was there. |
+| `get_or(m, key, default) -> V` | The value of key in the map m, or default when m has no such key; m[key] traps (R0003) instead. |

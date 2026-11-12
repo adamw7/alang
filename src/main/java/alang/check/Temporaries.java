@@ -133,7 +133,9 @@ final class Temporaries {
             case Unary u -> expr(u.operand);
             case Binary b -> Layout.add(expr(b.left), expr(b.right));
             case ArrayLit a -> {
-                Type elem = Type.elementOf(a.type);
+                // A map literal's entries are (key, value) tuples.
+                Type elem = a.type instanceof Type.MapT mt ? new Type.TupleT(List.of(mt.key(), mt.value()))
+                    : a.type instanceof Type.SetT st ? st.elem() : Type.elementOf(a.type);
                 long t = 0;
                 for (Expr x : a.elems) t = Layout.add(t, Layout.add(expr(x), stored(x, elem)));
                 yield t;

@@ -205,6 +205,27 @@ final class Fuzz {
                     }
                 }
             }
+            case Type.SetT st -> {
+                // Empty, then as many distinct values as fit, up to the capacity.
+                List<Object> vs = values(st.elem(), JsonValues.schema(st.elem()));
+                for (int n : new int[] {0, 1, Math.min(st.cap(), vs.size())}) out.add(new ArrayList<>(vs.subList(0, Math.min(n, vs.size()))));
+            }
+            case Type.MapT mt -> {
+                List<Object> ks = values(mt.key(), JsonValues.schema(mt.key()));
+                List<Object> vs = values(mt.value(), JsonValues.schema(mt.value()));
+                for (int n : new int[] {0, 1, Math.min(mt.cap(), ks.size())}) {
+                    n = Math.min(n, ks.size());
+                    if (mt.key() instanceof Type.Str) {
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        for (int i = 0; i < n; i++) m.put((String) ks.get(i), vs.get(i % vs.size()));
+                        out.add(m);
+                    } else {
+                        List<Object> pairs = new ArrayList<>();
+                        for (int i = 0; i < n; i++) pairs.add(List.of(ks.get(i), vs.get(i % vs.size())));
+                        out.add(pairs);
+                    }
+                }
+            }
             case Type.TupleT tt -> {
                 // As a struct: the plainest of each element, then each element in turn through its values.
                 List<Object> items = list(schema.get("prefixItems"));

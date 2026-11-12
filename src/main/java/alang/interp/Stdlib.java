@@ -7,6 +7,7 @@ import alang.diag.Span;
 import alang.interp.Values.ArrV;
 import alang.interp.Values.EnumV;
 import alang.interp.Values.ListV;
+import alang.interp.Values.MapV;
 import alang.interp.Values.StrV;
 import alang.interp.Values.StructV;
 import alang.types.PrimKind;
@@ -643,6 +644,18 @@ final class Stdlib {
                 }
                 yield 0;
             }
+            case Type.SetT st -> compareAll(((ListV) a).items, ((ListV) b).items, ((ListV) a).len, ((ListV) b).len, st.elem());
+            case Type.MapT mt -> {
+                // Entry by entry, key then value; a map that is a prefix of the other first.
+                MapV x = (MapV) a;
+                MapV y = (MapV) b;
+                for (int i = 0; i < x.len && i < y.len; i++) {
+                    int c = compare(x.keys[i], y.keys[i], mt.key());
+                    if (c == 0) c = compare(x.vals[i], y.vals[i], mt.value());
+                    if (c != 0) yield c;
+                }
+                yield Integer.compare(x.len, y.len);
+            }
             case Type.TupleT tt -> {
                 Object[] x = ((StructV) a).fields;
                 Object[] y = ((StructV) b).fields;
@@ -753,6 +766,88 @@ final class Stdlib {
         System.arraycopy(l.items, at0 + 1, l.items, at0, len - at0 - 1);
         l.items[--l.len] = null;
         return v;
+    }
+
+    // =================================================================== maps and sets
+
+    /** The position of k among keys[0..len), which are in order: its index, or -(where it would go) - 1. */
+    static int find(Object[] keys, int len, Object k, Type kt) {
+        int lo = 0;
+        int hi = len - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int c = compare(keys[mid], k, kt);
+            if (c < 0) lo = mid + 1;
+            else if (c > 0) hi = mid - 1;
+            else return mid;
+        }
+        return -lo - 1;
+    }
+
+    private static byte[] keyText(Object k, Type kt) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Format.format(ByteSink.of(out), k, kt, true);
+        return out.toByteArray();
+    }
+
+    /** m[k]: R0003 if the map has no key k. */
+    static Object mapGet(MapV m, Object k, Type kt, Span at) {
+        int i = find(m.keys, m.len, k, kt);
+        if (i < 0) {
+            ByteArrayOutputStream msg = new ByteArrayOutputStream();
+            msg.writeBytes("key ".getBytes(StandardCharsets.UTF_8));
+            msg.writeBytes(keyText(k, kt));
+            msg.writeBytes(" is not in the map".getBytes(StandardCharsets.UTF_8));
+            throw new Trap(Code.R0003, at, msg.toByteArray());
+        }
+        return m.vals[i];
+    }
+
+    /** m[k] = v, or insert(mut m, k, v): replaces the value of k, or adds k in its place; R0004 if that does not fit. */
+    static void mapPut(MapV m, Object k, Object v, Type kt, Span at) {
+        int i = find(m.keys, m.len, k, kt);
+        if (i >= 0) {
+            m.vals[i] = v;
+            return;
+        }
+        if (m.len == m.keys.length) throw new Trap(Code.R0004, at, "insert into a full map (capacity " + m.keys.length + ")");
+        int at0 = -i - 1;
+        System.arraycopy(m.keys, at0, m.keys, at0 + 1, m.len - at0);
+        System.arraycopy(m.vals, at0, m.vals, at0 + 1, m.len - at0);
+        m.keys[at0] = k;
+        m.vals[at0] = v;
+        m.len++;
+    }
+
+    /** remove(mut m, k): whether k was there. */
+    static boolean mapRemove(MapV m, Object k, Type kt) {
+        int i = find(m.keys, m.len, k, kt);
+        if (i < 0) return false;
+        System.arraycopy(m.keys, i + 1, m.keys, i, m.len - i - 1);
+        System.arraycopy(m.vals, i + 1, m.vals, i, m.len - i - 1);
+        m.len--;
+        m.keys[m.len] = null;
+        m.vals[m.len] = null;
+        return true;
+    }
+
+    /** insert(mut s, x): adds x in its place unless it is there; R0004 if that does not fit. */
+    static void setInsert(ListV s, Object x, Type t, Span at) {
+        int i = find(s.items, s.len, x, t);
+        if (i >= 0) return;
+        if (s.len == s.items.length) throw new Trap(Code.R0004, at, "insert into a full set (capacity " + s.items.length + ")");
+        int at0 = -i - 1;
+        System.arraycopy(s.items, at0, s.items, at0 + 1, s.len - at0);
+        s.items[at0] = x;
+        s.len++;
+    }
+
+    static boolean setRemove(ListV s, Object x, Type t) {
+        int i = find(s.items, s.len, x, t);
+        if (i < 0) return false;
+        System.arraycopy(s.items, i + 1, s.items, i, s.len - i - 1);
+        s.items[--s.len] = null;
+        return true;
     }
 
     // =================================================================== helpers

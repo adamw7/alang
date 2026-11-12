@@ -49,6 +49,13 @@ public final class Layout {
                 }
                 yield align(Math.max(off, 1), al);
             }
+            case Type.SetT st -> size(new Type.ListT(st.elem(), st.cap()));
+            case Type.MapT mt -> {
+                // struct { uint32_t len; K k[N]; V v[N]; }
+                long keys = add(align(4, align(mt.key())), mul(size(mt.key()), mt.cap()));
+                long vals = add(align(keys, align(mt.value())), mul(size(mt.value()), mt.cap()));
+                yield align(vals, align(t));
+            }
             case Type.TupleT tt -> {
                 long off = 0;
                 long al = 1;
@@ -97,6 +104,8 @@ public final class Layout {
                 for (Type e : tt.elems()) al = Math.max(al, align(e));
                 yield al;
             }
+            case Type.SetT st -> Math.max(4, align(st.elem()));
+            case Type.MapT mt -> Math.max(4, Math.max(align(mt.key()), align(mt.value())));
             case Type.EnumT e -> {
                 long al = 4;
                 for (Variant v : e.decl().variants) {

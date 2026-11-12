@@ -1,7 +1,7 @@
-error[E0001]: unexpected '[', expected '='
- --> tests/errors/E0001_map_type.al:3:20
+error[E0001]: unexpected ']', expected ';'
+ --> tests/errors/E0001_map_type.al:3:33
   |
 3 |     var counts: map[str[16], i64] = [];
-  |                    ^
-  = hint: there are no maps, dictionaries or sets; keep the entries in a list of structs and find a key with a loop: struct Entry { key: str[16], value: i64 } and list[Entry; 64]
+  |                                 ^
+  = hint: maps and sets need a capacity after `;`: map[str[16], i64; 64] holds up to 64 entries, set[i64; 32] up to 32 values
 

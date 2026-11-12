@@ -316,6 +316,17 @@ public final class Checker {
                 int len = a.len() == null ? anyCapacity(a.span(), "[" + elem + "; _]") : typeSize(a.len(), "array length");
                 yield len == BAD_SIZE || Type.isError(elem) ? Type.ERROR : new Type.ArrayT(elem, len);
             }
+            case MapRef m -> {
+                Type k = resolveType(m.key());
+                Type v = resolveType(m.value());
+                int cap = m.cap() == null ? anyCapacity(m.span(), "map[" + k + ", " + v + "; _]") : typeSize(m.cap(), "map capacity");
+                yield cap == BAD_SIZE || Type.isError(k) || Type.isError(v) ? Type.ERROR : new Type.MapT(k, v, cap);
+            }
+            case SetRef st -> {
+                Type e = resolveType(st.elem());
+                int cap = st.cap() == null ? anyCapacity(st.span(), "set[" + e + "; _]") : typeSize(st.cap(), "set capacity");
+                yield cap == BAD_SIZE || Type.isError(e) ? Type.ERROR : new Type.SetT(e, cap);
+            }
             case TupleRef t -> {
                 List<Type> elems = new ArrayList<>();
                 boolean bad = false;
@@ -371,6 +382,7 @@ public final class Checker {
             case "boolean", "Bool" -> "use bool";
             case "void", "unit", "None" -> "omit the return type for functions that return nothing";
             case "Vec", "List", "Array", "vector" -> "use list[T; N] (up to N items) or [T; N] (exactly N items)";
+            case "HashMap", "Map", "dict", "Dict", "BTreeMap", "TreeMap", "HashSet", "Set", "BTreeSet", "TreeSet" -> Hints.COLLECTIONS;
             case "Option", "Optional", "Result" -> "there are no generics; declare an enum, e.g. enum MaybeI32 { None, Some(i32) }";
             default -> {
                 List<String> names = new ArrayList<>(structs.keySet());
@@ -459,6 +471,11 @@ public final class Checker {
             case Type.ArrayT a -> children.add(a.elem());
             case Type.ListT l -> children.add(l.elem());
             case Type.TupleT tt -> children.addAll(tt.elems());
+            case Type.MapT mt -> {
+                children.add(mt.key());
+                children.add(mt.value());
+            }
+            case Type.SetT st -> children.add(st.elem());
             default -> {
             }
         }
@@ -967,6 +984,8 @@ public final class Checker {
             Type ct = expr(f.from, null);
             ctx.pieces = null;
             varType = Type.elementOf(ct);
+            if (ct instanceof Type.SetT st) varType = st.elem();
+            if (ct instanceof Type.MapT mt) varType = f.indexName != null ? mt.value() : mt.key();
             if (varType == null) {
                 if (!Type.isError(ct)) {
                     diags.error(Code.E0212, f.from.span, "cannot iterate over " + ct,
@@ -982,7 +1001,9 @@ public final class Checker {
         }
         ctx.scopes.push(new HashMap<>());
         if (f.indexName != null) {
-            f.indexVar = declare(f.indexName, f.indexSpan, Type.I64, false);
+            // For a map, `for k, v in m` gives each key with its value.
+            Type indexType = f.from.type instanceof Type.MapT mt ? mt.key() : Type.I64;
+            f.indexVar = declare(f.indexName, f.indexSpan, indexType, false);
             loopVars.put(f.indexVar, f);
         }
         f.var = declare(f.name, f.nameSpan, varType, false);
@@ -1237,6 +1258,20 @@ public final class Checker {
 
     private Type index(Index ix) {
         Type tt = expr(ix.target, null);
+        if (tt instanceof Type.MapT mt) {
+            Type kt = expr(ix.index, mt.key());
+            if (!Type.isError(kt) && !Type.assignable(kt, mt.key())) {
+                diags.error(Code.E0201, ix.index.span, "the keys of " + mt + " are " + mt.key() + ", found " + kt);
+            }
+            return mt.value();
+        }
+        if (tt instanceof Type.SetT st) {
+            expr(ix.index, st.elem());
+            diags.error(Code.E0212, ix.target.span, "a set has no positions to index",
+                "ask whether it holds a value with contains(" + exprText(ix.target) + ", x), or go through it: for x in "
+                    + exprText(ix.target) + " { }");
+            return Type.ERROR;
+        }
         Type it = expr(ix.index, Type.I64);
         if (!Type.isInt(it) && !Type.isError(it)) {
             diags.error(Code.E0212, ix.index.span, "index must be an integer, found " + it);
@@ -1464,6 +1499,8 @@ public final class Checker {
             case Type.ListT l -> Math.max(Math.max(0, -l.cap()), anyCapacities(l.elem()));
             case Type.ArrayT a -> Math.max(Math.max(0, -a.len()), anyCapacities(a.elem()));
             case Type.TupleT tt -> tt.elems().stream().mapToInt(Checker::anyCapacities).max().orElse(0);
+            case Type.MapT m -> Math.max(Math.max(0, -m.cap()), Math.max(anyCapacities(m.key()), anyCapacities(m.value())));
+            case Type.SetT st -> Math.max(Math.max(0, -st.cap()), anyCapacities(st.elem()));
             default -> 0;
         };
     }
@@ -1576,7 +1613,9 @@ public final class Checker {
             case "enumerate" -> "for i, x in xs { } gives each element with its index";
             case "ord" -> "a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number";
             case "chr" -> "push(mut s, u8(n)) adds the byte n to a str";
-            case "dict", "HashMap", "hashmap", "Map", "set", "Set", "HashSet" -> Hints.COLLECTIONS;
+            case "dict", "HashMap", "hashmap", "Map", "Set", "HashSet", "BTreeMap", "TreeMap" -> Hints.COLLECTIONS;
+            case "get", "getOrDefault", "get_or_default" -> "use get_or(m, key, default), or m[key], which traps (R0003) when the key is missing";
+            case "keys", "values", "items", "entries" -> "go through a map in key order: for k, v in m { }";
             case "input", "read", "read_line", "readline", "readLine", "scanf", "gets", "getline", "open", "fopen",
                  "read_file", "readFile", "write_file", "writeFile", "fetch", "get_env", "getenv", "env" ->
                 "there is no input, file, network or environment access; a program's only inputs are its tool "
@@ -1725,10 +1764,11 @@ public final class Checker {
                 Arg a = args.get(0);
                 noMut(a);
                 Type t = expr(a.expr(), null);
-                boolean ok = b == Builtin.LEN ? Type.elementOf(t) != null : (t instanceof Type.ListT || t instanceof Type.Str);
+                boolean keyed = t instanceof Type.MapT || t instanceof Type.SetT;
+                boolean ok = keyed || (b == Builtin.LEN ? Type.elementOf(t) != null : (t instanceof Type.ListT || t instanceof Type.Str));
                 if (!ok && !Type.isError(t)) {
-                    diags.error(Code.E0203, a.span(), b.name + "() needs " + (b == Builtin.LEN ? "an array, list or str" : "a list or str")
-                        + ", found " + t);
+                    diags.error(Code.E0203, a.span(), b.name + "() needs " + (b == Builtin.LEN ? "an array, list, str, map or set"
+                        : "a list, str, map or set") + ", found " + t);
                 }
                 return Type.I64;
             }
@@ -1749,7 +1789,7 @@ public final class Checker {
             }
             case CLEAR -> {
                 if (!arity(c, 1)) return Type.VOID;
-                collectionArg(c, args.get(0));
+                if (keyedArg(c, args.get(0)) == null) collectionArg(c, args.get(0));
                 return Type.VOID;
             }
             case APPEND -> {
@@ -1920,6 +1960,10 @@ public final class Checker {
                 if (!arity(c, 2)) return ret;
                 noMut(args.get(0));
                 Type t = expr(args.get(0).expr(), null);
+                if (b == Builtin.CONTAINS && (t instanceof Type.MapT || t instanceof Type.SetT)) {
+                    keyArg(b, args.get(1), t instanceof Type.MapT mt ? mt.key() : ((Type.SetT) t).elem());
+                    return ret;
+                }
                 if (t instanceof Type.Str) {
                     textPattern(b, args.get(1), "what it looks for");
                 } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
@@ -2104,6 +2148,18 @@ public final class Checker {
                 return Type.VOID;
             }
             case INSERT -> {
+                Type keyed = args.isEmpty() ? null : keyedArg(c, args.get(0));
+                if (keyed instanceof Type.MapT mt) {
+                    if (!arity(c, 3)) return Type.VOID;
+                    keyArg(b, args.get(1), mt.key());
+                    keyArg(b, args.get(2), mt.value());
+                    return Type.VOID;
+                }
+                if (keyed instanceof Type.SetT st) {
+                    if (!arity(c, 2)) return Type.VOID;
+                    keyArg(b, args.get(1), st.elem());
+                    return Type.VOID;
+                }
                 if (!arity(c, 3)) return Type.VOID;
                 Type t = collectionArg(c, args.get(0));
                 indexArg(b, args.get(1));
@@ -2115,10 +2171,32 @@ public final class Checker {
                 return Type.VOID;
             }
             case REMOVE -> {
+                Type keyed = args.isEmpty() ? null : keyedArg(c, args.get(0));
+                if (keyed != null) {
+                    if (!arity(c, 2)) return Type.BOOL;
+                    keyArg(b, args.get(1), keyed instanceof Type.MapT mt ? mt.key() : ((Type.SetT) keyed).elem());
+                    return Type.BOOL;
+                }
                 if (!arity(c, 2)) return Type.ERROR;
                 Type t = collectionArg(c, args.get(0));
                 indexArg(b, args.get(1));
                 return Type.isError(t) ? Type.ERROR : Type.elementOf(t);
+            }
+            case GET_OR -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                if (!(t instanceof Type.MapT mt)) {
+                    for (int i = 1; i < 3; i++) expr(args.get(i).expr(), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, args.get(0).span(), "get_or() needs a map, found " + t,
+                            Type.elementOf(t) != null ? "for a position, check it first: if i < len(xs) then xs[i] else d" : null);
+                    }
+                    return Type.ERROR;
+                }
+                keyArg(b, args.get(1), mt.key());
+                keyArg(b, args.get(2), mt.value());
+                return mt.value();
             }
             case FIXED -> {
                 boolean asText = ctx.text == c;
@@ -2370,6 +2448,39 @@ public final class Checker {
         return t;
     }
 
+    /**
+     * The first argument of clear, insert and remove when it is a map or set: checked as a `mut` place, and its
+     * type returned. Null for anything else, which the list and str forms then check.
+     */
+    private Type keyedArg(Call c, Arg a) {
+        if (!(a.expr() instanceof Name || a.expr() instanceof FieldAccess || a.expr() instanceof Index)) return null;
+        Diagnostics saved = diags;
+        diags = new Diagnostics(saved.source());
+        Type t = expr(a.expr(), null);
+        diags = saved;
+        if (!(t instanceof Type.MapT) && !(t instanceof Type.SetT)) return null;
+        if (!a.mut()) {
+            diags.error(Code.E0207, a.span(), c.name + "() modifies its first argument",
+                "write " + c.name + "(mut " + exprText(a.expr()) + switch (c.builtin) {
+                    case INSERT -> t instanceof Type.MapT ? ", key, value)" : ", x)";
+                    case REMOVE -> ", key)";
+                    default -> ")";
+                });
+            return t;
+        }
+        mutPlace(a.expr());
+        return t;
+    }
+
+    /** A key, value or element of a map or set: read-only, checked against its type. */
+    private void keyArg(Builtin b, Arg a, Type want) {
+        noMut(a);
+        Type t = expr(a.expr(), want);
+        if (!Type.assignable(t, want) && !Type.isError(t)) {
+            diags.error(Code.E0201, a.span(), b.name + "() needs a " + want + ", found " + t);
+        }
+    }
+
     /** First argument of push/pop/clear: `mut` list or str. */
     private Type collectionArg(Call c, Arg a) {
         if (!a.mut()) {
@@ -2386,7 +2497,9 @@ public final class Checker {
         Type t = mutPlace(a.expr());
         if (!(t instanceof Type.ListT) && !(t instanceof Type.Str) && !Type.isError(t)) {
             diags.error(Code.E0203, a.span(), c.name + "() needs a list or str, found " + t,
-                t instanceof Type.ArrayT ? "arrays have a fixed length; use list[T; N] for a growable collection" : null);
+                t instanceof Type.ArrayT ? "arrays have a fixed length; use list[T; N] for a growable collection"
+                    : t instanceof Type.MapT ? "add to a map with m[key] = value or insert(mut m, key, value)"
+                    : t instanceof Type.SetT ? "add to a set with insert(mut s, x)" : null);
             return Type.ERROR;
         }
         return t;
@@ -2750,6 +2863,30 @@ public final class Checker {
             for (Expr e : a.elems) requireAssignable(e, expr(e, lt.elem()), lt.elem());
             return lt;
         }
+        if (expected instanceof Type.MapT mt) {
+            // [(key, value), ...]: a key given twice keeps its last value.
+            if (mt.cap() >= 0 && a.elems.size() > mt.cap()) {
+                diags.error(Code.E0201, a.span, "map literal has " + a.elems.size() + " entries but the capacity of " + mt
+                    + " is " + mt.cap());
+            }
+            Type entry = new Type.TupleT(List.of(mt.key(), mt.value()));
+            for (Expr e : a.elems) {
+                Type et = expr(e, entry);
+                if (!Type.assignable(et, entry) && !Type.isError(et)) {
+                    diags.error(Code.E0201, e.span, "an entry of " + mt + " is a (key, value) pair " + entry + ", found " + et,
+                        "write each entry as a pair: [(\"a\", 1), (\"b\", 2)]");
+                }
+            }
+            return mt;
+        }
+        if (expected instanceof Type.SetT st) {
+            if (st.cap() >= 0 && a.elems.size() > st.cap()) {
+                diags.error(Code.E0201, a.span, "set literal has " + a.elems.size() + " values but the capacity of " + st
+                    + " is " + st.cap());
+            }
+            for (Expr e : a.elems) requireAssignable(e, expr(e, st.elem()), st.elem());
+            return st;
+        }
         if (a.elems.isEmpty()) {
             if (expected != null && Type.isError(expected)) return Type.ERROR;
             diags.error(Code.E0216, a.span, "cannot infer the type of an empty list literal",
@@ -2802,6 +2939,11 @@ public final class Checker {
      * here; only an empty list literal is sure to fit. Returns whether it did.
      */
     private boolean unknownSize(Expr lit, Type expected, boolean elements) {
+        if ((expected instanceof Type.MapT mt && mt.cap() < 0 || expected instanceof Type.SetT st && st.cap() < 0) && elements) {
+            diags.error(Code.E0201, lit.span, "a literal may not fit " + expected + ": its capacity is not known here",
+                "clear it and insert each entry, which traps (R0004) when it is full: clear(mut m); insert(mut m, k, v);");
+            return true;
+        }
         if (expected instanceof Type.ListT lt && lt.cap() < 0 && elements) {
             diags.error(Code.E0201, lit.span, "a list literal may not fit " + expected + ": its capacity is not known here",
                 "clear the list and push each element, which traps (R0004) when it is full: clear(mut xs); push(mut xs, v);");
@@ -2897,6 +3039,12 @@ public final class Checker {
         }
         int n = constSize(r.count, "repeat count");
         r.n = Math.max(n, 0);
+        if (expected instanceof Type.MapT || expected instanceof Type.SetT) {
+            expr(r.value, null);
+            diags.error(Code.E0201, r.span, "[v; n] repeats one value, which a " + (expected instanceof Type.MapT ? "map" : "set")
+                + " holds once", "write the entries, or start empty: []");
+            return Type.ERROR;
+        }
         if (expected instanceof Type.ArrayT at) {
             if (n >= 0 && n != at.len()) {
                 diags.error(Code.E0201, r.span, "expected " + at.len() + " elements for " + at + ", found [_; " + n + "]");

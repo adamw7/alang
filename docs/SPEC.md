@@ -55,6 +55,8 @@ nearest-even, directly to `f32` or `f64`; one that would round to `inf` is E0202
 | `[T; N]` | array of exactly N elements | N × size(T) |
 | `list[T; N]` | list of 0..N elements, stored inline | 4 + N × size(T) (aligned) |
 | `(T1, T2, ...)` | a tuple of two or more values, read as `t.0`, `t.1`, ... | as a struct of those fields |
+| `map[K, V; N]` | up to N entries from distinct keys to values, in key order | 4 + N × (size(K) + size(V)) (aligned) |
+| `set[T; N]` | up to N distinct values, in order | as `list[T; N]` |
 | `Name` | a declared `struct` or `enum` | sum of fields / tag + largest payload |
 
 `N` is a compile-time integer constant (a literal or a `const`) from 1 to 1 048 576; only in the type of
@@ -94,6 +96,15 @@ tuple type its context expects, `let p: (str[8], i64) = ("ann", 7);`. Elements a
 apart into new variables, with `_` for an element that is not needed. A function returns several values as a
 tuple: `fn divmod(a: i64, b: i64) -> (i64, i64)`. Tuples compare with `==` element by element, and `sort` orders
 them so; tuple types are equal only when every element type is (no widening, except in a literal).
+
+**Maps and sets** have a capacity, like lists, and keep their keys (a set its values) in the order of `sort`
+(§9.5), whatever order they were added in, so iterating, printing and comparing them never depends on
+history. `[]` is an empty one; `[("a", 1), ("b", 2)]` builds a map (a key given twice keeps its last value) and
+`[3, 1, 3]` a set (`{1, 3}`). `m[k]` reads the value of `k` and traps (R0003) if there is none; `m[k] = v` sets it,
+adding `k` if it is new, which traps (R0004) when the map is full; `m[k] += 1` and `m[k].field = x` need `k` to be
+there. `for k in m` goes through the keys, `for k, v in m` through the keys with their values, `for x in s`
+through a set, all in order (`rev` backwards). They print as `{"a": 1, "b": 2}` and `{1, 3}`, compare with `==`
+by contents (capacities may differ), and finding a key takes a binary search.
 
 **Enum** variants are always qualified (`Shape.Empty`, `Shape.Circle(2.0)`), and payloads are read only
 with `match`. There is no `null`: model absence with an enum such as `enum MaybeI32 { None, Some(i32) }`.
@@ -603,12 +614,16 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 | `insert(mut xs, i, v)` | Inserts `v` into a list (a `u8` into a str) at position `i`, moving the rest up. Traps unless `0 <= i <= len(xs)` (R0003), then if full (R0004). |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position `i` of a list (a byte of a str), moving the rest down. Traps unless `0 <= i < len(xs)` (R0003). Like `pop`, it may be a statement of its own. |
 
-`contains`, `index_of`, `count` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
+| `insert(mut m, k, v)`, `insert(mut s, x)` | Sets `k` to `v` in a map (as `m[k] = v`), or adds `x` to a set; a key or value already there is kept once. Traps (R0004) when a new one does not fit. |
+| `remove(mut m, k) -> bool`, `remove(mut s, x) -> bool` | Removes a key (with its value) or a value; whether it was there. |
+| `get_or(m, k, d) -> V` | The value of `k` in the map `m`, or `d` when there is none. |
+
+`len`, `cap`, `clear` and `contains` work on maps and sets too, by key. `contains`, `index_of`, `count` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
 be of any integer type, as indexes may.
 
 **The order of `sort`** is defined for every type: numbers by value, with `-0.0` before `0.0` and every
 NaN after everything else; `false` before `true`; strs (by unsigned byte), arrays and lists element by
-element, a prefix before a longer value; structs field by field, in the order they are declared; enums
+element, a prefix before a longer value (sets too; maps entry by entry, key then value); tuples and structs field by field, in the order they are declared; enums
 by the order of their variants, then by payload. So a list of structs sorts by its first field, then its
 second: put the key first, and sort on a negated key, or `reverse` afterwards, for descending order. Two
 values this order calls equal cannot be told apart, so the result is the same whatever the algorithm,
@@ -696,6 +711,9 @@ of a function it calls is not. The calls are the same on every run, at most 200 
 | `list[T; N]` | array of at most N items |
 | struct | object with every field required, no extra fields |
 | `(T1, T2)` | array of exactly that many items, each of its element's type (`prefixItems`) |
+| `map[str[K], V; N]` | object of at most N properties, each a value of V |
+| `map[K, V; N]` (other keys) | array of at most N `[key, value]` pairs, each key once |
+| `set[T; N]` | array of at most N distinct items, in any order |
 | enum | `"Variant"` without payload, `{"Variant": [v1, v2]}` with |
 
 Arguments must be strict JSON (RFC 8259: ASCII digits, no leading zeros, escaped control characters,

@@ -101,7 +101,7 @@ error[E0102]: unknown function `dict`
    |
 19 |     dict();
    |     ^^^^
-  = hint: there are no maps, dictionaries or sets; keep the entries in a list of structs and find a key with a loop: struct Entry { key: str[16], value: i64 } and list[Entry; 64]
+  = hint: maps and sets have a capacity, like lists: var m: map[str[16], i64; 64] = []; m[key] = value; and var s: set[i64; 32] = []; insert(mut s, x);
 
 error[E0102]: unknown function `input`
   --> tests/errors/E0102_missing_library.al:20:5

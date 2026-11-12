@@ -44,6 +44,25 @@ public sealed interface Type {
         }
     }
 
+    /**
+     * Up to {@code cap} entries from keys to values, stored inline and always in the order of their keys (the order
+     * sort gives), so that iteration, printing and equality never depend on how the entries were added.
+     */
+    record MapT(Type key, Type value, int cap) implements Type {
+        @Override
+        public String toString() {
+            return "map[" + key + ", " + value + "; " + capText(cap) + "]";
+        }
+    }
+
+    /** Up to {@code cap} distinct values, stored inline in order. */
+    record SetT(Type elem, int cap) implements Type {
+        @Override
+        public String toString() {
+            return "set[" + elem + "; " + capText(cap) + "]";
+        }
+    }
+
     /** A tuple of two or more values of the given types: (i64, str[8]). Its elements are read as t.0, t.1, ... */
     record TupleT(List<Type> elems) implements Type {
         @Override
@@ -71,6 +90,8 @@ public sealed interface Type {
             case ListT l -> l.cap() < 0 || hasAnyCapacity(l.elem());
             case ArrayT a -> a.len() < 0 || hasAnyCapacity(a.elem());
             case TupleT tt -> tt.elems().stream().anyMatch(Type::hasAnyCapacity);
+            case MapT m -> m.cap() < 0 || hasAnyCapacity(m.key()) || hasAnyCapacity(m.value());
+            case SetT s -> s.cap() < 0 || hasAnyCapacity(s.elem());
             default -> false;
         };
     }
@@ -82,6 +103,8 @@ public sealed interface Type {
             case ListT l -> new ListT(substitute(l.elem(), caps), l.cap() < 0 ? caps.get(-1 - l.cap()) : l.cap());
             case ArrayT a -> new ArrayT(substitute(a.elem(), caps), a.len() < 0 ? caps.get(-1 - a.len()) : a.len());
             case TupleT tt -> new TupleT(tt.elems().stream().map(e -> substitute(e, caps)).toList());
+            case MapT m -> new MapT(substitute(m.key(), caps), substitute(m.value(), caps), m.cap() < 0 ? caps.get(-1 - m.cap()) : m.cap());
+            case SetT s -> new SetT(substitute(s.elem(), caps), s.cap() < 0 ? caps.get(-1 - s.cap()) : s.cap());
             default -> t;
         };
     }
@@ -102,6 +125,9 @@ public sealed interface Type {
             }
             case ListT p when arg instanceof ListT a -> bind(p.elem(), a.elem(), true, caps) && bindCap(p.cap(), a.cap(), exact, caps);
             case ArrayT p when arg instanceof ArrayT a -> bind(p.elem(), a.elem(), true, caps) && bindCap(p.len(), a.len(), true, caps);
+            case MapT p when arg instanceof MapT a -> bind(p.key(), a.key(), true, caps) && bind(p.value(), a.value(), true, caps)
+                && bindCap(p.cap(), a.cap(), exact, caps);
+            case SetT p when arg instanceof SetT a -> bind(p.elem(), a.elem(), true, caps) && bindCap(p.cap(), a.cap(), exact, caps);
             case TupleT p when arg instanceof TupleT a && p.elems().size() == a.elems().size() -> {
                 for (int i = 0; i < p.elems().size(); i++) {
                     if (!bind(p.elems().get(i), a.elems().get(i), true, caps)) yield false;
@@ -201,6 +227,10 @@ public sealed interface Type {
         if (from.equals(to)) return true;
         if (from instanceof Str a && to instanceof Str b) return fits(a.cap(), b.cap());
         if (from instanceof ListT a && to instanceof ListT b) return a.elem().equals(b.elem()) && fits(a.cap(), b.cap());
+        if (from instanceof MapT a && to instanceof MapT b) {
+            return a.key().equals(b.key()) && a.value().equals(b.value()) && fits(a.cap(), b.cap());
+        }
+        if (from instanceof SetT a && to instanceof SetT b) return a.elem().equals(b.elem()) && fits(a.cap(), b.cap());
         return false;
     }
 
@@ -219,6 +249,8 @@ public sealed interface Type {
         if (a instanceof Void || b instanceof Void) return false;
         if (a.equals(b)) return true;
         if (a instanceof Str && b instanceof Str) return true;
+        if (a instanceof MapT ma && b instanceof MapT mb) return ma.key().equals(mb.key()) && ma.value().equals(mb.value());
+        if (a instanceof SetT sa && b instanceof SetT sb) return sa.elem().equals(sb.elem());
         return a instanceof ListT la && b instanceof ListT lb && la.elem().equals(lb.elem());
     }
 

@@ -130,7 +130,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 continue;
             }
             if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT
-                || t == ALangParser.STEP || t == ALangParser.REV || t == ALangParser.THEN) {
+                || t == ALangParser.STEP || t == ALangParser.REV || t == ALangParser.THEN || t == ALangParser.MAP
+                || t == ALangParser.SET) {
                 if (expected.contains(ALangParser.IDENT)) continue;
             }
             String lit = ALangParser.VOCABULARY.getLiteralName(t);
@@ -370,6 +371,11 @@ final class SyntaxErrorListener extends BaseErrorListener {
             // or a literal. (A stray `]`, as in `xs[0]];`, closes nothing.)
             Token open = opener(ts, tok);
             if (open != null && open.getType() == ALangLexer.LBRACK) {
+                Token kind = previous(ts, open);
+                if (kind != null && (kind.getType() == ALangLexer.MAP || kind.getType() == ALangLexer.SET)) {
+                    return "maps and sets need a capacity after `;`: map[str[16], i64; 64] holds up to 64 entries, "
+                        + "set[i64; 32] up to 32 values";
+                }
                 return "lists and arrays need a capacity after `;`: list[i64; 16] holds up to 16 items, "
                     + "[i64; 4] exactly 4";
             }
@@ -425,7 +431,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
     /** Tokens that can come right before the `(` of a call, constructor, pattern or declaration. */
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
-            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 
     private static boolean expectsOperator(IntervalSet expected) {

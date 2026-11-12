@@ -108,6 +108,8 @@ type
     | LIST LBRACK type SEMI capacity RBRACK      # listTypeRef     // list[i32; 16]: up to 16 items
     | LBRACK type SEMI capacity RBRACK           # arrayTypeRef    // [i32; 16]: exactly 16 items
     | LPAREN type (COMMA type)+ COMMA? RPAREN    # tupleTypeRef    // (i64, str[8]): a pair
+    | MAP LBRACK type COMMA type SEMI capacity RBRACK  # mapTypeRef  // map[str[16], i64; 64]: up to 64 entries, in key order
+    | SET LBRACK type SEMI capacity RBRACK       # setTypeRef      // set[i64; 32]: up to 32 distinct values, in order
     | identifier                                 # namedTypeRef    // struct or enum name
     ;
 
@@ -329,7 +331,7 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool`, `import`, `step`, `rev` and `then` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map` and `set` are contextual keywords and remain usable as names.
 identifier
     : IDENT
     | LIMIT
@@ -339,6 +341,8 @@ identifier
     | STEP
     | REV
     | THEN
+    | MAP
+    | SET
     ;
 
 // =====================================================================
@@ -359,6 +363,8 @@ ELSE      : 'else' ;
 WHILE     : 'while' ;
 LIMIT     : 'limit' ;
 STEP      : 'step' ;
+MAP       : 'map' ;
+SET       : 'set' ;
 THEN      : 'then' ;
 REV       : 'rev' ;
 FOR       : 'for' ;

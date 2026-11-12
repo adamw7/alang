@@ -193,6 +193,12 @@ final class AstBuilder {
         if (ctx instanceof ArrayTypeRefContext a) {
             return new ArrayRef(sp, type(a.type()), capacity(a.capacity()));
         }
+        if (ctx instanceof MapTypeRefContext m) {
+            return new MapRef(sp, type(m.type(0)), type(m.type(1)), capacity(m.capacity()));
+        }
+        if (ctx instanceof SetTypeRefContext s) {
+            return new SetRef(sp, type(s.type()), capacity(s.capacity()));
+        }
         if (ctx instanceof TupleTypeRefContext t) {
             List<TypeRef> elems = new ArrayList<>();
             for (TypeContext e : t.type()) elems.add(type(e));
@@ -212,6 +218,9 @@ final class AstBuilder {
             case StrRef s -> s.cap() == null;
             case ListRef l -> l.cap() == null || anyCapacity(l.elem());
             case ArrayRef a -> a.len() == null || anyCapacity(a.elem());
+            case MapRef m -> m.cap() == null || anyCapacity(m.key()) || anyCapacity(m.value());
+            case SetRef s -> s.cap() == null || anyCapacity(s.elem());
+            case TupleRef tr -> tr.elems().stream().anyMatch(AstBuilder::anyCapacity);
             default -> false;
         };
     }

@@ -8,6 +8,7 @@ import alang.interp.Format;
 import alang.interp.Values.ArrV;
 import alang.interp.Values.EnumV;
 import alang.interp.Values.ListV;
+import alang.interp.Values.MapV;
 import alang.interp.Values.StrV;
 import alang.interp.Values.StructV;
 import alang.types.PrimKind;
@@ -296,6 +297,12 @@ public final class CGen {
             case Type.ListT l -> "l" + l.cap() + "_" + mangle(l.elem());
             case Type.StructT s -> "S" + s.decl().name.length() + s.decl().name;
             case Type.EnumT e -> "E" + e.decl().name.length() + e.decl().name;
+            // m, the capacity, then the key's name after its length, then the value's: map[i64, s8; 4] is m4_3i64s8.
+            case Type.MapT m -> {
+                String k = mangle(m.key());
+                yield "m" + m.cap() + "_" + k.length() + k + mangle(m.value());
+            }
+            case Type.SetT st -> "z" + st.cap() + "_" + mangle(st.elem());
             case Type.TupleT tt -> {
                 // T2, then each element's name after its length: (i64, str[8]) is T2_3i64_2s8.
                 StringBuilder sb = new StringBuilder("T").append(tt.elems().size());
@@ -331,6 +338,16 @@ public final class CGen {
                 sb.append("typedef struct {\n");
                 for (String f : fields) sb.append(f);
                 sb.append("} ");
+            }
+            case Type.SetT st -> {
+                String e = ct(st.elem());
+                sb.append("typedef struct {\n    uint32_t len;\n    ").append(e).append(" v[").append(st.cap()).append("];\n} ");
+            }
+            case Type.MapT m -> {
+                String k = ct(m.key());
+                String v = ct(m.value());
+                sb.append("typedef struct {\n    uint32_t len;\n    ").append(k).append(" k[").append(m.cap()).append("];\n    ")
+                    .append(v).append(" v[").append(m.cap()).append("];\n} ");
             }
             case Type.TupleT tt -> {
                 List<String> elems = new ArrayList<>();
@@ -384,6 +401,17 @@ public final class CGen {
         switch (t) {
             case Type.ArrayT a -> sequenceFmt(sb, name, ty, a.elem(), String.valueOf(a.len()));
             case Type.ListT l -> sequenceFmt(sb, name, ty, l.elem(), "x->len");
+            case Type.SetT st -> sb.append("static void ").append(name).append("(al_out *o, const ").append(ty).append(" *x) {\n")
+                .append("    uint32_t i;\n    AL_PUTS(o, \"{\");\n")
+                .append("    for (i = 0; i < x->len; i++) {\n")
+                .append("        if (i > 0) AL_PUTS(o, \", \");\n        ").append(fmtStmt(st.elem(), "o", "x->v[i]", "1")).append("\n    }\n")
+                .append("    AL_PUTS(o, \"}\");\n}\n\n");
+            case Type.MapT m -> sb.append("static void ").append(name).append("(al_out *o, const ").append(ty).append(" *x) {\n")
+                .append("    uint32_t i;\n    AL_PUTS(o, \"{\");\n")
+                .append("    for (i = 0; i < x->len; i++) {\n")
+                .append("        if (i > 0) AL_PUTS(o, \", \");\n        ").append(fmtStmt(m.key(), "o", "x->k[i]", "1")).append("\n")
+                .append("        AL_PUTS(o, \": \");\n        ").append(fmtStmt(m.value(), "o", "x->v[i]", "1")).append("\n    }\n")
+                .append("    AL_PUTS(o, \"}\");\n}\n\n");
             case Type.StructT s -> {
                 List<String> parts = new ArrayList<>();
                 for (Field f : s.decl().fields) parts.add(fmtStmt(f.type, "o", "x->f_" + f.name, "1"));
@@ -446,6 +474,9 @@ public final class CGen {
             case Type.Prim p -> "((" + a + ") == (" + b + "))";
             case Type.Str s -> "al_eq_bytes((" + a + ").b, (" + a + ").len, (" + b + ").b, (" + b + ").len)";
             case Type.ListT l -> eqListFn(l.elem()) + "((" + a + ").v, (" + a + ").len, (" + b + ").v, (" + b + ").len)";
+            case Type.SetT st -> eqListFn(st.elem()) + "((" + a + ").v, (" + a + ").len, (" + b + ").v, (" + b + ").len)";
+            case Type.MapT m -> "(" + eqListFn(m.key()) + "((" + a + ").k, (" + a + ").len, (" + b + ").k, (" + b + ").len) && "
+                + eqListFn(m.value()) + "((" + a + ").v, (" + a + ").len, (" + b + ").v, (" + b + ").len))";
             default -> eqFn(t) + "(&(" + a + "), &(" + b + "))";
         };
     }
@@ -509,7 +540,8 @@ public final class CGen {
     }
 
     private static boolean needsCoerce(Type from, Type to) {
-        return (from instanceof Type.Str && to instanceof Type.Str || from instanceof Type.ListT && to instanceof Type.ListT)
+        return (from instanceof Type.Str && to instanceof Type.Str || from instanceof Type.ListT && to instanceof Type.ListT
+            || from instanceof Type.SetT && to instanceof Type.SetT || from instanceof Type.MapT && to instanceof Type.MapT)
             && !from.equals(to);
     }
 
@@ -527,8 +559,9 @@ public final class CGen {
             String arr = to instanceof Type.Str ? "b" : "v";
             helpers.append("static void ").append(name).append("(").append(tt).append(" *r, const ").append(ft).append(" *x) {\n")
                 .append("    uint32_t i;\n    r->len = x->len;\n")
-                .append("    for (i = 0; i < x->len; i++) r->").append(arr).append("[i] = x->").append(arr).append("[i];\n")
-                .append("}\n\n");
+                .append("    for (i = 0; i < x->len; i++) r->").append(arr).append("[i] = x->").append(arr).append("[i];\n");
+            if (to instanceof Type.MapT) helpers.append("    for (i = 0; i < x->len; i++) r->k[i] = x->k[i];\n");
+            helpers.append("}\n\n");
         }
         String t = tmp(to, "{0}");
         emit(name + "(&" + t + ", &(" + x + "));");
@@ -564,6 +597,22 @@ public final class CGen {
                 List<String> parts = new ArrayList<>();
                 for (int i = 0; i < lv.len; i++) parts.add(init(lv.items[i], l.elem()));
                 yield lv.len == 0 ? "{0}" : "{" + lv.len + "u, {" + String.join(", ", parts) + "}}";
+            }
+            case Type.SetT st -> {
+                ListV lv = (ListV) v;
+                List<String> parts = new ArrayList<>();
+                for (int i = 0; i < lv.len; i++) parts.add(init(lv.items[i], st.elem()));
+                yield lv.len == 0 ? "{0}" : "{" + lv.len + "u, {" + String.join(", ", parts) + "}}";
+            }
+            case Type.MapT m -> {
+                MapV mv = (MapV) v;
+                List<String> keys = new ArrayList<>();
+                List<String> vals = new ArrayList<>();
+                for (int i = 0; i < mv.len; i++) {
+                    keys.add(init(mv.keys[i], m.key()));
+                    vals.add(init(mv.vals[i], m.value()));
+                }
+                yield mv.len == 0 ? "{0}" : "{" + mv.len + "u, {" + String.join(", ", keys) + "}, {" + String.join(", ", vals) + "}}";
             }
             case Type.StructT s -> {
                 List<String> parts = new ArrayList<>();
@@ -835,6 +884,14 @@ public final class CGen {
     private void assign(Assign a) {
         Type t = a.target.type;
         String v = lower(a.value);
+        if (a.op == null && a.target instanceof Index ix && ix.target.type instanceof Type.MapT mt) {
+            // m[k] = v adds k when it is new; the value is computed first, then the place.
+            String vt = Type.isAggregate(t) ? coerce(v, a.value.type, t) : tmp(t, v);
+            String base = lower(ix.target);
+            String key = keyLvalue(ix.index, mt.key());
+            emit("*al_put_" + keyedFns(mt) + "(&(" + base + "), &" + key + ", " + loc(ix.span) + ") = " + vt + ";");
+            return;
+        }
         if (a.op == null) {
             String target = lower(a.target);
             emit(target + " = " + coerce(v, a.value.type, t) + ";");
@@ -1064,6 +1121,26 @@ public final class CGen {
         String i = "t" + ++tmpCount;
         String n = ct instanceof Type.ArrayT a ? a.len() + "u" : coll + ".len";
         String elem = ct instanceof Type.Str ? coll + ".b[" + i + "]" : coll + ".v[" + i + "]";
+        if (ct instanceof Type.MapT) {
+            // The keys in order, or with `for k, v in m` each key and its value.
+            emit("uint32_t " + i + ";");
+            open(f.rev ? "for (" + i + " = " + n + "; " + i + "-- > 0;) {" : "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+            if (f.indexVar != null) {
+                emit(ct(f.indexVar.type) + " " + cName(f.indexVar) + " = " + coll + ".k[" + i + "];");
+                emit("(void)" + cName(f.indexVar) + ";");
+            } else {
+                elem = coll + ".k[" + i + "]";
+            }
+            emit(ct(f.var.type) + " " + cName(f.var) + " = " + elem + ";");
+            emit("(void)" + cName(f.var) + ";");
+            CLoop cl = enterLoop(f, false);
+            block(f.body);
+            endBody(cl);
+            close("}");
+            exitLoop(cl);
+            close("}");
+            return;
+        }
         emit("uint32_t " + i + ";");
         open(f.rev ? "for (" + i + " = " + n + "; " + i + "-- > 0;) {" : "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
         if (f.indexVar != null) {
@@ -1300,6 +1377,22 @@ public final class CGen {
                 };
             }
             case Binary b -> binary(b);
+            case ArrayLit a when a.type instanceof Type.MapT mt -> {
+                String r = tmp(mt, "{0}");
+                String m = keyedFns(mt);
+                Type entry = new Type.TupleT(List.of(mt.key(), mt.value()));
+                for (Expr x : a.elems) {
+                    String pair = coerce(lower(x), x.type, entry);
+                    emit("*al_put_" + m + "(&" + r + ", &(" + pair + ").e0, " + loc(a.span) + ") = (" + pair + ").e1;");
+                }
+                yield r;
+            }
+            case ArrayLit a when a.type instanceof Type.SetT st -> {
+                String r = tmp(st, "{0}");
+                String m = keyedFns(st);
+                for (Expr x : a.elems) emit("al_ins_" + m + "(&" + r + ", &" + keyLvalue(x, st.elem()) + ", " + loc(a.span) + ");");
+                yield r;
+            }
             case ArrayLit a -> {
                 Type elem = Type.elementOf(a.type);
                 List<String> vals = new ArrayList<>();
@@ -1366,7 +1459,20 @@ public final class CGen {
         return line + ", " + s.col();
     }
 
+    /** A key, value or element of a map or set, as an lvalue of type {@code to} whose address the helpers take. */
+    private String keyLvalue(Expr e, Type to) {
+        return Type.isAggregate(to) ? coerce(lower(e), e.type, to) : tmp(to, lower(e));
+    }
+
     private String index(Index ix) {
+        if (ix.target.type instanceof Type.MapT mt) {
+            // Read through a pointer: a const one, cast for the places that are written (the checker allows that only
+            // on a variable or a `mut` parameter).
+            String base = lower(ix.target);
+            String key = keyLvalue(ix.index, mt.key());
+            String m = keyedFns(mt);
+            return "(*(" + ct(mt.value()) + " *)al_get_" + m + "(&(" + base + "), &" + key + ", " + loc(ix.span) + "))";
+        }
         String base = lower(ix.target);
         String idx = lower(ix.index);
         PrimKind k = Type.kind(ix.index.type);
@@ -1585,7 +1691,13 @@ public final class CGen {
             case CAP -> {
                 Type t = args.get(0).expr().type;
                 lower(args.get(0).expr());
-                return "INT64_C(" + (t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap()) + ")";
+                int cap = switch (t) {
+                    case Type.Str s -> s.cap();
+                    case Type.MapT m -> m.cap();
+                    case Type.SetT s -> s.cap();
+                    default -> ((Type.ListT) t).cap();
+                };
+                return "INT64_C(" + cap + ")";
             }
             case PUSH -> {
                 Type t = args.get(0).expr().type;
@@ -1788,6 +1900,15 @@ public final class CGen {
             }
             case CONTAINS, INDEX_OF -> {
                 Expr xs = args.get(0).expr();
+                if (xs.type instanceof Type.MapT || xs.type instanceof Type.SetT) {
+                    Type kt = xs.type instanceof Type.MapT mt ? mt.key() : ((Type.SetT) xs.type).elem();
+                    String h = lowerLvalue(xs);
+                    String key = keyLvalue(args.get(1).expr(), kt);
+                    String found = "t" + ++tmpCount;
+                    emit("int " + found + ";");
+                    emit("(void)al_find_" + keyedFns(xs.type) + "(&(" + h + "), &" + key + ", &" + found + ");");
+                    return tmp(Type.BOOL, found + " != 0");
+                }
                 String h = lowerLvalue(xs);
                 String at0;
                 if (xs.type instanceof Type.Str) {
@@ -1945,6 +2066,19 @@ public final class CGen {
             }
             case INSERT -> {
                 Type t = args.get(0).expr().type;
+                if (t instanceof Type.MapT mt) {
+                    String place = lower(args.get(0).expr());
+                    String key = keyLvalue(args.get(1).expr(), mt.key());
+                    String val = keyLvalue(args.get(2).expr(), mt.value());
+                    emit("*al_put_" + keyedFns(mt) + "(&(" + place + "), &" + key + ", " + at + ") = " + val + ";");
+                    return null;
+                }
+                if (t instanceof Type.SetT st) {
+                    String place = lower(args.get(0).expr());
+                    String key = keyLvalue(args.get(1).expr(), st.elem());
+                    emit("al_ins_" + keyedFns(st) + "(&(" + place + "), &" + key + ", " + at + ");");
+                    return null;
+                }
                 String place = lower(args.get(0).expr());
                 String pos = position(args.get(1).expr());
                 Type elem = Type.elementOf(t);
@@ -1967,6 +2101,12 @@ public final class CGen {
             }
             case REMOVE -> {
                 Type t = args.get(0).expr().type;
+                if (t instanceof Type.MapT || t instanceof Type.SetT) {
+                    Type kt = t instanceof Type.MapT mt ? mt.key() : ((Type.SetT) t).elem();
+                    String place = lower(args.get(0).expr());
+                    String key = keyLvalue(args.get(1).expr(), kt);
+                    return tmp(Type.BOOL, "al_del_" + keyedFns(t) + "(&(" + place + "), &" + key + ")");
+                }
                 String place = lower(args.get(0).expr());
                 Expr ie = args.get(1).expr();
                 String idx = lower(ie);
@@ -1982,6 +2122,17 @@ public final class CGen {
                 close("}");
                 emit("(" + place + ").len--;");
                 return r;
+            }
+            case GET_OR -> {
+                Type.MapT mt = (Type.MapT) args.get(0).expr().type;
+                String m = lowerLvalue(args.get(0).expr());
+                String key = keyLvalue(args.get(1).expr(), mt.key());
+                String d = keyLvalue(args.get(2).expr(), mt.value());
+                String found = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                emit("int " + found + ";");
+                emit("uint32_t " + i + " = al_find_" + keyedFns(mt) + "(&(" + m + "), &" + key + ", &" + found + ");");
+                return tmp(mt.value(), found + " ? (" + m + ").v[" + i + "] : " + d);
             }
             case PANIC -> {
                 String v = lowerLvalue(args.get(0).expr());
@@ -2054,6 +2205,13 @@ public final class CGen {
                 }
                 body.append("    return 0;\n");
             }
+            case Type.SetT st -> body.append("    uint32_t i;\n    for (i = 0; i < a->len && i < b->len; i++) {\n")
+                .append("        int c = ").append(cmpExpr(st.elem(), "a->v[i]", "b->v[i]")).append(";\n")
+                .append("        if (c != 0) return c;\n    }\n    return (a->len > b->len) - (a->len < b->len);\n");
+            case Type.MapT m -> body.append("    uint32_t i;\n    for (i = 0; i < a->len && i < b->len; i++) {\n")
+                .append("        int c = ").append(cmpExpr(m.key(), "a->k[i]", "b->k[i]")).append(";\n")
+                .append("        if (c == 0) c = ").append(cmpExpr(m.value(), "a->v[i]", "b->v[i]")).append(";\n")
+                .append("        if (c != 0) return c;\n    }\n    return (a->len > b->len) - (a->len < b->len);\n");
             case Type.TupleT tt -> {
                 body.append("    int c;\n");
                 for (int i = 0; i < tt.elems().size(); i++) {
@@ -2130,6 +2288,94 @@ public final class CGen {
             .append("    return 1;\n")
             .append("}\n\n");
         return name;
+    }
+
+    /**
+     * The helpers of a map type: find (a binary search, as Stdlib.find), get (R0003 for a missing key), put
+     * (adds a new key in its place; R0004 when full) and del. A set has find, ins and del.
+     */
+    private String keyedFns(Type t) {
+        String m = mangle(t);
+        String name = "al_kf_" + m;
+        if (!doneHelpers.add(name)) return m;
+        String ty = ct(t);
+        boolean map = t instanceof Type.MapT;
+        Type kt = map ? ((Type.MapT) t).key() : ((Type.SetT) t).elem();
+        int cap = map ? ((Type.MapT) t).cap() : ((Type.SetT) t).cap();
+        String k = ct(kt);
+        String keys = map ? "k" : "v";
+        StringBuilder sb = new StringBuilder();
+        sb.append("static uint32_t al_find_").append(m).append("(const ").append(ty).append(" *m, const ").append(k)
+            .append(" *key, int *found) {\n")
+            .append("    uint32_t lo = 0, hi = m->len;\n")
+            .append("    *found = 0;\n")
+            .append("    while (lo < hi) {\n")
+            .append("        uint32_t mid = lo + (hi - lo) / 2;\n")
+            .append("        int c = ").append(cmpExpr(kt, "m->" + keys + "[mid]", "(*key)")).append(";\n")
+            .append("        if (c < 0) lo = mid + 1;\n")
+            .append("        else if (c > 0) hi = mid;\n")
+            .append("        else {\n            *found = 1;\n            return mid;\n        }\n")
+            .append("    }\n")
+            .append("    return lo;\n}\n\n");
+        String full = cString(utf8("insert into a full " + (map ? "map" : "set") + " (capacity " + cap + ")"));
+        if (map) {
+            Type vt = ((Type.MapT) t).value();
+            String v = ct(vt);
+            sb.append("static const ").append(v).append(" *al_get_").append(m).append("(const ").append(ty).append(" *m, const ")
+                .append(k).append(" *key, int line, int col) {\n")
+                .append("    int found;\n")
+                .append("    uint32_t i = al_find_").append(m).append("(m, key, &found);\n")
+                .append("    if (!found) {\n")
+                .append("        al_out e = al_trap_begin(\"R0003\");\n")
+                .append("        AL_PUTS(&e, \"key \");\n")
+                .append("        ").append(fmtStmt(kt, "&e", "(*key)", "1")).append("\n")
+                .append("        AL_PUTS(&e, \" is not in the map\");\n")
+                .append("        al_trap_end(&e, line, col);\n")
+                .append("    }\n")
+                .append("    return &m->v[i];\n}\n\n");
+            sb.append("static ").append(v).append(" *al_put_").append(m).append("(").append(ty).append(" *m, const ").append(k)
+                .append(" *key, int line, int col) {\n")
+                .append("    int found;\n")
+                .append("    uint32_t i = al_find_").append(m).append("(m, key, &found), j;\n")
+                .append("    if (found) return &m->v[i];\n")
+                .append("    if (m->len >= ").append(cap).append("u) AL_TRAP(\"R0004\", ").append(full).append(", line, col);\n")
+                .append("    for (j = m->len; j > i; j--) {\n")
+                .append("        m->k[j] = m->k[j - 1];\n")
+                .append("        m->v[j] = m->v[j - 1];\n")
+                .append("    }\n")
+                .append("    m->k[i] = *key;\n")
+                .append("    m->len++;\n")
+                .append("    return &m->v[i];\n}\n\n");
+            sb.append("static bool al_del_").append(m).append("(").append(ty).append(" *m, const ").append(k).append(" *key) {\n")
+                .append("    int found;\n")
+                .append("    uint32_t i = al_find_").append(m).append("(m, key, &found);\n")
+                .append("    if (!found) return false;\n")
+                .append("    for (; i + 1 < m->len; i++) {\n")
+                .append("        m->k[i] = m->k[i + 1];\n")
+                .append("        m->v[i] = m->v[i + 1];\n")
+                .append("    }\n")
+                .append("    m->len--;\n")
+                .append("    return true;\n}\n\n");
+        } else {
+            sb.append("static void al_ins_").append(m).append("(").append(ty).append(" *m, const ").append(k)
+                .append(" *key, int line, int col) {\n")
+                .append("    int found;\n")
+                .append("    uint32_t i = al_find_").append(m).append("(m, key, &found), j;\n")
+                .append("    if (found) return;\n")
+                .append("    if (m->len >= ").append(cap).append("u) AL_TRAP(\"R0004\", ").append(full).append(", line, col);\n")
+                .append("    for (j = m->len; j > i; j--) m->v[j] = m->v[j - 1];\n")
+                .append("    m->v[i] = *key;\n")
+                .append("    m->len++;\n}\n\n");
+            sb.append("static bool al_del_").append(m).append("(").append(ty).append(" *m, const ").append(k).append(" *key) {\n")
+                .append("    int found;\n")
+                .append("    uint32_t i = al_find_").append(m).append("(m, key, &found);\n")
+                .append("    if (!found) return false;\n")
+                .append("    for (; i + 1 < m->len; i++) m->v[i] = m->v[i + 1];\n")
+                .append("    m->len--;\n")
+                .append("    return true;\n}\n\n");
+        }
+        helpers.append(sb);
+        return m;
     }
 
     /** chars() into a list of type t: the code points in turn, each checked for room. */

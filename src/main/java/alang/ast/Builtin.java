@@ -155,10 +155,14 @@ public enum Builtin {
     REVERSE(Group.COLLECTIONS, false, "reverse", "reverse(mut xs)", "Reverses a list, array or str in place."),
     INSERT(Group.COLLECTIONS, false, "insert", "insert(mut xs, i, value)",
         "Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. "
-            + "Traps unless 0 <= i <= len(xs), or if full."),
+            + "Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and "
+            + "insert(mut s, x) adds x to a set; both trap (R0004) when a new key does not fit."),
     REMOVE(Group.COLLECTIONS, false, "remove", "remove(mut xs, i) -> T",
         "Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. "
-            + "Traps unless 0 <= i < len(xs).");
+            + "Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether "
+            + "it was there."),
+    GET_OR(Group.COLLECTIONS, true, "get_or", "get_or(m, key, default) -> V",
+        "The value of key in the map m, or default when m has no such key; m[key] traps (R0003) instead.");
 
     /** Where fixed, pad_left and pad_right may be used. */
     private static final String TEXT_USE = "Pass it to print or append, as the value of pad_left or pad_right, or store it "

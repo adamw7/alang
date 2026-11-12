@@ -8,6 +8,7 @@ import alang.diag.Span;
 import alang.interp.Values.ArrV;
 import alang.interp.Values.EnumV;
 import alang.interp.Values.ListV;
+import alang.interp.Values.MapV;
 import alang.interp.Values.StrV;
 import alang.interp.Values.StructV;
 import alang.types.PrimKind;
@@ -395,6 +396,24 @@ public final class Interpreter {
         // The collection is evaluated once and iterated as a snapshot: a copy, when it is a variable the body
         // may change, else the value itself.
         Object coll = f.snapshot ? owned(f.from, slots) : eval(f.from, slots);
+        if (coll instanceof MapV m) {
+            // A map gives its keys in order, or with `for k, v in m` each key with its value.
+            for (int k = 0; k < m.len; k++) {
+                int i = f.rev ? m.len - 1 - k : k;
+                step(f.span);
+                if (f.indexVar != null) {
+                    slots[f.indexVar.slot] = m.keys[i];
+                    slots[f.var.slot] = m.vals[i];
+                } else {
+                    slots[f.var.slot] = m.keys[i];
+                }
+                int r = execBlock(f.body, slots);
+                int a = after(f, r);
+                if (a == LEAVE) break;
+                if (a == OUT) return r;
+            }
+            return NORMAL;
+        }
         Object[] items = coll instanceof ArrV a ? a.items : coll instanceof ListV l ? l.items : null;
         int n = length(coll);
         for (int k = 0; k < n; k++) {
@@ -551,6 +570,17 @@ public final class Interpreter {
         }
     }
 
+    /** m[k] as a place: reading it needs the key (R0003), storing to it adds the key if it is new (R0004 when full). */
+    private record MapRef(MapV m, Object key, Type keyType, Span at) implements Ref {
+        public Object get() {
+            return Stdlib.mapGet(m, key, keyType, at);
+        }
+
+        public void set(Object v) {
+            Stdlib.mapPut(m, key, v, keyType, at);
+        }
+    }
+
     private record ByteRef(StrV s, int i) implements Ref {
         public Object get() {
             return (long) (s.b[i] & 0xFF);
@@ -573,6 +603,10 @@ public final class Interpreter {
             }
             case Index ix -> {
                 Object container = ref(ix.target, slots).get();
+                if (ix.target.type instanceof Type.MapT mt) {
+                    Object key = Values.coerce(owned(ix.index, slots), mt.key());
+                    return new MapRef((MapV) container, key, mt.key(), ix.span);
+                }
                 long i = (Long) eval(ix.index, slots);
                 return elementRef(container, i, Type.kind(ix.index.type), ix.span);
             }
@@ -585,6 +619,7 @@ public final class Interpreter {
             case ArrV a -> a.items.length;
             case ListV l -> l.len;
             case StrV s -> s.len;
+            case MapV m -> m.len;
             default -> throw new IllegalStateException();
         };
     }
@@ -625,6 +660,9 @@ public final class Interpreter {
                 : ((StructV) eval(f.target, slots)).fields[f.fieldIndex];
             case Index ix -> {
                 Object container = eval(ix.target, slots);
+                if (ix.target.type instanceof Type.MapT mt) {
+                    yield Stdlib.mapGet((MapV) container, eval(ix.index, slots), mt.key(), ix.span);
+                }
                 long i = (Long) eval(ix.index, slots);
                 yield elementRef(container, i, Type.kind(ix.index.type), ix.span).get();
             }
@@ -658,6 +696,19 @@ public final class Interpreter {
                 };
             }
             case Binary b -> binary(b, slots);
+            case ArrayLit a when a.type instanceof Type.MapT mt -> {
+                MapV m = new MapV(new Object[mt.cap()], new Object[mt.cap()], 0);
+                for (Expr x : a.elems) {
+                    StructV pair = (StructV) owned(x, slots);
+                    Stdlib.mapPut(m, Values.coerce(pair.fields[0], mt.key()), Values.coerce(pair.fields[1], mt.value()), mt.key(), a.span);
+                }
+                yield m;
+            }
+            case ArrayLit a when a.type instanceof Type.SetT st -> {
+                ListV s = new ListV(new Object[st.cap()], 0);
+                for (Expr x : a.elems) Stdlib.setInsert(s, Values.coerce(owned(x, slots), st.elem()), st.elem(), a.span);
+                yield s;
+            }
             case ArrayLit a -> {
                 Type elem = Type.elementOf(a.type);
                 Object[] vals = new Object[a.elems.size()];
@@ -848,7 +899,12 @@ public final class Interpreter {
             }
             case CAP -> {
                 Type t = args.get(0).expr().type;
-                return (long) (t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap());
+                return (long) switch (t) {
+                    case Type.Str s -> s.cap();
+                    case Type.MapT m -> m.cap();
+                    case Type.SetT s -> s.cap();
+                    default -> ((Type.ListT) t).cap();
+                };
             }
             case PUSH -> {
                 Object container = ref(args.get(0).expr(), slots).get();
@@ -882,7 +938,11 @@ public final class Interpreter {
             }
             case CLEAR -> {
                 Object container = ref(args.get(0).expr(), slots).get();
-                if (container instanceof ListV l) {
+                if (container instanceof MapV m) {
+                    Arrays.fill(m.keys, null);
+                    Arrays.fill(m.vals, null);
+                    m.len = 0;
+                } else if (container instanceof ListV l) {
                     Arrays.fill(l.items, null);
                     l.len = 0;
                 } else {
@@ -999,6 +1059,9 @@ public final class Interpreter {
             case CONTAINS, INDEX_OF -> {
                 Object xs = eval(args.get(0).expr(), slots);
                 Object x = eval(args.get(1).expr(), slots);
+                Type ct = args.get(0).expr().type;
+                if (ct instanceof Type.MapT mt) return Stdlib.find(((MapV) xs).keys, ((MapV) xs).len, x, mt.key()) >= 0;
+                if (ct instanceof Type.SetT st) return Stdlib.find(((ListV) xs).items, ((ListV) xs).len, x, st.elem()) >= 0;
                 long at = xs instanceof StrV s ? Stdlib.find(s.b, s.len, Stdlib.pattern(x), 0)
                     : Stdlib.indexOf(xs, x, Type.elementOf(args.get(0).expr().type));
                 return c.builtin == Builtin.CONTAINS ? (Object) (at >= 0) : (Object) at;
@@ -1110,6 +1173,18 @@ public final class Interpreter {
                 return null;
             }
             case INSERT -> {
+                if (args.get(0).expr().type instanceof Type.MapT mt) {
+                    MapV m = (MapV) ref(args.get(0).expr(), slots).get();
+                    Object k = Values.coerce(owned(args.get(1).expr(), slots), mt.key());
+                    Object v = Values.coerce(owned(args.get(2).expr(), slots), mt.value());
+                    Stdlib.mapPut(m, k, v, mt.key(), c.span);
+                    return null;
+                }
+                if (args.get(0).expr().type instanceof Type.SetT st) {
+                    ListV s = (ListV) ref(args.get(0).expr(), slots).get();
+                    Stdlib.setInsert(s, Values.coerce(owned(args.get(1).expr(), slots), st.elem()), st.elem(), c.span);
+                    return null;
+                }
                 Object xs = ref(args.get(0).expr(), slots).get();
                 long i = (Long) eval(args.get(1).expr(), slots);
                 Type elem = Type.elementOf(args.get(0).expr().type);
@@ -1118,9 +1193,25 @@ public final class Interpreter {
                 return null;
             }
             case REMOVE -> {
+                if (args.get(0).expr().type instanceof Type.MapT mt) {
+                    MapV m = (MapV) ref(args.get(0).expr(), slots).get();
+                    return Stdlib.mapRemove(m, eval(args.get(1).expr(), slots), mt.key());
+                }
+                if (args.get(0).expr().type instanceof Type.SetT st) {
+                    ListV s = (ListV) ref(args.get(0).expr(), slots).get();
+                    return Stdlib.setRemove(s, eval(args.get(1).expr(), slots), st.elem());
+                }
                 Object xs = ref(args.get(0).expr(), slots).get();
                 long i = (Long) eval(args.get(1).expr(), slots);
                 return Stdlib.remove(xs, i, Type.kind(args.get(1).expr().type), c.span);
+            }
+            case GET_OR -> {
+                Type.MapT mt = (Type.MapT) args.get(0).expr().type;
+                MapV m = (MapV) eval(args.get(0).expr(), slots);
+                Object k = eval(args.get(1).expr(), slots);
+                Object d = eval(args.get(2).expr(), slots);
+                int i = Stdlib.find(m.keys, m.len, k, mt.key());
+                return Values.coerce(i >= 0 ? m.vals[i] : d, mt.value());
             }
             case PANIC -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);

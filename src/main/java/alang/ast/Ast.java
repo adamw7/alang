@@ -269,6 +269,12 @@ public final class Ast {
 
     public record NamedRef(Span span, String name) implements TypeRef {}
 
+    /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
+    public record MapRef(Span span, TypeRef key, TypeRef value, Expr cap) implements TypeRef {}
+
+    /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
+    public record SetRef(Span span, TypeRef elem, Expr cap) implements TypeRef {}
+
     /** (T1, T2, ...): a tuple type. */
     public record TupleRef(Span span, List<TypeRef> elems) implements TypeRef {}
 

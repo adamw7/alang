@@ -137,6 +137,8 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `let x = 5;` / `x := 5` | `let x: i64 = 5;` |
 | `int`, `usize`, `String`, `Vec<T>` | `i32`/`i64`, `i64`, `str[N]`, `list[T; N]` |
 | `Option<T>`, `null` | `enum MaybeT { None, Some(T) }` |
+| `dict`, `HashMap<K, V>`, `set()`, `HashSet<T>` | `map[str[16], i64; 64]`, `set[i64; 32]`: a capacity, keys always in order; `var m: map[str[8], i64; 16] = [];` then `m[k] = v;` |
+| `d.get(k, 0)`, `d[k] = d.get(k, 0) + 1`, `for k, v in d.items()` | `get_or(m, k, 0)`, `m[k] = get_or(m, k, 0) + 1;`, `for k, v in m { }` |
 | `return a, b`, `(a, b) = f()`, `let (q, r) = divmod(a, b)` | `return (a, b);` with `-> (i64, i64)`, then `let (q, r): (i64, i64) = divmod(a, b);` and `p.0`, `p.1` |
 | `i++` | `i += 1;` |
 | `for (i = 0; i < n; i++)` | `for i in 0..n { }` |
@@ -171,15 +173,15 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 ## The standard library
 
 Builtins that work on any type and capacity. Their names are reserved: call `gcd`, do not define it. For
-what it leaves out (parsing into an enum instead of trapping, pseudo-random numbers, a map as a list of
-structs), [examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
+what it leaves out (parsing into an enum instead of trapping, pseudo-random numbers, a map that keeps
+the order its keys were added in), [examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
 
 | Area | Functions |
 |------|-----------|
 | Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
 | Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
-| Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays |
+| Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear` |
 
 - `split`, `words`, `join` and `replace` take their type from the variable they are stored in, so make the
   call the whole right side of a typed `let`/`var`, assignment or `return`:
@@ -418,7 +420,8 @@ it out with `requires`, which the schema then shows too.
 
 JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string of at most N UTF-8
 bytes (a non-ASCII character takes 2 to 4, so size N in bytes, not characters), arrays and lists as
-arrays, tuples as arrays of fixed length, structs as objects (all fields required), enum variants as `"Name"` or
+arrays, tuples as arrays of fixed length, maps with str keys as objects (others as `[key, value]` pairs), sets as
+arrays of distinct items, structs as objects (all fields required), enum variants as `"Name"` or
 `{"Name": [payload...]}`.
 Tools cannot take `mut` parameters. A trap inside a tool returns `{"ok": false, "error": {"code":
 "R....", ...}}` instead of crashing the caller. JSON has no NaN or infinity, so a float result holding one

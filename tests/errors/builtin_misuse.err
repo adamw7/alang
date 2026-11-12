@@ -5,7 +5,7 @@ error[E0204]: len() takes 1 argument(s) but 0 were given
    |                  ^^^^^
   = hint: signature: len(x) -> i64
 
-error[E0203]: len() needs an array, list or str, found i64
+error[E0203]: len() needs an array, list, str, map or set, found i64
   --> tests/errors/builtin_misuse.al:12:22
    |
 12 |     let b: i64 = len(n);
