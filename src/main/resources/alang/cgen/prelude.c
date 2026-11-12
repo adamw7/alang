@@ -35,8 +35,22 @@
 #endif
 
 #ifdef AL_WRITE
-/* Freestanding targets: define AL_WRITE(fd, ptr, len) to emit bytes (e.g. to a UART). */
+/*
+ * Freestanding targets: define AL_WRITE(fd, ptr, len) to emit bytes (e.g. to a UART), and AL_READ(fd, ptr,
+ * len) to read the input of a fn main that takes one: it returns the bytes read, 0 at the end of the input.
+ * Without AL_READ, the input is empty.
+ */
 static void al_write(int fd, const uint8_t *p, uint32_t n) { AL_WRITE(fd, p, n); }
+static int64_t al_read(int fd, uint8_t *p, uint32_t n) {
+#ifdef AL_READ
+    return (int64_t)AL_READ(fd, p, n);
+#else
+    (void)fd;
+    (void)p;
+    (void)n;
+    return 0;
+#endif
+}
 #elif defined(_WIN32)
 /*
  * Windows: the C runtime opens stdout and stderr in text mode, which writes every "\n" as
@@ -53,6 +67,10 @@ static void al_write(int fd, const uint8_t *p, uint32_t n) {
         n -= (uint32_t)w;
     }
 }
+static int64_t al_read(int fd, uint8_t *p, uint32_t n) {
+    _setmode(fd, _O_BINARY);
+    return _read(fd, p, n);
+}
 #else
 #include <unistd.h>
 static void al_write(int fd, const uint8_t *p, uint32_t n) {
@@ -62,6 +80,9 @@ static void al_write(int fd, const uint8_t *p, uint32_t n) {
         p += w;
         n -= (uint32_t)w;
     }
+}
+static int64_t al_read(int fd, uint8_t *p, uint32_t n) {
+    return (int64_t)read(fd, p, n);
 }
 #endif
 
@@ -307,6 +328,8 @@ static bool al_eq_bytes(const uint8_t *a, uint32_t an, const uint8_t *b, uint32_
 /* ---------------------------------------------------------------- traps */
 
 static const char *al_source_path;
+/* The imported files: a line in the k-th (from 1) is passed to a trap as -(1048576 * k + line). */
+static const char *const *al_import_paths;
 
 static al_out al_trap_begin(const char *code) {
     al_out e = al_stderr_sink();
@@ -320,6 +343,10 @@ static al_out al_trap_begin(const char *code) {
 static void al_trap_end(al_out *e, int line, int col) {
     const char *p = al_source_path;
     uint32_t n = 0;
+    if (line < 0) {
+        p = al_import_paths[(-line >> 20) - 1];
+        line = -line & 0xFFFFF;
+    }
     while (p[n] != 0) n++;
     AL_PUTS(e, "\n  --> ");
     al_put(e, p, n);
@@ -354,6 +381,30 @@ static void al_puts_c(al_out *o, const char *s) {
     uint32_t n = 0;
     while (s[n] != 0) n++;
     al_put(o, s, n);
+}
+
+/*
+ * Reads all of the standard input into the str parameter of fn main, whose name is param. Input that does
+ * not fit traps as an append past the capacity does; input that cannot be read ends the program (exit 2).
+ */
+static void al_read_input(uint8_t *b, uint32_t *len, uint32_t cap, const char *param, int line, int col) {
+    uint8_t extra;
+    *len = 0;
+    for (;;) {
+        int64_t r = *len < cap ? al_read(0, b + *len, cap - *len) : al_read(0, &extra, 1);
+        if (r < 0) _Exit(2);
+        if (r == 0) return;
+        if (*len == cap) {
+            al_out e = al_trap_begin("R0004");
+            AL_PUTS(&e, "standard input exceeds str capacity ");
+            al_fmt_u64(&e, cap);
+            AL_PUTS(&e, " of `");
+            al_puts_c(&e, param);
+            AL_PUTS(&e, "`");
+            al_trap_end(&e, line, col);
+        }
+        *len += (uint32_t)r;
+    }
 }
 
 static uint32_t al_idx_s(int64_t i, uint32_t len, int line, int col) {

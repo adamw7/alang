@@ -9,6 +9,7 @@ import alang.cgen.CGen;
 import alang.check.Checker;
 import alang.cli.Frontend;
 import alang.diag.Source;
+import alang.diag.Span;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -56,10 +57,17 @@ class CBackendTest {
     private record Proc(int exit, String stdout, String stderr, byte[] stderrBytes) {}
 
     private static Proc exec(Path dir, String... cmd) throws IOException, InterruptedException {
+        return exec(dir, new byte[0], cmd);
+    }
+
+    /** Runs {@code cmd} in {@code dir} with {@code stdin} as its standard input. */
+    private static Proc exec(Path dir, byte[] stdin, String... cmd) throws IOException, InterruptedException {
+        Path in = dir.resolve("in.txt");
         Path out = dir.resolve("out.txt");
         Path err = dir.resolve("err.txt");
+        Files.write(in, stdin);
         Process p = new ProcessBuilder(cmd).directory(dir.toFile())
-            .redirectOutput(out.toFile()).redirectError(err.toFile()).start();
+            .redirectInput(in.toFile()).redirectOutput(out.toFile()).redirectError(err.toFile()).start();
         try {
             assertTrue(p.waitFor(COMPILE_AND_RUN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), "timeout: " + String.join(" ", cmd));
         } finally {
@@ -123,7 +131,11 @@ class CBackendTest {
      * like the interpreter. Returns the directory that holds prog.c.
      */
     private static Path buildEachAndCompare(Frontend.Result r, List<String[]> ccs) throws IOException, InterruptedException {
-        Harness.Run expected = Harness.runMain(r);
+        return buildEachAndCompare(r, new byte[0], ccs);
+    }
+
+    private static Path buildEachAndCompare(Frontend.Result r, byte[] input, List<String[]> ccs) throws IOException, InterruptedException {
+        Harness.Run expected = Harness.runMain(r, input);
         Path dir = Files.createTempDirectory("alang-c");
         Path c = dir.resolve("prog.c");
         Files.writeString(c, CGen.generate(r.program()), StandardCharsets.UTF_8);
@@ -133,7 +145,7 @@ class CBackendTest {
             cmd.addAll(libm(cc[0]));
             Proc build = exec(dir, cmd.toArray(new String[0]));
             assertEquals(0, build.exit(), () -> String.join(" ", cc) + ":\n" + build.stderr());
-            Proc run = exec(dir, dir.resolve(PROG).toString());
+            Proc run = exec(dir, input, dir.resolve(PROG).toString());
             String who = String.join(" ", cc) + " on " + r.diags().source().path;
             assertEquals(expected.stdout(), run.stdout(), "stdout differs: " + who);
             if (expected.trap() == null) {
@@ -150,7 +162,9 @@ class CBackendTest {
                 line[line.length - 1] = '\n';
                 byte[] got = Arrays.copyOf(run.stderrBytes(), Math.min(line.length, run.stderrBytes().length));
                 assertArrayEquals(line, got, () -> who + "\n" + run.stderr());
-                String where = r.diags().source().path + ":" + expected.trap().span.line() + ":" + expected.trap().span.col();
+                // In the file of the trap, which may be one the program imports.
+                Span at = expected.trap().span;
+                String where = (at.file() != null ? at.file() : r.diags().source()).path + ":" + at.line() + ":" + at.col();
                 assertTrue(run.stderr().contains("--> " + where), who + "\n" + run.stderr());
             }
         }
@@ -166,7 +180,7 @@ class CBackendTest {
             assumeTrue(!ccs.isEmpty(), "no C compiler available");
             Frontend.Result r = Harness.compile(p);
             assertTrue(r.ok(), () -> r.diags().renderText());
-            Path dir = buildEachAndCompare(r, ccs);
+            Path dir = buildEachAndCompare(r, Harness.input(p), ccs);
             if (available("nm") && available("gcc")) {
                 assertEquals(0, exec(dir, "gcc", "-std=c99", "-O2", "-c", "prog.c", "-o", "prog.o").exit());
                 Proc nm = exec(dir, "nm", "-u", "prog.o");

@@ -1,0 +1,14 @@
+error[E0104]: duplicate constant `LIMIT_ITEMS`: tests/errors/lib/names.al declares it too, at line 2
+ --> tests/errors/import_duplicate_name.al:4:7
+  |
+4 | const LIMIT_ITEMS: i64 = 8;
+  |       ^^^^^^^^^^^
+  = hint: rename or remove one of the declarations
+
+error[E0104]: duplicate function `total`: tests/errors/lib/names.al declares it too, at line 9
+ --> tests/errors/import_duplicate_name.al:6:4
+  |
+6 | fn total(x: i64) -> i64 {
+  |    ^^^^^
+  = hint: rename or remove one of the declarations
+

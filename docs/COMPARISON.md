@@ -157,7 +157,8 @@ does the same after `setlocale`. ALang formats numbers itself, and the tests run
 `de-DE`, `tr-TR` and locales with Arabic and Devanagari digits, checking the output never changes.
 
 **No hidden inputs.** No clock, random numbers, environment, threads or I/O except `print`: output
-depends only on the source and the tool arguments. A task that needs randomness takes a seed argument.
+depends only on the source and the input, which arrives whole before the program runs (a tool's
+arguments, or the standard input of `fn main`). A task that needs randomness takes a seed argument.
 
 ## 3. Programs that always finish
 
@@ -446,8 +447,8 @@ code runs, and its failures carry a code, a location and a fix.
 - **No recursion:** tree and graph algorithms use an explicit work list (see
   [AGENTS.md](../AGENTS.md#patterns)).
 - **No I/O beyond `print`:** the host reads files and calls the network, then passes the data to a
-  `tool fn`.
-- **A small language:** version 0.2 has no modules, generics or slices, no `sin`, `exp` or float `pow`,
+  `tool fn`, or to `fn main` on stdin (`alang run prog.al < data.txt`).
+- **A small language:** version 0.2 has imports but no namespaces, generics or slices, no `sin`, `exp` or float `pow`,
   and a small standard library (text, math, sorting; [SPEC.md](SPEC.md#9-builtins-and-the-standard-library)).
 - **No ecosystem:** no packages to install, and none to vet.
 

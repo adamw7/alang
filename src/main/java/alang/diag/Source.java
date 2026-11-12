@@ -29,6 +29,11 @@ public final class Source {
         return s.endsWith("\r") ? s.substring(0, s.length() - 1) : s;
     }
 
+    /** The number of lines; text that ends with a line break has an empty last line. */
+    public int lineCount() {
+        return lines.size();
+    }
+
     /** Returns the given 1-based line, or "" if out of range. */
     public String line(int n) {
         return n >= 1 && n <= lines.size() ? lines.get(n - 1) : "";

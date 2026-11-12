@@ -63,7 +63,7 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 |----------|-------------------------|
 | **Easy for agents** | One way to do things, explicit types, Rust-like syntax, no precedence puzzles, no shadowing. Every diagnostic has a stable code, an exact location and a fix hint, also as JSON. Built-in `test` blocks and `requires`/`ensures` contracts. |
 | **No heap** | Every type has a compile-time size (`str[N]`, `list[T; N]`, `[T; N]`, structs, enums); no pointers, `null` or allocator. `alang check` bounds the worst-case memory of every entry point and rejects a program over its budget (8 MiB by default). |
-| **Deterministic** | No clock, randomness, environment, threads or I/O except `print`. No undefined behavior: overflow, bad indexes and bad conversions trap with fixed codes. Fixed evaluation order, only correctly rounded floats, exact formatting. The tests run every program repeatedly and under several locales, and compare the C backend byte for byte with the interpreter under gcc and clang at `-O0` to `-O3`. |
+| **Deterministic** | No clock, randomness, environment, threads or I/O except `print`; input arrives whole, as a tool's JSON arguments or the stdin of `fn main`. No undefined behavior: overflow, bad indexes and bad conversions trap with fixed codes. Fixed evaluation order, only correctly rounded floats, exact formatting. The tests run every program repeatedly and under several locales, and compare the C backend byte for byte with the interpreter under gcc and clang at `-O0` to `-O3`. |
 | **Always terminates** | Recursion is a compile error; every `while` loop states an iteration `limit`. |
 | **Safe to run agent code** | Tool functions take JSON in and return JSON out with no access to the host; a deterministic step budget bounds runtime. |
 | **Runs anywhere** | A reference interpreter (JVM) and a C99 backend that emits heap-free, stdio-free C with byte-identical behavior. |
@@ -106,7 +106,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | Command | Purpose |
 |---------|---------|
 | `alang check FILE [--json] [--memory] [--max-stack B]` | Type-check; print diagnostics and the static memory bound (budget 8 MiB unless `--max-stack` sets another) |
-| `alang run FILE [--json] [--max-steps N] [--max-stack B]` | Run `fn main()` |
+| `alang run FILE [--json] [--max-steps N] [--max-stack B]` | Run `fn main()`; a `fn main(input: str[N])` gets all of stdin (`alang run prog.al < data.txt`) |
 | `alang test FILE [--json] [--filter TEXT] [--max-steps N] [--max-stack B]` | Run all `test "..." { }` blocks; a filter that matches no test fails |
 | `alang tools FILE [--json] [--max-steps N] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema, and input_examples from the tests' calls) |
 | `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B]` | Call a tool with JSON arguments; `-` reads them from stdin, none means `{}` |
@@ -174,8 +174,9 @@ error[E0215]: a call with `mut` arguments must be its own statement or the whole
 
 With `--json`, the report is one line of JSON that names the source `file` once, and each diagnostic
 has `severity`, `code`, `title`, `message`, `line`, `column`, `length`, `source_line` and `hint`. A trap
-gives its `line`, `column` and `source_line` the same way. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`,
-`xs.len()`, `let x = 5`, `while` without a limit, `null`, generics, imports, tuples, slices, `if` as an
+gives its `line`, `column` and `source_line` the same way, and a diagnostic or trap in an imported file
+adds its `file`. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`, `xs.len()`,
+`let x = 5`, `while` without a limit, `null`, generics, `use`/`#include`, tuples, slices, `if` as an
 expression, match guards, `substr`, `parse_int`, `sorted`, ...) are answered with the ALang spelling.
 See [docs/ERRORS.md](docs/ERRORS.md).
 
@@ -232,12 +233,14 @@ same, so measure before switching a harness over. `--delimiter tab` saves a litt
 - [harness/toon.py](harness/toon.py): tool results as TOON for a model's prompt
 - [examples/](examples): complete programs, each with tests
 - [examples/helpers.al](examples/helpers.al): tested helpers the standard library leaves out (str
-  ordering, padding, parsing into an enum, pseudo-random numbers, a map), to copy into a program
+  ordering, padding, parsing into an enum, pseudo-random numbers, a map), to import (`import "helpers.al";`,
+  as [examples/tally.al](examples/tally.al) does) or copy into a program
 
 `src/main/java/alang/` holds the toolchain, one package per component (see the architecture);
-`tests/run/` has programs with golden output (`.out`) and expected traps (`.trap`), `tests/errors/`
-programs that must fail with given codes and exact messages (`.err`), `tests/stack/` programs that must
-fit their memory bound when compiled to C, and `tests/examples/` the examples' golden output.
+`tests/run/` has programs with golden output (`.out`), expected traps (`.trap`) and standard input
+(`.in`), and the files they import in `tests/run/lib/`; `tests/errors/` programs that must fail with given
+codes and exact messages (`.err`); `tests/stack/` programs that must fit their memory bound when compiled
+to C; and `tests/examples/` the examples' golden output.
 
 ## Development
 
@@ -281,7 +284,8 @@ published once; to redo one, delete its release and package first.
 
 ## Status
 
-Version 0.2. Not yet included: modules/imports, generics, slices and a formatter.
+Version 0.2. Not yet included: generics, slices, namespaces and a formatter. A program can span several
+files with `import "file.al";` ([SPEC.md §3.1](docs/SPEC.md#31-imports)).
 
 ## License
 

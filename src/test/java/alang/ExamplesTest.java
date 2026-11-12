@@ -11,7 +11,10 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
 
-/** Every example compiles without any diagnostic, passes its tests, and prints its golden output. */
+/**
+ * Every example compiles without any diagnostic, passes its tests, and prints its golden output; one whose
+ * main takes the standard input reads examples/NAME.in.
+ */
 class ExamplesTest {
     @TestFactory
     Stream<DynamicTest> examples() {
@@ -19,7 +22,7 @@ class ExamplesTest {
             Frontend.Result r = Harness.compile(p);
             assertTrue(r.diags().all().isEmpty(), () -> r.diags().renderText());
             assertEquals(List.of(), Harness.runTests(r));
-            Harness.Run run = Harness.runMain(r);
+            Harness.Run run = Harness.runMain(r, Harness.input(p));
             assertNull(run.trap());
             String name = p.getFileName().toString().replace(".al", ".out");
             assertEquals(Harness.read(Harness.ROOT.resolve("tests/examples").resolve(name)), run.stdout());

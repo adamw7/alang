@@ -33,7 +33,7 @@ class DeterminismTest {
         if (r.ok()) {
             sb.append(alang.util.Json.write(r.check().memory().toJson())).append('\n');
             if (r.program().function("main") != null) {
-                Harness.Run run = Harness.runMain(r);
+                Harness.Run run = Harness.runMain(r, Harness.input(p));
                 sb.append(run.stdout());
                 if (run.trap() != null) {
                     sb.append(run.trap().code).append(' ').append(run.trap().getMessage()).append(run.trap().trace);

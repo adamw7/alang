@@ -1,0 +1,7 @@
+error[E0701]: cannot find `tests/errors/lib/no_such_file.al`
+ --> tests/errors/import_missing.al:2:8
+  |
+2 | import "lib/no_such_file.al";
+  |        ^^^^^^^^^^^^^^^^^^^^^
+  = hint: the path is relative to the importing file, tests/errors/import_missing.al; check the name and the directory
+

@@ -91,13 +91,30 @@ public final class CGen {
         sb.append(protos).append('\n');
         sb.append(bodies);
         FnDecl main = program.function("main");
+        List<Source> imported = program.files.subList(1, program.files.size());
+        if (!imported.isEmpty()) {
+            sb.append("static const char *const al_imported[] = {\n");
+            for (Source f : imported) sb.append("    ").append(cString(f.path.getBytes(StandardCharsets.UTF_8))).append(",\n");
+            sb.append("};\n\n");
+        }
         sb.append("int main(void) {\n");
         sb.append("    al_source_path = ").append(cString(source.path.getBytes(StandardCharsets.UTF_8))).append(";\n");
+        if (!imported.isEmpty()) sb.append("    al_import_paths = al_imported;\n");
         for (ConstDecl c : program.itemsOf(ConstDecl.class)) sb.append("    (void)al_c_").append(c.name).append(";\n");
         if (main != null) {
+            List<String> args = new ArrayList<>();
+            if (!main.paramVars.isEmpty()) {
+                // The standard input, in static storage: it is read once, before main runs.
+                LocalVar p = main.paramVars.get(0);
+                Type.Str t = (Type.Str) p.type;
+                sb.append("    static ").append(ct(t)).append(" al_input;\n");
+                sb.append("    al_read_input(al_input.b, &al_input.len, ").append(t.cap()).append("u, ")
+                    .append(cString(utf8(p.name))).append(", ").append(loc(p.span)).append(");\n");
+                args.add("&al_input");
+            }
             // A failed `requires` of main is reported at its name, as the interpreter does.
-            String site = main.requires.isEmpty() ? "" : main.nameSpan.line() + ", " + main.nameSpan.col();
-            sb.append("    al_f_main(").append(site).append(");\n");
+            if (!main.requires.isEmpty()) args.add(loc(main.nameSpan));
+            sb.append("    al_f_main(").append(String.join(", ", args)).append(");\n");
         }
         sb.append("    al_flush();\n    return 0;\n}\n");
         return sb.toString();
@@ -634,7 +651,7 @@ public final class CGen {
                     emit(fmtStmt(f.ret, "&al_e", cName(f.resultVar), "1"));
                     emit("AL_PUTS(&al_e, \")\");");
                 }
-                emit("al_trap_end(&al_e, " + e.span.line() + ", " + e.span.col() + ");");
+                emit("al_trap_end(&al_e, " + loc(e.span) + ");");
                 close("}");
                 close("}");
             }
@@ -791,7 +808,7 @@ public final class CGen {
         emit("AL_PUTS(&al_e, \"while loop exceeded its limit of \");");
         emit((unsigned ? "al_fmt_u64(&al_e, " : "al_fmt_i64(&al_e, ") + lim + ");");
         emit("AL_PUTS(&al_e, \" iterations\");");
-        emit("al_trap_end(&al_e, " + w.span.line() + ", " + w.span.col() + ");");
+        emit("al_trap_end(&al_e, " + loc(w.span) + ");");
         close("}");
         emit(count + "++;");
         // The body goes straight into the loop: a block of its own made each while loop three brackets
@@ -904,12 +921,12 @@ public final class CGen {
             emit("AL_PUTS(&al_e, \", right: \");");
             emit(fmtStmt(b.right.type, "&al_e", r, "1"));
             emit("AL_PUTS(&al_e, \")\");");
-            emit("al_trap_end(&al_e, " + a.span.line() + ", " + a.span.col() + ");");
+            emit("al_trap_end(&al_e, " + loc(a.span) + ");");
             close("}");
             return;
         }
         String v = lower(c);
-        emit("if (!(" + v + ")) AL_TRAP(\"R0005\", " + prefix + ", " + a.span.line() + ", " + a.span.col() + ");");
+        emit("if (!(" + v + ")) AL_TRAP(\"R0005\", " + prefix + ", " + loc(a.span) + ");");
     }
 
     // =================================================================== expressions
@@ -1005,8 +1022,15 @@ public final class CGen {
         return v;
     }
 
-    private static String loc(Span s) {
-        return s.line() + ", " + s.col();
+    /**
+     * The line and column the generated C passes to a trap. A line in the k-th imported file is passed as
+     * -(1048576 * k + line), and al_trap_end shows it with that file's path (Frontend keeps imported files
+     * under 1048576 lines).
+     */
+    private String loc(Span s) {
+        int k = s.file() == null ? 0 : program.files.indexOf(s.file());
+        long line = k <= 0 ? s.line() : -(1048576L * k + s.line());
+        return line + ", " + s.col();
     }
 
     private String index(Index ix) {
@@ -1037,8 +1061,7 @@ public final class CGen {
             }
         }
         if (!f.requires.isEmpty()) {
-            args.add(String.valueOf(c.span.line()));
-            args.add(String.valueOf(c.span.col()));
+            args.add(loc(c.span));
         }
         String call = "al_f_" + f.name + "(" + String.join(", ", args) + ")";
         if (f.ret instanceof Type.Void) {
@@ -1593,7 +1616,7 @@ public final class CGen {
     // =================================================================== text helpers
 
     private String text(Span s) {
-        String t = source.text(s);
+        String t = (s.file() != null ? s.file() : source).text(s);
         return t.isEmpty() ? "?" : t;
     }
 

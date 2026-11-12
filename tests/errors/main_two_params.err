@@ -1,0 +1,7 @@
+error[E0602]: `main` must return nothing and take at most one parameter
+ --> tests/errors/main_two_params.al:2:4
+  |
+2 | fn main(a: str[8], b: str[8]) {
+  |    ^^^^
+  = hint: declare it as fn main() { ... }, or as fn main(input: str[4096]) { ... } to receive the standard input
+

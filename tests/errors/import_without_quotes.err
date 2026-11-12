@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'names', expected a string in quotes
+ --> tests/errors/import_without_quotes.al:2:8
+  |
+2 | import names;
+  |        ^^^^^
+  = hint: import names a file, in quotes, relative to this one: import "helpers.al";
+

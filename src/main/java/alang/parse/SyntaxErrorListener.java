@@ -26,10 +26,12 @@ import org.antlr.v4.runtime.misc.IntervalSet;
  */
 final class SyntaxErrorListener extends BaseErrorListener {
     private final Diagnostics diags;
+    private final Source file;
     private boolean reported;
 
-    SyntaxErrorListener(Diagnostics diags) {
+    SyntaxErrorListener(Diagnostics diags, Source file) {
         this.diags = diags;
+        this.file = file;
     }
 
     boolean hasError() {
@@ -42,7 +44,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (reported) return;
         reported = true;
         if (!(offendingSymbol instanceof Token tok) || !(recognizer instanceof Parser parser)) {
-            diags.error(Code.E0001, new Span(line, charPositionInLine + 1, 1), msg);
+            diags.error(Code.E0001, new Span(line, charPositionInLine + 1, 1, file), msg);
             return;
         }
         IntervalSet expected = e != null ? e.getExpectedTokens() : parser.getExpectedTokens();
@@ -58,7 +60,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         // A missing semicolon is reported at the end of the previous line, where it belongs.
         if (expected != null && expected.contains(ALangLexer.SEMI) && prev != null
             && (tok.getLine() > prev.getLine() || tok.getType() == Token.EOF) && tok.getType() != ALangLexer.SEMI) {
-            Span at = new Span(prev.getLine(), prev.getCharPositionInLine() + 1, Math.max(1, Source.columns(prev.getText())));
+            Span at = new Span(prev.getLine(), prev.getCharPositionInLine() + 1, Math.max(1, Source.columns(prev.getText())), file);
             diags.error(Code.E0001, at, "missing ';' after '" + prev.getText() + "'",
                 "every statement and const declaration ends with `;`");
             return;
@@ -73,7 +75,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
             message = msg;
         }
         String hint = hint(ts, tok, prev, prev2, expected);
-        diags.error(Code.E0001, new Span(tok.getLine(), tok.getCharPositionInLine() + 1, len), message, hint);
+        diags.error(Code.E0001, new Span(tok.getLine(), tok.getCharPositionInLine() + 1, len, file), message, hint);
     }
 
     /**
@@ -104,6 +106,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
 
     private static String describe(IntervalSet expected) {
         if (expected == null || expected.isNil()) return null;
+        if (expected.size() == 1 && expected.contains(ALangParser.STRING_LIT)) return "a string in quotes";
         List<String> names = new ArrayList<>();
         boolean expr = false;
         boolean operator = false;
@@ -126,7 +129,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 names.add("a name");
                 continue;
             }
-            if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL) {
+            if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT) {
                 if (expected.contains(ALangParser.IDENT)) continue;
             }
             String lit = ALangParser.VOCABULARY.getLiteralName(t);
@@ -263,12 +266,20 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 return "there are no global variables; use `const NAME: T = value;` for a fixed value, "
                     + "and pass changing state to functions as a `mut` parameter";
             }
+            if (t == ALangLexer.IMPORT) {
+                return "imports come first: move this import above every other declaration of the file";
+            }
             if (t == ALangLexer.IDENT && switch (word) {
-                case "import", "use", "include", "require", "from", "package", "module", "mod" -> true;
+                case "use", "include", "require", "from", "package", "module", "mod" -> true;
                 default -> false;
             }) {
-                return "there are no modules or imports; a program is one file, so declare everything it uses in it";
+                return "to use the declarations of another file, import it at the top of this one: import \"helpers.al\"; "
+                    + "(a path relative to this file). There are no modules or namespaces";
             }
+        }
+        if (p == ALangLexer.IMPORT && t != ALangLexer.STRING_LIT && !expectsOperator(expected)) {
+            // `import math;`, `import foo.bar;`, `import { x } from ...`
+            return "import names a file, in quotes, relative to this one: import \"helpers.al\";";
         }
         // `Vec<T>`, or `List[int]` / `Optional[int]` where a type starts (elsewhere `xs[` is an index).
         if ((t == ALangLexer.LT || t == ALangLexer.LBRACK && prev2 != null
@@ -431,7 +442,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
     /** Tokens that can come right before the `(` of a call, constructor, pattern or declaration. */
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
-            || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+            || t == ALangLexer.IMPORT || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 
     private static boolean expectsOperator(IntervalSet expected) {

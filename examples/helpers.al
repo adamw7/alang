@@ -1,7 +1,8 @@
-// Helpers the standard library leaves out, each written once and tested. There are no imports or
-// generics, so copy the ones you need into your program and change the capacities to fit your data:
-// TEXT and ITEMS below, or the types themselves. For split, trim, index_of, sort, pow and the rest, call
-// the standard library (docs/SPEC.md, section 9).
+// Helpers the standard library leaves out, each written once and tested. Import this file, as
+// examples/tally.al does with `import "helpers.al";` (its main and tests stay out of your program), or,
+// as there are no generics, copy the helpers you need and change the capacities to fit your data: TEXT
+// and ITEMS below, or the types themselves. For split, trim, index_of, sort, pow and the rest, call the
+// standard library (docs/SPEC.md, section 9).
 //
 // A read-only `str[N]` or `list[T; N]` parameter also accepts a value of smaller capacity, so these
 // helpers take any text up to TEXT bytes and any list up to ITEMS items.

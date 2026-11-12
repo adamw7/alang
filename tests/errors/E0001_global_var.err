@@ -1,4 +1,4 @@
-error[E0001]: unexpected 'var', expected one of end of file, 'fn', 'tool', 'const', 'struct', 'enum', 'test'
+error[E0001]: unexpected 'var', expected one of end of file, 'import', 'fn', 'tool', 'const', 'struct', 'enum', 'test'
  --> tests/errors/E0001_global_var.al:2:1
   |
 2 | var counter: i64 = 0;

@@ -17,6 +17,7 @@ import alang.interp.Trap;
 import alang.types.Type;
 import alang.util.Json;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.ByteBuffer;
@@ -50,7 +51,7 @@ public final class Main {
 
         commands:
           check <file.al>              type-check; report diagnostics and the static memory bound
-          run <file.al>                check, then run fn main()
+          run <file.al>                check, then run fn main(); a main(input: str[N]) gets all of stdin
           test <file.al>               check, then run every `test "..." { }` block
           tools <file.al>              print JSON tool definitions of all `tool fn` functions, with
                                        example arguments from the tests' calls
@@ -101,6 +102,7 @@ public final class Main {
 
     private final PrintStream out;
     private final PrintStream err;
+    private final InputStream in;
 
     private boolean json;
     private boolean memoryTable;
@@ -111,8 +113,13 @@ public final class Main {
     private final List<String> positional = new ArrayList<>();
 
     Main(PrintStream out, PrintStream err) {
+        this(out, err, System.in);
+    }
+
+    Main(PrintStream out, PrintStream err, InputStream in) {
         this.out = out;
         this.err = err;
+        this.in = in;
     }
 
     public static void main(String[] args) {
@@ -330,7 +337,9 @@ public final class Main {
             return 1;
         }
         Program p = r.program();
-        line(out, "ok: " + src.path + ": " + p.itemsOf(FnDecl.class).size() + " function(s), "
+        int imported = p.files.size() - 1;
+        String with = imported == 0 ? "" : " with " + imported + " imported file(s)";
+        line(out, "ok: " + src.path + with + ": " + p.itemsOf(FnDecl.class).size() + " function(s), "
             + p.itemsOf(TestDecl.class).size() + " test(s), " + r.diags().warningCount() + " warning(s)");
         if (mem != null) {
             line(out, "memory: heap 0 B, static " + mem.staticBytes + " B, worst-case stack " + mem.maxStack() + " B");
@@ -367,12 +376,21 @@ public final class Main {
             }
             return 1;
         }
+        // A main that takes a str gets the standard input, all of it, as bytes.
+        byte[] input = new byte[0];
+        if (!main.paramVars.isEmpty()) {
+            try {
+                input = in.readAllBytes();
+            } catch (IOException e) {
+                throw new UsageException("cannot read stdin: " + e.getMessage());
+            }
+        }
         CappedOutput captured = json ? new CappedOutput(MAX_CAPTURED_OUTPUT) : null;
         OutputStream sink = json ? captured : out;
-        Interpreter in = new Interpreter(src, sink, maxSteps);
+        Interpreter interp = new Interpreter(src, sink, maxSteps);
         Trap trap = null;
         try {
-            in.call(main, new Object[0], main.nameSpan);
+            interp.runMain(main, input);
         } catch (Trap t) {
             trap = t;
         }
@@ -381,7 +399,7 @@ public final class Main {
             j.put("ok", trap == null);
             putStdout(j, captured);
             j.put("trap", trap == null ? null : trapJson(src, trap));
-            j.put("steps", in.steps());
+            j.put("steps", interp.steps());
             line(out, Json.write(j));
         } else if (trap != null) {
             err.writeBytes(renderTrapBytes(src, trap));
@@ -401,12 +419,19 @@ public final class Main {
 
     /**
      * A trap as JSON. Its line and column are in the file given on the command line, which `run` and
-     * `test` name once at the top level; `call` leaves it out, as the caller passed it.
+     * `test` name once at the top level and `call` leaves out, as the caller passed it; a trap in an
+     * imported file has a "file" key, that file's path.
      */
     static Map<String, Object> trapJson(Source src, Trap t) {
-        return Json.obj("code", t.code.name(), "title", t.code.title, "message", t.getMessage(),
-            "line", t.span.line(), "column", t.span.col(), "source_line", src.line(t.span.line()),
-            "trace", t.trace, "hint", t.code.explanation);
+        Source file = t.span.file() == null ? src : t.span.file();
+        Map<String, Object> j = Json.obj("code", t.code.name(), "title", t.code.title, "message", t.getMessage());
+        if (file != src) j.put("file", file.path);
+        j.put("line", t.span.line());
+        j.put("column", t.span.col());
+        j.put("source_line", file.line(t.span.line()));
+        j.put("trace", t.trace);
+        j.put("hint", t.code.explanation);
+        return j;
     }
 
     /** The trap as text; a byte of a str value in the message that is not UTF-8 becomes U+FFFD. */
@@ -425,6 +450,7 @@ public final class Main {
         StringBuilder sb = new StringBuilder();
         sb.append('\n');
         Span s = t.span;
+        if (s.file() != null) src = s.file();
         if (s.line() > 0) {
             String lineNo = String.valueOf(s.line());
             String pad = " ".repeat(lineNo.length());
@@ -474,10 +500,10 @@ public final class Main {
         int failed = 0;
         for (TestDecl t : selected) {
             CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
-            Interpreter in = new Interpreter(src, captured, maxSteps);
+            Interpreter interp = new Interpreter(src, captured, maxSteps);
             Trap trap = null;
             try {
-                in.runTest(t);
+                interp.runTest(t);
             } catch (Trap e) {
                 trap = e;
             }
@@ -677,7 +703,7 @@ public final class Main {
             return 1;
         }
         try {
-            new McpServer(src, r.program(), maxSteps).serve(System.in, out);
+            new McpServer(src, r.program(), maxSteps).serve(in, out);
         } catch (IOException e) {
             line(err, "alang: cannot read stdin: " + e.getMessage());
             return 1;
@@ -703,10 +729,10 @@ public final class Main {
     }
 
     /** All of stdin as UTF-8 text, or null if it is not valid UTF-8. */
-    private static String readStdinUtf8() {
+    private String readStdinUtf8() {
         byte[] bytes;
         try {
-            bytes = System.in.readAllBytes();
+            bytes = in.readAllBytes();
         } catch (IOException e) {
             throw new UsageException("cannot read stdin: " + e.getMessage());
         }

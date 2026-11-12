@@ -6,17 +6,34 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
-/** Collects diagnostics for one source file and renders them for humans or machines. */
+/**
+ * Collects the diagnostics of a program and renders them for humans or machines. The program is the file
+ * given on the command line, its {@link #source()}, and the files it imports, which {@link #addFile} adds
+ * in the order they are read.
+ */
 public final class Diagnostics {
     private final Source source;
+    private final List<Source> files = new ArrayList<>();
     private final List<Diagnostic> list = new ArrayList<>();
 
     public Diagnostics(Source source) {
         this.source = source;
+        files.add(source);
     }
 
+    /** The file given on the command line. */
     public Source source() {
         return source;
+    }
+
+    /** Adds an imported file; its diagnostics come after those of the files added before it. */
+    public void addFile(Source file) {
+        if (!files.contains(file)) files.add(file);
+    }
+
+    /** The program's files: the one given on the command line, then the imported ones in the order they were read. */
+    public List<Source> files() {
+        return List.copyOf(files);
     }
 
     public void error(Code code, Span span, String message) {
@@ -41,8 +58,14 @@ public final class Diagnostics {
 
     public List<Diagnostic> all() {
         List<Diagnostic> sorted = new ArrayList<>(list);
-        sorted.sort(Comparator.comparingInt((Diagnostic d) -> d.span().line()).thenComparingInt(d -> d.span().col()));
+        sorted.sort(Comparator.comparingInt((Diagnostic d) -> fileOrder(d.span()))
+            .thenComparingInt(d -> d.span().line()).thenComparingInt(d -> d.span().col()));
         return sorted;
+    }
+
+    private int fileOrder(Span s) {
+        int i = files.indexOf(s.file());
+        return i < 0 ? 0 : i;
     }
 
     public boolean hasErrors() {
@@ -66,10 +89,12 @@ public final class Diagnostics {
         return sb.toString();
     }
 
+    /** One diagnostic as text; it shows the file of its span, else {@code source}. */
     public static void renderOne(StringBuilder sb, Source source, Diagnostic d) {
         String kind = d.isError() ? "error" : "warning";
         sb.append(kind).append('[').append(d.code().name()).append("]: ").append(d.message()).append('\n');
         Span s = d.span();
+        if (s.file() != null) source = s.file();
         if (s.line() > 0) {
             String lineNo = String.valueOf(s.line());
             String pad = " ".repeat(lineNo.length());
@@ -93,19 +118,22 @@ public final class Diagnostics {
     }
 
     /**
-     * One diagnostic as JSON. It does not repeat the file: every diagnostic is in the one source file,
-     * which the report around it names once.
+     * One diagnostic as JSON. The report around it names the file given on the command line once, so a
+     * diagnostic in that file does not repeat it; one in an imported file has a "file" key, its path.
      */
     public static Map<String, Object> toJson(Source source, Diagnostic d) {
-        return Json.obj(
+        Source file = d.span().file() == null ? source : d.span().file();
+        Map<String, Object> j = Json.obj(
             "severity", d.isError() ? "error" : "warning",
             "code", d.code().name(),
             "title", d.code().title,
-            "message", d.message(),
-            "line", d.span().line(),
-            "column", d.span().col(),
-            "length", d.span().length(),
-            "source_line", source.line(d.span().line()),
-            "hint", d.hint());
+            "message", d.message());
+        if (file != source) j.put("file", file.path);
+        j.put("line", d.span().line());
+        j.put("column", d.span().col());
+        j.put("length", d.span().length());
+        j.put("source_line", file.line(d.span().line()));
+        j.put("hint", d.hint());
+        return j;
     }
 }

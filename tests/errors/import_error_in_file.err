@@ -1,0 +1,7 @@
+error[E0201]: type mismatch: expected i32, found i64
+ --> tests/errors/lib/bad_types.al:3:12
+  |
+3 |     return n / 2;
+  |            ^^^^^
+  = hint: convert explicitly: i32(n / 2)
+

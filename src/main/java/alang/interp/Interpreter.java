@@ -139,6 +139,26 @@ public final class Interpreter {
         }
     }
 
+    /**
+     * Runs fn main. A main that takes a str receives {@code input}, the program's standard input; input
+     * longer than its capacity traps (R0004) before main starts.
+     */
+    public void runMain(FnDecl main, byte[] input) {
+        Object[] args = new Object[main.paramVars.size()];
+        if (args.length == 1) {
+            LocalVar p = main.paramVars.get(0);
+            int cap = ((Type.Str) p.type).cap();
+            if (input.length > cap) {
+                Trap t = new Trap(Code.R0004, p.span, "standard input exceeds str capacity " + cap + " of `" + p.name + "`");
+                callStack.push(new CallSite("fn main", main.nameSpan));
+                fillTrace(t);
+                throw t;
+            }
+            args[0] = new StrV(Arrays.copyOf(input, cap), input.length);
+        }
+        call(main, args, main.nameSpan);
+    }
+
     public void runTest(TestDecl t) {
         try {
             Object[] slots = new Object[t.locals.size()];
@@ -158,8 +178,9 @@ public final class Interpreter {
         int i = 0;
         for (CallSite c : callStack) {
             boolean outermost = ++i == callStack.size();
+            // A call in an imported file names the file; the entry point is always in the main one.
             String where = outermost ? " (entry point, line " + c.site.line() + ")"
-                : " (called at " + c.site.line() + ":" + c.site.col() + ")";
+                : " (called at " + c.site.where(source) + ")";
             t.trace.add(c.name + where);
         }
         callStack.clear();
@@ -181,7 +202,8 @@ public final class Interpreter {
     }
 
     private String text(Span s) {
-        String t = source == null ? "" : source.text(s);
+        Source file = s.file() != null ? s.file() : source;
+        String t = file == null ? "" : file.text(s);
         return t.isEmpty() ? "?" : t;
     }
 

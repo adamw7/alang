@@ -1,0 +1,7 @@
+error[E0703]: import cycle: tests/errors/lib/cycle_a.al imports tests/errors/lib/cycle_b.al, which imports tests/errors/lib/cycle_a.al
+ --> tests/errors/lib/cycle_b.al:2:8
+  |
+2 | import "cycle_a.al";
+  |        ^^^^^^^^^^^^
+  = hint: files cannot import each other; move what they share into a file that both import
+

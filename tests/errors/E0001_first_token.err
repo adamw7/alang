@@ -1,4 +1,4 @@
-error[E0001]: unexpected '}', expected one of end of file, 'fn', 'tool', 'const', 'struct', 'enum', 'test'
+error[E0001]: unexpected '}', expected one of end of file, 'import', 'fn', 'tool', 'const', 'struct', 'enum', 'test'
  --> tests/errors/E0001_first_token.al:2:1
   |
 2 | }
