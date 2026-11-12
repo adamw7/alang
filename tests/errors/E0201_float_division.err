@@ -1,0 +1,42 @@
+error[E0201]: operands of `/` have different types: i32 and i64
+ --> tests/errors/E0201_float_division.al:8:18
+  |
+8 |     let a: f64 = total / len(xs);
+  |                  ^^^^^^^^^^^^^^^
+  = hint: convert the operands to f64: f64(total) / f64(len(xs))
+
+error[E0201]: type mismatch: expected f64, found i32
+ --> tests/errors/E0201_float_division.al:9:18
+  |
+9 |     let b: f64 = total / i32(len(xs));
+  |                  ^^^^^^^^^^^^^^^^^^^^
+  = hint: convert the operands to divide as floats: f64(total) / f64(len(xs)); f64(total / i32(len(xs))) would divide integers first and drop the fraction
+
+error[E0201]: operands of `*` have different types: i32 and i64
+  --> tests/errors/E0201_float_division.al:10:19
+   |
+10 |     let c: f64 = (total + 1) * len(xs);
+   |                   ^^^^^^^^^^^^^^^^^^^^
+  = hint: convert the operands to f64: f64(total + 1) * f64(len(xs))
+
+error[E0201]: type mismatch: expected f64, found i64
+  --> tests/errors/E0201_float_division.al:11:18
+   |
+11 |     let d: f64 = i64(total) / 2;
+   |                  ^^^^^^^^^^^^^^
+  = hint: convert the operands to divide as floats: f64(total) / 2; f64(i64(total) / 2) would divide integers first and drop the fraction
+
+error[E0201]: operands of `+` have different types: i32 and i64
+  --> tests/errors/E0201_float_division.al:12:18
+   |
+12 |     let e: i64 = total + len(xs);
+   |                  ^^^^^^^^^^^^^^^
+  = hint: convert the operands to i64: i64(total) + len(xs)
+
+error[E0201]: operands of `*` have different types: f64 and i64
+  --> tests/errors/E0201_float_division.al:13:18
+   |
+13 |     let f: i64 = 2.5 * len(xs);
+   |                  ^^^^^^^^^^^^^
+  = hint: convert one side explicitly, e.g. f64(len(xs))
+

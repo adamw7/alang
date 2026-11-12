@@ -80,7 +80,7 @@ error[E0201]: operands of `+` have different types: i64 and u32
    |
 24 |     let a13: i64 = n + u;
    |                    ^^^^^
-  = hint: convert one side explicitly, e.g. i64(u)
+  = hint: convert the operands to i64: n + i64(u)
 
 error[E0203]: `%` needs integers, found f64 and f64
   --> tests/errors/operand_types.al:25:20

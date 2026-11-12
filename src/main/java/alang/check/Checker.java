@@ -2036,11 +2036,31 @@ public final class Checker {
             return Type.ERROR;
         }
         if (!lt.equals(rt)) {
-            diags.error(Code.E0201, b.span, "operands of `" + op.text + "` have different types: " + lt + " and " + rt,
-                "convert one side explicitly, e.g. " + lt + "(" + exprText(b.right) + ")");
+            // With a numeric target, convert the operands to it; "convert one side to the left's type" would
+            // send `let avg: f64 = total / len(xs)` to an integer division and only then to f64. Narrowing a
+            // float operand to an integer target would drop its fraction early, so that case keeps the old hint.
+            String fix = Type.isNumeric(expected) && (Type.isFloat(expected) || Type.isInt(lt) && Type.isInt(rt))
+                ? "convert the operands to " + expected + ": " + convertOperands(b, expected)
+                : "convert one side explicitly, e.g. " + lt + "(" + exprText(b.right) + ")";
+            diags.error(Code.E0201, b.span, "operands of `" + op.text + "` have different types: " + lt + " and " + rt, fix);
             return Type.ERROR;
         }
         return lt;
+    }
+
+    /** {@code b} with each operand not already of type {@code to} wrapped in a conversion to it. */
+    private String convertOperands(Binary b, Type to) {
+        return convertOperand(b.left, to) + " " + b.op.text + " " + convertOperand(b.right, to);
+    }
+
+    private String convertOperand(Expr e, Type to) {
+        String text = exprText(e);
+        if (e instanceof IntLit lit && !lit.isChar) return text; // a literal takes the type it is used as
+        if (e instanceof Convert c && Type.isInt(e.type) && Type.isInt(c.arg.type) && !e.type.equals(to)) {
+            return convertOperand(c.arg, to); // f64(len(xs)), not f64(i32(len(xs)))
+        }
+        if (!e.type.equals(to)) return to + "(" + text + ")";
+        return e instanceof Binary ? "(" + text + ")" : text; // the span leaves out the source's parentheses
     }
 
     private Type arrayLit(ArrayLit a, Type expected) {
@@ -2142,7 +2162,10 @@ public final class Checker {
 
     private void mismatch(Expr e, Type from, Type to) {
         String hint = null;
-        if (Type.isNumeric(from) && Type.isNumeric(to)) {
+        if (Type.isInt(from) && Type.isFloat(to) && e instanceof Binary b && b.op == BinOp.DIV) {
+            hint = "convert the operands to divide as floats: " + convertOperands(b, to) + "; "
+                + to + "(" + exprText(e) + ") would divide integers first and drop the fraction";
+        } else if (Type.isNumeric(from) && Type.isNumeric(to)) {
             hint = "convert explicitly: " + to + "(" + exprText(e) + ")";
         } else if (Type.isNumeric(from) && Type.isBool(to)) {
             hint = "there is no truthiness; compare explicitly, e.g. " + exprText(e) + " != 0";
