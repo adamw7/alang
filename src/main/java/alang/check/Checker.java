@@ -1429,10 +1429,12 @@ public final class Checker {
                  "toInt", "to_i64", "to_number", "number", "Number" -> Hints.PARSE_NUMBER;
             case "parse_float", "parse_f64", "atof", "parseFloat", "strtod", "to_float", "toFloat" ->
                 "use f64(s), checked with is_float(s) first: it traps (R0009) on text that is not a decimal number";
-            case "powf", "powi", "exp2" -> "pow(x, n) takes an integer x and n >= 0; for a float, multiply: x * x";
-            case "exp", "log", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "hypot", "cbrt" ->
-                "there is no " + name + ": it rounds differently in different math libraries, so ALang leaves it out; "
-                + "only + - * /, sqrt, floor, ceil, round, trunc, abs, min and max exist";
+            case "powf", "powi", "fpow" -> "use pow(x, y): on floats it takes a float exponent, pow(2.0, 0.5)";
+            case "exp2" -> "use pow(2.0, x)";
+            case "ln" -> "use log(x), the natural logarithm";
+            case "hypot" -> "use sqrt(x * x + y * y)";
+            case "cbrt" -> "use pow(x, 1.0 / 3.0) for x >= 0";
+            case "sinh", "cosh", "tanh" -> "write it with exp: sinh(x) is (exp(x) - exp(-x)) / 2.0";
             case "fabs" -> "use abs(x)";
             case "fmin", "fmax" -> "use " + name.substring(1) + "(a, b)";
             case "isdigit", "isDigit" -> "use is_digit(c) on a u8 byte";
@@ -1671,7 +1673,7 @@ public final class Checker {
                 }
                 return ts[0];
             }
-            case SQRT, FLOOR, CEIL, ROUND, TRUNC -> {
+            case SQRT, FLOOR, CEIL, ROUND, TRUNC, EXP, LOG, LOG2, LOG10, SIN, COS, TAN, ASIN, ACOS, ATAN -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 noMut(args.get(0));
                 Type t = expr(args.get(0).expr(), Type.F64);
@@ -1682,6 +1684,19 @@ public final class Checker {
                     return Type.ERROR;
                 }
                 return t;
+            }
+            case ATAN2 -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0));
+                noMut(args.get(1));
+                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isFloat(expected) ? expected : Type.F64);
+                if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
+                if (!Type.isFloat(ts[0]) || !ts[0].equals(ts[1])) {
+                    diags.error(Code.E0201, c.span, "atan2() needs two floats of the same type, found " + ts[0] + " and " + ts[1],
+                        "convert them: atan2(f64(y), f64(x))");
+                    return Type.ERROR;
+                }
+                return ts[0];
             }
             case IS_NAN, IS_FINITE -> {
                 if (!arity(c, 1)) return Type.BOOL;
@@ -1708,17 +1723,31 @@ public final class Checker {
                 if (!arity(c, 2)) return Type.ERROR;
                 noMut(args.get(0));
                 noMut(args.get(1));
-                Type x = expr(args.get(0).expr(), Type.isInt(expected) ? expected : null);
-                Type n = expr(args.get(1).expr(), Type.I64);
+                Expr base = args.get(0).expr();
+                Expr power = args.get(1).expr();
+                // pow(2, 0.5) is a float pow, as 2 + 0.5 is a float sum.
+                Type hint = Type.isNumeric(expected) ? expected : isUntyped(base) && hasFloatLiteral(power) ? Type.F64 : null;
+                Type x = expr(base, hint);
+                if (Type.isFloat(x)) {
+                    Type n = expr(power, x);
+                    if (Type.isError(n)) return Type.ERROR;
+                    if (!n.equals(x)) {
+                        diags.error(Code.E0201, args.get(1).span(), "pow() of an " + x + " needs an exponent of the same type, found " + n,
+                            "convert it: pow(" + exprText(base) + ", " + x + "(" + exprText(power) + "))");
+                        return Type.ERROR;
+                    }
+                    return x;
+                }
+                Type n = expr(power, Type.I64);
                 if (Type.isError(x) || Type.isError(n)) return Type.ERROR;
                 if (!Type.isInt(x)) {
-                    diags.error(Code.E0203, args.get(0).span(), "pow() needs an integer base, found " + x,
-                        Type.isFloat(x) ? "there is no float pow, which rounds differently in different math libraries; "
-                            + "for a whole power, multiply: x * x * x" : null);
+                    diags.error(Code.E0203, args.get(0).span(), "pow() needs an integer or float base, found " + x);
                     return Type.ERROR;
                 }
                 if (!Type.isInt(n)) {
-                    diags.error(Code.E0203, args.get(1).span(), "pow() needs an integer exponent, found " + n);
+                    diags.error(Code.E0203, args.get(1).span(), "pow() of an integer needs an integer exponent, found " + n,
+                        Type.isFloat(n) ? "for a float result, make the base a float: pow(f64(" + exprText(base) + "), "
+                            + exprText(power) + ")" : null);
                     return Type.ERROR;
                 }
                 return x;

@@ -357,9 +357,10 @@ time, everywhere:**
 - **No undefined or implementation-defined behavior:** integer widths are fixed, and overflow, bad
   indexes, shifts and conversions, and failed contracts trap with a fixed code, message and location.
   Evaluation order is fixed (§6).
-- **Portable floats:** only correctly rounded IEEE 754 operations exist (`+ - * /`, `sqrt`, `floor`,
-  `ceil`, `round`, `trunc`, `abs`, `min`, `max`, `clamp`, conversions); `sin`, `exp`, a float `pow` and
-  the like differ between math libraries and are left out. `min`/`max` are `if b < a then b else a` / `if b > a then b else a`, which
+- **Portable floats:** every float operation is built from correctly rounded IEEE 754 operations (`+ - * /`,
+  `sqrt`, `floor`, `ceil`, `round`, `trunc`, `abs`, `min`, `max`, `clamp`, conversions). Math libraries round
+  `sin`, `exp`, `pow` and the like differently, so ALang computes them itself (§9.2), with the same operations
+  in the same order in the interpreter and the C backend. `min`/`max` are `if b < a then b else a` / `if b > a then b else a`, which
   fixes NaN handling. The C backend refuses `-ffast-math` and x87 excess precision, and disables fused
   multiply-add contraction.
 - **Exact text formatting** (§9.6), independent of locale and C library.
@@ -400,14 +401,21 @@ them all.
 |----------|-------------|
 | `abs(x)`, `min(a, b)`, `max(a, b)` | Same-type numbers. `abs` of the minimum integer traps (R0001). |
 | `clamp(x, lo, hi) -> T` | `lo` if `x < lo`, `hi` if `x > hi`, else `x`; same-type numbers. Traps (R0013) unless `lo <= hi`, so a NaN bound traps. |
-| `pow(x, n) -> T` | `x` (any integer type) to the power `n` (any integer type); `pow(0, 0)` is 1. Traps if `n < 0` (R0013) or the result does not fit (R0001). There is no float `pow`. |
+| `pow(x, n) -> T` | `x` (any integer type) to the power `n` (any integer type); `pow(0, 0)` is 1. Traps if `n < 0` (R0013) or the result does not fit (R0001). For an `f32`/`f64` `x`, `n` is a float of the same type (`pow(2.0, 0.5)`, `pow(x, 3.0)`) and nothing traps: the special cases are C99's (`pow(-8.0, 0.5)` is NaN, `pow(0.0, -1.0)` is `inf`), an integer `n` gives the correctly rounded power (`pow(2.0, 10.0)` is `1024.0`), and `pow(x, 0.5)` is `sqrt(x)`. |
 | `gcd(a, b) -> T` | Greatest common divisor of same-type integers, never negative; `gcd(0, 0)` is 0. `gcd(x, 0)` for the minimum `x` does not fit and traps (R0001). |
 | `lcm(a, b) -> T` | Least common multiple, never negative; 0 if either is 0. Traps if it does not fit (R0001). |
 | `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | Same-type integers; the exact result wrapped around to the type (modulo 2^bits), so they never trap: `wrapping_add(u8(250), 10)` is `4`, `wrapping_mul(h, 16777619)` is the multiply of 32-bit FNV. |
 | `saturating_add(a, b)`, `saturating_sub(a, b)`, `saturating_mul(a, b)` | Same-type integers; the exact result, or the type's largest or smallest value when it does not fit: `saturating_sub(u8(3), 5)` is `0`. Never trap. |
 | `sqrt(x)`, `floor(x)`, `ceil(x)` | On `f32`/`f64`, correctly rounded. |
 | `round(x)`, `trunc(x)` | On `f32`/`f64`, exact: `round` halves away from zero (`round(2.5)` is `3.0`, `round(-0.5)` is `-1.0`); `trunc` drops the fraction (`trunc(-2.7)` is `-2.0`). |
+| `exp(x)`, `log(x)`, `log2(x)`, `log10(x)` | On `f32`/`f64`: e^x and the logarithms; `log` of 0 is `-inf` and of a negative number NaN. `log2` of a power of two and `log10` of a power of ten are exact. |
+| `sin(x)`, `cos(x)`, `tan(x)` | On `f32`/`f64`, in radians, for every finite `x` (a large argument is reduced exactly). |
+| `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y, x)` | On `f32`/`f64`, in radians: `asin` and `atan` from -pi/2 to pi/2, `acos` from 0 to pi (NaN outside -1..1), `atan2` the angle of the point (x, y) from -pi to pi. |
 | `is_nan(x)`, `is_finite(x)` | On `f32`/`f64`. |
+
+The elementary functions are within one unit in the last place of the exact result (`tan` within two), and the
+same bits everywhere: ALang computes them itself (`exp`, `log`, `log10`, `sin`, `cos`, `asin`, `acos`, `atan` and
+`atan2` as fdlibm does, see THIRD-PARTY-NOTICES), and an `f32` result is the `f64` one rounded once.
 
 A literal argument takes the type of the other arguments or, for `min`, `max`, `clamp`, `pow`, `gcd`,
 `lcm` and the wrapping and saturating functions, of the variable the result is stored in: `let b: u8 = pow(2, 7);`.

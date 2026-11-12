@@ -1,0 +1,21 @@
+error[E0201]: pow() of an f64 needs an exponent of the same type, found i64
+ --> tests/errors/E0201_pow_types.al:6:25
+  |
+6 |     let a: f64 = pow(x, n);
+  |                         ^
+  = hint: convert it: pow(x, f64(n))
+
+error[E0203]: pow() of an integer needs an integer exponent, found f64
+ --> tests/errors/E0201_pow_types.al:7:25
+  |
+7 |     let b: i64 = pow(n, 0.5);
+  |                         ^^^
+  = hint: for a float result, make the base a float: pow(f64(n), 0.5)
+
+error[E0201]: pow() of an f32 needs an exponent of the same type, found f64
+ --> tests/errors/E0201_pow_types.al:8:32
+  |
+8 |     let c: f32 = pow(f32(2.0), x);
+  |                                ^
+  = hint: convert it: pow(f32(2.0), f32(x))
+

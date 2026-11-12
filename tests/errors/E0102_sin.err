@@ -1,7 +1,0 @@
-error[E0102]: unknown function `sin`
- --> tests/errors/E0102_sin.al:3:18
-  |
-3 |     let y: f64 = sin(1.0);
-  |                  ^^^
-  = hint: there is no sin: it rounds differently in different math libraries, so ALang leaves it out; only + - * /, sqrt, floor, ceil, round, trunc, abs, min and max exist
-

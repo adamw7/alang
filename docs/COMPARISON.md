@@ -148,9 +148,9 @@ test "a * b + c rounds twice on every compiler and CPU" {
 }
 ```
 
-`sin`, `exp` and a float `pow` are left out on purpose: their last bits differ between math libraries.
-ALang has only the operations IEEE 754 requires to be correctly rounded, so every platform gets the same
-bits.
+The last bits of `sin`, `exp` and `pow` differ between math libraries, so ALang does not call one: it
+computes them itself, with only the operations IEEE 754 requires to be correctly rounded, in the same
+order in the interpreter and in the C it generates. Every platform gets the same bits.
 
 **Locale.** Java's `String.format("%.2f", 3.14159)` prints `3,14` under a German locale, and C's `printf`
 does the same after `setlocale`. ALang formats numbers itself, and the tests run every program under
@@ -449,7 +449,7 @@ code runs, and its failures carry a code, a location and a fix.
   [AGENTS.md](../AGENTS.md#patterns)).
 - **No I/O beyond `print`:** the host reads files and calls the network, then passes the data to a
   `tool fn`, or to `fn main` on stdin (`alang run prog.al < data.txt`).
-- **A small language:** version 0.2 has imports but no namespaces, generics or slices, no `sin`, `exp` or float `pow`,
+- **A small language:** version 0.2 has imports but no namespaces, generics or slices,
   and a small standard library (text, math, sorting; [SPEC.md](SPEC.md#9-builtins-and-the-standard-library)).
 - **No ecosystem:** no packages to install, and none to vet.
 

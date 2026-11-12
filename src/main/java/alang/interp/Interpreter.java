@@ -834,16 +834,31 @@ public final class Interpreter {
                     : Integer.signum(IntOps.compare(Type.kind(c.type), (Long) b, (Long) a)) == (min ? -1 : 1);
                 return takeB ? b : a;
             }
-            case SQRT, FLOOR, CEIL, ROUND, TRUNC -> {
+            case SQRT, FLOOR, CEIL, ROUND, TRUNC, EXP, LOG, LOG2, LOG10, SIN, COS, TAN, ASIN, ACOS, ATAN -> {
                 double d = (Double) eval(args.get(0).expr(), slots);
                 double r = switch (c.builtin) {
                     case SQRT -> Math.sqrt(d);
                     case FLOOR -> Math.floor(d);
                     case CEIL -> Math.ceil(d);
                     case ROUND -> Stdlib.round(d);
+                    case EXP -> FloatMath.exp(d);
+                    case LOG -> FloatMath.log(d);
+                    case LOG2 -> FloatMath.log2(d);
+                    case LOG10 -> FloatMath.log10(d);
+                    case SIN -> FloatMath.sin(d);
+                    case COS -> FloatMath.cos(d);
+                    case TAN -> FloatMath.tan(d);
+                    case ASIN -> FloatMath.asin(d);
+                    case ACOS -> FloatMath.acos(d);
+                    case ATAN -> FloatMath.atan(d);
                     default -> Stdlib.trunc(d);
                 };
                 return round(r, c.type);
+            }
+            case ATAN2 -> {
+                double y = (Double) eval(args.get(0).expr(), slots);
+                double x = (Double) eval(args.get(1).expr(), slots);
+                return round(FloatMath.atan2(y, x), c.type);
             }
             case IS_NAN, IS_FINITE -> {
                 double d = (Double) eval(args.get(0).expr(), slots);
@@ -856,6 +871,11 @@ public final class Interpreter {
                 return Stdlib.clamp(c.type, x, lo, hi, c.span);
             }
             case POW -> {
+                if (Type.isFloat(c.type)) {
+                    double x = (Double) eval(args.get(0).expr(), slots);
+                    double n = (Double) eval(args.get(1).expr(), slots);
+                    return round(FloatMath.pow(x, n), c.type);
+                }
                 long x = (Long) eval(args.get(0).expr(), slots);
                 long n = (Long) eval(args.get(1).expr(), slots);
                 return Stdlib.pow(Type.kind(c.type), x, Type.kind(args.get(1).expr().type), n, c.span);

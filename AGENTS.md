@@ -166,7 +166,7 @@ structs), [examples/helpers.al](examples/helpers.al) has tested helpers to impor
 
 | Area | Functions |
 |------|-----------|
-| Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
+| Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
 | Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` |
 | Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays |
@@ -427,8 +427,7 @@ You get these for free; do not work around them:
 - Same input, same output, same trap, on every run, machine, compiler and locale.
 - No time, randomness, environment, threads or I/O other than `print` and the stdin of `fn main`. For a
   "random" value, take a seed as a tool argument and compute from it.
-- Floats are bit-exact across the interpreter and the C backend: only `+ - * /`, `sqrt`, `floor`, `ceil`,
-  `round`, `trunc`, `abs`, `min`, `max`, `clamp` and conversions exist (no `sin`/`exp`, and `pow` is for
-  integers only).
+- Floats are bit-exact across the interpreter and the C backend, `sin`, `exp`, `log` and float `pow` included:
+  ALang computes them itself rather than calling a math library, whose last bits differ.
 - `print` shows floats with at most 6 decimals (`0.1 + 0.2` prints `0.3`); compare floats in tests with a
   tolerance, e.g. `assert abs(x - 0.3) < 0.000001;`.

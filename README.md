@@ -63,7 +63,7 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 |----------|-------------------------|
 | **Easy for agents** | One way to do things, explicit types, Rust-like syntax, no precedence puzzles, no shadowing. Every diagnostic has a stable code, an exact location and a fix hint, also as JSON. Built-in `test` blocks and `requires`/`ensures` contracts. |
 | **No heap** | Every type has a compile-time size (`str[N]`, `list[T; N]`, `[T; N]`, structs, enums); no pointers, `null` or allocator. `alang check` bounds the worst-case memory of every entry point and rejects a program over its budget (8 MiB by default). |
-| **Deterministic** | No clock, randomness, environment, threads or I/O except `print`; input arrives whole, as a tool's JSON arguments or the stdin of `fn main`. No undefined behavior: overflow, bad indexes and bad conversions trap with fixed codes. Fixed evaluation order, only correctly rounded floats, exact formatting. The tests run every program repeatedly and under several locales, and compare the C backend byte for byte with the interpreter under gcc and clang at `-O0` to `-O3`. |
+| **Deterministic** | No clock, randomness, environment, threads or I/O except `print`; input arrives whole, as a tool's JSON arguments or the stdin of `fn main`. No undefined behavior: overflow, bad indexes and bad conversions trap with fixed codes. Fixed evaluation order, floats from correctly rounded operations only (`sin`, `exp` and `pow` included, which ALang computes itself), exact formatting. The tests run every program repeatedly and under several locales, and compare the C backend byte for byte with the interpreter under gcc and clang at `-O0` to `-O3`. |
 | **Always terminates** | Recursion is a compile error; every `while` loop states an iteration `limit`. |
 | **Safe to run agent code** | Tool functions take JSON in and return JSON out with no access to the host; a deterministic step budget bounds runtime. |
 | **Runs anywhere** | A reference interpreter (JVM) and a C99 backend that emits heap-free, stdio-free C with byte-identical behavior. |
@@ -129,7 +129,7 @@ interpreter and the C backend alike, traps included
 | Area | Functions |
 |------|-----------|
 | Core | `print` `len` `cap` `push` `pop` `clear` `append` `panic` |
-| Math | `abs` `min` `max` `clamp` `pow` `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
+| Math | `abs` `min` `max` `clamp` `pow` `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2` `is_nan` `is_finite` |
 | Characters | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` |
 | Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice` `trim` `split` `words` `try_split` `try_words` `join` `replace` `is_int` `is_float` `fixed` `pad_left` `pad_right`, and `i64(s)`, `f64(s)` to parse |
 | Collections | `sort` `reverse` `insert` `remove` (and `contains`, `index_of`, `count`, `slice` on lists and arrays) |

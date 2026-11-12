@@ -31,3 +31,18 @@ PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
 LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+
+ALang's exp, log, log10, sin, cos, asin, acos, atan and atan2 (src/main/java/alang/interp/FloatMath.java,
+and the C prelude src/main/resources/alang/cgen/prelude.c, which is copied into every program `alang
+build` writes) follow fdlibm 5.3, which carries the following notice.
+
+--------------------------------------------------------------------------------
+
+Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+
+Developed at SunSoft, a Sun Microsystems, Inc. business.
+Permission to use, copy, modify, and distribute this
+software is freely granted, provided that this notice
+is preserved.

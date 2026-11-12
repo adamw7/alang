@@ -649,7 +649,7 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `min(a, b) -> T` | Smaller of two numbers of the same type. |
 | `max(a, b) -> T` | Larger of two numbers of the same type. |
 | `clamp(x, lo, hi) -> T` | x limited to lo..hi (numbers of the same type). Traps (R0013) unless lo <= hi. |
-| `pow(x, n) -> T` | x to the power n, for an integer x and an integer n >= 0; pow(0, 0) is 1. Traps on overflow, and (R0013) if n < 0. |
+| `pow(x, n) -> T` | x to the power n. For integers: n >= 0, pow(0, 0) is 1, traps on overflow, and (R0013) if n < 0. For an f32/f64 x, n is a float of the same type: pow(2.0, 0.5); never traps (pow(-8.0, 0.5) is NaN), with the special cases of C99. |
 | `gcd(a, b) -> T` | Greatest common divisor of two integers of the same type, never negative; gcd(0, 0) is 0. Traps if it does not fit. |
 | `lcm(a, b) -> T` | Least common multiple of two integers of the same type, never negative; 0 if either is 0. Traps on overflow. |
 | `wrapping_add(a, b) -> T` | a + b for two integers of the same type, wrapped around to fit (modulo 2^bits): wrapping_add(u8(250), 10) is 4. Never traps; for hashes and checksums. |
@@ -663,6 +663,17 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `ceil(x) -> f` | Smallest integral value not less than x (f32/f64). |
 | `round(x) -> f` | Nearest integral value, halves away from zero: round(2.5) is 3.0 (f32/f64). |
 | `trunc(x) -> f` | x without its fraction, rounded toward zero: trunc(-2.7) is -2.0 (f32/f64). |
+| `exp(x) -> f` | e to the power x (f32/f64). |
+| `log(x) -> f` | Natural logarithm of x (f32/f64): -inf for 0, NaN below 0. |
+| `log2(x) -> f` | Base-2 logarithm of x (f32/f64); exact for powers of two. |
+| `log10(x) -> f` | Base-10 logarithm of x (f32/f64). |
+| `sin(x) -> f` | Sine of x radians (f32/f64). |
+| `cos(x) -> f` | Cosine of x radians (f32/f64). |
+| `tan(x) -> f` | Tangent of x radians (f32/f64). |
+| `asin(x) -> f` | Arc sine, in radians from -pi/2 to pi/2 (f32/f64); NaN outside -1..1. |
+| `acos(x) -> f` | Arc cosine, in radians from 0 to pi (f32/f64); NaN outside -1..1. |
+| `atan(x) -> f` | Arc tangent, in radians from -pi/2 to pi/2 (f32/f64). |
+| `atan2(y, x) -> f` | The angle of the point (x, y) from the positive x axis, in radians from -pi to pi (two floats of the same type). |
 | `is_nan(x) -> bool` | Whether an f32/f64 is NaN. |
 | `is_finite(x) -> bool` | Whether an f32/f64 is neither NaN nor infinite. |
 

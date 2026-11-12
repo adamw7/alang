@@ -1402,6 +1402,17 @@ public final class CGen {
                 String name = c.builtin.name + (k == PrimKind.F32 ? "f" : "");
                 return "((" + cPrim(k) + ")" + name + "(" + v + "))";
             }
+            case EXP, LOG, LOG2, LOG10, SIN, COS, TAN, ASIN, ACOS, ATAN -> {
+                PrimKind k = Type.kind(c.type);
+                String v = lower(args.get(0).expr());
+                return tmp(c.type, "(" + cPrim(k) + ")al_m_" + c.builtin.name + "((double)(" + v + "))");
+            }
+            case ATAN2 -> {
+                PrimKind k = Type.kind(c.type);
+                String y = tmp(c.type, lower(args.get(0).expr()));
+                String x = tmp(c.type, lower(args.get(1).expr()));
+                return tmp(c.type, "(" + cPrim(k) + ")al_m_atan2((double)" + y + ", (double)" + x + ")");
+            }
             case ROUND, TRUNC -> {
                 PrimKind k = Type.kind(c.type);
                 String v = lower(args.get(0).expr());
@@ -1427,6 +1438,11 @@ public final class CGen {
             }
             case POW -> {
                 PrimKind k = Type.kind(c.type);
+                if (k.isFloat) {
+                    String x = tmp(c.type, lower(args.get(0).expr()));
+                    String n = tmp(c.type, lower(args.get(1).expr()));
+                    return tmp(c.type, "(" + cPrim(k) + ")al_m_pow((double)" + x + ", (double)" + n + ")");
+                }
                 String x = tmp(c.type, lower(args.get(0).expr()));
                 PrimKind nk = Type.kind(args.get(1).expr().type);
                 String n = lower(args.get(1).expr());
