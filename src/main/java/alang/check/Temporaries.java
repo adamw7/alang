@@ -74,7 +74,10 @@ final class Temporaries {
             }
             case Match m -> {
                 long arms = 0;
-                for (Arm a : m.arms) arms = Layout.add(arms, block(a.body(), r));
+                for (Arm a : m.arms) {
+                    arms = Layout.add(arms, block(a.body(), r));
+                    if (a.guard() != null) arms = Layout.add(arms, expr(a.guard()));
+                }
                 yield Layout.add(expr(m.subject), arms);
             }
             case Return ret -> {
@@ -133,6 +136,8 @@ final class Temporaries {
                 yield t;
             }
             case Repeat r -> Layout.add(expr(r.value), stored(r.value, Type.elementOf(r.type)));
+            case IfExpr i -> Layout.add(expr(i.cond), Layout.add(Layout.add(expr(i.then), stored(i.then, i.type)),
+                Layout.add(expr(i.otherwise), stored(i.otherwise, i.type))));
         };
     }
 

@@ -10,6 +10,7 @@ import alang.ast.Ast.Expr;
 import alang.ast.Ast.FieldAccess;
 import alang.ast.Ast.FloatLit;
 import alang.ast.Ast.FnDecl;
+import alang.ast.Ast.IfExpr;
 import alang.ast.Ast.Index;
 import alang.ast.Ast.IntLit;
 import alang.ast.Ast.LocalVar;
@@ -93,6 +94,7 @@ final class ToolDefinitions {
             case StructLit s -> s.fields.stream().allMatch(fi -> isConstant(fi.value()));
             case ArrayLit a -> a.elems.stream().allMatch(ToolDefinitions::isConstant);
             case Repeat r -> isConstant(r.value) && isConstant(r.count);
+            case IfExpr i -> isConstant(i.cond) && isConstant(i.then) && isConstant(i.otherwise);
         };
     }
 

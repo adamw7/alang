@@ -130,7 +130,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 continue;
             }
             if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT
-                || t == ALangParser.STEP || t == ALangParser.REV) {
+                || t == ALangParser.STEP || t == ALangParser.REV || t == ALangParser.THEN) {
                 if (expected.contains(ALangParser.IDENT)) continue;
             }
             String lit = ALangParser.VOCABULARY.getLiteralName(t);
@@ -299,18 +299,17 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 return "there are no range patterns; use an if/else if chain instead: if 1 <= x and x < 5 { ... }";
             }
         }
-        if (t == ALangLexer.IF && arrowAhead(ts, tok)) {
-            return "there are no match guards; use an if/else if chain, or test the condition inside the arm: "
-                + "_ => { if x > 2 { ... } }";
+        if (t == ALangLexer.LBRACE && expected.contains(ALangLexer.THEN)) {
+            return "an if expression is written with `then` and no braces: let x: i64 = if c then 1 else 2;";
         }
-        if ((t == ALangLexer.IF || t == ALangLexer.MATCH) && expected.contains(ALangLexer.INT_LIT)
-            && !expected.contains(ALangLexer.LET)) {
-            // Where an expression must start.
-            return t == ALangLexer.IF
-                ? "`if` is a statement, not an expression; declare the variable first and assign it in every "
-                    + "branch: var x: i64 = 0; if c { x = 1; } else { x = 2; }"
-                : "`match` is a statement, not an expression; declare the variable first and assign it in every "
-                    + "arm: var x: i64 = 0; match c { ... => { x = 1; } }";
+        if (t == ALangLexer.IF && expected.contains(ALangLexer.INT_LIT) && !expected.contains(ALangLexer.LET)) {
+            // Where an operand must start: an if expression is a whole expression.
+            return "an if expression is never an operand; put it in parentheses: 1 + (if c then 2 else 3)";
+        }
+        if (t == ALangLexer.MATCH && expected.contains(ALangLexer.INT_LIT) && !expected.contains(ALangLexer.LET)) {
+            return "`match` is a statement, not an expression; declare the variable first and assign it in every "
+                + "arm: var x: i64 = 0; match c { ... => { x = 1; } }; for a choice between two values, "
+                + "if c then a else b is an expression";
         }
         if (t == ALangLexer.FN) {
             if (expected.contains(ALangLexer.LET)) {
@@ -409,21 +408,6 @@ final class SyntaxErrorListener extends BaseErrorListener {
         return null;
     }
 
-    /** Whether a `=>` follows {@code tok} before the next block or statement: {@code tok} is in a match arm's pattern. */
-    private static boolean arrowAhead(TokenStream ts, Token tok) {
-        for (int i = tok.getTokenIndex() + 1; i < ts.size(); i++) {
-            switch (ts.get(i).getType()) {
-                case ALangLexer.FAT_ARROW -> {
-                    return true;
-                }
-                case ALangLexer.LBRACE, ALangLexer.RBRACE, ALangLexer.SEMI, Token.EOF -> {
-                    return false;
-                }
-                default -> { }
-            }
-        }
-        return false;
-    }
 
     /** Whether {@code tok} is between `for` and the loop's `{`. */
     private static boolean inForHeader(TokenStream ts, Token tok) {
@@ -444,7 +428,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
     /** Tokens that can come right before the `(` of a call, constructor, pattern or declaration. */
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
-            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 
     private static boolean expectsOperator(IntervalSet expected) {

@@ -202,6 +202,11 @@ last). Each arm body is a block. Match works on enums, integers, `bool` and `str
 exhaustive (E0306): all enum variants or both bools, or a final `_`, which integers and strings always
 need. Duplicate or unreachable arms are E0307.
 
+An arm may have a **guard**: `Shape.Circle(r) if r > 10.0 => { }` matches only when the pattern does and then the
+`bool` condition, which can use the arm's bindings, holds; otherwise matching goes on with the next arm. A guarded
+arm covers nothing for exhaustiveness, so a match whose last arms are guarded still needs an unguarded one (often
+`_`) after them, and a guarded arm below an unguarded one with the same pattern is unreachable (E0307).
+
 ## 5. Functions and `mut` parameters
 
 ```
@@ -313,6 +318,13 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 | anything → bool | not allowed (E0214); compare instead |
 | `str[M]` → `str[N]` | the same bytes; more than N bytes traps (R0004) |
 | `list[T; M]` → `list[T; N]` | the same elements, of the same type T; more than N traps (R0004) |
+
+**If expressions.** `if c then a else b` is `a` when the `bool` `c` holds and `b` otherwise; only that branch is
+evaluated, so `if len(xs) > 0 then xs[0] else 0` never indexes an empty list. The branches have one type, as
+the operands of `+` do (literals take the other branch's type or the expected one), and a str or list branch
+widens to the larger capacity. An if expression is a whole expression, never an operand:
+`(if c then 1 else 2) + 3`, and `else if c2 then ...` chains. A call with `mut` arguments cannot be a branch
+(E0215).
 
 **Evaluation order** is fully specified, so side effects (`print`, traps) always happen in the same
 order:

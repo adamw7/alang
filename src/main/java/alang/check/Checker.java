@@ -1029,17 +1029,22 @@ public final class Checker {
                 diags.error(Code.E0307, p.span, "unreachable arm: `_` above already matches everything",
                     "move `_ => { }` to the end");
             }
+            // A guarded arm may not match, so it covers nothing: it is checked against what the arms above
+            // cover (a pattern they all take is unreachable) without adding to it.
+            Set<Object> seenHere = arm.guard() == null ? seen : new HashSet<>(seen);
             ctx.scopes.push(new HashMap<>());
             switch (p) {
-                case WildPat w -> wildcard = true;
-                case VariantPat v -> variantPattern(v, t, seen);
+                case WildPat w -> {
+                    if (arm.guard() == null) wildcard = true;
+                }
+                case VariantPat v -> variantPattern(v, t, seenHere);
                 case IntPat i -> {
                     if (supported && !Type.isError(t)) {
                         if (!Type.isInt(t)) {
                             diags.error(Code.E0308, p.span, "integer pattern cannot match a value of type " + t);
                         } else if (!Type.kind(t).fits(i.value)) {
                             diags.error(Code.E0202, p.span, "pattern " + i.value + " is out of range for " + t);
-                        } else if (!seen.add(i.value)) {
+                        } else if (!seenHere.add(i.value)) {
                             diags.error(Code.E0307, p.span, "duplicate pattern " + i.value);
                         }
                     }
@@ -1048,7 +1053,7 @@ public final class Checker {
                     if (supported && !Type.isError(t)) {
                         if (!(t instanceof Type.Str)) {
                             diags.error(Code.E0308, p.span, "string pattern cannot match a value of type " + t);
-                        } else if (!seen.add(new String(sp.value, java.nio.charset.StandardCharsets.ISO_8859_1))) {
+                        } else if (!seenHere.add(new String(sp.value, java.nio.charset.StandardCharsets.ISO_8859_1))) {
                             diags.error(Code.E0307, p.span, "duplicate pattern");
                         }
                     }
@@ -1057,12 +1062,13 @@ public final class Checker {
                     if (supported && !Type.isError(t)) {
                         if (!Type.isBool(t)) {
                             diags.error(Code.E0308, p.span, "bool pattern cannot match a value of type " + t);
-                        } else if (!seen.add(b.value)) {
+                        } else if (!seenHere.add(b.value)) {
                             diags.error(Code.E0307, p.span, "duplicate pattern " + b.value);
                         }
                     }
                 }
             }
+            if (arm.guard() != null) condition(arm.guard(), "if");
             if (!block(arm.body())) allJump = false;
             ctx.scopes.pop();
         }
@@ -1167,6 +1173,7 @@ public final class Checker {
             case Binary b -> binary(b, expected);
             case ArrayLit a -> arrayLit(a, expected);
             case Repeat r -> repeat(r, expected);
+            case IfExpr i -> ifExpr(i, expected);
         };
     }
 
@@ -1648,6 +1655,7 @@ public final class Checker {
             case Binary b -> mentions(b.left, v) || mentions(b.right, v);
             case ArrayLit a -> a.elems.stream().anyMatch(x -> mentions(x, v));
             case Repeat r -> mentions(r.value, v);
+            case IfExpr i -> mentions(i.cond, v) || mentions(i.then, v) || mentions(i.otherwise, v);
             default -> false;
         };
     }
@@ -2754,6 +2762,55 @@ public final class Checker {
         return false;
     }
 
+    /**
+     * `if c then a else b`: the branches share a type, as the operands of `+` do, and a str or list branch widens
+     * to the larger capacity. What split, join and the like build takes the type the whole expression is stored as.
+     */
+    private Type ifExpr(IfExpr i, Type expected) {
+        condition(i.cond, "if");
+        Expr outer = ctx.stored;
+        Type[] ts;
+        if (outer == i && (typedByTarget(i.then) || typedByTarget(i.otherwise))) {
+            ctx.stored = i.then;
+            Type a = expr(i.then, expected);
+            ctx.stored = i.otherwise;
+            Type b = expr(i.otherwise, expected);
+            ts = new Type[] {a, b};
+        } else {
+            ts = sameTypeOperands(i.then, i.otherwise, expected);
+        }
+        ctx.stored = outer;
+        Type a = ts[0];
+        Type b = ts[1];
+        if (Type.isError(a) || Type.isError(b)) return Type.ERROR;
+        if (a instanceof Type.Void || b instanceof Type.Void) {
+            diags.error(Code.E0201, (a instanceof Type.Void ? i.then : i.otherwise).span,
+                "a branch of an if expression returns nothing", "use an if statement: if c { f(); } else { g(); }");
+            return Type.ERROR;
+        }
+        Type t = widen(a, b);
+        if (!Type.assignable(a, t) || !Type.assignable(b, t)) {
+            String hint;
+            if (Type.isNumeric(a) && Type.isNumeric(b)) {
+                hint = "convert one: if c then " + exprText(i.then) + " else " + a + "(" + exprText(i.otherwise) + ")";
+            } else if (Type.hasAnyCapacity(a) || Type.hasAnyCapacity(b)) {
+                String to = (a instanceof Type.Str ? "str[64]" : a.toString().replaceAll("_]$", "16]"));
+                hint = "their `_` capacities are not known to be the same; convert both to one: if c then " + to + "("
+                    + exprText(i.then) + ") else " + to + "(" + exprText(i.otherwise) + ")";
+            } else {
+                hint = "give both branches the same type";
+            }
+            diags.error(Code.E0201, i.span, "the branches of an if expression have different types: " + a + " and " + b, hint);
+            return Type.ERROR;
+        }
+        return t;
+    }
+
+    /** Whether {@code e} is a call of split, words, chars, join, replace or a formatter, which takes its type from where it is stored. */
+    private static boolean typedByTarget(Expr e) {
+        return e instanceof Call c && Builtin.byName(c.name) != null && Builtin.byName(c.name).typedByTarget();
+    }
+
     private Type repeat(Repeat r, Type expected) {
         if (unknownSize(r, expected, true)) {
             constSize(r.count, "repeat count");
@@ -2850,6 +2907,7 @@ public final class Checker {
             case Binary b -> isConst(b.left) && isConst(b.right);
             case ArrayLit a -> a.elems.stream().allMatch(Checker::isConst);
             case Repeat r -> isConst(r.value);
+            case IfExpr i -> isConst(i.cond) && isConst(i.then) && isConst(i.otherwise);
         };
     }
 

@@ -178,8 +178,7 @@ With `--json`, the report is one line of JSON that names the source `file` once,
 has `severity`, `code`, `title`, `message`, `line`, `column`, `length`, `source_line` and `hint`. A trap
 gives its `line`, `column` and `source_line` the same way, and a diagnostic or trap in an imported file
 adds its `file`. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`, `xs.len()`,
-`let x = 5`, `while` without a limit, `null`, generics, `use`/`#include`, tuples, slices, `if` as an
-expression, match guards, `substr`, `parse_int`, `sorted`, ...) are answered with the ALang spelling.
+`let x = 5`, `while` without a limit, `null`, generics, `use`/`#include`, tuples, slices, `substr`, `parse_int`, `sorted`, ...) are answered with the ALang spelling.
 See [docs/ERRORS.md](docs/ERRORS.md).
 
 ## Tools in an agent host

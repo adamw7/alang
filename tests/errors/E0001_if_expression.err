@@ -1,7 +1,7 @@
-error[E0001]: unexpected 'if', expected a statement or expression
- --> tests/errors/E0001_if_expression.al:4:23
+error[E0001]: unexpected '{', expected 'then' or an operator
+ --> tests/errors/E0001_if_expression.al:4:37
   |
 4 |     let parity: i64 = if n % 2 == 0 { 0 } else { 1 };
-  |                       ^^
-  = hint: `if` is a statement, not an expression; declare the variable first and assign it in every branch: var x: i64 = 0; if c { x = 1; } else { x = 2; }
+  |                                     ^
+  = hint: an if expression is written with `then` and no braces: let x: i64 = if c then 1 else 2;
 

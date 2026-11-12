@@ -127,6 +127,7 @@ final class Uses {
                     read(m.subject);
                     for (Arm a : m.arms) {
                         if (a.pattern() instanceof VariantPat p) patterns.add(p);
+                        if (a.guard() != null) read(a.guard());
                         block(a.body());
                     }
                 }
@@ -195,6 +196,11 @@ final class Uses {
                     for (Expr x : a.elems) read(x);
                 }
                 case Repeat r -> read(r.value);
+                case IfExpr i -> {
+                    read(i.cond);
+                    read(i.then);
+                    read(i.otherwise);
+                }
                 case IntLit i -> { }
                 case FloatLit f -> { }
                 case StrLit s -> { }

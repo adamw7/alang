@@ -114,7 +114,8 @@ test "counts repeated words" {
 11. **A call with a `mut` argument is its own statement** or the whole right side of `let`/assignment/`return`: `let top: i32 = pop(mut stack);` then use `top`.
 12. **A `mut` variable cannot appear twice in one call**: `append(mut s, s)` and `swap(mut xs[i], mut xs[j])` are errors. Numbers passed without `mut` are copied first, so `remove(mut xs, len(xs) - 1)` is fine.
 13. **No shadowing.** Pick a new name instead of redeclaring one in an inner block.
-14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings.
+14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings. An arm may have a guard,
+    `MaybeI64.Some(v) if v > 0 => { }`; guarded arms do not count toward exhaustiveness.
 15. **Functions with a return type return on every path.** Add a final `return` after loops.
 16. **No methods.** `len(xs)`, not `xs.len()`; `push(mut xs, v)`, not `xs.push(v)`; `trim(s)`, not `s.trim()`.
 17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`. Two strs compare with `==` and order with `<`, byte by byte. For characters beyond ASCII, `char_count(s)` counts
@@ -160,6 +161,8 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
 | `println!("{}", x)` | `print(x);` |
 | `throw` / `raise` | return an enum, or `panic("message")` |
+| `c ? a : b`, `a if c else b`, `if c { a } else { b }` as a value | `if c then a else b` |
+| `case x if x > 0 =>`, `Some(v) if v > 0 =>` | `_ if x > 0 => { }`, `MaybeI64.Some(v) if v > 0 => { }` (guards) |
 | `sys.stdin.read()`, `open(path).read()`, `input()` | `fn main(input: str[4096])`, run with `< path`; split it into lines |
 | `import utils`, `#include "utils.h"`, `use crate::utils` | `import "utils.al";` before any declaration |
 | `if x { }` with `x: i32` | `if x != 0 { }` |

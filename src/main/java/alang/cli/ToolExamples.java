@@ -19,6 +19,7 @@ import alang.ast.Ast.FloatLit;
 import alang.ast.Ast.FnDecl;
 import alang.ast.Ast.For;
 import alang.ast.Ast.If;
+import alang.ast.Ast.IfExpr;
 import alang.ast.Ast.Index;
 import alang.ast.Ast.IntLit;
 import alang.ast.Ast.Let;
@@ -137,7 +138,10 @@ final class ToolExamples {
             }
             case Match m -> {
                 calls(m.subject, out);
-                for (Arm arm : m.arms) calls(arm.body(), out);
+                for (Arm arm : m.arms) {
+                    if (arm.guard() != null) calls(arm.guard(), out);
+                    calls(arm.body(), out);
+                }
             }
             case Return r -> {
                 if (r.value != null) calls(r.value, out);
@@ -164,6 +168,11 @@ final class ToolExamples {
             case Repeat r -> {
                 calls(r.value, out);
                 calls(r.count, out);
+            }
+            case IfExpr i -> {
+                calls(i.cond, out);
+                calls(i.then, out);
+                calls(i.otherwise, out);
             }
             case Unary u -> calls(u.operand, out);
             case Binary b -> {

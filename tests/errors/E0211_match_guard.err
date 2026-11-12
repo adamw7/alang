@@ -1,0 +1,27 @@
+error[E0306]: match is not exhaustive: missing values other than the listed ones
+ --> tests/errors/E0211_match_guard.al:6:5
+  |
+6 |     match x {
+  |     ^^^^^
+  = hint: add arms for them, or add `_ => { }` as the last arm
+
+error[E0211]: condition of `if` must be bool, found i64
+ --> tests/errors/E0211_match_guard.al:7:14
+  |
+7 |         0 if x => { k = 1; }
+  |              ^
+  = hint: there is no truthiness; compare explicitly, e.g. x != 0
+
+error[E0307]: duplicate pattern 0
+ --> tests/errors/E0211_match_guard.al:9:9
+  |
+9 |         0 if x > 5 => { k = 3; }
+  |         ^
+
+error[E0201]: the branches of an if expression have different types: i64 and str[4]
+  --> tests/errors/E0211_match_guard.al:12:12
+   |
+12 |     return if k > 0 then k else "none";
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = hint: give both branches the same type
+

@@ -464,7 +464,9 @@ public final class Interpreter {
     private int match(Match m, Object[] slots) {
         Object v = eval(m.subject, slots);
         for (Arm arm : m.arms) {
-            if (matches(arm.pattern(), v, slots)) return execBlock(arm.body(), slots);
+            if (matches(arm.pattern(), v, slots) && (arm.guard() == null || (Boolean) eval(arm.guard(), slots))) {
+                return execBlock(arm.body(), slots);
+            }
         }
         throw new IllegalStateException("non-exhaustive match passed the checker");
     }
@@ -655,6 +657,7 @@ public final class Interpreter {
                 for (int i = 0; i < vals.length; i++) vals[i] = Values.coerce(owned(a.elems.get(i), slots), elem);
                 yield a.type instanceof Type.ListT l ? new ListV(Arrays.copyOf(vals, l.cap()), vals.length) : new ArrV(vals);
             }
+            case IfExpr i -> Values.coerce(owned((Boolean) eval(i.cond, slots) ? i.then : i.otherwise, slots), i.type);
             case Repeat r -> {
                 Type elem = Type.elementOf(r.type);
                 Object v = Values.coerce(owned(r.value, slots), elem);

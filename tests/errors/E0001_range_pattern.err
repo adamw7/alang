@@ -1,4 +1,4 @@
-error[E0001]: unexpected '..', expected '=>'
+error[E0001]: unexpected '..', expected 'if' or '=>'
  --> tests/errors/E0001_range_pattern.al:4:11
   |
 4 |         90..101 => { return 'A'; }

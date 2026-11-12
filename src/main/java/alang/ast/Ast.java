@@ -441,7 +441,8 @@ public final class Ast {
         }
     }
 
-    public record Arm(Pattern pattern, Block body) {}
+    /** A match arm; {@code guard} is the condition of `Pattern if cond =>`, or null. */
+    public record Arm(Pattern pattern, Expr guard, Block body) {}
 
     /** `break;` or `break label;`: {@code target} is the loop it leaves, set by the checker for a label. */
     public static final class Break extends Stmt {
@@ -823,6 +824,20 @@ public final class Ast {
             this.op = op;
             this.left = left;
             this.right = right;
+        }
+    }
+
+    /** `if cond then a else b`: a or b, whichever cond picks; only that one is evaluated. */
+    public static final class IfExpr extends Expr {
+        public final Expr cond;
+        public final Expr then;
+        public final Expr otherwise;
+
+        public IfExpr(Span span, Expr cond, Expr then, Expr otherwise) {
+            super(span);
+            this.cond = cond;
+            this.then = then;
+            this.otherwise = otherwise;
         }
     }
 

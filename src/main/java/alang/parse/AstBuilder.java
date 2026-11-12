@@ -260,7 +260,9 @@ final class AstBuilder {
         if (ctx.matchStmt() != null) {
             MatchStmtContext m = ctx.matchStmt();
             List<Arm> arms = new ArrayList<>();
-            for (MatchArmContext a : m.matchArm()) arms.add(new Arm(pattern(a.pattern()), block(a.block())));
+            for (MatchArmContext a : m.matchArm()) {
+                arms.add(new Arm(pattern(a.pattern()), a.expression() == null ? null : expr(a.expression()), block(a.block())));
+            }
             return new Match(sp, expr(m.expression()), arms);
         }
         if (ctx.breakStmt() != null) {
@@ -351,6 +353,9 @@ final class AstBuilder {
         if (ctx instanceof BitAndExprContext b) return chain(sp, BinOp.BAND, b.unary());
         if (ctx instanceof BitOrExprContext b) return chain(sp, BinOp.BOR, b.unary());
         if (ctx instanceof BitXorExprContext b) return chain(sp, BinOp.BXOR, b.unary());
+        if (ctx instanceof IfExprContext i) {
+            return new IfExpr(sp, expr(i.expression(0)), expr(i.expression(1)), expr(i.expression(2)));
+        }
         if (ctx instanceof ShiftExprContext s) {
             BinOp op = s.op.getType() == ALangLexer.SHL ? BinOp.SHL : BinOp.SHR;
             return new Binary(sp, op, unary(s.unary(0)), unary(s.unary(1)));

@@ -194,8 +194,9 @@ matchStmt
     : MATCH expression LBRACE matchArm+ RBRACE
     ;
 
+// A guard `if cond` makes the arm match only when cond holds too; guarded arms do not count toward exhaustiveness.
 matchArm
-    : pattern FAT_ARROW block
+    : pattern (IF expression)? FAT_ARROW block
     ;
 
 pattern
@@ -237,8 +238,10 @@ exprStmt
 // Expressions
 // =====================================================================
 
+// `if c then a else b` is a whole expression, never an operand: (if c then a else b) + 1.
 expression
-    : unary (AMP unary)+                 # bitAndExpr
+    : IF expression THEN expression ELSE expression   # ifExpr
+    | unary (AMP unary)+                 # bitAndExpr
     | unary (PIPE unary)+                # bitOrExpr
     | unary (CARET unary)+               # bitXorExpr
     | unary op=(SHL | SHR) unary         # shiftExpr
@@ -320,7 +323,7 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool`, `import`, `step` and `rev` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool`, `import`, `step`, `rev` and `then` are contextual keywords and remain usable as names.
 identifier
     : IDENT
     | LIMIT
@@ -329,6 +332,7 @@ identifier
     | IMPORT
     | STEP
     | REV
+    | THEN
     ;
 
 // =====================================================================
@@ -349,6 +353,7 @@ ELSE      : 'else' ;
 WHILE     : 'while' ;
 LIMIT     : 'limit' ;
 STEP      : 'step' ;
+THEN      : 'then' ;
 REV       : 'rev' ;
 FOR       : 'for' ;
 IN        : 'in' ;

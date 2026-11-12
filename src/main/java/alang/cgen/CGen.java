@@ -694,6 +694,11 @@ public final class CGen {
         return "(" + ct(t) + "){0}";
     }
 
+    /** The initializer of a variable of type t that is assigned before it is read. */
+    private String zeroInit(Type t) {
+        return Type.isAggregate(t) ? "{0}" : zero(t);
+    }
+
     private void emit(String line) {
         out.append("    ".repeat(indent)).append(line).append('\n');
     }
@@ -1120,11 +1125,11 @@ public final class CGen {
                     yield "al_eq_bytes(" + s + ".b, " + s + ".len, " + lit + ".b, " + lit + ".len)";
                 }
             };
-            // Matches are exhaustive, so the final arm needs no test.
-            boolean tested = !last && cond != null;
+            // Matches are exhaustive, so the final arm needs no test, unless a guard may turn it down.
+            boolean tested = arm.guard() != null || !last && cond != null;
             if (tested) {
                 if (end == null) end = "al_endmatch" + ++tmpCount;
-                open("if (" + cond + ") {");
+                open(cond != null ? "if (" + cond + ") {" : "{");
             } else {
                 open("{");
             }
@@ -1137,8 +1142,17 @@ public final class CGen {
                     }
                 }
             }
-            block(arm.body());
-            if (tested) emit("goto " + end + ";");
+            if (arm.guard() != null) {
+                // The guard reads the bindings, so it is lowered after them.
+                String g = lower(arm.guard());
+                open("if (" + g + ") {");
+                block(arm.body());
+                emit("goto " + end + ";");
+                close("}");
+            } else {
+                block(arm.body());
+                if (tested) emit("goto " + end + ";");
+            }
             close("}");
             if (!tested) break;
         }
@@ -1245,6 +1259,17 @@ public final class CGen {
                 for (int i = 0; i < vals.size(); i++) emit(t + ".v[" + i + "] = " + vals.get(i) + ";");
                 if (a.type instanceof Type.ListT) emit(t + ".len = " + vals.size() + "u;");
                 yield t;
+            }
+            case IfExpr i -> {
+                String r = tmp(i.type, zeroInit(i.type));
+                String c = lower(i.cond);
+                open("if (" + c + ") {");
+                emit(r + " = " + coerce(lower(i.then), i.then.type, i.type) + ";");
+                close("} else {");
+                indent++;
+                emit(r + " = " + coerce(lower(i.otherwise), i.otherwise.type, i.type) + ";");
+                close("}");
+                yield r;
             }
             case Repeat r -> {
                 Type elem = Type.elementOf(r.type);
