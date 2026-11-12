@@ -97,7 +97,7 @@ test "counts repeated words" {
 
 1. **Every variable has a type and a value**: `let x: i32 = 0;` (immutable) or `var x: i32 = 0;` (mutable).
 2. **No implicit conversions.** `i64(x)`, `f64(n)`, `u8(c)`. Integer literals adapt to context and default to `i64`; `for i in 0..n` gives `i: i64` when the bounds are literals. `len()` returns `i64`.
-3. **No heap, no null, no pointers.** Fixed-capacity types: `str[64]`, `list[T; 16]`, `[T; 4]`. Capacity overflow traps.
+3. **No heap, no null, no pointers.** Fixed-capacity types: `str[64]`, `list[T; 16]`, `[T; 4]`, `map[K, V; 16]`, `set[T; 16]`. Capacity overflow traps.
    A smaller capacity widens on its own; to narrow, convert: `str[16](s)`, `list[T; 8](xs)` (traps if it
    does not fit, so check `len` first). A parameter takes any capacity with `_`: `fn total(xs: list[i64; _])`,
    `fn shout(s: mut str[_])` work on every list of i64 and every str; inside, `cap(s)` is the caller's.
@@ -157,6 +157,8 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `f"{x:.2f}"`, `format!("{:.2}", x)`, `x.toFixed(2)` | `fixed(x, 2)`, in `print`/`append` or stored in a typed str |
 | `f"{n:03}"`, `s.rjust(8)`, `s.ljust(8)`, `padStart` | `pad_left(n, 3, '0')`, `pad_left(s, 8, ' ')`, `pad_right(s, 8, ' ')` |
 | `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
+| `fn first<T>(xs: &[T]) -> T`, `def first(xs)` | `fn first<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
+| `xs.filter(f)`, `map(f, xs)`, `sort(key=f)`, a callback | a parameter `f: fn(T) -> bool`, passed by name: `count_if(xs, is_even)`; no closures or lambdas |
 | `s[a:b]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `slice(s, a, b)`, `trim(s)`, `to_upper(s)` |
 | a `str[256]` passed where `str[16]` is wanted | `str[16](s)` after checking `len(s) <= 16` |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
@@ -237,6 +239,42 @@ test "best first, bad lines skipped" {
 ```
 
 ## Patterns
+
+**One function for every type**
+
+```alang
+// A type parameter takes any type, and a parameter of a function type a function, passed by name.
+fn count_if<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
+    var n: i64 = 0;
+    for x in xs {
+        if keep(x) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
+fn largest<T>(xs: list[T; _]) -> T
+    requires len(xs) > 0
+{
+    var best: T = xs[0];
+    for x in xs {
+        if compare(x, best) > 0 {
+            best = x;
+        }
+    }
+    return best;
+}
+
+fn is_even(x: i64) -> bool {
+    return x % 2 == 0;
+}
+
+fn main() {
+    let xs: list[i64; 8] = [3, 8, 1, 6];
+    print(count_if(xs, is_even), " ", largest(xs), " ", largest(["b", "a"]));
+}
+```
 
 **One function for every capacity**
 

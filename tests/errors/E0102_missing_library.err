@@ -73,7 +73,7 @@ error[E0102]: unknown function `filter`
    |
 15 |     filter(s);
    |     ^^^^^^
-  = hint: there are no higher-order functions; write the loop: for x in xs { if x > 0 { push(mut out, x); } }
+  = hint: write the loop, or a function that takes one: fn keep<T>(xs: list[T; _], f: fn(T) -> bool, out: mut list[T; _]) { for x in xs { if f(x) { push(mut out, x); } } }
 
 error[E0102]: unknown function `enumerate`
   --> tests/errors/E0102_missing_library.al:16:5

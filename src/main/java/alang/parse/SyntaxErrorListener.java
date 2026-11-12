@@ -287,9 +287,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if ((t == ALangLexer.LT || t == ALangLexer.LBRACK && prev2 != null
                 && (prev2.getType() == ALangLexer.COLON || prev2.getType() == ALangLexer.ARROW))
             && p == ALangLexer.IDENT && !expectsOperator(expected)) {
-            return "there are no type parameters; write a function or type for each element type, "
-                + "e.g. fn max_i64(a: i64, b: i64) -> i64, and use list[T; N] instead of Vec<T>; a parameter can take "
-                + "any capacity: fn total(xs: list[i64; _]) -> i64";
+            return "a type takes its element types in brackets: list[i64; 16], map[str[8], i64; 16]; only a function has "
+                + "type parameters, fn first<T>(xs: list[T; _]) -> T, and an optional value is an enum: "
+                + "enum MaybeI64 { None, Some(i64) }";
         }
         if (expected.contains(ALangLexer.FAT_ARROW)) {
             // After a pattern, where `=>` should come.
@@ -317,8 +317,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 return "functions cannot be nested; declare every fn at the top level";
             }
             if (expected.contains(ALangLexer.I64)) {
-                return "there are no function types or closures; call functions by name, and choose between "
-                    + "behaviors with an enum and match";
+                return "a function type is only the type of a parameter: fn apply(f: fn(i64) -> i64, x: i64); there are "
+                    + "no closures, so pass a function declared at the top level by its name";
             }
         }
         if (t == ALangLexer.COMMA) {

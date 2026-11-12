@@ -168,6 +168,8 @@ public final class Ast {
         public final List<LocalVar> locals = new ArrayList<>();
         /** User functions called from this routine (including from contracts). */
         public final Set<FnDecl> callees = new LinkedHashSet<>();
+        /** Functions this routine passes as values, to a parameter of a function type. */
+        public final Set<FnDecl> fnValues = new LinkedHashSet<>();
 
         Routine(Span span, String name, Block body) {
             super(span, name);
@@ -178,6 +180,9 @@ public final class Ast {
     public static final class FnDecl extends Routine {
         public final Span nameSpan;
         public final boolean tool;
+        /** The names of `fn f<T, U>`'s type parameters, and where each is declared. */
+        public final List<String> typeParams;
+        public final List<Span> typeParamSpans;
         public final List<Param> params;
         public final TypeRef retRef;
         public final List<Expr> requires;
@@ -195,23 +200,33 @@ public final class Ast {
          * Null for every other function.
          */
         public Supplier<FnDecl> copy;
-        /** For an instance: the function it is a copy of, and the capacities its `_`s stand for, in order. */
+        /**
+         * For an instance: the function it is a copy of, the capacities its `_`s stand for, the types its type
+         * parameters stand for, and for each parameter of a function type the function it is given (null for others).
+         */
         public FnDecl origin;
         public List<Integer> capacities = List.of();
-        /** For a function with `_` capacities: its instances, by their capacities, in the order they were made. */
-        public final Map<List<Integer>, FnDecl> instances = new LinkedHashMap<>();
+        public List<Type> typeArgs = List.of();
+        public List<FnDecl> fnArgs = List.of();
+        /**
+         * For a function with `_` capacities, type parameters or parameters of a function type: its instances, by
+         * what they stand for, in the order they were made.
+         */
+        public final Map<List<Object>, FnDecl> instances = new LinkedHashMap<>();
 
         /** Whether the function takes any capacity somewhere: it runs and compiles only as its instances. */
         public boolean generic() {
             return copy != null && origin == null;
         }
 
-        public FnDecl(Span span, Span nameSpan, String name, boolean tool, List<Param> params, TypeRef retRef,
-                      List<Expr> requires, List<Expr> ensures, List<String> requiresText, List<String> ensuresText,
-                      Block body) {
+        public FnDecl(Span span, Span nameSpan, String name, boolean tool, List<String> typeParams, List<Span> typeParamSpans,
+                      List<Param> params, TypeRef retRef, List<Expr> requires, List<Expr> ensures, List<String> requiresText,
+                      List<String> ensuresText, Block body) {
             super(span, name, body);
             this.nameSpan = nameSpan;
             this.tool = tool;
+            this.typeParams = typeParams;
+            this.typeParamSpans = typeParamSpans;
             this.params = params;
             this.retRef = retRef;
             this.requires = requires;
@@ -274,6 +289,9 @@ public final class Ast {
 
     /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
     public record SetRef(Span span, TypeRef elem, Expr cap) implements TypeRef {}
+
+    /** fn(T1, T2) -> R: a function type, for a parameter; {@code ret} is null for none. */
+    public record FnRef(Span span, List<TypeRef> params, TypeRef ret) implements TypeRef {}
 
     /** (T1, T2, ...): a tuple type. */
     public record TupleRef(Span span, List<TypeRef> elems) implements TypeRef {}
@@ -754,6 +772,8 @@ public final class Ast {
         public final List<Arg> args;
         public FnDecl fn;
         public Builtin builtin;
+        /** A call of a parameter of a function type, in a function checked as written: which one. */
+        public LocalVar fnParam;
         /**
          * A fixed, pad_left or pad_right call whose text print or append writes out directly, or pad_left or
          * pad_right pads: it builds no str, and its type is a nominal str[0].

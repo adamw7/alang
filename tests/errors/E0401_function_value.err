@@ -1,0 +1,7 @@
+error[E0401]: recursion is not allowed: apply -> countdown -> apply, through a function passed as a value
+ --> tests/errors/E0401_function_value.al:3:4
+  |
+3 | fn apply(f: fn(i64) -> i64, x: i64) -> i64 {
+  |    ^^^^^
+  = hint: rewrite with a loop; keep pending work in a fixed-capacity list (a stack) if needed
+

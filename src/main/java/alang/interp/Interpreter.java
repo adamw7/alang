@@ -743,6 +743,8 @@ public final class Interpreter {
         for (int i = 0; i < args.length; i++) {
             LocalVar p = f.paramVars.get(i);
             Expr a = c.args.get(i).expr();
+            // A function argument is not a value: the instance calls the function it was made for.
+            if (p.type instanceof Type.FnT) continue;
             args[i] = p.byRef ? ref(a, slots) : Values.coerce(eval(a, slots), p.type);
         }
         return invoke(f, args, c.span);
@@ -1204,6 +1206,11 @@ public final class Interpreter {
                 Object xs = ref(args.get(0).expr(), slots).get();
                 long i = (Long) eval(args.get(1).expr(), slots);
                 return Stdlib.remove(xs, i, Type.kind(args.get(1).expr().type), c.span);
+            }
+            case COMPARE -> {
+                Object a = eval(args.get(0).expr(), slots);
+                Object b = eval(args.get(1).expr(), slots);
+                return (long) Integer.signum(Stdlib.compare(a, b, args.get(0).expr().type));
             }
             case GET_OR -> {
                 Type.MapT mt = (Type.MapT) args.get(0).expr().type;

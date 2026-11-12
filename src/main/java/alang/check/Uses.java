@@ -39,11 +39,17 @@ final class Uses {
      */
     static void warnUnused(Program program, Diagnostics diags, Function<Expr, String> text) {
         Set<FnDecl> called = new HashSet<>();
+        List<Routine> routines = new ArrayList<>();
         for (Item item : program.items) {
             if (item instanceof Routine r) {
-                // A call of a function that takes any capacity runs an instance of it.
-                for (FnDecl f : r.callees) called.add(f.origin != null ? f.origin : f);
+                routines.add(r);
+                if (r instanceof FnDecl f) routines.addAll(f.instances.values());
             }
+        }
+        for (Routine r : routines) {
+            // A call of a generic function runs an instance of it, which calls the functions it was given.
+            for (FnDecl f : r.callees) called.add(f.origin != null ? f.origin : f);
+            called.addAll(r.fnValues);
         }
         for (Item item : program.items) {
             if (!(item instanceof Routine r)) continue;

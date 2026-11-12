@@ -1,7 +1,0 @@
-error[E0001]: unexpected '<', expected '('
- --> tests/errors/E0001_generic.al:2:11
-  |
-2 | fn largest<T>(xs: list[T; 8]) -> T {
-  |           ^
-  = hint: there are no type parameters; write a function or type for each element type, e.g. fn max_i64(a: i64, b: i64) -> i64, and use list[T; N] instead of Vec<T>; a parameter can take any capacity: fn total(xs: list[i64; _]) -> i64
-

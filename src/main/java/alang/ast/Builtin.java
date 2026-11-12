@@ -2,7 +2,7 @@ package alang.ast;
 
 /**
  * The builtin functions: the core ones and the standard library. Their names are reserved and cannot be
- * declared by programs. They are polymorphic where user functions cannot be (there are no generics):
+ * declared by programs. They are polymorphic in ways user functions are not (beyond type parameters):
  * {@code len} takes any array, list or str, {@code sort} any list, and so on.
  */
 public enum Builtin {
@@ -161,6 +161,9 @@ public enum Builtin {
         "Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. "
             + "Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether "
             + "it was there."),
+    COMPARE(Group.COLLECTIONS, true, "compare", "compare(a, b) -> i64",
+        "-1, 0 or 1 as a comes before b, is equal to it, or comes after it in the order of sort: two values of the same "
+            + "type, any type. For a type parameter, compare(a, b) < 0 is a < b."),
     GET_OR(Group.COLLECTIONS, true, "get_or", "get_or(m, key, default) -> V",
         "The value of key in the map m, or default when m has no such key; m[key] traps (R0003) instead.");
 

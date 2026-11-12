@@ -1,4 +1,4 @@
-error[E0001]: unexpected character U+00A0, expected one of a type, '(', '[', a name
+error[E0001]: unexpected character U+00A0, expected one of a type, 'fn', '(', '[', a name
  --> tests/errors/E0001_invisible_character.al:3:11
   |
 3 |     let x: i64 = 1;

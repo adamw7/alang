@@ -149,9 +149,17 @@ final class AstBuilder {
             (pre ? requiresText : ensuresText).add(oneLine(c.expression()));
         }
         TypeRef ret = f.type() == null ? null : type(f.type());
-        FnDecl fn = new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null && !imported, params,
-            ret, requires, ensures, requiresText, ensuresText, block(f.block()));
-        if (params.stream().anyMatch(p -> anyCapacity(p.typeRef()))) {
+        List<String> typeParams = new ArrayList<>();
+        List<Span> typeParamSpans = new ArrayList<>();
+        if (f.typeParams() != null) {
+            for (IdentifierContext t : f.typeParams().identifier()) {
+                typeParams.add(t.getText());
+                typeParamSpans.add(span(t));
+            }
+        }
+        FnDecl fn = new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null && !imported,
+            typeParams, typeParamSpans, params, ret, requires, ensures, requiresText, ensuresText, block(f.block()));
+        if (!typeParams.isEmpty() || params.stream().anyMatch(p -> anyCapacity(p.typeRef()) || p.typeRef() instanceof FnRef)) {
             // A function that takes any capacity is checked once as written, then once more for each set of
             // capacities it is called with, on a fresh copy of its tree; the syntax errors were reported already.
             fn.copy = () -> new AstBuilder(new Diagnostics(file), file, tokens, imported).function(f);
@@ -192,6 +200,14 @@ final class AstBuilder {
         }
         if (ctx instanceof ArrayTypeRefContext a) {
             return new ArrayRef(sp, type(a.type()), capacity(a.capacity()));
+        }
+        if (ctx instanceof FnTypeRefContext f) {
+            List<TypeRef> ps = new ArrayList<>();
+            List<TypeContext> ts = f.type();
+            // With `-> R` the last type is the result.
+            boolean ret = f.ARROW() != null;
+            for (int i = 0; i < ts.size() - (ret ? 1 : 0); i++) ps.add(type(ts.get(i)));
+            return new FnRef(sp, ps, ret ? type(ts.get(ts.size() - 1)) : null);
         }
         if (ctx instanceof MapTypeRefContext m) {
             return new MapRef(sp, type(m.type(0)), type(m.type(1)), capacity(m.capacity()));

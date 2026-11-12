@@ -76,8 +76,13 @@ variantDecl
     ;
 
 // tool fn area(w: f64, h: f64) -> f64 requires w >= 0.0 ensures result >= 0.0 { ... }
+// fn first<T>(xs: list[T; _]) -> T: a type parameter stands for any type; each call fixes it from the arguments.
 functionDecl
-    : TOOL? FN identifier LPAREN paramList? RPAREN (ARROW type)? contract* block
+    : TOOL? FN identifier typeParams? LPAREN paramList? RPAREN (ARROW type)? contract* block
+    ;
+
+typeParams
+    : LT identifier (COMMA identifier)* GT
     ;
 
 paramList
@@ -110,6 +115,7 @@ type
     | LPAREN type (COMMA type)+ COMMA? RPAREN    # tupleTypeRef    // (i64, str[8]): a pair
     | MAP LBRACK type COMMA type SEMI capacity RBRACK  # mapTypeRef  // map[str[16], i64; 64]: up to 64 entries, in key order
     | SET LBRACK type SEMI capacity RBRACK       # setTypeRef      // set[i64; 32]: up to 32 distinct values, in order
+    | FN LPAREN (type (COMMA type)*)? RPAREN (ARROW type)?  # fnTypeRef  // fn(i64) -> bool: a function, as a parameter
     | identifier                                 # namedTypeRef    // struct or enum name
     ;
 

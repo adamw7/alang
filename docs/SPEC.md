@@ -60,7 +60,8 @@ nearest-even, directly to `f32` or `f64`; one that would round to `inf` is E0202
 | `Name` | a declared `struct` or `enum` | sum of fields / tag + largest payload |
 
 `N` is a compile-time integer constant (a literal or a `const`) from 1 to 1 048 576; only in the type of
-a function parameter may it be `_`, any capacity (§5). There are no pointer, reference, function, generic
+a function parameter may it be `_`, any capacity (§5). A function's type parameters (`fn first<T>(...)`) and
+function types (`fn(i64) -> bool`) also appear only in its parameters (§5). There are no pointer, reference
 or dynamically sized types.
 
 All types are **values**: assigning, passing, returning, storing in a field or element, and iterating
@@ -273,6 +274,36 @@ fn total(xs: list[i64; _]) -> i64 {
         sum += x;
     }
     return sum;
+}
+```
+
+**Type parameters.** `fn largest<T>(xs: list[T; _]) -> T` takes a list of any element type. Inside, `T` is a type
+of its own, which values can be copied, stored, compared with `==` and `!=`, ordered with `compare(a, b)` (the order
+of `sort`; `<` is only for numbers and strs) and printed; anything else, such as `a + b`, is an error until a call
+says what `T` is. Each type parameter must appear in a parameter's type, and a call fixes it from the arguments:
+the first argument whose type gives it (arguments with types of their own before literals, so that
+`largest_of(x, 1)` with `x: u8` makes the `1` a `u8`), which the others must then match exactly. Like a `_`, each
+call with new types runs an instance made for them, checked again with the types filled in (`alang check
+--memory` lists them). Structs and enums have no type parameters; tuples and the built-in collections cover most
+of what they would.
+
+**Function parameters.** A parameter of a function type, `keep: fn(T) -> bool`, takes a function by its name,
+`count_if(xs, is_even)`, and the body calls it, `keep(x)`. The function's parameter and result types must be the
+parameter's exactly (type parameters aside, which they can fix), it cannot have `mut` parameters, and it cannot be
+a builtin (wrap one in a function of your own) or itself take a `_`, type parameter or function. A parameter of a
+function type can be passed on to another function, but not stored, returned or put in a variable: there are no
+closures. Each call with a new function runs an instance that calls that function directly, so the call graph
+stays known, and passing a function to something that calls it back is recursion (E0401).
+
+```
+fn count_if<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
+    var n: i64 = 0;
+    for x in xs {
+        if keep(x) {
+            n += 1;
+        }
+    }
+    return n;
 }
 ```
 
@@ -617,6 +648,8 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 | `insert(mut m, k, v)`, `insert(mut s, x)` | Sets `k` to `v` in a map (as `m[k] = v`), or adds `x` to a set; a key or value already there is kept once. Traps (R0004) when a new one does not fit. |
 | `remove(mut m, k) -> bool`, `remove(mut s, x) -> bool` | Removes a key (with its value) or a value; whether it was there. |
 | `get_or(m, k, d) -> V` | The value of `k` in the map `m`, or `d` when there is none. |
+
+| `compare(a, b) -> i64` | -1, 0 or 1 as `a` comes before, equals or comes after `b` in the order below; two values of any one type, so it orders the values of a type parameter. |
 
 `len`, `cap`, `clear` and `contains` work on maps and sets too, by key. `contains`, `index_of`, `count` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
 be of any integer type, as indexes may.

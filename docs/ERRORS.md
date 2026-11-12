@@ -726,4 +726,5 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `reverse(mut xs)` | Reverses a list, array or str in place. |
 | `insert(mut xs, i, value)` | Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and insert(mut s, x) adds x to a set; both trap (R0004) when a new key does not fit. |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether it was there. |
+| `compare(a, b) -> i64` | -1, 0 or 1 as a comes before b, is equal to it, or comes after it in the order of sort: two values of the same type, any type. For a type parameter, compare(a, b) < 0 is a < b. |
 | `get_or(m, key, default) -> V` | The value of key in the map m, or default when m has no such key; m[key] traps (R0003) instead. |

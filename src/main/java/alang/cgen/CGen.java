@@ -705,6 +705,12 @@ public final class CGen {
      */
     private static String fnName(FnDecl f) {
         if (f.origin == null) return "al_f_" + f.name;
+        // The instances of a function with type parameters or function arguments are numbered in the order the checker
+        // made them; the others keep their capacities in the name.
+        if (!f.typeArgs.isEmpty() || f.fnArgs.stream().anyMatch(java.util.Objects::nonNull)) {
+            int i = new ArrayList<>(f.origin.instances.values()).indexOf(f);
+            return "al_g" + f.name.length() + f.name + "_n" + i;
+        }
         StringBuilder sb = new StringBuilder("al_g").append(f.name.length()).append(f.name);
         for (int cap : f.capacities) sb.append('_').append(cap);
         return sb.toString();
@@ -714,6 +720,7 @@ public final class CGen {
         String ret = f.ret instanceof Type.Void ? "void" : ct(f.ret);
         List<String> ps = new ArrayList<>();
         for (LocalVar p : f.paramVars) {
+            if (p.type instanceof Type.FnT) continue;
             String t = ct(p.type);
             if (p.byRef) ps.add(t + " *" + cName(p));
             else if (Type.isAggregate(p.type)) ps.add("const " + t + " *" + cName(p));
@@ -1491,6 +1498,7 @@ public final class CGen {
         for (int i = 0; i < c.args.size(); i++) {
             LocalVar p = f.paramVars.get(i);
             Expr a = c.args.get(i).expr();
+            if (p.type instanceof Type.FnT) continue;
             if (p.byRef) {
                 args.add("&(" + lower(a) + ")");
             } else if (Type.isAggregate(p.type)) {
@@ -2122,6 +2130,13 @@ public final class CGen {
                 close("}");
                 emit("(" + place + ").len--;");
                 return r;
+            }
+            case COMPARE -> {
+                Type t = args.get(0).expr().type;
+                String a = lowerLvalue(args.get(0).expr());
+                String b = lowerLvalue(args.get(1).expr());
+                String cmp = tmp(Type.I32, "(int32_t)(" + cmpExpr(t, a, b) + ")");
+                return tmp(Type.I64, "(int64_t)((" + cmp + " > 0) - (" + cmp + " < 0))");
             }
             case GET_OR -> {
                 Type.MapT mt = (Type.MapT) args.get(0).expr().type;
