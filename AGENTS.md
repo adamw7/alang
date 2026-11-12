@@ -105,7 +105,8 @@ test "counts repeated words" {
 5. **Enum variants are qualified with a dot**: `Color.Red`, `Shape.Circle(2.0)`. Never `Color::Red`.
 6. **Logic uses words**: `and`, `or`, `not`. `&&`, `||`, `!x` are errors (`!=` is fine).
 7. **No precedence guessing**: `* / %` bind tighter than `+ -`; everything else needs parentheses when mixed: `(a and b) or c`, `(flags & 4) != 0`, `(x << 2) + 1`. Comparisons do not chain: `0 < x and x < 10`.
-8. **`while` needs a limit**: `while lo < hi limit 64 { }`. Exceeding it traps. Prefer `for i in 0..n` or `for x in xs` when you can.
+8. **`while` needs a limit**: `while lo < hi limit 64 { }`. Exceeding it traps. Prefer `for i in 0..n` or `for x in xs` when you can:
+   ranges also go `0..=n`, `step 2` and `rev 0..n` (backwards), and `for i, x in xs` gives each index.
 9. **No recursion.** Use a loop with an explicit work list (`list[T; N]` as a stack or queue).
 10. **`mut` is explicit on both sides**: `fn grow(xs: mut list[i32; 8])` and `grow(mut xs)`. Plain parameters are read-only copies.
     So is every variable: `var it: Item = items[0]; it.qty += 1;` changes the copy, not the list (warning
@@ -137,6 +138,10 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `Option<T>`, `null` | `enum MaybeT { None, Some(T) }` |
 | `i++` | `i += 1;` |
 | `for (i = 0; i < n; i++)` | `for i in 0..n { }` |
+| `for i in range(0, n + 1, 2)`, `(0..=n).step_by(2)` | `for i in 0..=n step 2 { }` |
+| `for i in range(n - 1, -1, -1)`, `(0..n).rev()`, `reversed(xs)` | `for i in rev 0..n { }`, `for x in rev xs { }` |
+| `for i, x in enumerate(xs)`, `xs.iter().enumerate()` | `for i, x in xs { }` |
+| `'outer: for ...` / `break 'outer` (Rust), `break outer` (Go, Java) | `outer: for ... { }` and `break outer;`, `continue outer;` |
 | `loop { }` | `while true limit 1000 { ... break; }` |
 | `s.push_str("a")`, `format!("{} {}", a, b)` | `append(mut s, "a")`, `var s: str[64] = ""; append(mut s, a, " ", b);` |
 | `for line in text.splitlines()`, `for w in s.split()` | `for line in split(text, '\n') { }`, `for w in words(s) { }` |

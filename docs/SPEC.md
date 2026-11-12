@@ -23,7 +23,7 @@ syntax; this document describes semantics. Diagnostic codes are listed in [ERROR
 - Identifiers: `[a-zA-Z_][a-zA-Z0-9_]*`. `_` alone is the wildcard, not a name.
 - Reserved words: `fn let var const struct enum if else while for in match break continue return assert
   requires ensures mut and or not true false bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str list`.
-  `limit`, `test`, `tool`, `import` and `result` are contextual and may be used as names.
+  `limit`, `step`, `rev`, `test`, `tool`, `import` and `result` are contextual and may be used as names.
 - The names of the builtin functions, the standard library included (§9), cannot be redefined (E0108),
   but may be variable names.
 
@@ -157,7 +157,8 @@ a file, before any declaration (E0001), and:
 | binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable) |
 | assignment | `place = expr;` and `+= -= *= /= %=` |
 | condition | `if c { } else if c { } else { }` |
-| loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for x in xs { }` (array, list or str: `u8` bytes), `for p in split(s, sep) { }`, `for w in words(s) { }` |
+| loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`; `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
+| labels | `outer: for ... { }` or `outer: while ... { }`, then `break outer;` or `continue outer;` from a loop inside it |
 | match | `match e { Pattern => { } ... }` |
 | jumps | `break;` `continue;` `return;` `return expr;` |
 | assertion | `assert cond;` `assert cond, "message";` |
@@ -171,9 +172,18 @@ a file, before any declaration (E0001), and:
   traps (R0008) when the body is about to run for the `n + 1`-th time. The limit is a promise about the
   algorithm, e.g. `limit 64` for a binary search over a 64-bit range.
 - `for i in a..b`: `a` and `b` are evaluated once and are integers of the same type, which `i` has
-  (`i64` for literals). `for x in xs` goes through what `xs` held before the first iteration: changing
+  (`i64` for literals). `a..=b` includes `b`. `step k` (`k` of the same type, evaluated once after the bounds)
+  counts by `k`: `0..10 step 3` is 0, 3, 6, 9; a step that is not positive traps (R0013), and a literal one is
+  E0202. `rev` takes the same values, the last one first: `rev 0..10 step 3` is 9, 6, 3, 0, and to count down
+  from 10 to 1 write `rev 1..=10`. Nothing overflows at the ends of a type: `for b in u8(250)..=u8(255)` stops
+  after 255. `for x in xs` goes through what `xs` held before the first iteration: changing
   `xs` in the loop does not affect it. (Only a variable that the body changes, by assigning to it or passing
   it as `mut`, is copied for this, §7; any other collection is used where it is.)
+- `for i, x in xs` also gives each element's position, an `i64`, as `i` (for split, words and chars, the
+  number of the piece or code point). `for x in rev xs` goes through an array, list or str from its last
+  element; `i` is then still the position, counting down.
+- `break label;` and `continue label;` leave or continue the loop labelled `label:` around them, from any
+  depth; `break;` and `continue;` the innermost loop. Labels of loops inside one another differ (E0105).
 - `for p in split(s, sep)` and `for w in words(s)` go through the pieces of `s` one at a time (§9.4),
   without building a list: each piece is a `str` of the capacity of `s`, which no piece can outgrow, so the
   loop never traps on the size or number of the pieces. `s` and `sep` are evaluated once, before the first

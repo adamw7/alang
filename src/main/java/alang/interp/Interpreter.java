@@ -269,8 +269,14 @@ public final class Interpreter {
             case While w -> whileLoop(w, slots);
             case For f -> f.isRange() ? rangeLoop(f, slots) : eachLoop(f, slots);
             case Match m -> match(m, slots);
-            case Break b -> BREAK;
-            case Continue c -> CONTINUE;
+            case Break b -> {
+                jumpTarget = b.target;
+                yield BREAK;
+            }
+            case Continue c -> {
+                jumpTarget = c.target;
+                yield CONTINUE;
+            }
             case Return r -> {
                 retVal = r.value == null ? null : owned(r.value, slots);
                 yield RETURN;
@@ -298,6 +304,24 @@ public final class Interpreter {
         r.set(arith(a.op, Type.kind(t), Type.kind(a.value.type), r.get(), rhs, a.span));
     }
 
+    /** What a loop does after its body: go on with the next iteration, leave the loop, or pass the result out. */
+    private static final int GO = 0;
+    private static final int LEAVE = 1;
+    private static final int OUT = 2;
+
+    /**
+     * The loop that a `break label;` or `continue label;` being carried out jumps to; null for one without a
+     * label, which jumps to the innermost loop.
+     */
+    private Loop jumpTarget;
+
+    private int after(Loop l, int r) {
+        if (r == NORMAL) return GO;
+        if (r == RETURN || jumpTarget != null && jumpTarget != l) return OUT;
+        jumpTarget = null;
+        return r == BREAK ? LEAVE : GO;
+    }
+
     private int whileLoop(While w, Object[] slots) {
         Object lim = eval(w.limit, slots);
         PrimKind lk = Type.kind(w.limit.type);
@@ -311,22 +335,50 @@ public final class Interpreter {
             count++;
             step(w.span);
             int r = execBlock(w.body, slots);
-            if (r == BREAK) break;
-            if (r == RETURN) return r;
+            int a = after(w, r);
+            if (a == LEAVE) break;
+            if (a == OUT) return r;
         }
         return NORMAL;
     }
 
+    /**
+     * `for i in a..b`, `a..=b`, either with `step k`, and with `rev` the same values last first. The differences
+     * that decide when to stop are unsigned 64-bit, so nothing overflows near the ends of the type.
+     */
     private int rangeLoop(For f, Object[] slots) {
         PrimKind k = Type.kind(f.var.type);
         long from = (Long) eval(f.from, slots);
         long to = (Long) eval(f.to, slots);
-        for (long i = from; IntOps.compare(k, i, to) < 0; i++) {
+        long step = 1;
+        if (f.step != null) {
+            step = (Long) eval(f.step, slots);
+            if (k.signed ? step <= 0 : step == 0) {
+                throw new Trap(Code.R0013, f.step.span, "the step of a range must be positive, found " + IntOps.toString(k, step));
+            }
+        }
+        int cmp = IntOps.compare(k, from, to);
+        if (f.inclusive ? cmp > 0 : cmp >= 0) return NORMAL;
+        long i = from;
+        if (f.rev) {
+            long span = to - from;
+            i = from + (f.inclusive ? Long.divideUnsigned(span, step) : Long.divideUnsigned(span - 1, step)) * step;
+        }
+        while (true) {
             step(f.span);
             slots[f.var.slot] = i;
             int r = execBlock(f.body, slots);
-            if (r == BREAK) break;
-            if (r == RETURN) return r;
+            int a = after(f, r);
+            if (a == LEAVE) break;
+            if (a == OUT) return r;
+            if (f.rev) {
+                if (Long.compareUnsigned(i - from, step) < 0) break;
+                i -= step;
+            } else {
+                int c = Long.compareUnsigned(to - i, step);
+                if (f.inclusive ? c < 0 : c <= 0) break;
+                i += step;
+            }
         }
         return NORMAL;
     }
@@ -338,33 +390,39 @@ public final class Interpreter {
         Object coll = f.snapshot ? owned(f.from, slots) : eval(f.from, slots);
         Object[] items = coll instanceof ArrV a ? a.items : coll instanceof ListV l ? l.items : null;
         int n = length(coll);
-        for (int i = 0; i < n; i++) {
+        for (int k = 0; k < n; k++) {
+            int i = f.rev ? n - 1 - k : k;
             step(f.span);
+            if (f.indexVar != null) slots[f.indexVar.slot] = (long) i;
             slots[f.var.slot] = items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF);
             int r = execBlock(f.body, slots);
-            if (r == BREAK) break;
-            if (r == RETURN) return r;
+            int a = after(f, r);
+            if (a == LEAVE) break;
+            if (a == OUT) return r;
         }
         return NORMAL;
     }
 
     /**
-     * `for x in split(s, sep)` and `for x in words(s)`: the pieces of s, made one at a time into a str of
-     * the capacity of s, which no piece can outgrow. The loop variable is read-only and anything that stores
-     * it copies it, so one buffer serves every piece.
+     * `for x in split(s, sep)`, `for x in words(s)` and `for c in chars(s)`: the pieces of s, made one at a time
+     * into a str of the capacity of s, which no piece can outgrow, or its code points. The loop variable is
+     * read-only and anything that stores it copies it, so one buffer serves every piece.
      */
     private int pieceLoop(For f, Call c, Object[] slots) {
         Expr src = c.args.get(0).expr();
         StrV s = (StrV) (f.snapshot ? owned(src, slots) : eval(src, slots));
+        long index = 0;
         if (c.builtin == Builtin.CHARS) {
             for (int pos = 0; pos < s.len; ) {
                 long d = Stdlib.utf8Next(s.b, s.len, pos);
                 pos += (int) (d & 7);
                 step(f.span);
+                if (f.indexVar != null) slots[f.indexVar.slot] = index++;
                 slots[f.var.slot] = d >>> 8;
                 int r = execBlock(f.body, slots);
-                if (r == BREAK) break;
-                if (r == RETURN) return r;
+                int a = after(f, r);
+                if (a == LEAVE) break;
+                if (a == OUT) return r;
             }
             return NORMAL;
         }
@@ -392,10 +450,12 @@ public final class Interpreter {
             piece.len = end - start;
             System.arraycopy(s.b, start, piece.b, 0, piece.len);
             if (before > piece.len) Arrays.fill(piece.b, piece.len, before, (byte) 0);
+            if (f.indexVar != null) slots[f.indexVar.slot] = index++;
             slots[f.var.slot] = piece;
             int r = execBlock(f.body, slots);
-            if (r == BREAK) break;
-            if (r == RETURN) return r;
+            int a = after(f, r);
+            if (a == LEAVE) break;
+            if (a == OUT) return r;
             if (pos < 0) break;
         }
         return NORMAL;

@@ -138,6 +138,7 @@ statement
     | ifStmt
     | whileStmt
     | forStmt
+    | labeledStmt
     | matchStmt
     | breakStmt
     | continueStmt
@@ -174,10 +175,18 @@ whileStmt
     : WHILE expression LIMIT expression block
     ;
 
-// for i in 0..n { }      (half-open integer range)
-// for item in items { }  (array, list or str; iterates over copies)
+// for i in 0..n { }            (half-open integer range)
+// for i in 0..=n step 2 { }    (inclusive, counting by 2)
+// for i in rev 0..n { }        (the same values, last first)
+// for item in items { }        (array, list or str; iterates over copies)
+// for i, item in items { }     (with each element's index)
 forStmt
-    : FOR identifier IN expression (DOTDOT expression)? block
+    : FOR identifier (COMMA identifier)? IN REV? expression (range=(DOTDOT | DOTDOTEQ) expression (STEP expression)?)? block
+    ;
+
+// outer: for i in 0..n { ... break outer; ... }
+labeledStmt
+    : identifier COLON (whileStmt | forStmt)
     ;
 
 // Arms are checked for exhaustiveness. `_` matches anything and must be last.
@@ -204,11 +213,11 @@ binding
     ;
 
 breakStmt
-    : BREAK SEMI
+    : BREAK identifier? SEMI
     ;
 
 continueStmt
-    : CONTINUE SEMI
+    : CONTINUE identifier? SEMI
     ;
 
 returnStmt
@@ -311,13 +320,15 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool` and `import` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool`, `import`, `step` and `rev` are contextual keywords and remain usable as names.
 identifier
     : IDENT
     | LIMIT
     | TEST
     | TOOL
     | IMPORT
+    | STEP
+    | REV
     ;
 
 // =====================================================================
@@ -337,6 +348,8 @@ IF        : 'if' ;
 ELSE      : 'else' ;
 WHILE     : 'while' ;
 LIMIT     : 'limit' ;
+STEP      : 'step' ;
+REV       : 'rev' ;
 FOR       : 'for' ;
 IN        : 'in' ;
 MATCH     : 'match' ;
@@ -372,6 +385,7 @@ LIST      : 'list' ;
 // ---- multi-character operators ----
 ARROW          : '->' ;
 FAT_ARROW      : '=>' ;
+DOTDOTEQ       : '..=' ;
 DOTDOT         : '..' ;
 EQ             : '==' ;
 NEQ            : '!=' ;

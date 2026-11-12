@@ -45,7 +45,7 @@ error[E0102]: unknown function `reversed`
    |
 11 |     reversed(s);
    |     ^^^^^^^^
-  = hint: reverse in place with reverse(mut xs)
+  = hint: go through it backwards with for x in rev xs { }, or reverse it in place with reverse(mut xs)
 
 error[E0102]: unknown function `substring`
   --> tests/errors/E0102_missing_library.al:12:5
@@ -80,7 +80,7 @@ error[E0102]: unknown function `enumerate`
    |
 16 |     enumerate(s);
    |     ^^^^^^^^^
-  = hint: loop over the indexes: for i in 0..len(xs) { let x: i64 = xs[i]; }
+  = hint: for i, x in xs { } gives each element with its index
 
 error[E0102]: unknown function `ord`
   --> tests/errors/E0102_missing_library.al:17:5

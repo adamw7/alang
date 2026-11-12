@@ -129,7 +129,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 names.add("a name");
                 continue;
             }
-            if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT) {
+            if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT
+                || t == ALangParser.STEP || t == ALangParser.REV) {
                 if (expected.contains(ALangParser.IDENT)) continue;
             }
             String lit = ALangParser.VOCABULARY.getLiteralName(t);
@@ -197,9 +198,6 @@ final class SyntaxErrorListener extends BaseErrorListener {
         }
         if (p == ALangLexer.FOR && t == ALangLexer.LPAREN) {
             return "for loops iterate a range or a collection: for i in 0..n { ... } or for x in xs { ... }";
-        }
-        if (p == ALangLexer.DOTDOT && t == ALangLexer.ASSIGN) {
-            return "ranges are half-open (end excluded); write a..(b + 1) instead of a..=b";
         }
         if (expected != null && expected.contains(ALangLexer.COLON) && t == ALangLexer.ASSIGN) {
             return "every variable needs an explicit type: let x: i32 = 0;";
@@ -341,10 +339,10 @@ final class SyntaxErrorListener extends BaseErrorListener {
                     + "for i in a..b { push(mut part, xs[i]); }";
             }
         }
-        if (t == ALangLexer.IDENT && (word.equals("step") || word.equals("by")) && expected.contains(ALangLexer.LBRACE)
+        if (t == ALangLexer.IDENT && (word.equals("by") || word.equals("step_by")) && expected.contains(ALangLexer.LBRACE)
             && inForHeader(ts, tok)) {
-            return "ranges always count up by 1; compute other sequences from the loop variable: "
-                + "for k in 0..5 { let i: i64 = k * 2; }";
+            return "a range counts by a step with `step`: for i in 0..10 step 2 { }; to count down, add `rev`: "
+                + "for i in rev 0..10 { } goes 9, 8, ..., 0";
         }
         if (t == ALangLexer.ASSIGN && expected.contains(ALangLexer.COMMA) && expected.contains(ALangLexer.RBRACE)) {
             // `=` in a struct's fields or an enum's variants.
@@ -446,7 +444,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
     /** Tokens that can come right before the `(` of a call, constructor, pattern or declaration. */
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
-            || t == ALangLexer.IMPORT || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 
     private static boolean expectsOperator(IntervalSet expected) {

@@ -248,14 +248,14 @@ final class AstBuilder {
             Block elseBlock = bs.size() > conds.size() ? block(bs.get(bs.size() - 1)) : null;
             return new If(sp, conds, blocks, elseBlock);
         }
-        if (ctx.whileStmt() != null) {
-            WhileStmtContext w = ctx.whileStmt();
-            return new While(sp, expr(w.expression(0)), expr(w.expression(1)), block(w.block()));
-        }
-        if (ctx.forStmt() != null) {
-            ForStmtContext f = ctx.forStmt();
-            Expr to = f.expression().size() > 1 ? expr(f.expression(1)) : null;
-            return new For(sp, f.identifier().getText(), span(f.identifier()), expr(f.expression(0)), to, block(f.block()));
+        if (ctx.whileStmt() != null) return whileLoop(sp, ctx.whileStmt());
+        if (ctx.forStmt() != null) return forLoop(sp, ctx.forStmt());
+        if (ctx.labeledStmt() != null) {
+            LabeledStmtContext l = ctx.labeledStmt();
+            Loop loop = l.whileStmt() != null ? whileLoop(sp, l.whileStmt()) : forLoop(sp, l.forStmt());
+            loop.label = l.identifier().getText();
+            loop.labelSpan = span(l.identifier());
+            return loop;
         }
         if (ctx.matchStmt() != null) {
             MatchStmtContext m = ctx.matchStmt();
@@ -263,8 +263,14 @@ final class AstBuilder {
             for (MatchArmContext a : m.matchArm()) arms.add(new Arm(pattern(a.pattern()), block(a.block())));
             return new Match(sp, expr(m.expression()), arms);
         }
-        if (ctx.breakStmt() != null) return new Break(sp);
-        if (ctx.continueStmt() != null) return new Continue(sp);
+        if (ctx.breakStmt() != null) {
+            IdentifierContext l = ctx.breakStmt().identifier();
+            return new Break(sp, l == null ? null : l.getText());
+        }
+        if (ctx.continueStmt() != null) {
+            IdentifierContext l = ctx.continueStmt().identifier();
+            return new Continue(sp, l == null ? null : l.getText());
+        }
         if (ctx.returnStmt() != null) {
             ExpressionContext e = ctx.returnStmt().expression();
             return new Return(sp, e == null ? null : expr(e));
@@ -275,6 +281,23 @@ final class AstBuilder {
             return new Assert(sp, expr(a.expression()), msg);
         }
         return new ExprStmt(sp, expr(ctx.exprStmt().expression()));
+    }
+
+    private While whileLoop(Span sp, WhileStmtContext w) {
+        return new While(sp, expr(w.expression(0)), expr(w.expression(1)), block(w.block()));
+    }
+
+    /** `for [i,] x in [rev] from[..to | ..=to [step k]] { }`. */
+    private For forLoop(Span sp, ForStmtContext f) {
+        List<IdentifierContext> names = f.identifier();
+        IdentifierContext name = names.get(names.size() - 1);
+        IdentifierContext index = names.size() > 1 ? names.get(0) : null;
+        List<ExpressionContext> es = f.expression();
+        Expr to = es.size() > 1 ? expr(es.get(1)) : null;
+        Expr step = es.size() > 2 ? expr(es.get(2)) : null;
+        boolean inclusive = f.range != null && f.range.getType() == ALangLexer.DOTDOTEQ;
+        return new For(sp, name.getText(), span(name), index == null ? null : index.getText(), index == null ? null : span(index),
+            expr(es.get(0)), to, inclusive, step, f.REV() != null, block(f.block()));
     }
 
     private Expr place(PlaceContext ctx) {

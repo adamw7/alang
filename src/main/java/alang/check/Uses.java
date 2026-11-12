@@ -120,6 +120,7 @@ final class Uses {
                 case For f -> {
                     read(f.from);
                     if (f.to != null) read(f.to);
+                    if (f.step != null) read(f.step);
                     block(f.body);
                 }
                 case Match m -> {

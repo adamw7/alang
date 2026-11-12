@@ -758,8 +758,8 @@ public final class CGen {
                 else eachLoop(f);
             }
             case Match m -> match(m);
-            case Break b -> emit("break;");
-            case Continue c -> emit("continue;");
+            case Break b -> jump(b.target, true);
+            case Continue c -> jump(c.target, false);
             case Return r -> {
                 if (fn == null) {
                     emit("return;");
@@ -830,6 +830,70 @@ public final class CGen {
         }
     }
 
+    /**
+     * A loop being generated: the C labels that a `break` or `continue` jumping to it uses when a plain C
+     * `break` or `continue` would not do, and whether one did. A label is emitted only when used, since C
+     * compilers warn of an unused one.
+     */
+    private static final class CLoop {
+        final Loop loop;
+        final String brk;
+        final String cont;
+        /** Whether C's `continue` skips something the loop does after its body (the next value of a stepped range). */
+        final boolean continueSkips;
+        boolean brkUsed;
+        boolean contUsed;
+
+        CLoop(Loop loop, int id, boolean continueSkips) {
+            this.loop = loop;
+            this.brk = "al_brk" + id;
+            this.cont = "al_cont" + id;
+            this.continueSkips = continueSkips;
+        }
+    }
+
+    private final java.util.ArrayDeque<CLoop> loops = new java.util.ArrayDeque<>();
+
+    /** Starts the body of a loop: break and continue inside it know where to go. */
+    private CLoop enterLoop(Loop l, boolean continueSkips) {
+        CLoop c = new CLoop(l, ++tmpCount, continueSkips);
+        loops.push(c);
+        return c;
+    }
+
+    /** Ends the body of a loop (still inside the C loop): the label continue jumps to, if one did. */
+    private void endBody(CLoop c) {
+        if (c.contUsed) emit(c.cont + ":;");
+    }
+
+    /** After the C loop: the label break jumps to, if one did. */
+    private void exitLoop(CLoop c) {
+        loops.pop();
+        if (c.brkUsed) emit(c.brk + ":;");
+    }
+
+    private void jump(Loop target, boolean brk) {
+        CLoop inner = loops.peek();
+        CLoop to = inner;
+        if (target != null) {
+            for (CLoop c : loops) {
+                if (c.loop == target) {
+                    to = c;
+                    break;
+                }
+            }
+        }
+        if (to == inner && (brk || !inner.continueSkips)) {
+            emit(brk ? "break;" : "continue;");
+        } else if (brk) {
+            to.brkUsed = true;
+            emit("goto " + to.brk + ";");
+        } else {
+            to.contUsed = true;
+            emit("goto " + to.cont + ";");
+        }
+    }
+
     private void whileLoop(While w) {
         PrimKind lk = Type.kind(w.limit.type);
         boolean unsigned = !lk.signed;
@@ -852,12 +916,19 @@ public final class CGen {
         emit(count + "++;");
         // The body goes straight into the loop: a block of its own made each while loop three brackets
         // deep in C, so loops nested within the nesting limit went past the 256 that clang accepts.
+        CLoop cl = enterLoop(w, false);
         block(w.body);
+        endBody(cl);
         close("}");
+        exitLoop(cl);
         close("}");
     }
 
     private void rangeLoop(For f) {
+        if (f.stepped()) {
+            steppedLoop(f);
+            return;
+        }
         String t = ct(f.var.type);
         open("{");
         String from = tmp(f.var.type, lower(f.from));
@@ -866,7 +937,65 @@ public final class CGen {
         open("for (" + t + " " + i + " = " + from + "; " + i + " < " + to + "; " + i + "++) {");
         emit(t + " " + cName(f.var) + " = " + i + ";");
         emit("(void)" + cName(f.var) + ";");
+        CLoop cl = enterLoop(f, false);
         block(f.body);
+        endBody(cl);
+        close("}");
+        exitLoop(cl);
+        close("}");
+    }
+
+    /** a - b as an unsigned 64-bit number, for values a >= b of type t: exact, as the difference fits. */
+    private static String udiff(PrimKind k, String a, String b) {
+        String c = k.signed ? "(uint64_t)(int64_t)" : "(uint64_t)";
+        return "(" + c + a + " - " + c + b + ")";
+    }
+
+    /** base plus the unsigned offset off, a value of type k that is known to fit. */
+    private static String offset(PrimKind k, String base, String off) {
+        if (!k.signed) return "(" + cPrim(k) + ")((uint64_t)" + base + " + " + off + ")";
+        return "(" + cPrim(k) + ")al_wrap_i64((uint64_t)(int64_t)" + base + " + " + off + ")";
+    }
+
+    /** A range with a step, `..=` or `rev`, as Interpreter.rangeLoop: the stop test comes after the body. */
+    private void steppedLoop(For f) {
+        PrimKind k = Type.kind(f.var.type);
+        String t = ct(f.var.type);
+        open("{");
+        String from = tmp(f.var.type, lower(f.from));
+        String to = tmp(f.var.type, lower(f.to));
+        String st;
+        if (f.step != null) {
+            st = tmp(f.var.type, lower(f.step));
+            rangeTrap(k.signed ? st + " <= 0" : st + " == 0", "the step of a range must be positive, found ", f.var.type, st,
+                loc(f.step.span));
+        } else {
+            st = tmp(f.var.type, "1");
+        }
+        open("if (" + from + (f.inclusive ? " <= " : " < ") + to + ") {");
+        String i = "t" + ++tmpCount;
+        if (f.rev) {
+            String span = udiff(k, to, from);
+            String q = "(" + (f.inclusive ? span : span + " - 1u") + ") / (uint64_t)" + st;
+            emit(t + " " + i + " = " + offset(k, from, "(" + q + ") * (uint64_t)" + st) + ";");
+        } else {
+            emit(t + " " + i + " = " + from + ";");
+        }
+        open("for (;;) {");
+        emit(t + " " + cName(f.var) + " = " + i + ";");
+        emit("(void)" + cName(f.var) + ";");
+        CLoop cl = enterLoop(f, true);
+        block(f.body);
+        endBody(cl);
+        if (f.rev) {
+            emit("if (" + udiff(k, i, from) + " < (uint64_t)" + st + ") break;");
+            emit(i + " = " + offset(k, i, "(uint64_t)0 - (uint64_t)" + st) + ";");
+        } else {
+            emit("if (" + udiff(k, to, i) + (f.inclusive ? " < " : " <= ") + "(uint64_t)" + st + ") break;");
+            emit(i + " = " + offset(k, i, "(uint64_t)" + st) + ";");
+        }
+        close("}");
+        exitLoop(cl);
         close("}");
         close("}");
     }
@@ -885,11 +1014,18 @@ public final class CGen {
         String n = ct instanceof Type.ArrayT a ? a.len() + "u" : coll + ".len";
         String elem = ct instanceof Type.Str ? coll + ".b[" + i + "]" : coll + ".v[" + i + "]";
         emit("uint32_t " + i + ";");
-        open("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+        open(f.rev ? "for (" + i + " = " + n + "; " + i + "-- > 0;) {" : "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+        if (f.indexVar != null) {
+            emit("int64_t " + cName(f.indexVar) + " = (int64_t)" + i + ";");
+            emit("(void)" + cName(f.indexVar) + ";");
+        }
         emit(ct(f.var.type) + " " + cName(f.var) + " = " + elem + ";");
         emit("(void)" + cName(f.var) + ";");
+        CLoop cl = enterLoop(f, false);
         block(f.body);
+        endBody(cl);
         close("}");
+        exitLoop(cl);
         close("}");
     }
 
@@ -902,6 +1038,11 @@ public final class CGen {
         Expr src = c.args.get(0).expr();
         open("{");
         String s = f.snapshot ? tmp(src.type, lower(src)) : lowerLvalue(src);
+        String index = null;
+        if (f.indexVar != null) {
+            index = "t" + ++tmpCount;
+            emit("int64_t " + index + " = -1;");
+        }
         if (c.builtin == Builtin.CHARS) {
             String pos = "t" + ++tmpCount;
             String len = "t" + ++tmpCount;
@@ -912,8 +1053,12 @@ public final class CGen {
             emit("uint32_t " + cName(f.var) + " = al_utf8_next((" + s + ").b, (" + s + ").len, " + pos + ", &" + len + ", &" + ok + ");");
             emit("(void)" + cName(f.var) + ";");
             emit(pos + " += " + len + ";");
+            pieceIndex(f, index);
+            CLoop cl = enterLoop(f, false);
             block(f.body);
+            endBody(cl);
             close("}");
+            exitLoop(cl);
             close("}");
             return;
         }
@@ -935,9 +1080,21 @@ public final class CGen {
         open("while (al_next_piece((" + s + ").b, (" + s + ").len, &" + pos + ", " + p[0] + ", " + p[1] + ", " + (words ? 1 : 0)
             + ", &" + from + ", &" + to + ")) {");
         emit(x + ".len = al_copy_bytes(" + x + ".b, (" + s + ").b + " + from + ", " + to + " - " + from + ");");
+        pieceIndex(f, index);
+        CLoop cl = enterLoop(f, false);
         block(f.body);
+        endBody(cl);
         close("}");
+        exitLoop(cl);
         close("}");
+    }
+
+    /** The index variable of `for i, p in split(...)`: counted up at the start of each piece. */
+    private void pieceIndex(For f, String counter) {
+        if (counter == null) return;
+        emit(counter + "++;");
+        emit("int64_t " + cName(f.indexVar) + " = " + counter + ";");
+        emit("(void)" + cName(f.indexVar) + ";");
     }
 
     private void match(Match m) {

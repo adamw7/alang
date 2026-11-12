@@ -54,7 +54,10 @@ final class Temporaries {
             }
             case While w -> Layout.add(Layout.add(expr(w.cond), expr(w.limit)), block(w.body, r));
             case For f -> {
-                if (f.isRange()) yield Layout.add(Layout.add(expr(f.from), expr(f.to)), block(f.body, r));
+                if (f.isRange()) {
+                    long bounds = Layout.add(Layout.add(expr(f.from), expr(f.to)), f.step == null ? 0 : expr(f.step));
+                    yield Layout.add(bounds, block(f.body, r));
+                }
                 // The snapshot of the collection lives as long as the loop: the value itself when the
                 // collection is built by an expression (counted there), a copy when it is a variable the body
                 // may change. split and words in a loop build no list: only their arguments count.

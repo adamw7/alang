@@ -336,7 +336,17 @@ public final class Ast {
         }
     }
 
-    public static final class While extends Stmt {
+    /** A `for` or `while` loop, which `outer: for ...` may label for `break outer;` and `continue outer;`. */
+    public abstract static sealed class Loop extends Stmt {
+        public String label;
+        public Span labelSpan;
+
+        Loop(Span span) {
+            super(span);
+        }
+    }
+
+    public static final class While extends Loop {
         public final Expr cond;
         public final Expr limit;
         public final Block body;
@@ -354,13 +364,23 @@ public final class Ast {
      * `for x in words(s)` / `for c in chars(s)`, which go through the pieces (or code points) of s one at a time
      * without building a list.
      */
-    public static final class For extends Stmt {
+    public static final class For extends Loop {
         public final String name;
         public final Span nameSpan;
+        /** `for i, x in xs`: the name of the index, i; null without one. */
+        public final String indexName;
+        public final Span indexSpan;
         public final Expr from;
         public final Expr to;
+        /** `a..=b`: the range includes b. */
+        public final boolean inclusive;
+        /** `a..b step k`: the step, or null for 1. */
+        public final Expr step;
+        /** `rev`: the same values, last first. */
+        public final boolean rev;
         public final Block body;
         public LocalVar var;
+        public LocalVar indexVar;
         /**
          * Set by the checker: whether the loop goes through a copy of what it iterates, taken before the
          * first iteration. Only a variable (the collection, or the text that split and words cut up) needs
@@ -369,13 +389,24 @@ public final class Ast {
          */
         public boolean snapshot;
 
-        public For(Span span, String name, Span nameSpan, Expr from, Expr to, Block body) {
+        public For(Span span, String name, Span nameSpan, String indexName, Span indexSpan, Expr from, Expr to,
+                   boolean inclusive, Expr step, boolean rev, Block body) {
             super(span);
             this.name = name;
             this.nameSpan = nameSpan;
+            this.indexName = indexName;
+            this.indexSpan = indexSpan;
             this.from = from;
             this.to = to;
+            this.inclusive = inclusive;
+            this.step = step;
+            this.rev = rev;
             this.body = body;
+        }
+
+        /** Whether the range counts other than up by one from its start: a step, `..=` or `rev`. */
+        public boolean stepped() {
+            return step != null || inclusive || rev;
         }
 
         public boolean isRange() {
@@ -412,15 +443,25 @@ public final class Ast {
 
     public record Arm(Pattern pattern, Block body) {}
 
+    /** `break;` or `break label;`: {@code target} is the loop it leaves, set by the checker for a label. */
     public static final class Break extends Stmt {
-        public Break(Span span) {
+        public final String label;
+        public Loop target;
+
+        public Break(Span span, String label) {
             super(span);
+            this.label = label;
         }
     }
 
+    /** `continue;` or `continue label;`: {@code target} is the loop it continues, set by the checker for a label. */
     public static final class Continue extends Stmt {
-        public Continue(Span span) {
+        public final String label;
+        public Loop target;
+
+        public Continue(Span span, String label) {
             super(span);
+            this.label = label;
         }
     }
 

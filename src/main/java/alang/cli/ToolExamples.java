@@ -132,6 +132,7 @@ final class ToolExamples {
             case For f -> {
                 calls(f.from, out);
                 if (f.to != null) calls(f.to, out);
+                if (f.step != null) calls(f.step, out);
                 calls(f.body, out);
             }
             case Match m -> {

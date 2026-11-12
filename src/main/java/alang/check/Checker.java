@@ -51,6 +51,8 @@ public final class Checker {
         FnDecl fn;
         final Deque<Map<String, LocalVar>> scopes = new ArrayDeque<>();
         int loopDepth;
+        /** The loops around the statement being checked, innermost first. */
+        final Deque<Loop> loops = new ArrayDeque<>();
         boolean inEnsures;
         Expr mutCallAllowed;
         /**
@@ -689,7 +691,7 @@ public final class Checker {
                 if (!Type.isInt(lt) && !Type.isError(lt)) {
                     diags.error(Code.E0201, w.limit.span, "loop limit must be an integer, found " + lt);
                 }
-                loop(w.body);
+                loop(w, w.body);
                 yield false;
             }
             case For f -> {
@@ -699,10 +701,12 @@ public final class Checker {
             case Match m -> match(m);
             case Break b -> {
                 if (ctx.loopDepth == 0) diags.error(Code.E0302, b.span, "`break` outside of a loop");
+                else if (b.label != null) b.target = labelled(b.label, "break", b.span);
                 yield true;
             }
             case Continue c -> {
                 if (ctx.loopDepth == 0) diags.error(Code.E0302, c.span, "`continue` outside of a loop");
+                else if (c.label != null) c.target = labelled(c.label, "continue", c.span);
                 yield true;
             }
             case Return r -> {
@@ -717,10 +721,36 @@ public final class Checker {
         };
     }
 
-    private void loop(Block body) {
+    private void loop(Loop l, Block body) {
+        if (l.label != null) {
+            for (Loop outer : ctx.loops) {
+                if (l.label.equals(outer.label)) {
+                    diags.error(Code.E0105, l.labelSpan, "label `" + l.label + "` is already used by a loop around this one",
+                        "give each nested loop its own label");
+                    break;
+                }
+            }
+        }
         ctx.loopDepth++;
+        ctx.loops.push(l);
         block(body);
+        ctx.loops.pop();
         ctx.loopDepth--;
+    }
+
+    /** The loop around this statement labelled {@code label}, or null after reporting that there is none. */
+    private Loop labelled(String label, String jump, Span at) {
+        List<String> labels = new ArrayList<>();
+        for (Loop l : ctx.loops) {
+            if (label.equals(l.label)) return l;
+            if (l.label != null) labels.add(l.label);
+        }
+        String close = labels.isEmpty() ? null : didYouMean(label, labels);
+        String hint = labels.isEmpty()
+            ? "label the loop to " + jump + ": " + label + ": for x in xs { ... " + jump + " " + label + "; }"
+            : close != null ? close : "the loops around it are labelled " + String.join(", ", labels);
+        diags.error(Code.E0302, at, "`" + jump + " " + label + "` is not inside a loop labelled `" + label + "`", hint);
+        return null;
     }
 
     private void condition(Expr e, String what) {
@@ -800,6 +830,10 @@ public final class Checker {
             return Type.hasAnyCapacity(v.type) ? hint : hint + ", or copy it: var " + v.name + "2: " + v.type + " = " + v.name + ";";
         }
         For loop = loopVars.get(v);
+        if (loop != null && v == loop.indexVar) {
+            return "`" + v.name + "` is the index of each element, which the loop sets; to count something else, "
+                + "declare a var before the loop: var count: i64 = 0;";
+        }
         if (loop != null && loop.isRange()) {
             String from = exprText(loop.from);
             String to = exprText(loop.to);
@@ -864,6 +898,29 @@ public final class Checker {
                     varType = Type.ERROR;
                 }
             }
+            if (f.step != null) {
+                Type st = expr(f.step, Type.isError(varType) ? Type.I64 : varType);
+                if (!Type.isError(st) && !Type.isError(varType) && !st.equals(varType)) {
+                    diags.error(Code.E0201, f.step.span, "the step of a range of " + varType + " must be " + varType + ", found " + st,
+                        "convert it: step " + varType + "(" + exprText(f.step) + ")");
+                } else if (f.step instanceof IntLit lit && lit.value.signum() <= 0) {
+                    String hint;
+                    if (lit.value.equals(java.math.BigInteger.ONE.negate()) && f.from instanceof IntLit a && f.to instanceof IntLit b) {
+                        // `10..0 step -1` counts 10 down to 1: the same values as rev 1..=10.
+                        java.math.BigInteger low = f.inclusive ? b.value : b.value.add(java.math.BigInteger.ONE);
+                        hint = "to count down from " + a.value + " to " + low + ", go through the range backwards: for " + f.name
+                            + " in rev " + low + "..=" + a.value + " { }";
+                    } else {
+                        hint = "to count down, go through the range backwards: `for i in rev a..b step k` takes the values "
+                            + "of a..b step k, the last one first";
+                    }
+                    diags.error(Code.E0202, f.step.span, "a range's step must be positive, found " + lit.value, hint);
+                }
+            }
+            if (f.indexName != null) {
+                diags.error(Code.E0212, f.indexSpan, "a range has no index: its values are the indexes",
+                    "write for " + f.name + " in " + exprText(f.from) + (f.inclusive ? "..=" : "..") + exprText(f.to) + " { }");
+            }
         } else {
             // split and words in a for loop make one piece at a time: there is no list for them to take a type from.
             Builtin b = f.from instanceof Call c ? Builtin.byName(c.name) : null;
@@ -879,10 +936,19 @@ public final class Checker {
                 varType = Type.ERROR;
             }
         }
+        if (f.rev && f.pieces() != null) {
+            diags.error(Code.E0212, f.from.span, "rev goes through a range, array, list or str backwards, not the pieces of "
+                    + f.pieces().name + ", which are made from the front",
+                "store them in a list first: let parts: list[str[32]; 16] = " + exprText(f.from) + "; for p in rev parts { }");
+        }
         ctx.scopes.push(new HashMap<>());
+        if (f.indexName != null) {
+            f.indexVar = declare(f.indexName, f.indexSpan, Type.I64, false);
+            loopVars.put(f.indexVar, f);
+        }
         f.var = declare(f.name, f.nameSpan, varType, false);
         loopVars.put(f.var, f);
-        loop(f.body);
+        loop(f, f.body);
         ctx.scopes.pop();
         if (!f.isRange()) {
             Expr src = f.source();
@@ -1405,11 +1471,11 @@ public final class Checker {
             case "insert_at", "add_at" -> "use insert(mut xs, i, value)";
             case "remove_at", "delete", "erase", "pop_at" -> "use remove(mut xs, i), which returns the element";
             case "exit", "abort", "fail", "error", "throw", "raise" -> "use panic(\"message\")";
-            case "range" -> "use a range loop: for i in 0..n { }";
+            case "range" -> "use a range loop: for i in 0..n { }, for i in 0..=n step 2 { }, or backwards: for i in rev 0..n { }";
             case "sorted", "sort_by", "sort_by_key", "order_by" ->
                 "sort a list in place with sort(mut xs); to order by a key, sort structs whose first field is the key "
                     + "(structs order field by field), and reverse(mut xs) for descending";
-            case "reversed", "rev" -> "reverse in place with reverse(mut xs)";
+            case "reversed", "rev" -> "go through it backwards with for x in rev xs { }, or reverse it in place with reverse(mut xs)";
             case "implode", "join_with", "joined", "concat_with" -> "use join(parts, sep): let line: str[64] = join(parts, \", \");";
             case "includes", "has" -> "use contains(xs, x)";
             case "find", "indexOf", "index", "position", "find_index", "search" -> "use index_of(xs, x), which is -1 when x is absent";
@@ -1448,7 +1514,7 @@ public final class Checker {
             case "sum" -> "there is no sum; add in a loop: var total: i64 = 0; for x in xs { total += x; }";
             case "map", "filter", "reduce", "fold", "any", "all", "zip", "foreach", "for_each", "forEach" ->
                 "there are no higher-order functions; write the loop: for x in xs { if x > 0 { push(mut out, x); } }";
-            case "enumerate" -> "loop over the indexes: for i in 0..len(xs) { let x: i64 = xs[i]; }";
+            case "enumerate" -> "for i, x in xs { } gives each element with its index";
             case "ord" -> "a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number";
             case "chr" -> "push(mut s, u8(n)) adds the byte n to a str";
             case "dict", "HashMap", "hashmap", "Map", "set", "Set", "HashSet" -> Hints.COLLECTIONS;
