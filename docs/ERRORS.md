@@ -185,7 +185,7 @@ f(1, 2);  // error
 
 ## E0205
 
-**cannot assign to immutable value**: Only `var` locals and `mut` parameters can be modified. `let` locals, plain parameters and constants are read-only.
+**cannot assign to immutable value**: Only `var` locals and `mut` parameters can be modified. `let` locals, loop variables, match bindings, plain parameters and constants are read-only.
 
 ```
 let x: i32 = 1;

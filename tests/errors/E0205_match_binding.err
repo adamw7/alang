@@ -1,0 +1,7 @@
+error[E0205]: cannot assign to `v`, it is immutable
+  --> tests/errors/E0205_match_binding.al:11:13
+   |
+11 |             v += 1;
+   |             ^
+  = hint: `v` is a read-only copy of the payload; to change it, copy it into a variable: var v2: i64 = v;
+

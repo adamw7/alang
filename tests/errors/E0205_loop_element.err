@@ -1,0 +1,21 @@
+error[E0205]: cannot assign to `item`, it is immutable
+  --> tests/errors/E0205_loop_element.al:11:9
+   |
+11 |         item.count += 1;
+   |         ^^^^
+  = hint: `item` is a copy of each element; to change the elements of `items`, loop over indexes and write `items[i].count` instead of `item.count`: for i in 0..len(items) { }
+
+error[E0205]: `row` is immutable and cannot be passed as `mut`
+  --> tests/errors/E0205_loop_element.al:16:22
+   |
+16 |             push(mut row, i);
+   |                      ^^^
+  = hint: `row` is a copy of each element; to change the elements of `grid`, loop over indexes and write `grid[i2]` instead of `row`: for i2 in 0..len(grid) { }
+
+error[E0205]: cannot assign to `s`, it is immutable
+  --> tests/errors/E0205_loop_element.al:20:9
+   |
+20 |         s = 0;
+   |         ^
+  = hint: `s` is a read-only copy of each element; to change it, copy it into a variable: var s2: i64 = s;
+

@@ -50,7 +50,7 @@ public enum Code {
         "A call passes more or fewer arguments than the function, variant or builtin accepts.",
         "fn f(a: i32) { }\nf(1, 2);  // error"),
     E0205("cannot assign to immutable value",
-        "Only `var` locals and `mut` parameters can be modified. `let` locals, plain parameters and constants are read-only.",
+        "Only `var` locals and `mut` parameters can be modified. `let` locals, loop variables, match bindings, plain parameters and constants are read-only.",
         "let x: i32 = 1;\nx = 2;  // error: declare with `var x: i32 = 1;`"),
     E0206("invalid assignment target",
         "The left side of an assignment must be a variable, field or element of a variable.",

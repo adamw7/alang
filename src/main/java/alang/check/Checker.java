@@ -60,6 +60,10 @@ public final class Checker {
 
     private Ctx ctx = new Ctx();
 
+    /** The loop that declares each `for` variable, and every match binding: E0205 hints differ for them. */
+    private final Map<LocalVar, For> loopVars = new HashMap<>();
+    private final Set<LocalVar> matchBindings = new HashSet<>();
+
     /** The memory budget in bytes (0: none), and the bytes of the constants evaluated so far. */
     private final long maxStack;
     private long staticBytes;
@@ -682,7 +686,7 @@ public final class Checker {
         Type tt = expr(a.target, null);
         if (!v.mutable) {
             diags.error(Code.E0205, root.span, "cannot assign to `" + v.name + "`, it is immutable",
-                immutableHint(v));
+                immutableHint(v, a.target));
         }
         ctx.mutCallAllowed = a.value;
         if (a.op == null) ctx.stored = a.value;
@@ -701,12 +705,47 @@ public final class Checker {
         }
     }
 
-    private String immutableHint(LocalVar v) {
+    /** How to change {@code place}, whose root is the immutable {@code v}; the advice depends on what declared it. */
+    private String immutableHint(LocalVar v, Expr place) {
         if (ctx.fn != null && ctx.fn.paramVars.contains(v)) {
             return "parameters are read-only; declare it as `" + v.name + ": mut " + v.type
                 + "` (callers then pass `mut x`), or copy it: var " + v.name + "2: " + v.type + " = " + v.name + ";";
         }
+        For loop = loopVars.get(v);
+        if (loop != null && loop.isRange()) {
+            String from = exprText(loop.from);
+            String to = exprText(loop.to);
+            return "`" + v.name + "` steps through the range by itself; to move it yourself, use a while loop instead: var "
+                + v.name + ": " + v.type + " = " + from + "; while " + v.name + " < " + to + " limit "
+                + (from.equals("0") ? to : "<iterations>") + " { ... " + v.name + " += 1; }";
+        }
+        if (loop != null) {
+            Name coll = rootName(loop.from);
+            if (coll != null && lookupLocal(coll.name) != null) {
+                String items = exprText(loop.from);
+                String index = freshName("i");
+                String text = exprText(place);
+                String rest = text.startsWith(v.name) ? text.substring(v.name.length()) : "";
+                return "`" + v.name + "` is a copy of each element; to change the elements of `" + items
+                    + "`, loop over indexes and write `" + items + "[" + index + "]" + rest + "` instead of `"
+                    + v.name + rest + "`: for " + index + " in 0..len(" + items + ") { }";
+            }
+        }
+        if (loop != null || matchBindings.contains(v)) {
+            String what = loop != null ? "of each element" : "of the payload";
+            return "`" + v.name + "` is a read-only copy " + what + "; to change it, copy it into a variable: var "
+                + freshName(v.name) + ": " + v.type + " = " + v.name + ";";
+        }
         return "declare it with `var` instead of `let`";
+    }
+
+    /** {@code base}, or else base2, base3, ...: the first that names no local in scope, constant, type or function. */
+    private String freshName(String base) {
+        String name = base;
+        for (int k = 2; lookupLocal(name) != null || consts.containsKey(name) || typeExists(name) || fns.containsKey(name); k++) {
+            name = base + k;
+        }
+        return name;
     }
 
     private void forLoop(For f) {
@@ -737,6 +776,7 @@ public final class Checker {
         }
         ctx.scopes.push(new HashMap<>());
         f.var = declare(f.name, f.nameSpan, varType, false);
+        loopVars.put(f.var, f);
         loop(f.body);
         ctx.scopes.pop();
     }
@@ -907,7 +947,9 @@ public final class Checker {
         }
         for (int i = 0; i < n; i++) {
             String b = v.bindings.get(i);
-            v.vars.add(b == null ? null : declare(b, v.bindingSpans.get(i), variant.payload.get(i), false));
+            LocalVar binding = b == null ? null : declare(b, v.bindingSpans.get(i), variant.payload.get(i), false);
+            if (binding != null) matchBindings.add(binding);
+            v.vars.add(binding);
         }
     }
 
@@ -1259,7 +1301,7 @@ public final class Checker {
         }
         if (!v.mutable) {
             diags.error(Code.E0205, root.span, "`" + v.name + "` is immutable and cannot be passed as `mut`",
-                immutableHint(v));
+                immutableHint(v, place));
         }
         return t;
     }
