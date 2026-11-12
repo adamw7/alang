@@ -766,16 +766,16 @@ static double al_dbl_from(uint64_t u) {
 }
 
 /* A 32-bit pattern as the int32_t it is in two's complement, without an implementation-defined conversion. */
-static int32_t al_s32(uint32_t u) {
+static int32_t al_bits_i32(uint32_t u) {
     return u <= 0x7fffffffu ? (int32_t)u : -(int32_t)(~u) - 1;
 }
 
 static int32_t al_hiw(double x) {
-    return al_s32((uint32_t)(al_dbl_bits(x) >> 32));
+    return al_bits_i32((uint32_t)(al_dbl_bits(x) >> 32));
 }
 
 static int32_t al_low(double x) {
-    return al_s32((uint32_t)al_dbl_bits(x));
+    return al_bits_i32((uint32_t)al_dbl_bits(x));
 }
 
 static double al_with_hi(double x, int32_t h) {
@@ -1553,6 +1553,128 @@ static uint32_t al_copy_bytes(uint8_t *dst, const uint8_t *src, uint32_t n) {
     uint32_t i;
     for (i = 0; i < n; i++) dst[i] = src[i];
     return n;
+}
+
+/* ---- UTF-8 */
+
+/*
+ * The code point that starts at byte i of s[0..n), as Stdlib.utf8Next decodes it: *len gets its length in
+ * bytes and *ok whether it is well-formed. A byte that does not start a well-formed sequence stands for
+ * U+FFFD on its own.
+ */
+static uint32_t al_utf8_next(const uint8_t *s, uint32_t n, uint32_t i, uint32_t *len, int *ok) {
+    uint32_t b0 = s[i], cp, lo = 0x80u, hi = 0xBFu, k, c, l;
+    *len = 1;
+    *ok = 0;
+    if (b0 < 0x80u) {
+        *ok = 1;
+        return b0;
+    }
+    if (b0 >= 0xC2u && b0 <= 0xDFu) {
+        l = 2;
+        cp = b0 & 0x1Fu;
+    } else if (b0 >= 0xE0u && b0 <= 0xEFu) {
+        l = 3;
+        cp = b0 & 0x0Fu;
+        if (b0 == 0xE0u) lo = 0xA0u;
+        if (b0 == 0xEDu) hi = 0x9Fu;
+    } else if (b0 >= 0xF0u && b0 <= 0xF4u) {
+        l = 4;
+        cp = b0 & 0x07u;
+        if (b0 == 0xF0u) lo = 0x90u;
+        if (b0 == 0xF4u) hi = 0x8Fu;
+    } else {
+        return 0xFFFDu;
+    }
+    if (n - i < l) return 0xFFFDu;
+    for (k = 1; k < l; k++) {
+        c = s[i + k];
+        if (c < (k == 1 ? lo : 0x80u) || c > (k == 1 ? hi : 0xBFu)) return 0xFFFDu;
+        cp = (cp << 6) | (c & 0x3Fu);
+    }
+    *len = l;
+    *ok = 1;
+    return cp;
+}
+
+static bool al_is_utf8(const uint8_t *s, uint32_t n) {
+    uint32_t i = 0, l;
+    int ok;
+    while (i < n) {
+        (void)al_utf8_next(s, n, i, &l, &ok);
+        if (!ok) return false;
+        i += l;
+    }
+    return true;
+}
+
+static int64_t al_char_count(const uint8_t *s, uint32_t n) {
+    uint32_t i = 0, l;
+    int ok;
+    int64_t count = 0;
+    while (i < n) {
+        (void)al_utf8_next(s, n, i, &l, &ok);
+        i += l;
+        count++;
+    }
+    return count;
+}
+
+/* Appends the UTF-8 encoding of the code point c to b, whose length is *len and capacity cap. */
+static void al_push_char(uint8_t *b, uint32_t *len, uint32_t cap, al_pos c, int line, int col) {
+    uint64_t v = c.u ? c.v : (uint64_t)c.s;
+    uint32_t n, k, lead;
+    if ((!c.u && c.s < 0) || v > 0x10FFFFu || (v >= 0xD800u && v <= 0xDFFFu)) {
+        al_out e = al_trap_begin("R0013");
+        AL_PUTS(&e, "push_char needs a Unicode code point from 0 to 1114111 that is not a surrogate (55296 to 57343), found ");
+        al_fmt_pos(&e, c);
+        al_trap_end(&e, line, col);
+    }
+    n = v < 0x80u ? 1 : v < 0x800u ? 2 : v < 0x10000u ? 3 : 4;
+    if (*len + n > cap) {
+        al_out e = al_trap_begin("R0004");
+        AL_PUTS(&e, "push_char exceeds str capacity ");
+        al_fmt_u64(&e, cap);
+        AL_PUTS(&e, " (length ");
+        al_fmt_u64(&e, *len);
+        AL_PUTS(&e, ", appending ");
+        al_fmt_u64(&e, n);
+        AL_PUTS(&e, " bytes)");
+        al_trap_end(&e, line, col);
+    }
+    if (n == 1) {
+        b[(*len)++] = (uint8_t)v;
+        return;
+    }
+    lead = n == 2 ? 0xC0u : n == 3 ? 0xE0u : 0xF0u;
+    b[(*len)++] = (uint8_t)(lead | (uint32_t)(v >> (6 * (n - 1))));
+    for (k = n - 1; k-- > 0;) b[(*len)++] = (uint8_t)(0x80u | (uint32_t)((v >> (6 * k)) & 0x3Fu));
+}
+
+/* The code points f..t of s[0..n) into dst; returns the length in bytes. */
+static uint32_t al_slice_chars(uint8_t *dst, const uint8_t *s, uint32_t n, al_pos f, al_pos t, int line, int col) {
+    uint32_t count = (uint32_t)al_char_count(s, n), i = 0, start = 0, k, l, from, to;
+    int ok;
+    if (!al_pos_le(f, count) || !al_pos_le(t, count) || al_pos_get(f) > al_pos_get(t)) {
+        al_out e = al_trap_begin("R0003");
+        AL_PUTS(&e, "slice_chars ");
+        al_fmt_pos(&e, f);
+        AL_PUTS(&e, "..");
+        al_fmt_pos(&e, t);
+        AL_PUTS(&e, " is out of range for ");
+        al_fmt_u64(&e, count);
+        AL_PUTS(&e, " code points");
+        al_trap_end(&e, line, col);
+    }
+    from = al_pos_get(f);
+    to = al_pos_get(t);
+    for (k = 0; k < to; k++) {
+        if (k == from) start = i;
+        (void)al_utf8_next(s, n, i, &l, &ok);
+        i += l;
+    }
+    if (from == to) start = i;
+    return al_copy_bytes(dst, s + start, i - start);
 }
 
 static uint32_t al_trim_into(uint8_t *dst, const uint8_t *s, uint32_t n) {

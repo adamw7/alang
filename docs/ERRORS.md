@@ -617,7 +617,7 @@ let x: u32 = 1 << 32;  // trap
 
 ## R0013
 
-**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, or an empty separator or pattern for split or replace.
+**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, an empty separator or pattern for split or replace, or a number that is not a Unicode code point for push_char.
 
 ```
 let p: i64 = pow(2, -1);  // trap
@@ -712,6 +712,11 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `count(xs, x) -> i64` | How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right (traps (R0013) if the str is empty); in an array or list, the elements equal to x. |
 | `is_int(s) -> bool` | Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it. |
 | `is_float(s) -> bool` | Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. No exponents. |
+| `is_utf8(s) -> bool` | Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or cut-off sequences. |
+| `char_count(s) -> i64` | The number of Unicode code points in a str (len(s) counts bytes). Each byte that does not start a well-formed UTF-8 sequence counts as one. |
+| `chars(s) -> list[u32; N]` | The Unicode code points of a str, decoding UTF-8; a byte that does not start a well-formed sequence gives U+FFFD (65533). Its type is that of the variable it is stored in; traps (R0004) if they do not fit. for c in chars(s) goes through them one at a time instead, each a u32, and never traps. |
+| `push_char(mut s, c)` | Appends the UTF-8 encoding (1 to 4 bytes) of the code point c, an integer, to a str. Traps (R0013) unless c is 0 to 0x10FFFF and not a surrogate, and (R0004) if it does not fit. |
+| `slice_chars(s, from, to) -> str[N]` | The code points from..to (half-open, counted as char_count counts them) of a str, as a str of the same capacity. Traps (R0003) unless 0 <= from <= to <= char_count(s). |
 
 ### Collections
 

@@ -116,7 +116,8 @@ test "counts repeated words" {
 14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings.
 15. **Functions with a return type return on every path.** Add a final `return` after loops.
 16. **No methods.** `len(xs)`, not `xs.len()`; `push(mut xs, v)`, not `xs.push(v)`; `trim(s)`, not `s.trim()`.
-17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`. Two strs compare with `==` and order with `<`, byte by byte.
+17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`. Two strs compare with `==` and order with `<`, byte by byte. For characters beyond ASCII, `char_count(s)` counts
+    code points, `for c in chars(s) { }` goes through them (each a `u32`), and `slice_chars` cuts between them.
 18. **No exceptions.** Return an enum for recoverable failures; `panic("...")` or `assert` for bugs.
 19. **Input arrives whole; nothing else is read.** `fn main(input: str[4096])` gets all of stdin as bytes
     (`bin/alang run prog.al < data.txt`; more than 4096 bytes traps), a `tool fn` gets JSON. No files.
@@ -168,7 +169,7 @@ structs), [examples/helpers.al](examples/helpers.al) has tested helpers to impor
 |------|-----------|
 | Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` |
+| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
 | Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays |
 
 - `split`, `words`, `join` and `replace` take their type from the variable they are stored in, so make the

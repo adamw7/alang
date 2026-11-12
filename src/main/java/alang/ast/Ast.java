@@ -351,7 +351,8 @@ public final class Ast {
 
     /**
      * `for x in a..b` (to != null), `for x in collection` (to == null), or `for x in split(s, sep)` /
-     * `for x in words(s)`, which goes through the pieces of s one at a time without building a list.
+     * `for x in words(s)` / `for c in chars(s)`, which go through the pieces (or code points) of s one at a time
+     * without building a list.
      */
     public static final class For extends Stmt {
         public final String name;
@@ -387,7 +388,7 @@ public final class Ast {
          */
         public Call pieces() {
             if (to != null || !(from instanceof Call c)) return null;
-            int arity = c.builtin == Builtin.SPLIT ? 2 : c.builtin == Builtin.WORDS ? 1 : -1;
+            int arity = c.builtin == Builtin.SPLIT ? 2 : c.builtin == Builtin.WORDS || c.builtin == Builtin.CHARS ? 1 : -1;
             return c.args.size() == arity ? c : null;
         }
 

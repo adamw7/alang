@@ -130,6 +130,23 @@ public enum Builtin {
             + "digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are "
             + "left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. No exponents."),
 
+    IS_UTF8(Group.TEXT, true, "is_utf8", "is_utf8(s) -> bool",
+        "Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or "
+            + "cut-off sequences."),
+    CHAR_COUNT(Group.TEXT, true, "char_count", "char_count(s) -> i64",
+        "The number of Unicode code points in a str (len(s) counts bytes). Each byte that does not start a well-formed "
+            + "UTF-8 sequence counts as one."),
+    CHARS(Group.TEXT, true, "chars", "chars(s) -> list[u32; N]",
+        "The Unicode code points of a str, decoding UTF-8; a byte that does not start a well-formed sequence gives "
+            + "U+FFFD (65533). Its type is that of the variable it is stored in; traps (R0004) if they do not fit. "
+            + "for c in chars(s) goes through them one at a time instead, each a u32, and never traps."),
+    PUSH_CHAR(Group.TEXT, false, "push_char", "push_char(mut s, c)",
+        "Appends the UTF-8 encoding (1 to 4 bytes) of the code point c, an integer, to a str. Traps (R0013) unless c is "
+            + "0 to 0x10FFFF and not a surrogate, and (R0004) if it does not fit."),
+    SLICE_CHARS(Group.TEXT, true, "slice_chars", "slice_chars(s, from, to) -> str[N]",
+        "The code points from..to (half-open, counted as char_count counts them) of a str, as a str of the same capacity. "
+            + "Traps (R0003) unless 0 <= from <= to <= char_count(s)."),
+
     // ---- collections
     SORT(Group.COLLECTIONS, false, "sort", "sort(mut xs)",
         "Sorts a list, array or str in place, ascending. Every type is ordered: numbers by value (-0.0 before 0.0, "
@@ -192,7 +209,7 @@ public enum Builtin {
      * text that fixed, pad_left and pad_right make when it is not written out at once (see {@link #formats}).
      */
     public boolean typedByTarget() {
-        return this == SPLIT || this == WORDS || this == JOIN || this == REPLACE || formats();
+        return this == SPLIT || this == WORDS || this == CHARS || this == JOIN || this == REPLACE || formats();
     }
 
     /** Whether it formats a value as text: fixed, pad_left and pad_right, which print and append write out directly. */
@@ -203,7 +220,7 @@ public enum Builtin {
     /** Whether the first argument is modified, and so passed as `mut`. */
     public boolean modifiesFirst() {
         return switch (this) {
-            case PUSH, POP, CLEAR, APPEND, SORT, REVERSE, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
+            case PUSH, POP, CLEAR, APPEND, PUSH_CHAR, SORT, REVERSE, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
             default -> false;
         };
     }

@@ -237,7 +237,8 @@ public enum Code {
         "let x: u32 = 1 << 32;  // trap"),
     R0013("invalid argument",
         "A standard library function received an argument outside its domain: a negative exponent for pow, bounds "
-            + "with lo > hi for clamp, or an empty separator or pattern for split or replace.",
+            + "with lo > hi for clamp, an empty separator or pattern for split or replace, or a number that is not a Unicode "
+            + "code point for push_char.",
         "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap");
 
     public final String title;

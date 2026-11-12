@@ -1,0 +1,28 @@
+error[E0201]: chars() builds a list[u32; M], but list[i64; 4] is expected
+ --> tests/errors/E0201_utf8.al:5:31
+  |
+5 |     let wrong: list[i64; 4] = chars(s);
+  |                               ^^^^^^^^
+  = hint: store it in a variable of that type: let cs: list[u32; 64] = chars(s);
+
+error[E0216]: chars() takes its type, and so its capacity, from the variable it is stored in
+ --> tests/errors/E0201_utf8.al:6:11
+  |
+6 |     print(chars(s));
+  |           ^^^^^^^^
+  = hint: make the call the whole right-hand side of a typed let/var, an assignment or a return: let cs: list[u32; 64] = chars(s); or, to go through the code points one at a time without a list: for c in chars(s) { }
+
+error[E0201]: push_char() needs a code point, an integer, found str[1]
+ --> tests/errors/E0201_utf8.al:7:22
+  |
+7 |     push_char(mut s, "b");
+  |                      ^^^
+  = hint: to add text, use append(mut s, "b")
+
+error[E0207]: push_char() modifies its first argument
+ --> tests/errors/E0201_utf8.al:8:15
+  |
+8 |     push_char(s, 98);
+  |               ^
+  = hint: write push_char(mut s, c)
+

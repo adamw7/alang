@@ -502,6 +502,115 @@ final class Stdlib {
         return v[0];
     }
 
+    // =================================================================== UTF-8
+
+    /**
+     * The code point that starts at byte i of b[0..n), as (code point << 8) | (valid ? 0x80 : 0) | length. A
+     * byte that does not start a well-formed sequence (overlong, a surrogate, past U+10FFFF, or cut short)
+     * stands for U+FFFD on its own, so that every byte belongs to exactly one code point.
+     */
+    static long utf8Next(byte[] b, int n, int i) {
+        int b0 = b[i] & 0xFF;
+        if (b0 < 0x80) return ((long) b0 << 8) | 0x80 | 1;
+        int len;
+        int cp;
+        int lo = 0x80;
+        int hi = 0xBF;
+        if (b0 >= 0xC2 && b0 <= 0xDF) {
+            len = 2;
+            cp = b0 & 0x1F;
+        } else if (b0 >= 0xE0 && b0 <= 0xEF) {
+            len = 3;
+            cp = b0 & 0x0F;
+            if (b0 == 0xE0) lo = 0xA0;
+            if (b0 == 0xED) hi = 0x9F;
+        } else if (b0 >= 0xF0 && b0 <= 0xF4) {
+            len = 4;
+            cp = b0 & 0x07;
+            if (b0 == 0xF0) lo = 0x90;
+            if (b0 == 0xF4) hi = 0x8F;
+        } else {
+            return (0xFFFDL << 8) | 1;
+        }
+        if (n - i < len) return (0xFFFDL << 8) | 1;
+        for (int k = 1; k < len; k++) {
+            int c = b[i + k] & 0xFF;
+            if (c < (k == 1 ? lo : 0x80) || c > (k == 1 ? hi : 0xBF)) return (0xFFFDL << 8) | 1;
+            cp = (cp << 6) | (c & 0x3F);
+        }
+        return ((long) cp << 8) | 0x80 | len;
+    }
+
+    static boolean isUtf8(StrV s) {
+        for (int i = 0; i < s.len; ) {
+            long d = utf8Next(s.b, s.len, i);
+            if ((d & 0x80) == 0) return false;
+            i += (int) (d & 7);
+        }
+        return true;
+    }
+
+    static long charCount(StrV s) {
+        long count = 0;
+        for (int i = 0; i < s.len; i += (int) (utf8Next(s.b, s.len, i) & 7)) count++;
+        return count;
+    }
+
+    /** The code points of s as a list of type t; R0004 if there are more than it holds. */
+    static ListV chars(StrV s, Type.ListT t, Span at) {
+        ListV r = new ListV(new Object[t.cap()], 0);
+        for (int i = 0; i < s.len; ) {
+            long d = utf8Next(s.b, s.len, i);
+            if (r.len == t.cap()) {
+                throw new Trap(Code.R0004, at, "chars makes more than " + t.cap() + " code points, the capacity of " + t);
+            }
+            r.items[r.len++] = d >>> 8;
+            i += (int) (d & 7);
+        }
+        return r;
+    }
+
+    /** Appends the UTF-8 encoding of the code point c (of integer type k) to s. */
+    static void pushChar(StrV s, long c, PrimKind k, Span at) {
+        boolean scalar = !(k.signed && c < 0) && Long.compareUnsigned(c, 0x10FFFF) <= 0 && (c < 0xD800 || c > 0xDFFF);
+        if (!scalar) {
+            throw new Trap(Code.R0013, at, "push_char needs a Unicode code point from 0 to 1114111 that is not a surrogate "
+                + "(55296 to 57343), found " + IntOps.toString(k, c));
+        }
+        int n = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+        if (s.len + n > s.b.length) {
+            throw new Trap(Code.R0004, at, "push_char exceeds str capacity " + s.b.length + " (length " + s.len + ", appending "
+                + n + " bytes)");
+        }
+        int v = (int) c;
+        if (n == 1) {
+            s.b[s.len++] = (byte) v;
+            return;
+        }
+        int lead = n == 2 ? 0xC0 : n == 3 ? 0xE0 : 0xF0;
+        s.b[s.len++] = (byte) (lead | (v >>> (6 * (n - 1))));
+        for (int k2 = n - 2; k2 >= 0; k2--) s.b[s.len++] = (byte) (0x80 | ((v >>> (6 * k2)) & 0x3F));
+    }
+
+    /** The code points from..to of s, as a str of the same capacity; R0003 unless 0 <= from <= to <= char_count(s). */
+    static StrV sliceChars(StrV s, long from, PrimKind fk, long to, PrimKind tk, Span at) {
+        long count = charCount(s);
+        if (from < 0 || from > count || to < 0 || to > count || from > to) {
+            throw new Trap(Code.R0003, at, "slice_chars " + IntOps.toString(fk, from) + ".." + IntOps.toString(tk, to)
+                + " is out of range for " + count + " code points");
+        }
+        int i = 0;
+        int start = 0;
+        for (long k = 0; k < to; k++) {
+            if (k == from) start = i;
+            i += (int) (utf8Next(s.b, s.len, i) & 7);
+        }
+        if (from == to) start = i;
+        byte[] b = new byte[s.b.length];
+        System.arraycopy(s.b, start, b, 0, i - start);
+        return new StrV(b, i - start);
+    }
+
     // =================================================================== collections
 
     /**

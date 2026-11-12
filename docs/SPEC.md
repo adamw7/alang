@@ -550,6 +550,20 @@ test "empty items are skipped and bad ones reported" {
 }
 ```
 
+Text is bytes, and these read and write it as UTF-8:
+
+| Function | Description |
+|----------|-------------|
+| `is_utf8(s) -> bool` | Whether `s` is well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or cut-off sequences. |
+| `char_count(s) -> i64` | The number of code points in `s` (`len` counts bytes). |
+| `chars(s) -> list[u32; N]` | The code points of `s`; its type is that of the variable it is stored in, and too many trap (R0004). `for c in chars(s) { }` goes through them one at a time instead, each a `u32`, and never traps. |
+| `push_char(mut s, c)` | Appends the UTF-8 encoding of the code point `c` (any integer type), 1 to 4 bytes. Traps (R0013) unless `c` is 0 to 0x10FFFF and not a surrogate, and (R0004) if it does not fit. |
+| `slice_chars(s, from, to) -> str[N]` | The code points `from..to` of `s`, as a str of the capacity of `s`; never cuts a character in half. Traps (R0003) unless `0 <= from <= to <= char_count(s)`. |
+
+A byte that does not start a well-formed sequence is one code point of its own, U+FFFD (65533), so every
+byte belongs to exactly one code point and the same bytes always decode the same way. Case changes and
+the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
+
 ### 9.5 Collections
 
 | Function | Description |

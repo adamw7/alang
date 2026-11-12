@@ -356,6 +356,18 @@ public final class Interpreter {
     private int pieceLoop(For f, Call c, Object[] slots) {
         Expr src = c.args.get(0).expr();
         StrV s = (StrV) (f.snapshot ? owned(src, slots) : eval(src, slots));
+        if (c.builtin == Builtin.CHARS) {
+            for (int pos = 0; pos < s.len; ) {
+                long d = Stdlib.utf8Next(s.b, s.len, pos);
+                pos += (int) (d & 7);
+                step(f.span);
+                slots[f.var.slot] = d >>> 8;
+                int r = execBlock(f.body, slots);
+                if (r == BREAK) break;
+                if (r == RETURN) return r;
+            }
+            return NORMAL;
+        }
         byte[] sep = c.builtin == Builtin.SPLIT ? Stdlib.pattern(eval(c.args.get(1).expr(), slots)) : null;
         if (sep != null && sep.length == 0) throw new Trap(Code.R0013, c.span, "split separator is empty");
         StrV piece = new StrV(new byte[((Type.Str) src.type).cap()], 0);
@@ -935,6 +947,28 @@ public final class Interpreter {
             }
             case TRIM -> {
                 return Stdlib.trim((StrV) eval(args.get(0).expr(), slots));
+            }
+            case IS_UTF8 -> {
+                return Stdlib.isUtf8((StrV) eval(args.get(0).expr(), slots));
+            }
+            case CHAR_COUNT -> {
+                return Stdlib.charCount((StrV) eval(args.get(0).expr(), slots));
+            }
+            case CHARS -> {
+                return Stdlib.chars((StrV) eval(args.get(0).expr(), slots), (Type.ListT) c.type, c.span);
+            }
+            case PUSH_CHAR -> {
+                Ref target = ref(args.get(0).expr(), slots);
+                long cp = (Long) eval(args.get(1).expr(), slots);
+                Stdlib.pushChar((StrV) target.get(), cp, Type.kind(args.get(1).expr().type), c.span);
+                return null;
+            }
+            case SLICE_CHARS -> {
+                StrV xs = (StrV) eval(args.get(0).expr(), slots);
+                long from = (Long) eval(args.get(1).expr(), slots);
+                long to = (Long) eval(args.get(2).expr(), slots);
+                return Stdlib.sliceChars(xs, from, Type.kind(args.get(1).expr().type), to, Type.kind(args.get(2).expr().type),
+                    c.span);
             }
             case TRY_SPLIT, TRY_WORDS -> {
                 ListV parts = (ListV) ref(args.get(0).expr(), slots).get();

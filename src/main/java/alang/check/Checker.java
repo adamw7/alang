@@ -867,7 +867,7 @@ public final class Checker {
         } else {
             // split and words in a for loop make one piece at a time: there is no list for them to take a type from.
             Builtin b = f.from instanceof Call c ? Builtin.byName(c.name) : null;
-            if (b == Builtin.SPLIT || b == Builtin.WORDS) ctx.pieces = (Call) f.from;
+            if (b == Builtin.SPLIT || b == Builtin.WORDS || b == Builtin.CHARS) ctx.pieces = (Call) f.from;
             Type ct = expr(f.from, null);
             ctx.pieces = null;
             varType = Type.elementOf(ct);
@@ -1886,6 +1886,54 @@ public final class Checker {
                 }
                 return stored;
             }
+            case IS_UTF8 -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                textArg(b, args.get(0));
+                return Type.BOOL;
+            }
+            case CHAR_COUNT -> {
+                if (!arity(c, 1)) return Type.I64;
+                textArg(b, args.get(0));
+                return Type.I64;
+            }
+            case CHARS -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                Type text = textArg(b, args.get(0));
+                if (ctx.pieces == c) {
+                    // One code point at a time; the list type is nominal, as for split in a loop.
+                    return text instanceof Type.Str s ? new Type.ListT(Type.U32, s.cap() < 0 ? s.cap() : s.cap() + 1) : Type.ERROR;
+                }
+                return storedType(c, b, expected);
+            }
+            case PUSH_CHAR -> {
+                if (!arity(c, 2)) return Type.VOID;
+                Arg target = args.get(0);
+                if (!target.mut()) {
+                    expr(target.expr(), null);
+                    diags.error(Code.E0207, target.span(), "push_char() modifies its first argument",
+                        "write push_char(mut " + exprText(target.expr()) + ", c)");
+                } else {
+                    Type t = mutPlace(target.expr());
+                    if (!(t instanceof Type.Str) && !Type.isError(t)) {
+                        diags.error(Code.E0203, target.span(), "push_char() needs a str[N] target, found " + t,
+                            t instanceof Type.ListT ? "use push(mut xs, value) for lists" : null);
+                    }
+                }
+                Arg v = args.get(1);
+                noMut(v);
+                Type vt = expr(v.expr(), Type.U32);
+                if (!Type.isInt(vt) && !Type.isError(vt)) {
+                    diags.error(Code.E0201, v.span(), "push_char() needs a code point, an integer, found " + vt,
+                        vt instanceof Type.Str ? "to add text, use append(mut s, " + exprText(v.expr()) + ")" : null);
+                }
+                return Type.VOID;
+            }
+            case SLICE_CHARS -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                Type t = textArg(b, args.get(0));
+                for (int i = 1; i < 3; i++) indexArg(b, args.get(i));
+                return t;
+            }
             case TRY_SPLIT, TRY_WORDS -> {
                 boolean split = b == Builtin.TRY_SPLIT;
                 if (!arity(c, split ? 3 : 2)) return Type.BOOL;
@@ -2119,10 +2167,11 @@ public final class Checker {
      * or of the function's return value, since the capacity of what they build cannot be computed.
      */
     private Type storedType(Call c, Builtin b, Type expected) {
-        boolean list = b == Builtin.SPLIT || b == Builtin.WORDS;
+        boolean list = b == Builtin.SPLIT || b == Builtin.WORDS || b == Builtin.CHARS;
         String example = switch (b) {
             case SPLIT -> "let parts: list[str[32]; 16] = ";
             case WORDS -> "let ws: list[str[32]; 16] = ";
+            case CHARS -> "let cs: list[u32; 64] = ";
             case JOIN -> "let line: str[256] = ";
             case FIXED, PAD_LEFT, PAD_RIGHT -> "let text: str[32] = ";
             default -> "let text: str[256] = ";
@@ -2137,12 +2186,14 @@ public final class Checker {
         if (ctx.stored != c || expected == null) {
             diags.error(Code.E0216, c.span, b.name + "() takes its type, and so its capacity, from the variable it is stored in",
                 "make the call the whole right-hand side of a typed let/var, an assignment or a return: " + example
-                    + (list ? " or, to go through the pieces one at a time without a list: for p in " + exprText(c) + " { }" : ""));
+                    + (b == Builtin.CHARS ? " or, to go through the code points one at a time without a list: for c in " + exprText(c) + " { }"
+                    : list ? " or, to go through the pieces one at a time without a list: for p in " + exprText(c) + " { }" : ""));
             return Type.ERROR;
         }
-        boolean ok = list ? expected instanceof Type.ListT l && l.elem() instanceof Type.Str : expected instanceof Type.Str;
+        boolean ok = b == Builtin.CHARS ? expected instanceof Type.ListT l && l.elem().equals(Type.U32)
+            : list ? expected instanceof Type.ListT l && l.elem() instanceof Type.Str : expected instanceof Type.Str;
         if (!ok) {
-            diags.error(Code.E0201, c.span, b.name + "() builds a " + (list ? "list[str[K]; M]" : "str[N]")
+            diags.error(Code.E0201, c.span, b.name + "() builds a " + (b == Builtin.CHARS ? "list[u32; M]" : list ? "list[str[K]; M]" : "str[N]")
                 + ", but " + expected + " is expected", "store it in a variable of that type: " + example);
             return Type.ERROR;
         }

@@ -902,6 +902,21 @@ public final class CGen {
         Expr src = c.args.get(0).expr();
         open("{");
         String s = f.snapshot ? tmp(src.type, lower(src)) : lowerLvalue(src);
+        if (c.builtin == Builtin.CHARS) {
+            String pos = "t" + ++tmpCount;
+            String len = "t" + ++tmpCount;
+            String ok = "t" + ++tmpCount;
+            emit("uint32_t " + pos + " = 0, " + len + ";");
+            emit("int " + ok + ";");
+            open("while (" + pos + " < (" + s + ").len) {");
+            emit("uint32_t " + cName(f.var) + " = al_utf8_next((" + s + ").b, (" + s + ").len, " + pos + ", &" + len + ", &" + ok + ");");
+            emit("(void)" + cName(f.var) + ";");
+            emit(pos + " += " + len + ";");
+            block(f.body);
+            close("}");
+            close("}");
+            return;
+        }
         boolean words = c.builtin == Builtin.WORDS;
         String[] p;
         if (words) {
@@ -1618,6 +1633,34 @@ public final class CGen {
                     + ", " + (words ? 1 : 0) + ", 0, " + at + ");");
                 return r;
             }
+            case IS_UTF8, CHAR_COUNT -> {
+                String v = lowerLvalue(args.get(0).expr());
+                return c.builtin == Builtin.IS_UTF8 ? tmp(Type.BOOL, "al_is_utf8((" + v + ").b, (" + v + ").len)")
+                    : tmp(Type.I64, "al_char_count((" + v + ").b, (" + v + ").len)");
+            }
+            case CHARS -> {
+                String target = into;
+                into = null;
+                String v = lowerLvalue(args.get(0).expr());
+                String r = dest(c.type, target);
+                emit(charsFn((Type.ListT) c.type) + "(&" + r + ", (" + v + ").b, (" + v + ").len, " + at + ");");
+                return r;
+            }
+            case PUSH_CHAR -> {
+                Type st = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String cp = position(args.get(1).expr());
+                emit("al_push_char((" + place + ").b, &(" + place + ").len, " + ((Type.Str) st).cap() + "u, " + cp + ", " + at + ");");
+                return null;
+            }
+            case SLICE_CHARS -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String from = position(args.get(1).expr());
+                String to = position(args.get(2).expr());
+                String r = tmp(c.type, "{0}");
+                emit(r + ".len = al_slice_chars(" + r + ".b, (" + v + ").b, (" + v + ").len, " + from + ", " + to + ", " + at + ");");
+                return r;
+            }
             case TRY_SPLIT, TRY_WORDS -> {
                 Type.ListT lt = (Type.ListT) args.get(0).expr().type;
                 String place = lower(args.get(0).expr());
@@ -1835,6 +1878,25 @@ public final class CGen {
             .append("        }\n")
             .append("    }\n")
             .append("    return 1;\n")
+            .append("}\n\n");
+        return name;
+    }
+
+    /** chars() into a list of type t: the code points in turn, each checked for room. */
+    private String charsFn(Type.ListT t) {
+        String name = "al_chars_" + mangle(t);
+        if (!doneHelpers.add(name)) return name;
+        String full = cString(utf8("chars makes more than " + t.cap() + " code points, the capacity of " + t));
+        helpers.append("static void ").append(name).append("(").append(ct(t)).append(" *r, const uint8_t *s, uint32_t n, int line, int col) {\n")
+            .append("    uint32_t pos = 0, len;\n")
+            .append("    int ok;\n")
+            .append("    r->len = 0;\n")
+            .append("    while (pos < n) {\n")
+            .append("        uint32_t c = al_utf8_next(s, n, pos, &len, &ok);\n")
+            .append("        if (r->len >= ").append(t.cap()).append("u) AL_TRAP(\"R0004\", ").append(full).append(", line, col);\n")
+            .append("        r->v[r->len++] = c;\n")
+            .append("        pos += len;\n")
+            .append("    }\n")
             .append("}\n\n");
         return name;
     }
