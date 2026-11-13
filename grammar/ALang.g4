@@ -91,8 +91,9 @@ paramList
     ;
 
 // `mut` parameters are passed by reference; all others are read-only values.
+// `limit: i64 = 10` has a default: a constant that a call leaving the argument out passes instead.
 param
-    : identifier COLON MUT? type
+    : identifier COLON MUT? type (ASSIGN expression)?
     ;
 
 contract

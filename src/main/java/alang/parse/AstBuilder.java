@@ -162,7 +162,7 @@ final class AstBuilder {
         if (f.paramList() != null) {
             for (ParamContext p : f.paramList().param()) {
                 params.add(new Param(span(p.identifier()), p.identifier().getText(), p.MUT() != null, type(p.type()),
-                    docComment(p.getStart())));
+                    docComment(p.getStart()), p.expression() == null ? null : expr(p.expression())));
             }
         }
         List<Expr> requires = new ArrayList<>();

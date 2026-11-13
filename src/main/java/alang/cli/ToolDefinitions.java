@@ -5,6 +5,7 @@ import alang.ast.Ast.BinOp;
 import alang.ast.Ast.Binary;
 import alang.ast.Ast.BoolLit;
 import alang.ast.Ast.Call;
+import alang.ast.Ast.ConstDecl;
 import alang.ast.Ast.Convert;
 import alang.ast.Ast.Expr;
 import alang.ast.Ast.FieldAccess;
@@ -66,8 +67,19 @@ final class ToolDefinitions {
         List<Object> required = new ArrayList<>();
         for (int i = 0; i < f.paramVars.size(); i++) {
             LocalVar p = f.paramVars.get(i);
-            props.put(p.name, JsonValues.describe(JsonValues.schema(p.type), f.params.get(i).doc()));
-            required.add(p.name);
+            Map<String, Object> schema = new LinkedHashMap<>(JsonValues.describe(JsonValues.schema(p.type), f.params.get(i).doc()));
+            ConstDecl d = f.defaults.get(i);
+            if (d == null) {
+                required.add(p.name);
+            } else {
+                // Optional: a call that leaves it out gets the default. One JSON cannot write (a NaN) is not shown.
+                try {
+                    schema.put("default", JsonValues.toJson(d.value, p.type));
+                } catch (JsonValues.EncodeException notJson) {
+                    // left out
+                }
+            }
+            props.put(p.name, schema);
         }
         for (Expr clause : f.requires) constrain(props, f, clause);
         return Json.obj("type", "object", "properties", props, "required", required, "additionalProperties", false);

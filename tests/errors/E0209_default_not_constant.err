@@ -1,0 +1,7 @@
+error[E0209]: the default value of parameter `ticks` of `wait` is not a constant expression
+ --> tests/errors/E0209_default_not_constant.al:6:22
+  |
+6 | fn wait(ticks: i64 = now()) -> i64 {
+  |                      ^^^^^
+  = hint: a default value is a constant: it may use literals, other constants, operators, conversions and the builtins that only compute (such as len, pow or split), but not other function calls or parameters
+

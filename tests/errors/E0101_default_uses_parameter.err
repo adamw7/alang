@@ -1,0 +1,7 @@
+error[E0101]: a default value cannot use the parameter `w`
+ --> tests/errors/E0101_default_uses_parameter.al:2:26
+  |
+2 | fn area(w: f64, h: f64 = w) -> f64 {
+  |                          ^
+  = hint: a default is a constant, the same for every call; to start from `w`, leave out the default and have callers pass it
+

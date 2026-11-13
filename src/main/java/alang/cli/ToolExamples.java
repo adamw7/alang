@@ -92,7 +92,8 @@ final class ToolExamples {
             for (int i = 0; i < args.length; i++) {
                 LocalVar p = tool.paramVars.get(i);
                 args[i] = Values.coerce(Interpreter.evalConst(c.args.get(i).expr()), p.type);
-                json.put(p.name, JsonValues.toJson(args[i], p.type));
+                // An argument the call leaves out to its default, the example leaves out too.
+                if (c.given < 0 || i < c.given) json.put(p.name, JsonValues.toJson(args[i], p.type));
             }
             Interpreter in = new Interpreter(src, OutputStream.nullOutputStream(), maxSteps);
             Object result = in.call(tool, args, c.span);

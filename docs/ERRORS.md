@@ -37,6 +37,7 @@ Codes are never reused for a different meaning.
 | [E0215](#e0215) | mut call not allowed here |
 | [E0216](#e0216) | type cannot be inferred |
 | [E0217](#e0217) | `_` capacity not allowed here |
+| [E0218](#e0218) | misplaced default value |
 | [E0301](#e0301) | missing return |
 | [E0302](#e0302) | break/continue outside loop |
 | [E0303](#e0303) | bad return |
@@ -299,6 +300,15 @@ print([]);  // error
 ```
 fn total(xs: list[i64; _]) -> i64 { ... }  // ok: takes any list of i64
 let s: str[_] = "a";                 // error: write str[64]
+```
+
+## E0218
+
+**misplaced default value**: A parameter's default value, `n: i64 = 3`, is a constant that a call leaving the argument out passes instead. A call leaves out arguments from the end only, so every parameter after one with a default needs one too. A `mut` parameter refers to the caller's variable, so it has none, and neither has a parameter whose type is not fixed (a `_` capacity, a type parameter or a function type) nor the input of `main`.
+
+```
+fn greet(name: str[16], times: i64 = 1) { ... }  // ok: greet("ann") passes times = 1
+fn bad(times: i64 = 1, name: str[16]) { ... }  // error: name needs a default too
 ```
 
 ## E0301

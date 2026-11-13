@@ -93,6 +93,13 @@ public enum Code {
             + "conversions need a constant, and so do the parameters of a tool fn (its JSON schema states them) and "
             + "of main.",
         "fn total(xs: list[i64; _]) -> i64 { ... }  // ok: takes any list of i64\nlet s: str[_] = \"a\";                 // error: write str[64]"),
+    E0218("misplaced default value",
+        "A parameter's default value, `n: i64 = 3`, is a constant that a call leaving the argument out passes instead. "
+            + "A call leaves out arguments from the end only, so every parameter after one with a default needs one too. "
+            + "A `mut` parameter refers to the caller's variable, so it has none, and neither has a parameter whose type "
+            + "is not fixed (a `_` capacity, a type parameter or a function type) nor the input of `main`.",
+        "fn greet(name: str[16], times: i64 = 1) { ... }  // ok: greet(\"ann\") passes times = 1\n"
+            + "fn bad(times: i64 = 1, name: str[16]) { ... }  // error: name needs a default too"),
 
     // ---- control flow ----
     E0301("missing return",

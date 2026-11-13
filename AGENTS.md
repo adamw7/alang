@@ -159,6 +159,7 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `f"{x:.2f}"`, `format!("{:.2}", x)`, `x.toFixed(2)` | `fixed(x, 2)`, in `print`/`append` or stored in a typed str |
 | `f"{n:03}"`, `s.rjust(8)`, `s.ljust(8)`, `padStart` | `pad_left(n, 3, '0')`, `pad_left(s, 8, ' ')`, `pad_right(s, 8, ' ')` |
 | `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
+| `def f(x, y=2)`, `function f(x, y = 2)` | `fn f(x: i64, y: i64 = 2)`: a constant default, after the parameters without one |
 | `fn first<T>(xs: &[T]) -> T`, `def first(xs)` | `fn first<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
 | `xs.filter(f)`, `map(f, xs)`, `sort(key=f)`, a callback | a parameter `f: fn(T) -> bool`, passed by name: `count_if(xs, is_even)`; no closures or lambdas |
 | `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
@@ -452,6 +453,8 @@ The definitions are all the calling model knows about your tool, so give them so
   `requires people > 0 and people <= 16` become schema bounds (`"minimum": 1, "maximum": 16`).
 - Calls in your `test` blocks with literal arguments, such as `word_counts("a b a")`, become
   `input_examples`.
+- A parameter with a default value, `max_words: i64 = 16`, is optional: the schema shows `"default": 16`
+  and a call that leaves it out gets 16. Defaults are constants and come after the parameters without one.
 
 Before handing tools over, run `bin/alang fuzz prog.al`. It calls each tool with arguments at the limits
 its schema allows and reports every trap with the arguments that caused it; for a word_counts that

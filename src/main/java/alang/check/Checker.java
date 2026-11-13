@@ -110,6 +110,8 @@ public final class Checker {
         Call pieces;
         /** The argument of print or append, or the value of pad_left or pad_right, being checked: it is written out as text. */
         Expr text;
+        /** While the default value of a parameter is checked: its function, whose parameters it cannot use. */
+        FnDecl defaultOf;
     }
 
     private Ctx ctx = new Ctx();
@@ -155,6 +157,8 @@ public final class Checker {
             if (item instanceof FnDecl f && diags.errorCount() != before) failed.add(f);
         }
         checkInstances(failed);
+        // The default values of parameters are constants of the program: the C backend and the memory bound count them.
+        program.items.addAll(defaultValues);
         boolean recursion = checkRecursion();
         if (!recursion && !diags.hasErrors()) recursion = checkInstanceRecursion();
         MemoryReport memory = null;
@@ -320,11 +324,12 @@ public final class Checker {
     private void ensureConst(ConstDecl c) {
         if (c.state == State.DONE) return;
         if (c.state == State.IN_PROGRESS) {
-            diags.error(Code.E0209, c.span, "constant `" + c.name + "` depends on itself");
+            diags.error(Code.E0209, c.span, constLabel(c) + " depends on itself");
             return;
         }
         c.state = State.IN_PROGRESS;
         Ctx saved = enterTopLevel(c);
+        ctx.defaultOf = c.defaultOf;
         // Count errors from the declared type too: a constant whose type is unknown must not get a
         // value, or constants computed from it would be evaluated with an error type.
         int before = diags.errorCount();
@@ -337,9 +342,12 @@ public final class Checker {
         // where it went wrong; skip evaluation without piling on another diagnostic.
         if (diags.errorCount() == before && !Type.isError(t)) {
             if (!isConst(c.init)) {
-                diags.error(Code.E0209, c.init.span, "the value of constant `" + c.name + "` is not a constant expression",
-                    "constants may use literals, other constants, operators, conversions and the builtins that only compute "
-                        + "(such as len, pow or split), but not other function calls");
+                diags.error(Code.E0209, c.init.span, (c.defaultOf == null ? "the value of " : "") + constLabel(c)
+                        + " is not a constant expression",
+                    (c.defaultOf == null ? "constants" : "a default value is a constant: it")
+                        + " may use literals, other constants, operators, conversions and the builtins that only compute "
+                        + "(such as len, pow or split), but not other function calls"
+                        + (c.defaultOf == null ? "" : " or parameters"));
             } else if (withinBudget(c)) {
                 c.value = evalConst(c.init);
             }
@@ -359,7 +367,7 @@ public final class Checker {
         long size = Layout.size(c.type);
         long need = Layout.add(staticBytes, Layout.add(size, Temporaries.expr(c.init)));
         if (maxStack > 0 && need > maxStack) {
-            diags.error(Code.E0405, c.span, "constant `" + c.name + "` needs up to " + need
+            diags.error(Code.E0405, c.span, constLabel(c) + " needs up to " + need
                     + " bytes, counting the constants before it and the values its initializer builds; the budget is "
                     + maxStack + " bytes",
                 "make the constant smaller, or build the data at run time in a function; --max-stack sets the budget");
@@ -671,6 +679,7 @@ public final class Checker {
             }
         }
         paramCapacities = savedCapacities;
+        defaults(f);
         if (f.origin == null && f.paramVars.stream().noneMatch(v -> Type.isError(v.type))) {
             // A call fixes each type parameter from the arguments, so each must appear in a parameter's type.
             for (int i = 0; i < f.typeParams.size(); i++) {
@@ -699,6 +708,77 @@ public final class Checker {
             f.locals.add(f.resultVar);
         }
         ctx = saved;
+    }
+
+    /** The constants that hold the default values of parameters, in the order they were made (see {@link #defaults}). */
+    private final List<ConstDecl> defaultValues = new ArrayList<>();
+
+    /**
+     * The default values of {@code f}'s parameters, each a constant of the parameter's type: allowed on read-only
+     * parameters of fixed types, and needed on every parameter after one with a default, since a call leaves out
+     * arguments from the end only. An instance has those of the function it copies.
+     */
+    private void defaults(FnDecl f) {
+        if (f.origin != null) {
+            f.defaults.addAll(f.origin.defaults);
+            return;
+        }
+        Param firstDefault = null;
+        boolean reported = false;
+        for (int i = 0; i < f.params.size(); i++) {
+            Param p = f.params.get(i);
+            LocalVar v = f.paramVars.get(i);
+            if (p.def() == null) {
+                f.defaults.add(null);
+                if (firstDefault != null && !reported) {
+                    reported = true;
+                    diags.error(Code.E0218, p.span(), "parameter `" + p.name() + "` has no default value, but `" + firstDefault.name()
+                            + "` before it has one",
+                        "a call leaves out arguments from the end only: move `" + p.name() + "` before `" + firstDefault.name()
+                            + "`, or give it a default too");
+                }
+                continue;
+            }
+            if (firstDefault == null) firstDefault = p;
+            String bad = null;
+            if (p.mut()) {
+                bad = "a `mut` parameter refers to the caller's variable, so it has no default value";
+            } else if (v.type instanceof Type.FnT) {
+                bad = "a parameter of a function type has no default value";
+            } else if (Type.hasTypeVar(v.type) || Type.hasAnyCapacity(v.type)) {
+                bad = "`" + p.name() + "` has a type that each call fixes (" + v.type + "), so it has no default value";
+            } else if (f.name.equals("main")) {
+                bad = "the parameter of `main` receives the standard input, so it has no default value";
+            }
+            if (bad != null) {
+                diags.error(Code.E0218, p.def().span, bad, "remove ` = " + exprText(p.def()) + "`");
+                f.defaults.add(null);
+                continue;
+            }
+            ConstDecl c = new ConstDecl(p.def().span, p.name(), p.typeRef(), p.def());
+            c.defaultOf = f;
+            c.scope = f.scope;
+            if (Type.isError(v.type)) {
+                // Its type was reported already; a call that leaves it out is no error of its own.
+                c.state = State.DONE;
+            } else {
+                int[] savedCapacities = paramCapacities;
+                boolean savedFnType = fnTypeAllowed;
+                paramCapacities = null;
+                fnTypeAllowed = false;
+                ensureConst(c);
+                paramCapacities = savedCapacities;
+                fnTypeAllowed = savedFnType;
+            }
+            f.defaults.add(c);
+            defaultValues.add(c);
+        }
+    }
+
+    /** How messages name a constant: `N`, or the default value of a parameter. */
+    private static String constLabel(ConstDecl c) {
+        return c.defaultOf == null ? "constant `" + c.name + "`"
+            : "the default value of parameter `" + c.name + "` of `" + c.defaultOf.name + "`";
     }
 
     /** Whether the type variable {@code v} occurs in {@code t}. */
@@ -1581,6 +1661,12 @@ public final class Checker {
             diags.error(Code.E0501, n.span, "`result` can only be used in `ensures` of a function that returns a value");
             return;
         }
+        if (ctx.defaultOf != null && ctx.defaultOf.params.stream().anyMatch(p -> p.name().equals(n.name))) {
+            diags.error(Code.E0101, n.span, "a default value cannot use the parameter `" + n.name + "`",
+                "a default is a constant, the same for every call; to start from `" + n.name + "`, leave out the default "
+                    + "and have callers pass it");
+            return;
+        }
         String hint = switch (n.name) {
             case "null", "nil", "None", "NULL", "undefined" ->
                 "ALang has no null; model absence with an enum, e.g. enum MaybeI32 { None, Some(i32) }";
@@ -1756,9 +1842,15 @@ public final class Checker {
         c.fn = f;
         signature(f);
         checkMutCallPosition(c, f.ret);
-        if (c.args.size() != f.params.size()) {
+        // Checked again (an argument's type is worked out twice in some places): the defaults added last time go.
+        if (c.given >= 0) c.args.subList(c.given, c.args.size()).clear();
+        c.given = c.args.size();
+        int required = f.params.size();
+        while (required > 0 && f.defaults.get(required - 1) != null) required--;
+        if (c.args.size() < required || c.args.size() > f.params.size()) {
             if (ctx.routine != null) ctx.routine.callees.add(f);
-            diags.error(Code.E0204, c.span, "`" + f.name + "` takes " + f.params.size() + " argument(s) but "
+            String takes = required == f.params.size() ? String.valueOf(required) : required + " to " + f.params.size();
+            diags.error(Code.E0204, c.span, "`" + f.name + "` takes " + takes + " argument(s) but "
                 + c.args.size() + " were given", "signature: " + signatureText(f));
             for (Arg a : c.args) expr(a.expr(), null);
             return f.ret;
@@ -1768,7 +1860,7 @@ public final class Checker {
         // What each `_` of the parameters' types stands for in this call, each type parameter, and each function.
         Map<Integer, Integer> caps = new HashMap<>();
         Map<Integer, Type> types = new HashMap<>();
-        FnDecl[] fnArgs = new FnDecl[n];
+        FnDecl[] fnArgs = new FnDecl[f.params.size()];
         // The arguments with types of their own come first, so that a literal can take the type that a type
         // parameter gets from another argument: max_of(x, 1) with x: u8 makes the 1 a u8.
         boolean[] done = new boolean[n];
@@ -1815,6 +1907,14 @@ public final class Checker {
             }
         }
         checkAliasing(c.args);
+        // The parameters the call leaves out get their default values: constants, which need no checking here.
+        for (int i = n; i < f.params.size(); i++) {
+            ConstDecl d = f.defaults.get(i);
+            Name value = new Name(c.span, d.name);
+            value.constant = d;
+            value.type = d.type;
+            c.args.add(new Arg(c.span, false, value));
+        }
         for (int i = 0; i < f.typeParams.size(); i++) {
             // One in no parameter's type was reported where it is declared.
             Type v = new Type.TypeVar(f.typeParams.get(i), i, f);
@@ -1840,7 +1940,7 @@ public final class Checker {
             for (int i = 0; i < f.typeParams.size(); i++) typeArgs.add(types.get(i));
             List<FnDecl> fns2 = java.util.Arrays.asList(fnArgs);
             boolean allFns = true;
-            for (int i = 0; i < n; i++) {
+            for (int i = 0; i < f.params.size(); i++) {
                 if (f.paramVars.get(i).type instanceof Type.FnT && fnArgs[i] == null) allFns = false;
             }
             if (known.size() == nc && !typeArgs.contains(null) && allFns) c.fn = instance(f, known, typeArgs, fns2);
@@ -2132,11 +2232,12 @@ public final class Checker {
         };
     }
 
-    private static String signatureText(FnDecl f) {
+    private String signatureText(FnDecl f) {
         List<String> ps = new ArrayList<>();
         for (int i = 0; i < f.params.size(); i++) {
             LocalVar v = f.paramVars.get(i);
-            ps.add(v.name + ": " + (v.byRef ? "mut " : "") + v.type);
+            ConstDecl d = i < f.defaults.size() ? f.defaults.get(i) : null;
+            ps.add(v.name + ": " + (v.byRef ? "mut " : "") + v.type + (d == null ? "" : " = " + exprText(d.init)));
         }
         String ret = f.ret instanceof Type.Void ? "" : " -> " + f.ret;
         return "fn " + f.name + "(" + String.join(", ", ps) + ")" + ret;

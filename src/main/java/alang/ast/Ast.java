@@ -101,6 +101,11 @@ public final class Ast {
         /** The compile-time value (interpreter representation), or null on error. */
         public Object value;
         public State state = State.NEW;
+        /**
+         * For the default value of a parameter, `fn f(n: i64 = 3)`: the function. The constant is then named after the
+         * parameter, cannot be named in code, and is what a call that leaves the argument out passes.
+         */
+        public FnDecl defaultOf;
 
         public ConstDecl(Span span, String name, TypeRef typeRef, Expr init) {
             super(span, name);
@@ -208,6 +213,8 @@ public final class Ast {
         public final List<String> ensuresText;
         public Type ret = Type.VOID;
         public final List<LocalVar> paramVars = new ArrayList<>();
+        /** For each parameter, the constant holding its default value, or null for one without a default. */
+        public final List<ConstDecl> defaults = new ArrayList<>();
         public LocalVar resultVar;
         /**
          * For a function with a `_` capacity in a parameter's type, such as fn total(xs: list[i64; _]): builds a
@@ -270,8 +277,11 @@ public final class Ast {
         }
     }
 
-    /** A parameter; {@code doc} is the text of the `///` doc comment directly above it, or "". */
-    public record Param(Span span, String name, boolean mut, TypeRef typeRef, String doc) {}
+    /**
+     * A parameter; {@code doc} is the text of the `///` doc comment directly above it, or "", and {@code def} the
+     * constant expression of `name: T = value`, or null.
+     */
+    public record Param(Span span, String name, boolean mut, TypeRef typeRef, String doc, Expr def) {}
 
     /** A local variable, parameter, loop variable, match binding, or `result`. */
     public static final class LocalVar {
@@ -831,6 +841,11 @@ public final class Ast {
          * pad_right pads: it builds no str, and its type is a nominal str[0].
          */
         public boolean asText;
+        /**
+         * How many arguments the call writes, once the checker has added the default values of the parameters it leaves
+         * out to {@link #args}; -1 before.
+         */
+        public int given = -1;
 
         public Call(Span span, String name, Span nameSpan, List<Arg> args) {
             super(span);

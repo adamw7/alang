@@ -11,6 +11,7 @@ import alang.diag.Span;
 import alang.interp.Interpreter;
 import alang.interp.JsonValues;
 import alang.interp.Trap;
+import alang.interp.Values;
 import alang.types.PrimKind;
 import alang.types.Type;
 import alang.util.Json;
@@ -68,7 +69,9 @@ final class Fuzz {
             String name = f.paramVars.get(i).name;
             List<Object> vs = values(f.paramVars.get(i).type, map(props.get(name)));
             values.add(vs);
-            base.put(name, example.containsKey(name) ? example.get(name) : vs.get(0));
+            // A parameter with a default is plainest left out, as a caller would; one call per value still sets it.
+            if (example.containsKey(name)) base.put(name, example.get(name));
+            else if (f.defaults.get(i) == null) base.put(name, vs.get(0));
         }
         List<Map<String, Object>> calls = new ArrayList<>();
         calls.add(base);
@@ -120,8 +123,9 @@ final class Fuzz {
         Object[] values = new Object[f.paramVars.size()];
         try {
             for (int i = 0; i < values.length; i++) {
-                values[i] = JsonValues.fromJson(args.get(f.paramVars.get(i).name), f.paramVars.get(i).type,
-                    f.paramVars.get(i).name);
+                String name = f.paramVars.get(i).name;
+                values[i] = !args.containsKey(name) && f.defaults.get(i) != null ? Values.copy(f.defaults.get(i).value)
+                    : JsonValues.fromJson(args.get(name), f.paramVars.get(i).type, name);
             }
         } catch (JsonValues.DecodeException e) {
             // A value the generator made that the type does not take: no call.

@@ -101,7 +101,7 @@ public final class CGen {
         sb.append("int main(void) {\n");
         sb.append("    al_source_path = ").append(cString(source.path.getBytes(StandardCharsets.UTF_8))).append(";\n");
         if (!imported.isEmpty()) sb.append("    al_import_paths = al_imported;\n");
-        for (ConstDecl c : program.itemsOf(ConstDecl.class)) sb.append("    (void)al_c_").append(scoped(c)).append(";\n");
+        for (ConstDecl c : program.itemsOf(ConstDecl.class)) sb.append("    (void)").append(constRef(c)).append(";\n");
         if (main != null) {
             List<String> args = new ArrayList<>();
             if (!main.paramVars.isEmpty()) {
@@ -292,6 +292,16 @@ public final class CGen {
     /** A declaration's name, after the number of its scope when it is in one of its own (import ... as ns): n2_Point. */
     static String scoped(Item item) {
         return item.scope == 0 ? item.name : "n" + item.scope + "_" + item.name;
+    }
+
+    /**
+     * The C name of a constant: al_c_NAME, or for the default value of a parameter, al_d_ with the function's name after
+     * its length, then the parameter's, so that no two can be the same.
+     */
+    static String constRef(ConstDecl c) {
+        if (c.defaultOf == null) return "al_c_" + scoped(c);
+        String f = scoped(c.defaultOf);
+        return "al_d_" + f.length() + f + "_" + c.name;
     }
 
     static String mangle(Type t) {
@@ -577,7 +587,7 @@ public final class CGen {
 
     private void constant(ConstDecl c) {
         String ty = ct(c.type);
-        statics.append("static const ").append(ty).append(" al_c_").append(scoped(c)).append(" = ")
+        statics.append("static const ").append(ty).append(" ").append(constRef(c)).append(" = ")
             .append(init(c.value, c.type)).append(";\n");
     }
 
@@ -1335,8 +1345,8 @@ public final class CGen {
             case FloatLit f -> floatLiteral(f.valueAs(Type.kind(f.type)), Type.kind(f.type));
             case StrLit s -> strLiteral(s.value);
             case BoolLit b -> b.value ? "true" : "false";
-            case Name n -> n.local != null ? varRef(n.local) : "al_c_" + scoped(n.constant);
-            case FieldAccess f when f.constant != null -> "al_c_" + scoped(f.constant);
+            case Name n -> n.local != null ? varRef(n.local) : constRef(n.constant);
+            case FieldAccess f when f.constant != null -> constRef(f.constant);
             case VariantCall v when v.asCall != null -> lower(v.asCall);
             case FieldAccess f -> {
                 if (f.variant == null && f.target.type instanceof Type.TupleT) {

@@ -129,7 +129,7 @@ import "path/to/file.al";
 const NAME: Type = constant-expression;
 struct Name { field: Type, ... }
 enum Name { Variant, Variant(Type, ...), ... }
-fn name(param: Type, param: mut Type) -> ReturnType requires cond ensures cond { ... }
+fn name(param: Type, param: mut Type, param: Type = constant) -> ReturnType requires cond ensures cond { ... }
 tool fn name(param: Type) -> ReturnType { ... }
 test "description" { ... }
 test "description" traps R0006 { ... }
@@ -324,6 +324,14 @@ fn count_if<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
     return n;
 }
 ```
+
+**Default values.** `fn area(w: f64, h: f64 = 1.0)` gives `h` a default: a constant expression of the parameter's
+type, evaluated once while checking, like a `const`, which a call that leaves the argument out passes in its place:
+`area(2.0)` is `area(2.0, 1.0)`. A call leaves out arguments from the end only, so every parameter after one with a
+default needs one too, and a call passes from the required ones up to all of them (E0204). A default cannot use the
+other parameters (E0101) or call functions (E0209), and only a read-only parameter of a fixed type has one: not a
+`mut` parameter, one whose type has a `_` or a type parameter, one of a function type, or the input of `main`
+(E0218). A tool's parameter with a default is optional in its JSON (§10).
 
 **Contracts.** `requires` clauses are checked on entry, in order; a failure is trap R0006, reported **at
 the call site** (the caller broke the contract). `ensures` clauses are checked on every return, with
@@ -777,7 +785,9 @@ of a function it calls is not. The calls are the same on every run, at most 200 
 
 Arguments must be strict JSON (RFC 8259: ASCII digits, no leading zeros, escaped control characters,
 paired surrogates) and are validated against the parameter types before the call; unknown, missing or
-duplicate keys are errors. With no I/O, no heap and bounded loops, a tool written by an agent is safe to
+duplicate keys are errors. A parameter with a default value (§5) is optional: the schema leaves it out of
+`required` and shows the value as its `"default"` (unless JSON cannot write it, as for a NaN), a call that
+leaves it out gets the default, and an example from a test call that leaves it out leaves it out too. With no I/O, no heap and bounded loops, a tool written by an agent is safe to
 run: it cannot touch the host, cannot exhaust memory, and terminates.
 
 `alang serve file.al` serves the same tools over the Model Context Protocol's stdio transport: JSON-RPC

@@ -14,6 +14,7 @@ import alang.diag.Span;
 import alang.interp.Interpreter;
 import alang.interp.JsonValues;
 import alang.interp.Trap;
+import alang.interp.Values;
 import alang.types.Type;
 import alang.util.Json;
 import java.io.IOException;
@@ -685,6 +686,10 @@ public final class Main {
             }
             for (int i = 0; i < args.length; i++) {
                 LocalVar p = f.paramVars.get(i);
+                if (!m.containsKey(p.name) && f.defaults.get(i) != null) {
+                    args[i] = Values.copy(f.defaults.get(i).value);
+                    continue;
+                }
                 if (!m.containsKey(p.name)) throw new JsonValues.DecodeException(p.name + ": missing argument");
                 args[i] = JsonValues.fromJson(m.get(p.name), p.type, p.name);
             }

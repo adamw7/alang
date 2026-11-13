@@ -407,6 +407,54 @@ class ToolsTest {
     }
 
     @Test
+    void parametersWithDefaultsAreOptional() throws IOException {
+        String program = """
+            enum Unit {
+                Metric,
+                Imperial,
+            }
+
+            /// Formats a distance.
+            tool fn distance(meters: f64, unit: Unit = Unit.Metric, decimals: i64 = 1, nan: f64 = 0.0 / 0.0) -> str[32]
+                requires decimals >= 0 and decimals <= 3
+            {
+                var s: str[32] = "";
+                match unit {
+                    Unit.Metric => { append(mut s, fixed(meters, decimals), " m"); }
+                    Unit.Imperial => { append(mut s, fixed(meters * 3.28084, decimals), " ft"); }
+                }
+                if is_nan(nan) {
+                    return s;
+                }
+                return "";
+            }
+
+            test "defaults" {
+                assert distance(2.0) == "2.0 m";
+                assert distance(2.0, Unit.Imperial, 0) == "7 ft";
+            }
+            """;
+        Map<?, ?> tool = (Map<?, ?>) ((List<?>) Json.parse(tools(program))).get(0);
+        Map<?, ?> schema = (Map<?, ?>) tool.get("input_schema");
+        assertEquals(List.of("meters"), schema.get("required"));
+        assertEquals("{\"type\": \"integer\", \"minimum\": 0, \"maximum\": 3, \"default\": 1}", param(program, "decimals"));
+        assertEquals("Metric", ((Map<?, ?>) ((Map<?, ?>) schema.get("properties")).get("unit")).get("default"));
+        // JSON has no NaN, so that default is not shown; the parameter is still optional.
+        assertEquals(false, ((Map<?, ?>) ((Map<?, ?>) schema.get("properties")).get("nan")).containsKey("default"));
+        // A call in a test that leaves out arguments gives an example that leaves them out too.
+        assertEquals("[{\"meters\": 2.0}, {\"meters\": 2.0, \"unit\": \"Imperial\", \"decimals\": 0}]",
+            Json.write(tool.get("input_examples")));
+        Path p = dir.resolve("tools.al");
+        Result r = run("call", p.toString(), "distance", "{\"meters\": 1.5}");
+        assertEquals("{\"ok\": true, \"result\": \"1.5 m\", \"stdout\": \"\", \"steps\": 5}\n", r.out());
+        r = run("call", p.toString(), "distance", "{\"meters\": 1.5, \"decimals\": 2}");
+        assertEquals(0, r.code(), r.out());
+        assertTrue(r.out().contains("\"result\": \"1.50 m\""), r.out());
+        r = run("call", p.toString(), "distance", "{}");
+        assertTrue(r.out().contains("meters: missing argument"), r.out());
+    }
+
+    @Test
     void otherClausesAreOnlyDescribed() throws IOException {
         String program = """
             const BIG: i64 = 9223372036854775807;
