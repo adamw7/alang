@@ -1,11 +1,6 @@
-Option.Some(1) Option.None
-2 -1
-none 2.5
-Result.Ok(42) Result.Err("not a number: x")
-big 17
-Pair(first: 1, second: "one") Pair(first: "one", second: 1)
-Pair(first: Option.None, second: true)
-nested 3
-Stack(items: ["a", "b"])
-Tree.Leaf(7) true false
-[Option.None, Option.Some(1), Option.Some(3)]
+8 ghijk 2.5 Point(x: 2, y: 0)
+("one", 1) (true, "a")
+2 2 4
+[9, 64, 1, 36] ["AB!", "CDEF!", "GHIJK!"]
+[Point(x: 1, y: 1), Point(x: 0, y: 2), Point(x: 3, y: 4)]
+-1 1 0

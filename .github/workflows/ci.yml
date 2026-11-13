@@ -18,9 +18,9 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # A run takes about a minute. These limits make a hang fail fast instead of holding a runner.
+    # A run takes a few minutes. These limits make a hang fail fast instead of holding a runner.
     # Inside the tests, each test fails after 10 s, and Surefire kills the test JVM if the whole run
-    # takes longer than 180 s (see pom.xml).
+    # takes longer than 240 s (see pom.xml).
     timeout-minutes: 10
     strategy:
       fail-fast: false
