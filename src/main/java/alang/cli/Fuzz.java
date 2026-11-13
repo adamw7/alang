@@ -205,6 +205,47 @@ final class Fuzz {
                     }
                 }
             }
+            case Type.SetT st -> {
+                // Empty, then as many distinct values as fit, up to the capacity.
+                List<Object> vs = values(st.elem(), JsonValues.schema(st.elem()));
+                for (int n : new int[] {0, 1, Math.min(st.cap(), vs.size())}) out.add(new ArrayList<>(vs.subList(0, Math.min(n, vs.size()))));
+            }
+            case Type.MapT mt -> {
+                List<Object> ks = values(mt.key(), JsonValues.schema(mt.key()));
+                List<Object> vs = values(mt.value(), JsonValues.schema(mt.value()));
+                for (int n : new int[] {0, 1, Math.min(mt.cap(), ks.size())}) {
+                    n = Math.min(n, ks.size());
+                    if (mt.key() instanceof Type.Str) {
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        for (int i = 0; i < n; i++) m.put((String) ks.get(i), vs.get(i % vs.size()));
+                        out.add(m);
+                    } else {
+                        List<Object> pairs = new ArrayList<>();
+                        for (int i = 0; i < n; i++) pairs.add(List.of(ks.get(i), vs.get(i % vs.size())));
+                        out.add(pairs);
+                    }
+                }
+            }
+            case Type.TupleT tt -> {
+                // As a struct: the plainest of each element, then each element in turn through its values.
+                List<Object> items = list(schema.get("prefixItems"));
+                List<Object> plain = new ArrayList<>();
+                List<List<Object>> elems = new ArrayList<>();
+                for (int i = 0; i < tt.elems().size(); i++) {
+                    Type et = tt.elems().get(i);
+                    List<Object> vs = values(et, items != null && i < items.size() ? map(items.get(i)) : JsonValues.schema(et));
+                    elems.add(vs);
+                    plain.add(vs.get(0));
+                }
+                out.add(plain);
+                for (int i = 0; i < elems.size(); i++) {
+                    for (Object v : elems.get(i)) {
+                        List<Object> m = new ArrayList<>(plain);
+                        m.set(i, v);
+                        out.add(m);
+                    }
+                }
+            }
             case Type.EnumT et -> {
                 EnumDecl d = et.decl();
                 for (Variant v : d.variants) {
@@ -221,6 +262,11 @@ final class Fuzz {
         }
         List<Object> list = new ArrayList<>(out);
         return list.size() > MAX_VALUES ? list.subList(0, MAX_VALUES) : list;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Object> list(Object o) {
+        return o instanceof List<?> l ? (List<Object>) l : null;
     }
 
     /** Lists (or arrays, when min == max) of min to max elements: the plainest, then full ones of many kinds. */

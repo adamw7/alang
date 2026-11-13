@@ -63,7 +63,7 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 |----------|-------------------------|
 | **Easy for agents** | One way to do things, explicit types, Rust-like syntax, no precedence puzzles, no shadowing. Every diagnostic has a stable code, an exact location and a fix hint, also as JSON. Built-in `test` blocks and `requires`/`ensures` contracts. |
 | **No heap** | Every type has a compile-time size (`str[N]`, `list[T; N]`, `[T; N]`, structs, enums); no pointers, `null` or allocator. `alang check` bounds the worst-case memory of every entry point and rejects a program over its budget (8 MiB by default). |
-| **Deterministic** | No clock, randomness, environment, threads or I/O except `print`; input arrives whole, as a tool's JSON arguments or the stdin of `fn main`. No undefined behavior: overflow, bad indexes and bad conversions trap with fixed codes. Fixed evaluation order, only correctly rounded floats, exact formatting. The tests run every program repeatedly and under several locales, and compare the C backend byte for byte with the interpreter under gcc and clang at `-O0` to `-O3`. |
+| **Deterministic** | No clock, randomness, environment, threads or I/O except `print`; input arrives whole, as a tool's JSON arguments or the stdin of `fn main`. No undefined behavior: overflow, bad indexes and bad conversions trap with fixed codes. Fixed evaluation order, floats from correctly rounded operations only (`sin`, `exp` and `pow` included, which ALang computes itself), exact formatting. The tests run every program repeatedly and under several locales, and compare the C backend byte for byte with the interpreter under gcc and clang at `-O0` to `-O3`. |
 | **Always terminates** | Recursion is a compile error; every `while` loop states an iteration `limit`. |
 | **Safe to run agent code** | Tool functions take JSON in and return JSON out with no access to the host; a deterministic step budget bounds runtime. |
 | **Runs anywhere** | A reference interpreter (JVM) and a C99 backend that emits heap-free, stdio-free C with byte-identical behavior. |
@@ -113,6 +113,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `alang fuzz FILE [--json] [--max-steps N] [--max-stack B]` | Call every `tool fn`, and a `fn main(input: str[N])`, with arguments at their limits (empty and full strs of many shapes, full lists, the smallest and largest numbers); report each trap with the arguments that hit it |
 | `alang serve FILE [--max-steps N] [--max-stack B]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout) |
 | `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
+| `alang fmt FILE [--write \| --check]` | Print the file laid out the one way (indentation, spaces between tokens, blank lines; the lines you broke stay broken); `--write` rewrites it, `--check` fails if it is not formatted |
 | `alang explain CODE \| --all \| --markdown` | Explain a diagnostic or trap code, or all of them |
 
 Exit codes: `0` success, `1` errors, traps (also those `fuzz` finds) or failing tests, `2` usage errors (including an option the
@@ -129,10 +130,10 @@ interpreter and the C backend alike, traps included
 | Area | Functions |
 |------|-----------|
 | Core | `print` `len` `cap` `push` `pop` `clear` `append` `panic` |
-| Math | `abs` `min` `max` `clamp` `pow` `gcd` `lcm` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
+| Math | `abs` `min` `max` `clamp` `pow` `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2` `is_nan` `is_finite` |
 | Characters | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` |
-| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice` `trim` `split` `words` `try_split` `try_words` `join` `replace` `is_int` `is_float` `fixed` `pad_left` `pad_right`, and `i64(s)`, `f64(s)` to parse |
-| Collections | `sort` `reverse` `insert` `remove` (and `contains`, `index_of`, `count`, `slice` on lists and arrays) |
+| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice` `trim` `split` `words` `try_split` `try_words` `join` `replace` `is_int` `is_float` `fixed` `pad_left` `pad_right`, and `i64(s)`, `f64(s)` to parse; UTF-8 code points: `is_utf8` `char_count` `chars` `push_char` `slice_chars` |
+| Collections | `sort` `reverse` `insert` `remove` (and `contains`, `index_of`, `count`, `slice` on lists and arrays); `map[K, V; N]` and `set[T; N]` with `m[k]`, `get_or`, `insert`, `remove`, `contains` |
 
 A user function takes any capacity with a `_` in a parameter's type: `fn total(xs: list[i64; _])`.
 
@@ -178,8 +179,7 @@ With `--json`, the report is one line of JSON that names the source `file` once,
 has `severity`, `code`, `title`, `message`, `line`, `column`, `length`, `source_line` and `hint`. A trap
 gives its `line`, `column` and `source_line` the same way, and a diagnostic or trap in an imported file
 adds its `file`. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`, `xs.len()`,
-`let x = 5`, `while` without a limit, `null`, generics, `use`/`#include`, tuples, slices, `if` as an
-expression, match guards, `substr`, `parse_int`, `sorted`, ...) are answered with the ALang spelling.
+`let x = 5`, `while` without a limit, `null`, `use`/`#include`, `substr`, `parse_int`, `sorted`, ...) are answered with the ALang spelling.
 See [docs/ERRORS.md](docs/ERRORS.md).
 
 ## Tools in an agent host
@@ -235,7 +235,7 @@ same, so measure before switching a harness over. `--delimiter tab` saves a litt
 - [harness/toon.py](harness/toon.py): tool results as TOON for a model's prompt
 - [examples/](examples): complete programs, each with tests
 - [examples/helpers.al](examples/helpers.al): tested helpers the standard library leaves out (parsing
-  into an enum, pseudo-random numbers, a map), for lists and strs of any capacity, to import
+  into an enum, pseudo-random numbers, a map in insertion order), for lists and strs of any capacity, to import
   (`import "helpers.al";`, as [examples/tally.al](examples/tally.al) does) or copy into a program
 
 `src/main/java/alang/` holds the toolchain, one package per component (see the architecture);
@@ -286,9 +286,11 @@ published once; to redo one, delete its release and package first.
 
 ## Status
 
-Version 0.2. Not yet included: type parameters (functions take any capacity with `_`, but not any
-element type), slices, namespaces and a formatter. A program can span several
-files with `import "file.al";` ([SPEC.md §3.1](docs/SPEC.md#31-imports)).
+Version 0.2. A program can span several files with `import "file.al";`, or keep each file's names
+apart with `import "file.al" as name;` ([SPEC.md §3.1](docs/SPEC.md#31-imports)). Functions take type
+parameters and function values (no closures), and the language has tuples, maps and sets, slices,
+labelled loops, match guards, `if ... then ... else` expressions, UTF-8 text functions, wrapping and
+saturating arithmetic, and the elementary float functions, bit-identical on every backend.
 
 ## License
 

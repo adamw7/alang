@@ -1,0 +1,14 @@
+0 bytes, 0 code points, utf8 true: 
+3 bytes, 3 code points, utf8 true: 97 98 99 
+13 bytes, 11 code points, utf8 true: 104 233 108 108 111 32 119 246 114 108 100 
+9 bytes, 3 code points, utf8 true: 26085 26412 35486 
+11 bytes, 8 code points, utf8 true: 101 109 111 106 105 32 128512 33 
+1 bytes, 1 code points, utf8 false: 65533 
+3 bytes, 3 code points, utf8 false: 97 65533 65533 
+2 bytes, 2 code points, utf8 false: 65533 65533 
+3 bytes, 3 code points, utf8 false: 65533 65533 65533 
+4 bytes, 4 code points, utf8 false: 65533 65533 65533 65533 
+Aé日😀 10 4 true
+[97, 241, 26085, 128512]
+日本語|ab|éll||
+3

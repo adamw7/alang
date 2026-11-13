@@ -49,7 +49,27 @@ public final class Layout {
                 }
                 yield align(Math.max(off, 1), al);
             }
+            case Type.SetT st -> size(new Type.ListT(st.elem(), st.cap()));
+            case Type.MapT mt -> {
+                // struct { uint32_t len; K k[N]; V v[N]; }
+                long keys = add(align(4, align(mt.key())), mul(size(mt.key()), mt.cap()));
+                long vals = add(align(keys, align(mt.value())), mul(size(mt.value()), mt.cap()));
+                yield align(vals, align(t));
+            }
+            case Type.TupleT tt -> {
+                long off = 0;
+                long al = 1;
+                for (Type e : tt.elems()) {
+                    long ea = align(e);
+                    off = add(align(off, ea), size(e));
+                    al = Math.max(al, ea);
+                }
+                yield align(Math.max(off, 1), al);
+            }
             case Type.EnumT e -> enumSize(e.decl());
+            // Only instances are laid out, whose types are all known; a function is passed by name and takes no room.
+            case Type.TypeVar v -> 0;
+            case Type.FnT f -> 0;
             case Type.Void v -> 0;
             case Type.Error err -> 0;
         };
@@ -82,6 +102,13 @@ public final class Layout {
                 for (Field f : s.decl().fields) al = Math.max(al, align(f.type));
                 yield al;
             }
+            case Type.TupleT tt -> {
+                long al = 1;
+                for (Type e : tt.elems()) al = Math.max(al, align(e));
+                yield al;
+            }
+            case Type.SetT st -> Math.max(4, align(st.elem()));
+            case Type.MapT mt -> Math.max(4, Math.max(align(mt.key()), align(mt.value())));
             case Type.EnumT e -> {
                 long al = 4;
                 for (Variant v : e.decl().variants) {
@@ -89,6 +116,8 @@ public final class Layout {
                 }
                 yield al;
             }
+            case Type.TypeVar v -> 1;
+            case Type.FnT f -> 1;
             case Type.Void v -> 1;
             case Type.Error err -> 1;
         };
@@ -101,6 +130,7 @@ public final class Layout {
 
     /** Bytes a parameter occupies in a frame: aggregates and `mut` parameters are passed by address. */
     public static long paramSize(Type t, boolean byRef) {
+        if (t instanceof Type.FnT) return 0;
         if (byRef || Type.isAggregate(t)) return 8;
         return size(t);
     }

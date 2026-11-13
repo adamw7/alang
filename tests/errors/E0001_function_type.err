@@ -1,7 +1,0 @@
-error[E0001]: unexpected 'fn', expected one of a type, 'mut', '[', a name
- --> tests/errors/E0001_function_type.al:2:13
-  |
-2 | fn apply(f: fn(i64) -> i64, x: i64) -> i64 {
-  |             ^^
-  = hint: there are no function types or closures; call functions by name, and choose between behaviors with an enum and match
-

@@ -1,0 +1,7 @@
+error[E0702]: `n` already names another import of this file
+ --> tests/errors/import_alias_twice.al:3:28
+  |
+3 | import "lib/cycle_b.al" as n;
+  |                            ^
+  = hint: give each import its own name after `as`
+

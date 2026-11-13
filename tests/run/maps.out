@@ -1,0 +1,17 @@
+{"and": 1, "cat": 2, "dog": 1, "saw": 1, "the": 3}
+5 32 3 true false
+cat x2
+the x3
+the
+saw
+dog
+cat
+and
+{"ann": 26, "bob": 31, "cy": 40, "dee": 22}
+true false {"ann": 26, "cy": 40, "dee": 22}
+{1, 2, 3, 5} 4 true false
+true {2, 3, 5}
+true false
+{(-1, 5): "b", (0, 0): "o", (0, 1): "a"}
+[{"a"}, {"a", "b"}]
+{} 0

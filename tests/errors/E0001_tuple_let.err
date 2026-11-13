@@ -1,0 +1,7 @@
+error[E0001]: unexpected '=', expected ':'
+ --> tests/errors/E0001_tuple_let.al:3:16
+  |
+3 |     let (a, b) = (1, 2);
+  |                ^
+  = hint: every variable needs an explicit type: let x: i32 = 0;
+

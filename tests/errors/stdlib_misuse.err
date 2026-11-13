@@ -71,11 +71,12 @@ error[E0215]: a call with `mut` arguments must be its own statement or the whole
    |           ^^^^^^^^^^^^^^^^^
   = hint: store the result first: let value: i64 = remove(mut xs, 0); then use `value`
 
-error[E0203]: pow() needs an integer exponent, found f64
+error[E0203]: pow() of an integer needs an integer exponent, found f64
   --> tests/errors/stdlib_misuse.al:20:25
    |
 20 |     let p: i64 = pow(2, 1.5);
    |                         ^^^
+  = hint: for a float result, make the base a float: pow(f64(2), 1.5)
 
 error[E0201]: gcd() needs two integers of the same type, found i32 and i64
   --> tests/errors/stdlib_misuse.al:21:18
@@ -95,7 +96,7 @@ error[E0102]: unknown function `substr`
    |
 24 |     let w: str[16] = substr(s, 0, 1);
    |                      ^^^^^^
-  = hint: use slice(s, from, to): the bytes from..to as a copy
+  = hint: slice it: s[from..to], s[from..] or s[..to]
 
 error[E0203]: starts_with() needs a str, found list[i64; 4]
   --> tests/errors/stdlib_misuse.al:25:31

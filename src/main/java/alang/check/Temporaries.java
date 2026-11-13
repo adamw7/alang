@@ -3,6 +3,7 @@ package alang.check;
 import alang.ast.Ast.*;
 import alang.ast.Builtin;
 import alang.types.Type;
+import java.util.List;
 
 /**
  * An upper bound on the aggregate temporaries a routine builds, which {@link MemoryReport} adds to its
@@ -42,6 +43,8 @@ final class Temporaries {
     private static long stmt(Stmt s, Routine r) {
         return switch (s) {
             case Let l -> l.builtInPlace() ? inner(l.init) : Layout.add(expr(l.init), stored(l.init, l.var.type));
+            // The tuple is taken apart where it is: each variable copies its element.
+            case Destructure d -> expr(d.init);
             case Assign a -> {
                 long t = Layout.add(expr(a.target), expr(a.value));
                 yield a.op == null ? Layout.add(t, stored(a.value, a.target.type)) : t;
@@ -54,7 +57,10 @@ final class Temporaries {
             }
             case While w -> Layout.add(Layout.add(expr(w.cond), expr(w.limit)), block(w.body, r));
             case For f -> {
-                if (f.isRange()) yield Layout.add(Layout.add(expr(f.from), expr(f.to)), block(f.body, r));
+                if (f.isRange()) {
+                    long bounds = Layout.add(Layout.add(expr(f.from), expr(f.to)), f.step == null ? 0 : expr(f.step));
+                    yield Layout.add(bounds, block(f.body, r));
+                }
                 // The snapshot of the collection lives as long as the loop: the value itself when the
                 // collection is built by an expression (counted there), a copy when it is a variable the body
                 // may change. split and words in a loop build no list: only their arguments count.
@@ -71,7 +77,10 @@ final class Temporaries {
             }
             case Match m -> {
                 long arms = 0;
-                for (Arm a : m.arms) arms = Layout.add(arms, block(a.body(), r));
+                for (Arm a : m.arms) {
+                    arms = Layout.add(arms, block(a.body(), r));
+                    if (a.guard() != null) arms = Layout.add(arms, expr(a.guard()));
+                }
                 yield Layout.add(expr(m.subject), arms);
             }
             case Return ret -> {
@@ -88,7 +97,9 @@ final class Temporaries {
 
     /** The aggregates that evaluating {@code e} builds, all of which may be alive at once. */
     static long expr(Expr e) {
-        long own = Type.isAggregate(e.type) && !e.isPlace() ? Layout.size(e.type) : 0;
+        // A slice read in place is a pointer and a length, not a copy.
+        boolean view = e instanceof SliceExpr s && s.view;
+        long own = Type.isAggregate(e.type) && !e.isPlace() && !view ? Layout.size(e.type) : 0;
         return Layout.add(own, inner(e));
     }
 
@@ -100,9 +111,10 @@ final class Temporaries {
             case StrLit s -> 0;
             case BoolLit b -> 0;
             case Name n -> 0;
-            case FieldAccess f -> f.variant != null ? 0 : expr(f.target);
+            case FieldAccess f -> f.variant != null || f.constant != null ? 0 : expr(f.target);
             case Index i -> Layout.add(expr(i.target), expr(i.index));
             case Call c -> call(c);
+            case VariantCall v when v.asCall != null -> call(v.asCall);
             case VariantCall v -> {
                 long t = 0;
                 for (int i = 0; i < v.args.size(); i++) {
@@ -124,12 +136,26 @@ final class Temporaries {
             case Unary u -> expr(u.operand);
             case Binary b -> Layout.add(expr(b.left), expr(b.right));
             case ArrayLit a -> {
-                Type elem = Type.elementOf(a.type);
+                // A map literal's entries are (key, value) tuples.
+                Type elem = a.type instanceof Type.MapT mt ? new Type.TupleT(List.of(mt.key(), mt.value()))
+                    : a.type instanceof Type.SetT st ? st.elem() : Type.elementOf(a.type);
                 long t = 0;
                 for (Expr x : a.elems) t = Layout.add(t, Layout.add(expr(x), stored(x, elem)));
                 yield t;
             }
             case Repeat r -> Layout.add(expr(r.value), stored(r.value, Type.elementOf(r.type)));
+            case IfExpr i -> Layout.add(expr(i.cond), Layout.add(Layout.add(expr(i.then), stored(i.then, i.type)),
+                Layout.add(expr(i.otherwise), stored(i.otherwise, i.type))));
+            case SliceExpr s -> Layout.add(expr(s.target), Layout.add(s.from == null ? 0 : expr(s.from), s.to == null ? 0 : expr(s.to)));
+            case TupleLit t -> {
+                List<Type> elems = ((Type.TupleT) t.type).elems();
+                long sum = 0;
+                for (int i = 0; i < t.elems.size(); i++) {
+                    Expr x = t.elems.get(i);
+                    sum = Layout.add(sum, Layout.add(expr(x), stored(x, elems.get(i))));
+                }
+                yield sum;
+            }
         };
     }
 

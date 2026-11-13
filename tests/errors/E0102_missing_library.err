@@ -45,14 +45,14 @@ error[E0102]: unknown function `reversed`
    |
 11 |     reversed(s);
    |     ^^^^^^^^
-  = hint: reverse in place with reverse(mut xs)
+  = hint: go through it backwards with for x in rev xs { }, or reverse it in place with reverse(mut xs)
 
 error[E0102]: unknown function `substring`
   --> tests/errors/E0102_missing_library.al:12:5
    |
 12 |     substring(s);
    |     ^^^^^^^^^
-  = hint: use slice(s, from, to): the bytes from..to as a copy
+  = hint: slice it: s[from..to], s[from..] or s[..to]
 
 error[E0102]: unknown function `isdigit`
   --> tests/errors/E0102_missing_library.al:13:5
@@ -73,14 +73,14 @@ error[E0102]: unknown function `filter`
    |
 15 |     filter(s);
    |     ^^^^^^
-  = hint: there are no higher-order functions; write the loop: for x in xs { if x > 0 { push(mut out, x); } }
+  = hint: write the loop, or a function that takes one: fn keep<T>(xs: list[T; _], f: fn(T) -> bool, out: mut list[T; _]) { for x in xs { if f(x) { push(mut out, x); } } }
 
 error[E0102]: unknown function `enumerate`
   --> tests/errors/E0102_missing_library.al:16:5
    |
 16 |     enumerate(s);
    |     ^^^^^^^^^
-  = hint: loop over the indexes: for i in 0..len(xs) { let x: i64 = xs[i]; }
+  = hint: for i, x in xs { } gives each element with its index
 
 error[E0102]: unknown function `ord`
   --> tests/errors/E0102_missing_library.al:17:5
@@ -101,7 +101,7 @@ error[E0102]: unknown function `dict`
    |
 19 |     dict();
    |     ^^^^
-  = hint: there are no maps, dictionaries or sets; keep the entries in a list of structs and find a key with a loop: struct Entry { key: str[16], value: i64 } and list[Entry; 64]
+  = hint: maps and sets have a capacity, like lists: var m: map[str[16], i64; 64] = []; m[key] = value; and var s: set[i64; 32] = []; insert(mut s, x);
 
 error[E0102]: unknown function `input`
   --> tests/errors/E0102_missing_library.al:20:5

@@ -67,7 +67,9 @@ final class AstBuilder {
         List<Import> imports = new ArrayList<>();
         for (ImportDeclContext ic : ctx.importDecl()) {
             Token path = ic.STRING_LIT().getSymbol();
-            imports.add(new Import(span(path), new String(unescape(path), StandardCharsets.UTF_8)));
+            IdentifierContext alias = ic.identifier();
+            imports.add(new Import(span(path), new String(unescape(path), StandardCharsets.UTF_8),
+                alias == null ? null : alias.getText(), alias == null ? null : span(alias)));
         }
         List<Item> items = new ArrayList<>();
         for (ItemContext ic : ctx.item()) {
@@ -149,9 +151,17 @@ final class AstBuilder {
             (pre ? requiresText : ensuresText).add(oneLine(c.expression()));
         }
         TypeRef ret = f.type() == null ? null : type(f.type());
-        FnDecl fn = new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null && !imported, params,
-            ret, requires, ensures, requiresText, ensuresText, block(f.block()));
-        if (params.stream().anyMatch(p -> anyCapacity(p.typeRef()))) {
+        List<String> typeParams = new ArrayList<>();
+        List<Span> typeParamSpans = new ArrayList<>();
+        if (f.typeParams() != null) {
+            for (IdentifierContext t : f.typeParams().identifier()) {
+                typeParams.add(t.getText());
+                typeParamSpans.add(span(t));
+            }
+        }
+        FnDecl fn = new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null && !imported,
+            typeParams, typeParamSpans, params, ret, requires, ensures, requiresText, ensuresText, block(f.block()));
+        if (!typeParams.isEmpty() || params.stream().anyMatch(p -> anyCapacity(p.typeRef()) || p.typeRef() instanceof FnRef)) {
             // A function that takes any capacity is checked once as written, then once more for each set of
             // capacities it is called with, on a fresh copy of its tree; the syntax errors were reported already.
             fn.copy = () -> new AstBuilder(new Diagnostics(file), file, tokens, imported).function(f);
@@ -193,7 +203,27 @@ final class AstBuilder {
         if (ctx instanceof ArrayTypeRefContext a) {
             return new ArrayRef(sp, type(a.type()), capacity(a.capacity()));
         }
-        return new NamedRef(sp, ((NamedTypeRefContext) ctx).identifier().getText());
+        if (ctx instanceof FnTypeRefContext f) {
+            List<TypeRef> ps = new ArrayList<>();
+            List<TypeContext> ts = f.type();
+            // With `-> R` the last type is the result.
+            boolean ret = f.ARROW() != null;
+            for (int i = 0; i < ts.size() - (ret ? 1 : 0); i++) ps.add(type(ts.get(i)));
+            return new FnRef(sp, ps, ret ? type(ts.get(ts.size() - 1)) : null);
+        }
+        if (ctx instanceof MapTypeRefContext m) {
+            return new MapRef(sp, type(m.type(0)), type(m.type(1)), capacity(m.capacity()));
+        }
+        if (ctx instanceof SetTypeRefContext s) {
+            return new SetRef(sp, type(s.type()), capacity(s.capacity()));
+        }
+        if (ctx instanceof TupleTypeRefContext t) {
+            List<TypeRef> elems = new ArrayList<>();
+            for (TypeContext e : t.type()) elems.add(type(e));
+            return new TupleRef(sp, elems);
+        }
+        NamedTypeRefContext n = (NamedTypeRefContext) ctx;
+        return new NamedRef(sp, n.identifier(n.identifier().size() - 1).getText(), n.qual == null ? null : n.qual.getText());
     }
 
     /** A capacity or length: its expression, or null for `_` (any capacity, in a parameter's type). */
@@ -207,6 +237,9 @@ final class AstBuilder {
             case StrRef s -> s.cap() == null;
             case ListRef l -> l.cap() == null || anyCapacity(l.elem());
             case ArrayRef a -> a.len() == null || anyCapacity(a.elem());
+            case MapRef m -> m.cap() == null || anyCapacity(m.key()) || anyCapacity(m.value());
+            case SetRef s -> s.cap() == null || anyCapacity(s.elem());
+            case TupleRef tr -> tr.elems().stream().anyMatch(AstBuilder::anyCapacity);
             default -> false;
         };
     }
@@ -223,8 +256,17 @@ final class AstBuilder {
         Span sp = span(ctx);
         if (ctx.letStmt() != null) {
             LetStmtContext l = ctx.letStmt();
-            return new Let(sp, l.kind.getType() == ALangLexer.VAR, l.identifier().getText(), span(l.identifier()),
-                type(l.type()), expr(l.expression()));
+            boolean mutable = l.kind.getType() == ALangLexer.VAR;
+            if (l.identifier() == null) {
+                List<String> names = new ArrayList<>();
+                List<Span> spans = new ArrayList<>();
+                for (BindingContext b : l.binding()) {
+                    names.add(b.UNDERSCORE() != null ? null : b.identifier().getText());
+                    spans.add(span(b));
+                }
+                return new Destructure(sp, mutable, names, spans, type(l.type()), expr(l.expression()));
+            }
+            return new Let(sp, mutable, l.identifier().getText(), span(l.identifier()), type(l.type()), expr(l.expression()));
         }
         if (ctx.assignStmt() != null) {
             AssignStmtContext a = ctx.assignStmt();
@@ -248,23 +290,31 @@ final class AstBuilder {
             Block elseBlock = bs.size() > conds.size() ? block(bs.get(bs.size() - 1)) : null;
             return new If(sp, conds, blocks, elseBlock);
         }
-        if (ctx.whileStmt() != null) {
-            WhileStmtContext w = ctx.whileStmt();
-            return new While(sp, expr(w.expression(0)), expr(w.expression(1)), block(w.block()));
-        }
-        if (ctx.forStmt() != null) {
-            ForStmtContext f = ctx.forStmt();
-            Expr to = f.expression().size() > 1 ? expr(f.expression(1)) : null;
-            return new For(sp, f.identifier().getText(), span(f.identifier()), expr(f.expression(0)), to, block(f.block()));
+        if (ctx.whileStmt() != null) return whileLoop(sp, ctx.whileStmt());
+        if (ctx.forStmt() != null) return forLoop(sp, ctx.forStmt());
+        if (ctx.labeledStmt() != null) {
+            LabeledStmtContext l = ctx.labeledStmt();
+            Loop loop = l.whileStmt() != null ? whileLoop(sp, l.whileStmt()) : forLoop(sp, l.forStmt());
+            loop.label = l.identifier().getText();
+            loop.labelSpan = span(l.identifier());
+            return loop;
         }
         if (ctx.matchStmt() != null) {
             MatchStmtContext m = ctx.matchStmt();
             List<Arm> arms = new ArrayList<>();
-            for (MatchArmContext a : m.matchArm()) arms.add(new Arm(pattern(a.pattern()), block(a.block())));
+            for (MatchArmContext a : m.matchArm()) {
+                arms.add(new Arm(pattern(a.pattern()), a.expression() == null ? null : expr(a.expression()), block(a.block())));
+            }
             return new Match(sp, expr(m.expression()), arms);
         }
-        if (ctx.breakStmt() != null) return new Break(sp);
-        if (ctx.continueStmt() != null) return new Continue(sp);
+        if (ctx.breakStmt() != null) {
+            IdentifierContext l = ctx.breakStmt().identifier();
+            return new Break(sp, l == null ? null : l.getText());
+        }
+        if (ctx.continueStmt() != null) {
+            IdentifierContext l = ctx.continueStmt().identifier();
+            return new Continue(sp, l == null ? null : l.getText());
+        }
         if (ctx.returnStmt() != null) {
             ExpressionContext e = ctx.returnStmt().expression();
             return new Return(sp, e == null ? null : expr(e));
@@ -277,6 +327,23 @@ final class AstBuilder {
         return new ExprStmt(sp, expr(ctx.exprStmt().expression()));
     }
 
+    private While whileLoop(Span sp, WhileStmtContext w) {
+        return new While(sp, expr(w.expression(0)), expr(w.expression(1)), block(w.block()));
+    }
+
+    /** `for [i,] x in [rev] from[..to | ..=to [step k]] { }`. */
+    private For forLoop(Span sp, ForStmtContext f) {
+        List<IdentifierContext> names = f.identifier();
+        IdentifierContext name = names.get(names.size() - 1);
+        IdentifierContext index = names.size() > 1 ? names.get(0) : null;
+        List<ExpressionContext> es = f.expression();
+        Expr to = es.size() > 1 ? expr(es.get(1)) : null;
+        Expr step = es.size() > 2 ? expr(es.get(2)) : null;
+        boolean inclusive = f.range != null && f.range.getType() == ALangLexer.DOTDOTEQ;
+        return new For(sp, name.getText(), span(name), index == null ? null : index.getText(), index == null ? null : span(index),
+            expr(es.get(0)), to, inclusive, step, f.REV() != null, block(f.block()));
+    }
+
     private Expr place(PlaceContext ctx) {
         Expr e = new Name(span(ctx.identifier()), ctx.identifier().getText());
         for (PlaceSuffixContext s : ctx.placeSuffix()) {
@@ -284,8 +351,10 @@ final class AstBuilder {
                 s.getStop().getStopIndex() - ctx.getStart().getStartIndex() + 1, file);
             if (s.identifier() != null) {
                 e = new FieldAccess(sp, e, s.identifier().getText(), span(s.identifier()));
-            } else {
+            } else if (s.expression() != null) {
                 e = new Index(sp, e, expr(s.expression()));
+            } else {
+                e = tupleAccess(sp, e, s.getStop());
             }
         }
         return e;
@@ -303,7 +372,10 @@ final class AstBuilder {
                     spans.add(span(b));
                 }
             }
-            return new VariantPat(sp, v.identifier(0).getText(), v.identifier(1).getText(), names, spans);
+            int k = v.qual == null ? 0 : 1;
+            VariantPat vp = new VariantPat(sp, v.identifier(k).getText(), v.identifier(k + 1).getText(), names, spans);
+            if (v.qual != null) vp.qualifier = v.qual.getText();
+            return vp;
         }
         if (ctx instanceof IntPatternContext i) {
             BigInteger val = parseInt(i.INT_LIT().getText());
@@ -328,6 +400,9 @@ final class AstBuilder {
         if (ctx instanceof BitAndExprContext b) return chain(sp, BinOp.BAND, b.unary());
         if (ctx instanceof BitOrExprContext b) return chain(sp, BinOp.BOR, b.unary());
         if (ctx instanceof BitXorExprContext b) return chain(sp, BinOp.BXOR, b.unary());
+        if (ctx instanceof IfExprContext i) {
+            return new IfExpr(sp, expr(i.expression(0)), expr(i.expression(1)), expr(i.expression(2)));
+        }
         if (ctx instanceof ShiftExprContext s) {
             BinOp op = s.op.getType() == ALangLexer.SHL ? BinOp.SHL : BinOp.SHR;
             return new Binary(sp, op, unary(s.unary(0)), unary(s.unary(1)));
@@ -433,10 +508,32 @@ final class AstBuilder {
             Span sp = spanTo(e.span, op);
             if (op instanceof FieldAccessContext f) {
                 e = new FieldAccess(sp, e, f.identifier().getText(), span(f.identifier()));
+            } else if (op instanceof TupleAccessContext t) {
+                e = tupleAccess(sp, e, t.getStop());
+            } else if (op instanceof SliceAccessContext sl) {
+                e = new SliceExpr(sp, e, sl.from == null ? null : expr(sl.from), sl.to == null ? null : expr(sl.to));
             } else {
                 e = new Index(sp, e, expr(((IndexAccessContext) op).expression()));
             }
         }
+        return e;
+    }
+
+    /**
+     * t.0 (an INT_LIT after the dot), or t.0.1, which the lexer reads as t, a dot and the FLOAT_LIT 0.1: two
+     * element accesses. Anything else after the dot, such as 1e5, is not an element.
+     */
+    private Expr tupleAccess(Span sp, Expr target, Token t) {
+        String text = t.getText();
+        if (!text.matches("[0-9]+(\\.[0-9]+)?")) {
+            diags.error(Code.E0001, span(t), "`" + text + "` is not an element of a tuple",
+                "elements are numbered from 0: t.0, t.1, and t.0.1 for an element of an element");
+            return target;
+        }
+        Span first = new Span(sp.line(), sp.col(), Math.max(1, sp.length() - (text.contains(".") ? text.length() - text.indexOf('.') : 0)), file);
+        String[] parts = text.split("\\.");
+        Expr e = new FieldAccess(parts.length == 1 ? sp : first, target, parts[0], span(t));
+        if (parts.length == 2) e = new FieldAccess(sp, e, parts[1], span(t));
         return e;
     }
 
@@ -461,6 +558,20 @@ final class AstBuilder {
             }
             return new StructLit(sp, s.identifier().getText(), inits);
         }
+        if (ctx instanceof QualifiedStructExprContext s) {
+            List<FieldInit> inits = new ArrayList<>();
+            for (FieldInitContext f : s.fieldInit()) {
+                inits.add(new FieldInit(span(f.identifier()), f.identifier().getText(), expr(f.expression())));
+            }
+            StructLit lit = new StructLit(sp, s.identifier(1).getText(), inits);
+            lit.qualifier = s.identifier(0).getText();
+            return lit;
+        }
+        if (ctx instanceof QualifiedVariantExprContext v) {
+            VariantCall vc = new VariantCall(sp, v.identifier(1).getText(), v.identifier(2).getText(), args(v.argList()));
+            vc.qualifier = v.identifier(0).getText();
+            return vc;
+        }
         if (ctx instanceof VariantExprContext v) {
             return new VariantCall(sp, v.identifier(0).getText(), v.identifier(1).getText(), args(v.argList()));
         }
@@ -469,6 +580,11 @@ final class AstBuilder {
         }
         if (ctx instanceof NameExprContext n) return new Name(sp, n.identifier().getText());
         if (ctx instanceof ParenExprContext p) return expr(p.expression());
+        if (ctx instanceof TupleExprContext t) {
+            List<Expr> elems = new ArrayList<>();
+            for (ExpressionContext e : t.expression()) elems.add(expr(e));
+            return new TupleLit(sp, elems);
+        }
         if (ctx instanceof RepeatExprContext r) return new Repeat(sp, expr(r.expression(0)), expr(r.expression(1)));
         ArrayExprContext a = (ArrayExprContext) ctx;
         List<Expr> elems = new ArrayList<>();

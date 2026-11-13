@@ -6,6 +6,7 @@ import alang.ast.Ast.Variant;
 import alang.interp.Values.ArrV;
 import alang.interp.Values.EnumV;
 import alang.interp.Values.ListV;
+import alang.interp.Values.MapV;
 import alang.interp.Values.StrV;
 import alang.interp.Values.StructV;
 import alang.types.PrimKind;
@@ -97,6 +98,17 @@ public final class JsonValues {
                 }
                 yield describe(Json.obj("type", "object", "properties", props, "required", required,
                     "additionalProperties", false), st.decl().doc);
+            }
+            case Type.SetT st -> Json.obj("type", "array", "items", schema(st.elem()), "maxItems", st.cap(), "uniqueItems", true);
+            case Type.MapT mt when mt.key() instanceof Type.Str ks -> Json.obj("type", "object", "additionalProperties",
+                schema(mt.value()), "propertyNames", Json.obj("maxLength", ks.cap()), "maxProperties", mt.cap());
+            case Type.MapT mt -> Json.obj("type", "array", "items", schema(new Type.TupleT(List.of(mt.key(), mt.value()))),
+                "maxItems", mt.cap(), "description", "[key, value] pairs, each key once");
+            case Type.TupleT tt -> {
+                List<Object> items = new ArrayList<>();
+                for (Type e : tt.elems()) items.add(schema(e));
+                yield Json.obj("type", "array", "prefixItems", items, "items", false, "minItems", items.size(),
+                    "maxItems", items.size());
             }
             case Type.EnumT et -> describe(enumSchema(et.decl()), et.decl().doc);
             default -> Json.obj();
@@ -200,6 +212,37 @@ public final class JsonValues {
                     } catch (EncodeException e) {
                         throw e.within("." + f.name);
                     }
+                }
+                yield out;
+            }
+            case Type.TupleT tt -> {
+                List<Object> out = new ArrayList<>();
+                for (int i = 0; i < tt.elems().size(); i++) out.add(element(((StructV) v).fields[i], tt.elems().get(i), i));
+                yield out;
+            }
+            case Type.SetT st -> {
+                ListV lv = (ListV) v;
+                List<Object> out = new ArrayList<>();
+                for (int i = 0; i < lv.len; i++) out.add(element(lv.items[i], st.elem(), i));
+                yield out;
+            }
+            case Type.MapT mt -> {
+                MapV mv = (MapV) v;
+                if (mt.key() instanceof Type.Str) {
+                    Map<String, Object> out = new LinkedHashMap<>();
+                    for (int i = 0; i < mv.len; i++) {
+                        String key = (String) toJson(mv.keys[i], mt.key());
+                        try {
+                            out.put(key, toJson(mv.vals[i], mt.value()));
+                        } catch (EncodeException e) {
+                            throw e.within("." + key);
+                        }
+                    }
+                    yield out;
+                }
+                List<Object> out = new ArrayList<>();
+                for (int i = 0; i < mv.len; i++) {
+                    out.add(List.of(element(mv.keys[i], mt.key(), i), element(mv.vals[i], mt.value(), i)));
                 }
                 yield out;
             }
@@ -337,6 +380,46 @@ public final class JsonValues {
                     fields[i++] = fromJson(m.get(f.name), f.type, path + "." + f.name);
                 }
                 return new StructV(fields);
+            }
+            case Type.SetT st -> {
+                if (!(j instanceof List<?> l)) throw fail(path, "expected an array");
+                if (l.size() > st.cap()) throw fail(path, "at most " + st.cap() + " items allowed, found " + l.size());
+                ListV s = new ListV(new Object[st.cap()], 0);
+                for (int i = 0; i < l.size(); i++) {
+                    Object x = fromJson(l.get(i), st.elem(), path + "[" + i + "]");
+                    if (Stdlib.find(s.items, s.len, x, st.elem()) >= 0) throw fail(path + "[" + i + "]", "duplicate item");
+                    Stdlib.setInsert(s, x, st.elem(), null);
+                }
+                return s;
+            }
+            case Type.MapT mt -> {
+                MapV m = new MapV(new Object[mt.cap()], new Object[mt.cap()], 0);
+                List<Object[]> entries = new ArrayList<>();
+                if (mt.key() instanceof Type.Str) {
+                    if (!(j instanceof Map<?, ?> o)) throw fail(path, "expected an object");
+                    for (Map.Entry<?, ?> e : o.entrySet()) entries.add(new Object[] {e.getKey(), e.getValue(), "." + e.getKey()});
+                } else {
+                    if (!(j instanceof List<?> l)) throw fail(path, "expected an array of [key, value] pairs");
+                    for (int i = 0; i < l.size(); i++) {
+                        if (!(l.get(i) instanceof List<?> pair) || pair.size() != 2) throw fail(path + "[" + i + "]", "expected a [key, value] pair");
+                        entries.add(new Object[] {pair.get(0), pair.get(1), "[" + i + "]"});
+                    }
+                }
+                if (entries.size() > mt.cap()) throw fail(path, "at most " + mt.cap() + " entries allowed, found " + entries.size());
+                for (Object[] e : entries) {
+                    Object k = fromJson(e[0], mt.key(), path + e[2] + "(key)");
+                    if (Stdlib.find(m.keys, m.len, k, mt.key()) >= 0) throw fail(path + e[2], "duplicate key");
+                    Stdlib.mapPut(m, k, fromJson(e[1], mt.value(), path + e[2]), mt.key(), null);
+                }
+                return m;
+            }
+            case Type.TupleT tt -> {
+                int n = tt.elems().size();
+                if (!(j instanceof List<?> l)) throw fail(path, "expected an array of " + n + " items");
+                if (l.size() != n) throw fail(path, "expected exactly " + n + " items, found " + l.size());
+                Object[] vals = new Object[n];
+                for (int i = 0; i < n; i++) vals[i] = fromJson(l.get(i), tt.elems().get(i), path + "[" + i + "]");
+                return new StructV(vals);
             }
             case Type.EnumT et -> {
                 EnumDecl d = et.decl();

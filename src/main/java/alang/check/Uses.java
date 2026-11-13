@@ -39,11 +39,17 @@ final class Uses {
      */
     static void warnUnused(Program program, Diagnostics diags, Function<Expr, String> text) {
         Set<FnDecl> called = new HashSet<>();
+        List<Routine> routines = new ArrayList<>();
         for (Item item : program.items) {
             if (item instanceof Routine r) {
-                // A call of a function that takes any capacity runs an instance of it.
-                for (FnDecl f : r.callees) called.add(f.origin != null ? f.origin : f);
+                routines.add(r);
+                if (r instanceof FnDecl f) routines.addAll(f.instances.values());
             }
+        }
+        for (Routine r : routines) {
+            // A call of a generic function runs an instance of it, which calls the functions it was given.
+            for (FnDecl f : r.callees) called.add(f.origin != null ? f.origin : f);
+            called.addAll(r.fnValues);
         }
         for (Item item : program.items) {
             if (!(item instanceof Routine r)) continue;
@@ -74,6 +80,13 @@ final class Uses {
                         "what it is given is lost: use its value, or remove it");
                 }
             }
+            for (Destructure d : s.destructures) {
+                for (int i = 0; i < d.vars.size(); i++) {
+                    LocalVar v = d.vars.get(i);
+                    if (v == null || v.name.startsWith("_") || s.read.contains(v)) continue;
+                    diags.warning(Code.W0304, d.nameSpans.get(i), "`" + v.name + "` is never used", "write _ in its place");
+                }
+            }
             for (VariantPat p : s.patterns) {
                 for (int i = 0; i < p.vars.size(); i++) {
                     LocalVar v = p.vars.get(i);
@@ -91,6 +104,7 @@ final class Uses {
         final Set<LocalVar> changed = new HashSet<>();
         final List<Let> lets = new ArrayList<>();
         final List<VariantPat> patterns = new ArrayList<>();
+        final List<Destructure> destructures = new ArrayList<>();
 
         void block(Block b) {
             for (Stmt s : b.stmts()) stmt(s);
@@ -101,6 +115,10 @@ final class Uses {
                 case Let l -> {
                     lets.add(l);
                     read(l.init);
+                }
+                case Destructure d -> {
+                    destructures.add(d);
+                    read(d.init);
                 }
                 case Assign a -> {
                     // `x += 1` uses x only to change it, so it is not a read of x.
@@ -120,12 +138,14 @@ final class Uses {
                 case For f -> {
                     read(f.from);
                     if (f.to != null) read(f.to);
+                    if (f.step != null) read(f.step);
                     block(f.body);
                 }
                 case Match m -> {
                     read(m.subject);
                     for (Arm a : m.arms) {
                         if (a.pattern() instanceof VariantPat p) patterns.add(p);
+                        if (a.guard() != null) read(a.guard());
                         block(a.body());
                     }
                 }
@@ -194,6 +214,19 @@ final class Uses {
                     for (Expr x : a.elems) read(x);
                 }
                 case Repeat r -> read(r.value);
+                case IfExpr i -> {
+                    read(i.cond);
+                    read(i.then);
+                    read(i.otherwise);
+                }
+                case SliceExpr s -> {
+                    read(s.target);
+                    if (s.from != null) read(s.from);
+                    if (s.to != null) read(s.to);
+                }
+                case TupleLit t -> {
+                    for (Expr x : t.elems) read(x);
+                }
                 case IntLit i -> { }
                 case FloatLit f -> { }
                 case StrLit s -> { }

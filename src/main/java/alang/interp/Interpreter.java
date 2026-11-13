@@ -8,6 +8,7 @@ import alang.diag.Span;
 import alang.interp.Values.ArrV;
 import alang.interp.Values.EnumV;
 import alang.interp.Values.ListV;
+import alang.interp.Values.MapV;
 import alang.interp.Values.StrV;
 import alang.interp.Values.StructV;
 import alang.types.PrimKind;
@@ -260,6 +261,13 @@ public final class Interpreter {
                 assign(a, slots);
                 yield NORMAL;
             }
+            case Destructure d -> {
+                StructV t = (StructV) Values.coerce(owned(d.init, slots), d.init.type);
+                for (int i = 0; i < d.vars.size(); i++) {
+                    if (d.vars.get(i) != null) slots[d.vars.get(i).slot] = t.fields[i];
+                }
+                yield NORMAL;
+            }
             case If i -> {
                 for (int k = 0; k < i.conds.size(); k++) {
                     if ((Boolean) eval(i.conds.get(k), slots)) yield execBlock(i.blocks.get(k), slots);
@@ -269,8 +277,14 @@ public final class Interpreter {
             case While w -> whileLoop(w, slots);
             case For f -> f.isRange() ? rangeLoop(f, slots) : eachLoop(f, slots);
             case Match m -> match(m, slots);
-            case Break b -> BREAK;
-            case Continue c -> CONTINUE;
+            case Break b -> {
+                jumpTarget = b.target;
+                yield BREAK;
+            }
+            case Continue c -> {
+                jumpTarget = c.target;
+                yield CONTINUE;
+            }
             case Return r -> {
                 retVal = r.value == null ? null : owned(r.value, slots);
                 yield RETURN;
@@ -298,6 +312,24 @@ public final class Interpreter {
         r.set(arith(a.op, Type.kind(t), Type.kind(a.value.type), r.get(), rhs, a.span));
     }
 
+    /** What a loop does after its body: go on with the next iteration, leave the loop, or pass the result out. */
+    private static final int GO = 0;
+    private static final int LEAVE = 1;
+    private static final int OUT = 2;
+
+    /**
+     * The loop that a `break label;` or `continue label;` being carried out jumps to; null for one without a
+     * label, which jumps to the innermost loop.
+     */
+    private Loop jumpTarget;
+
+    private int after(Loop l, int r) {
+        if (r == NORMAL) return GO;
+        if (r == RETURN || jumpTarget != null && jumpTarget != l) return OUT;
+        jumpTarget = null;
+        return r == BREAK ? LEAVE : GO;
+    }
+
     private int whileLoop(While w, Object[] slots) {
         Object lim = eval(w.limit, slots);
         PrimKind lk = Type.kind(w.limit.type);
@@ -311,22 +343,50 @@ public final class Interpreter {
             count++;
             step(w.span);
             int r = execBlock(w.body, slots);
-            if (r == BREAK) break;
-            if (r == RETURN) return r;
+            int a = after(w, r);
+            if (a == LEAVE) break;
+            if (a == OUT) return r;
         }
         return NORMAL;
     }
 
+    /**
+     * `for i in a..b`, `a..=b`, either with `step k`, and with `rev` the same values last first. The differences
+     * that decide when to stop are unsigned 64-bit, so nothing overflows near the ends of the type.
+     */
     private int rangeLoop(For f, Object[] slots) {
         PrimKind k = Type.kind(f.var.type);
         long from = (Long) eval(f.from, slots);
         long to = (Long) eval(f.to, slots);
-        for (long i = from; IntOps.compare(k, i, to) < 0; i++) {
+        long step = 1;
+        if (f.step != null) {
+            step = (Long) eval(f.step, slots);
+            if (k.signed ? step <= 0 : step == 0) {
+                throw new Trap(Code.R0013, f.step.span, "the step of a range must be positive, found " + IntOps.toString(k, step));
+            }
+        }
+        int cmp = IntOps.compare(k, from, to);
+        if (f.inclusive ? cmp > 0 : cmp >= 0) return NORMAL;
+        long i = from;
+        if (f.rev) {
+            long span = to - from;
+            i = from + (f.inclusive ? Long.divideUnsigned(span, step) : Long.divideUnsigned(span - 1, step)) * step;
+        }
+        while (true) {
             step(f.span);
             slots[f.var.slot] = i;
             int r = execBlock(f.body, slots);
-            if (r == BREAK) break;
-            if (r == RETURN) return r;
+            int a = after(f, r);
+            if (a == LEAVE) break;
+            if (a == OUT) return r;
+            if (f.rev) {
+                if (Long.compareUnsigned(i - from, step) < 0) break;
+                i -= step;
+            } else {
+                int c = Long.compareUnsigned(to - i, step);
+                if (f.inclusive ? c < 0 : c <= 0) break;
+                i += step;
+            }
         }
         return NORMAL;
     }
@@ -336,26 +396,62 @@ public final class Interpreter {
         // The collection is evaluated once and iterated as a snapshot: a copy, when it is a variable the body
         // may change, else the value itself.
         Object coll = f.snapshot ? owned(f.from, slots) : eval(f.from, slots);
+        if (coll instanceof MapV m) {
+            // A map gives its keys in order, or with `for k, v in m` each key with its value.
+            for (int k = 0; k < m.len; k++) {
+                int i = f.rev ? m.len - 1 - k : k;
+                step(f.span);
+                if (f.indexVar != null) {
+                    slots[f.indexVar.slot] = m.keys[i];
+                    slots[f.var.slot] = m.vals[i];
+                } else {
+                    slots[f.var.slot] = m.keys[i];
+                }
+                int r = execBlock(f.body, slots);
+                int a = after(f, r);
+                if (a == LEAVE) break;
+                if (a == OUT) return r;
+            }
+            return NORMAL;
+        }
         Object[] items = coll instanceof ArrV a ? a.items : coll instanceof ListV l ? l.items : null;
         int n = length(coll);
-        for (int i = 0; i < n; i++) {
+        for (int k = 0; k < n; k++) {
+            int i = f.rev ? n - 1 - k : k;
             step(f.span);
+            if (f.indexVar != null) slots[f.indexVar.slot] = (long) i;
             slots[f.var.slot] = items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF);
             int r = execBlock(f.body, slots);
-            if (r == BREAK) break;
-            if (r == RETURN) return r;
+            int a = after(f, r);
+            if (a == LEAVE) break;
+            if (a == OUT) return r;
         }
         return NORMAL;
     }
 
     /**
-     * `for x in split(s, sep)` and `for x in words(s)`: the pieces of s, made one at a time into a str of
-     * the capacity of s, which no piece can outgrow. The loop variable is read-only and anything that stores
-     * it copies it, so one buffer serves every piece.
+     * `for x in split(s, sep)`, `for x in words(s)` and `for c in chars(s)`: the pieces of s, made one at a time
+     * into a str of the capacity of s, which no piece can outgrow, or its code points. The loop variable is
+     * read-only and anything that stores it copies it, so one buffer serves every piece.
      */
     private int pieceLoop(For f, Call c, Object[] slots) {
         Expr src = c.args.get(0).expr();
         StrV s = (StrV) (f.snapshot ? owned(src, slots) : eval(src, slots));
+        long index = 0;
+        if (c.builtin == Builtin.CHARS) {
+            for (int pos = 0; pos < s.len; ) {
+                long d = Stdlib.utf8Next(s.b, s.len, pos);
+                pos += (int) (d & 7);
+                step(f.span);
+                if (f.indexVar != null) slots[f.indexVar.slot] = index++;
+                slots[f.var.slot] = d >>> 8;
+                int r = execBlock(f.body, slots);
+                int a = after(f, r);
+                if (a == LEAVE) break;
+                if (a == OUT) return r;
+            }
+            return NORMAL;
+        }
         byte[] sep = c.builtin == Builtin.SPLIT ? Stdlib.pattern(eval(c.args.get(1).expr(), slots)) : null;
         if (sep != null && sep.length == 0) throw new Trap(Code.R0013, c.span, "split separator is empty");
         StrV piece = new StrV(new byte[((Type.Str) src.type).cap()], 0);
@@ -380,10 +476,12 @@ public final class Interpreter {
             piece.len = end - start;
             System.arraycopy(s.b, start, piece.b, 0, piece.len);
             if (before > piece.len) Arrays.fill(piece.b, piece.len, before, (byte) 0);
+            if (f.indexVar != null) slots[f.indexVar.slot] = index++;
             slots[f.var.slot] = piece;
             int r = execBlock(f.body, slots);
-            if (r == BREAK) break;
-            if (r == RETURN) return r;
+            int a = after(f, r);
+            if (a == LEAVE) break;
+            if (a == OUT) return r;
             if (pos < 0) break;
         }
         return NORMAL;
@@ -392,7 +490,9 @@ public final class Interpreter {
     private int match(Match m, Object[] slots) {
         Object v = eval(m.subject, slots);
         for (Arm arm : m.arms) {
-            if (matches(arm.pattern(), v, slots)) return execBlock(arm.body(), slots);
+            if (matches(arm.pattern(), v, slots) && (arm.guard() == null || (Boolean) eval(arm.guard(), slots))) {
+                return execBlock(arm.body(), slots);
+            }
         }
         throw new IllegalStateException("non-exhaustive match passed the checker");
     }
@@ -470,6 +570,17 @@ public final class Interpreter {
         }
     }
 
+    /** m[k] as a place: reading it needs the key (R0003), storing to it adds the key if it is new (R0004 when full). */
+    private record MapRef(MapV m, Object key, Type keyType, Span at) implements Ref {
+        public Object get() {
+            return Stdlib.mapGet(m, key, keyType, at);
+        }
+
+        public void set(Object v) {
+            Stdlib.mapPut(m, key, v, keyType, at);
+        }
+    }
+
     private record ByteRef(StrV s, int i) implements Ref {
         public Object get() {
             return (long) (s.b[i] & 0xFF);
@@ -492,6 +603,10 @@ public final class Interpreter {
             }
             case Index ix -> {
                 Object container = ref(ix.target, slots).get();
+                if (ix.target.type instanceof Type.MapT mt) {
+                    Object key = Values.coerce(owned(ix.index, slots), mt.key());
+                    return new MapRef((MapV) container, key, mt.key(), ix.span);
+                }
                 long i = (Long) eval(ix.index, slots);
                 return elementRef(container, i, Type.kind(ix.index.type), ix.span);
             }
@@ -504,6 +619,7 @@ public final class Interpreter {
             case ArrV a -> a.items.length;
             case ListV l -> l.len;
             case StrV s -> s.len;
+            case MapV m -> m.len;
             default -> throw new IllegalStateException();
         };
     }
@@ -540,10 +656,15 @@ public final class Interpreter {
                 Object v = slots[n.local.slot];
                 yield n.local.byRef ? ((Ref) v).get() : v;
             }
+            case FieldAccess f when f.constant != null -> f.constant.value;
+            case VariantCall v when v.asCall != null -> callUser(v.asCall, slots);
             case FieldAccess f -> f.variant != null ? new EnumV(f.variant.index, new Object[0])
                 : ((StructV) eval(f.target, slots)).fields[f.fieldIndex];
             case Index ix -> {
                 Object container = eval(ix.target, slots);
+                if (ix.target.type instanceof Type.MapT mt) {
+                    yield Stdlib.mapGet((MapV) container, eval(ix.index, slots), mt.key(), ix.span);
+                }
                 long i = (Long) eval(ix.index, slots);
                 yield elementRef(container, i, Type.kind(ix.index.type), ix.span).get();
             }
@@ -577,11 +698,39 @@ public final class Interpreter {
                 };
             }
             case Binary b -> binary(b, slots);
+            case ArrayLit a when a.type instanceof Type.MapT mt -> {
+                MapV m = new MapV(new Object[mt.cap()], new Object[mt.cap()], 0);
+                for (Expr x : a.elems) {
+                    StructV pair = (StructV) owned(x, slots);
+                    Stdlib.mapPut(m, Values.coerce(pair.fields[0], mt.key()), Values.coerce(pair.fields[1], mt.value()), mt.key(), a.span);
+                }
+                yield m;
+            }
+            case ArrayLit a when a.type instanceof Type.SetT st -> {
+                ListV s = new ListV(new Object[st.cap()], 0);
+                for (Expr x : a.elems) Stdlib.setInsert(s, Values.coerce(owned(x, slots), st.elem()), st.elem(), a.span);
+                yield s;
+            }
             case ArrayLit a -> {
                 Type elem = Type.elementOf(a.type);
                 Object[] vals = new Object[a.elems.size()];
                 for (int i = 0; i < vals.length; i++) vals[i] = Values.coerce(owned(a.elems.get(i), slots), elem);
                 yield a.type instanceof Type.ListT l ? new ListV(Arrays.copyOf(vals, l.cap()), vals.length) : new ArrV(vals);
+            }
+            case IfExpr i -> Values.coerce(owned((Boolean) eval(i.cond, slots) ? i.then : i.otherwise, slots), i.type);
+            case SliceExpr s -> {
+                Object xs = eval(s.target, slots);
+                long from = s.from == null ? 0L : (Long) eval(s.from, slots);
+                long to = s.to == null ? (long) length(xs) : (Long) eval(s.to, slots);
+                PrimKind fk = s.from == null ? PrimKind.I64 : Type.kind(s.from.type);
+                PrimKind tk = s.to == null ? PrimKind.I64 : Type.kind(s.to.type);
+                yield Stdlib.slice(xs, s.type, from, fk, to, tk, s.span);
+            }
+            case TupleLit t -> {
+                List<Type> elems = ((Type.TupleT) t.type).elems();
+                Object[] vals = new Object[t.elems.size()];
+                for (int i = 0; i < vals.length; i++) vals[i] = Values.coerce(owned(t.elems.get(i), slots), elems.get(i));
+                yield new StructV(vals);
             }
             case Repeat r -> {
                 Type elem = Type.elementOf(r.type);
@@ -604,6 +753,8 @@ public final class Interpreter {
         for (int i = 0; i < args.length; i++) {
             LocalVar p = f.paramVars.get(i);
             Expr a = c.args.get(i).expr();
+            // A function argument is not a value: the instance calls the function it was made for.
+            if (p.type instanceof Type.FnT) continue;
             args[i] = p.byRef ? ref(a, slots) : Values.coerce(eval(a, slots), p.type);
         }
         return invoke(f, args, c.span);
@@ -760,7 +911,12 @@ public final class Interpreter {
             }
             case CAP -> {
                 Type t = args.get(0).expr().type;
-                return (long) (t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap());
+                return (long) switch (t) {
+                    case Type.Str s -> s.cap();
+                    case Type.MapT m -> m.cap();
+                    case Type.SetT s -> s.cap();
+                    default -> ((Type.ListT) t).cap();
+                };
             }
             case PUSH -> {
                 Object container = ref(args.get(0).expr(), slots).get();
@@ -794,7 +950,11 @@ public final class Interpreter {
             }
             case CLEAR -> {
                 Object container = ref(args.get(0).expr(), slots).get();
-                if (container instanceof ListV l) {
+                if (container instanceof MapV m) {
+                    Arrays.fill(m.keys, null);
+                    Arrays.fill(m.vals, null);
+                    m.len = 0;
+                } else if (container instanceof ListV l) {
                     Arrays.fill(l.items, null);
                     l.len = 0;
                 } else {
@@ -834,16 +994,31 @@ public final class Interpreter {
                     : Integer.signum(IntOps.compare(Type.kind(c.type), (Long) b, (Long) a)) == (min ? -1 : 1);
                 return takeB ? b : a;
             }
-            case SQRT, FLOOR, CEIL, ROUND, TRUNC -> {
+            case SQRT, FLOOR, CEIL, ROUND, TRUNC, EXP, LOG, LOG2, LOG10, SIN, COS, TAN, ASIN, ACOS, ATAN -> {
                 double d = (Double) eval(args.get(0).expr(), slots);
                 double r = switch (c.builtin) {
                     case SQRT -> Math.sqrt(d);
                     case FLOOR -> Math.floor(d);
                     case CEIL -> Math.ceil(d);
                     case ROUND -> Stdlib.round(d);
+                    case EXP -> FloatMath.exp(d);
+                    case LOG -> FloatMath.log(d);
+                    case LOG2 -> FloatMath.log2(d);
+                    case LOG10 -> FloatMath.log10(d);
+                    case SIN -> FloatMath.sin(d);
+                    case COS -> FloatMath.cos(d);
+                    case TAN -> FloatMath.tan(d);
+                    case ASIN -> FloatMath.asin(d);
+                    case ACOS -> FloatMath.acos(d);
+                    case ATAN -> FloatMath.atan(d);
                     default -> Stdlib.trunc(d);
                 };
                 return round(r, c.type);
+            }
+            case ATAN2 -> {
+                double y = (Double) eval(args.get(0).expr(), slots);
+                double x = (Double) eval(args.get(1).expr(), slots);
+                return round(FloatMath.atan2(y, x), c.type);
             }
             case IS_NAN, IS_FINITE -> {
                 double d = (Double) eval(args.get(0).expr(), slots);
@@ -856,6 +1031,11 @@ public final class Interpreter {
                 return Stdlib.clamp(c.type, x, lo, hi, c.span);
             }
             case POW -> {
+                if (Type.isFloat(c.type)) {
+                    double x = (Double) eval(args.get(0).expr(), slots);
+                    double n = (Double) eval(args.get(1).expr(), slots);
+                    return round(FloatMath.pow(x, n), c.type);
+                }
                 long x = (Long) eval(args.get(0).expr(), slots);
                 long n = (Long) eval(args.get(1).expr(), slots);
                 return Stdlib.pow(Type.kind(c.type), x, Type.kind(args.get(1).expr().type), n, c.span);
@@ -865,6 +1045,11 @@ public final class Interpreter {
                 long b = (Long) eval(args.get(1).expr(), slots);
                 PrimKind k = Type.kind(c.type);
                 return c.builtin == Builtin.GCD ? Stdlib.gcd(k, a, b, c.span) : Stdlib.lcm(k, a, b, c.span);
+            }
+            case WRAPPING_ADD, WRAPPING_SUB, WRAPPING_MUL, SATURATING_ADD, SATURATING_SUB, SATURATING_MUL -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                long b = (Long) eval(args.get(1).expr(), slots);
+                return Stdlib.wrapOrSaturate(c.builtin, Type.kind(c.type), a, b);
             }
             case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
                 long ch = (Long) eval(args.get(0).expr(), slots);
@@ -886,6 +1071,9 @@ public final class Interpreter {
             case CONTAINS, INDEX_OF -> {
                 Object xs = eval(args.get(0).expr(), slots);
                 Object x = eval(args.get(1).expr(), slots);
+                Type ct = args.get(0).expr().type;
+                if (ct instanceof Type.MapT mt) return Stdlib.find(((MapV) xs).keys, ((MapV) xs).len, x, mt.key()) >= 0;
+                if (ct instanceof Type.SetT st) return Stdlib.find(((ListV) xs).items, ((ListV) xs).len, x, st.elem()) >= 0;
                 long at = xs instanceof StrV s ? Stdlib.find(s.b, s.len, Stdlib.pattern(x), 0)
                     : Stdlib.indexOf(xs, x, Type.elementOf(args.get(0).expr().type));
                 return c.builtin == Builtin.CONTAINS ? (Object) (at >= 0) : (Object) at;
@@ -910,6 +1098,28 @@ public final class Interpreter {
             }
             case TRIM -> {
                 return Stdlib.trim((StrV) eval(args.get(0).expr(), slots));
+            }
+            case IS_UTF8 -> {
+                return Stdlib.isUtf8((StrV) eval(args.get(0).expr(), slots));
+            }
+            case CHAR_COUNT -> {
+                return Stdlib.charCount((StrV) eval(args.get(0).expr(), slots));
+            }
+            case CHARS -> {
+                return Stdlib.chars((StrV) eval(args.get(0).expr(), slots), (Type.ListT) c.type, c.span);
+            }
+            case PUSH_CHAR -> {
+                Ref target = ref(args.get(0).expr(), slots);
+                long cp = (Long) eval(args.get(1).expr(), slots);
+                Stdlib.pushChar((StrV) target.get(), cp, Type.kind(args.get(1).expr().type), c.span);
+                return null;
+            }
+            case SLICE_CHARS -> {
+                StrV xs = (StrV) eval(args.get(0).expr(), slots);
+                long from = (Long) eval(args.get(1).expr(), slots);
+                long to = (Long) eval(args.get(2).expr(), slots);
+                return Stdlib.sliceChars(xs, from, Type.kind(args.get(1).expr().type), to, Type.kind(args.get(2).expr().type),
+                    c.span);
             }
             case TRY_SPLIT, TRY_WORDS -> {
                 ListV parts = (ListV) ref(args.get(0).expr(), slots).get();
@@ -975,6 +1185,18 @@ public final class Interpreter {
                 return null;
             }
             case INSERT -> {
+                if (args.get(0).expr().type instanceof Type.MapT mt) {
+                    MapV m = (MapV) ref(args.get(0).expr(), slots).get();
+                    Object k = Values.coerce(owned(args.get(1).expr(), slots), mt.key());
+                    Object v = Values.coerce(owned(args.get(2).expr(), slots), mt.value());
+                    Stdlib.mapPut(m, k, v, mt.key(), c.span);
+                    return null;
+                }
+                if (args.get(0).expr().type instanceof Type.SetT st) {
+                    ListV s = (ListV) ref(args.get(0).expr(), slots).get();
+                    Stdlib.setInsert(s, Values.coerce(owned(args.get(1).expr(), slots), st.elem()), st.elem(), c.span);
+                    return null;
+                }
                 Object xs = ref(args.get(0).expr(), slots).get();
                 long i = (Long) eval(args.get(1).expr(), slots);
                 Type elem = Type.elementOf(args.get(0).expr().type);
@@ -983,9 +1205,30 @@ public final class Interpreter {
                 return null;
             }
             case REMOVE -> {
+                if (args.get(0).expr().type instanceof Type.MapT mt) {
+                    MapV m = (MapV) ref(args.get(0).expr(), slots).get();
+                    return Stdlib.mapRemove(m, eval(args.get(1).expr(), slots), mt.key());
+                }
+                if (args.get(0).expr().type instanceof Type.SetT st) {
+                    ListV s = (ListV) ref(args.get(0).expr(), slots).get();
+                    return Stdlib.setRemove(s, eval(args.get(1).expr(), slots), st.elem());
+                }
                 Object xs = ref(args.get(0).expr(), slots).get();
                 long i = (Long) eval(args.get(1).expr(), slots);
                 return Stdlib.remove(xs, i, Type.kind(args.get(1).expr().type), c.span);
+            }
+            case COMPARE -> {
+                Object a = eval(args.get(0).expr(), slots);
+                Object b = eval(args.get(1).expr(), slots);
+                return (long) Integer.signum(Stdlib.compare(a, b, args.get(0).expr().type));
+            }
+            case GET_OR -> {
+                Type.MapT mt = (Type.MapT) args.get(0).expr().type;
+                MapV m = (MapV) eval(args.get(0).expr(), slots);
+                Object k = eval(args.get(1).expr(), slots);
+                Object d = eval(args.get(2).expr(), slots);
+                int i = Stdlib.find(m.keys, m.len, k, mt.key());
+                return Values.coerce(i >= 0 ? m.vals[i] : d, mt.value());
             }
             case PANIC -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);

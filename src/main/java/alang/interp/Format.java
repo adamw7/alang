@@ -6,6 +6,7 @@ import alang.ast.Ast.Variant;
 import alang.interp.Values.ArrV;
 import alang.interp.Values.EnumV;
 import alang.interp.Values.ListV;
+import alang.interp.Values.MapV;
 import alang.interp.Values.StrV;
 import alang.interp.Values.StructV;
 import alang.types.PrimKind;
@@ -90,6 +91,35 @@ public final class Format {
                     ascii(out, ": ");
                     format(out, sv.fields[i], f.type, true);
                     i++;
+                }
+                out.write(')');
+            }
+            case Type.SetT st -> {
+                ListV lv = (ListV) v;
+                out.write('{');
+                for (int i = 0; i < lv.len; i++) {
+                    if (i > 0) ascii(out, ", ");
+                    format(out, lv.items[i], st.elem(), true);
+                }
+                out.write('}');
+            }
+            case Type.MapT mt -> {
+                MapV mv = (MapV) v;
+                out.write('{');
+                for (int i = 0; i < mv.len; i++) {
+                    if (i > 0) ascii(out, ", ");
+                    format(out, mv.keys[i], mt.key(), true);
+                    ascii(out, ": ");
+                    format(out, mv.vals[i], mt.value(), true);
+                }
+                out.write('}');
+            }
+            case Type.TupleT tt -> {
+                StructV sv = (StructV) v;
+                out.write('(');
+                for (int i = 0; i < tt.elems().size(); i++) {
+                    if (i > 0) ascii(out, ", ");
+                    format(out, sv.fields[i], tt.elems().get(i), true);
                 }
                 out.write(')');
             }

@@ -1,0 +1,47 @@
+error[E0201]: an entry of map[str[8], i64; 4] is a (key, value) pair (str[8], i64), found i64
+ --> tests/errors/E0212_maps.al:5:37
+  |
+5 |     let bad: map[str[8], i64; 4] = [1, 2];
+  |                                     ^
+  = hint: write each entry as a pair: [("a", 1), ("b", 2)]
+
+error[E0201]: an entry of map[str[8], i64; 4] is a (key, value) pair (str[8], i64), found i64
+ --> tests/errors/E0212_maps.al:5:40
+  |
+5 |     let bad: map[str[8], i64; 4] = [1, 2];
+  |                                        ^
+  = hint: write each entry as a pair: [("a", 1), ("b", 2)]
+
+error[E0201]: the keys of map[str[8], i64; 4] are str[8], found i64
+ --> tests/errors/E0212_maps.al:7:13
+  |
+7 |     print(m[1], s[0]);
+  |             ^
+
+error[E0212]: a set has no positions to index
+ --> tests/errors/E0212_maps.al:7:17
+  |
+7 |     print(m[1], s[0]);
+  |                 ^
+  = hint: ask whether it holds a value with contains(s, x), or go through it: for x in s { }
+
+error[E0203]: push() needs a list or str, found map[str[8], i64; 4]
+ --> tests/errors/E0212_maps.al:8:10
+  |
+8 |     push(mut m, 3);
+  |          ^^^^^
+  = hint: add to a map with m[key] = value or insert(mut m, key, value)
+
+error[E0207]: insert() modifies its first argument
+ --> tests/errors/E0212_maps.al:9:12
+  |
+9 |     insert(m, "b", 2);
+  |            ^
+  = hint: write insert(mut m, key, value)
+
+error[E0203]: get_or() needs a map, found set[i64; 4]
+  --> tests/errors/E0212_maps.al:10:25
+   |
+10 |     let x: i64 = get_or(s, 1, 0);
+   |                         ^
+

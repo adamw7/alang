@@ -180,7 +180,8 @@ final class Nesting {
 
     private static boolean isIdentifier(int type) {
         return type == ALangLexer.IDENT || type == ALangLexer.LIMIT || type == ALangLexer.TEST
-            || type == ALangLexer.TOOL || type == ALangLexer.IMPORT;
+            || type == ALangLexer.TOOL || type == ALangLexer.IMPORT || type == ALangLexer.STEP || type == ALangLexer.REV || type == ALangLexer.THEN
+            || type == ALangLexer.MAP || type == ALangLexer.SET || type == ALangLexer.AS;
     }
 
     /**

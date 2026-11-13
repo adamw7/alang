@@ -1,7 +1,0 @@
-error[E0001]: unexpected '..', expected a statement or expression
- --> tests/errors/E0001_slice.al:4:17
-  |
-4 |     print(word[0..5]);
-  |                 ^^
-  = hint: there are no slices or range values; copy the part you need in a loop: for i in a..b { push(mut part, xs[i]); }
-

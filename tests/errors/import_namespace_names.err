@@ -1,0 +1,18 @@
+error[E0102]: `n` has no function `nothing`
+  --> tests/errors/import_namespace_names.al:14:11
+   |
+14 |     print(n.nothing(1));
+   |           ^^^^^^^^^^^^
+
+error[E0103]: `n` has no type `Missing`
+  --> tests/errors/import_namespace_names.al:15:12
+   |
+15 |     let q: n.Missing = n.Pair(a: 1, b: 1);
+   |            ^^^^^^^^^
+
+error[E0101]: `n` has no constant `MAX`
+  --> tests/errors/import_namespace_names.al:16:11
+   |
+16 |     print(n.MAX, q);
+   |           ^^^^^
+

@@ -134,9 +134,10 @@ $ gcc -O2 -march=haswell fma.c && ./a.out
 5.55112e-17
 ```
 
-In ALang `a * b + c` always rounds twice: the C backend turns contraction off and refuses `-ffast-math`
-and x87 excess precision, and the tests compare its output byte for byte with the interpreter under gcc
-and clang at `-O0` to `-O3`, even with `-ffp-contract=fast` forced on.
+In ALang `a * b + c` always rounds twice: the C backend turns contraction off, rounds every product on its
+own where a compiler would fuse it anyway, and refuses `-ffast-math` and x87 excess precision. The tests
+compare its output byte for byte with the interpreter under gcc and clang at `-O0` to `-O3`, even with
+`-ffp-contract=fast` forced on and a multiply-add instruction to fuse into (arm64, or x86 with `-mfma`).
 
 ```alang
 fn mul_add(a: f64, b: f64, c: f64) -> f64 {
@@ -148,9 +149,9 @@ test "a * b + c rounds twice on every compiler and CPU" {
 }
 ```
 
-`sin`, `exp` and a float `pow` are left out on purpose: their last bits differ between math libraries.
-ALang has only the operations IEEE 754 requires to be correctly rounded, so every platform gets the same
-bits.
+The last bits of `sin`, `exp` and `pow` differ between math libraries, so ALang does not call one: it
+computes them itself, with only the operations IEEE 754 requires to be correctly rounded, in the same
+order in the interpreter and in the C it generates. Every platform gets the same bits.
 
 **Locale.** Java's `String.format("%.2f", 3.14159)` prints `3,14` under a German locale, and C's `printf`
 does the same after `setlocale`. ALang formats numbers itself, and the tests run every program under
@@ -449,8 +450,8 @@ code runs, and its failures carry a code, a location and a fix.
   [AGENTS.md](../AGENTS.md#patterns)).
 - **No I/O beyond `print`:** the host reads files and calls the network, then passes the data to a
   `tool fn`, or to `fn main` on stdin (`alang run prog.al < data.txt`).
-- **A small language:** version 0.2 has imports but no namespaces, generics or slices, no `sin`, `exp` or float `pow`,
-  and a small standard library (text, math, sorting; [SPEC.md](SPEC.md#9-builtins-and-the-standard-library)).
+- **A small language:** version 0.2 has generics without closures, maps and sets with a fixed
+  capacity, and a small standard library (text, math, sorting; [SPEC.md](SPEC.md#9-builtins-and-the-standard-library)).
 - **No ecosystem:** no packages to install, and none to vet.
 
 Use Python, Go or Rust to build applications, talk to the outside world and reuse libraries. Use ALang

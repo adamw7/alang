@@ -33,16 +33,26 @@ public final class Ast {
         public final List<Item> items;
         public final List<Import> imports;
         public final List<Source> files;
+        /**
+         * For each file that imports with `as`: its aliases and the scope each names. A file imported with `as` has a
+         * scope of its own (shared with the files it imports without `as`), whose names do not clash with others'.
+         */
+        public final Map<Source, Map<String, Integer>> aliases;
+        /** The scope of each file's declarations; a file not listed is in scope 0. */
+        public final Map<Source, Integer> scopes;
 
         public Program(Source source, List<Item> items, List<Import> imports) {
-            this(source, items, imports, List.of(source));
+            this(source, items, imports, List.of(source), Map.of(), Map.of());
         }
 
-        public Program(Source source, List<Item> items, List<Import> imports, List<Source> files) {
+        public Program(Source source, List<Item> items, List<Import> imports, List<Source> files,
+                       Map<Source, Map<String, Integer>> aliases, Map<Source, Integer> scopes) {
             this.source = source;
             this.items = items;
             this.imports = imports;
             this.files = files;
+            this.aliases = aliases;
+            this.scopes = scopes;
         }
 
         public <T extends Item> List<T> itemsOf(Class<T> cls) {
@@ -61,14 +71,19 @@ public final class Ast {
         }
     }
 
-    /** `import "path";` at the top of a file: {@code span} is the path's string literal. */
-    public record Import(Span span, String path) {}
+    /**
+     * `import "path";` or `import "path" as alias;` at the top of a file: {@code span} is the path's string literal;
+     * {@code alias} is null without `as`.
+     */
+    public record Import(Span span, String path, String alias, Span aliasSpan) {}
 
     public abstract static sealed class Item {
         public final Span span;
         public final String name;
         /** Text of the `///` doc comment directly above the item, or "". */
         public String doc = "";
+        /** The scope of its names: 0 for the main file and what it imports without `as` (see {@link Program#aliases}). */
+        public int scope;
 
         Item(Span span, String name) {
             this.span = span;
@@ -168,6 +183,8 @@ public final class Ast {
         public final List<LocalVar> locals = new ArrayList<>();
         /** User functions called from this routine (including from contracts). */
         public final Set<FnDecl> callees = new LinkedHashSet<>();
+        /** Functions this routine passes as values, to a parameter of a function type. */
+        public final Set<FnDecl> fnValues = new LinkedHashSet<>();
 
         Routine(Span span, String name, Block body) {
             super(span, name);
@@ -178,6 +195,9 @@ public final class Ast {
     public static final class FnDecl extends Routine {
         public final Span nameSpan;
         public final boolean tool;
+        /** The names of `fn f<T, U>`'s type parameters, and where each is declared. */
+        public final List<String> typeParams;
+        public final List<Span> typeParamSpans;
         public final List<Param> params;
         public final TypeRef retRef;
         public final List<Expr> requires;
@@ -195,23 +215,33 @@ public final class Ast {
          * Null for every other function.
          */
         public Supplier<FnDecl> copy;
-        /** For an instance: the function it is a copy of, and the capacities its `_`s stand for, in order. */
+        /**
+         * For an instance: the function it is a copy of, the capacities its `_`s stand for, the types its type
+         * parameters stand for, and for each parameter of a function type the function it is given (null for others).
+         */
         public FnDecl origin;
         public List<Integer> capacities = List.of();
-        /** For a function with `_` capacities: its instances, by their capacities, in the order they were made. */
-        public final Map<List<Integer>, FnDecl> instances = new LinkedHashMap<>();
+        public List<Type> typeArgs = List.of();
+        public List<FnDecl> fnArgs = List.of();
+        /**
+         * For a function with `_` capacities, type parameters or parameters of a function type: its instances, by
+         * what they stand for, in the order they were made.
+         */
+        public final Map<List<Object>, FnDecl> instances = new LinkedHashMap<>();
 
         /** Whether the function takes any capacity somewhere: it runs and compiles only as its instances. */
         public boolean generic() {
             return copy != null && origin == null;
         }
 
-        public FnDecl(Span span, Span nameSpan, String name, boolean tool, List<Param> params, TypeRef retRef,
-                      List<Expr> requires, List<Expr> ensures, List<String> requiresText, List<String> ensuresText,
-                      Block body) {
+        public FnDecl(Span span, Span nameSpan, String name, boolean tool, List<String> typeParams, List<Span> typeParamSpans,
+                      List<Param> params, TypeRef retRef, List<Expr> requires, List<Expr> ensures, List<String> requiresText,
+                      List<String> ensuresText, Block body) {
             super(span, name, body);
             this.nameSpan = nameSpan;
             this.tool = tool;
+            this.typeParams = typeParams;
+            this.typeParamSpans = typeParamSpans;
             this.params = params;
             this.retRef = retRef;
             this.requires = requires;
@@ -267,7 +297,20 @@ public final class Ast {
     /** {@code len} is null for `_`: any length, in the type of a function parameter. */
     public record ArrayRef(Span span, TypeRef elem, Expr len) implements TypeRef {}
 
-    public record NamedRef(Span span, String name) implements TypeRef {}
+    /** A struct or enum by name; {@code qualifier} is the alias of `ns.Name`, or null. */
+    public record NamedRef(Span span, String name, String qualifier) implements TypeRef {}
+
+    /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
+    public record MapRef(Span span, TypeRef key, TypeRef value, Expr cap) implements TypeRef {}
+
+    /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
+    public record SetRef(Span span, TypeRef elem, Expr cap) implements TypeRef {}
+
+    /** fn(T1, T2) -> R: a function type, for a parameter; {@code ret} is null for none. */
+    public record FnRef(Span span, List<TypeRef> params, TypeRef ret) implements TypeRef {}
+
+    /** (T1, T2, ...): a tuple type. */
+    public record TupleRef(Span span, List<TypeRef> elems) implements TypeRef {}
 
     // =================================================================== statements
 
@@ -309,6 +352,26 @@ public final class Ast {
         }
     }
 
+    /** `let (a, b): (T1, T2) = e;`: one variable per element of a tuple; a null name is a `_`. */
+    public static final class Destructure extends Stmt {
+        public final boolean mutable;
+        public final List<String> names;
+        public final List<Span> nameSpans;
+        public final TypeRef typeRef;
+        public final Expr init;
+        /** One per element; null for a `_`. */
+        public final List<LocalVar> vars = new ArrayList<>();
+
+        public Destructure(Span span, boolean mutable, List<String> names, List<Span> nameSpans, TypeRef typeRef, Expr init) {
+            super(span);
+            this.mutable = mutable;
+            this.names = names;
+            this.nameSpans = nameSpans;
+            this.typeRef = typeRef;
+            this.init = init;
+        }
+    }
+
     public static final class Assign extends Stmt {
         public final Expr target;
         /** Null for plain `=`, otherwise the operator of a compound assignment (`+=` is ADD). */
@@ -336,7 +399,17 @@ public final class Ast {
         }
     }
 
-    public static final class While extends Stmt {
+    /** A `for` or `while` loop, which `outer: for ...` may label for `break outer;` and `continue outer;`. */
+    public abstract static sealed class Loop extends Stmt {
+        public String label;
+        public Span labelSpan;
+
+        Loop(Span span) {
+            super(span);
+        }
+    }
+
+    public static final class While extends Loop {
         public final Expr cond;
         public final Expr limit;
         public final Block body;
@@ -351,15 +424,26 @@ public final class Ast {
 
     /**
      * `for x in a..b` (to != null), `for x in collection` (to == null), or `for x in split(s, sep)` /
-     * `for x in words(s)`, which goes through the pieces of s one at a time without building a list.
+     * `for x in words(s)` / `for c in chars(s)`, which go through the pieces (or code points) of s one at a time
+     * without building a list.
      */
-    public static final class For extends Stmt {
+    public static final class For extends Loop {
         public final String name;
         public final Span nameSpan;
+        /** `for i, x in xs`: the name of the index, i; null without one. */
+        public final String indexName;
+        public final Span indexSpan;
         public final Expr from;
         public final Expr to;
+        /** `a..=b`: the range includes b. */
+        public final boolean inclusive;
+        /** `a..b step k`: the step, or null for 1. */
+        public final Expr step;
+        /** `rev`: the same values, last first. */
+        public final boolean rev;
         public final Block body;
         public LocalVar var;
+        public LocalVar indexVar;
         /**
          * Set by the checker: whether the loop goes through a copy of what it iterates, taken before the
          * first iteration. Only a variable (the collection, or the text that split and words cut up) needs
@@ -368,13 +452,24 @@ public final class Ast {
          */
         public boolean snapshot;
 
-        public For(Span span, String name, Span nameSpan, Expr from, Expr to, Block body) {
+        public For(Span span, String name, Span nameSpan, String indexName, Span indexSpan, Expr from, Expr to,
+                   boolean inclusive, Expr step, boolean rev, Block body) {
             super(span);
             this.name = name;
             this.nameSpan = nameSpan;
+            this.indexName = indexName;
+            this.indexSpan = indexSpan;
             this.from = from;
             this.to = to;
+            this.inclusive = inclusive;
+            this.step = step;
+            this.rev = rev;
             this.body = body;
+        }
+
+        /** Whether the range counts other than up by one from its start: a step, `..=` or `rev`. */
+        public boolean stepped() {
+            return step != null || inclusive || rev;
         }
 
         public boolean isRange() {
@@ -387,7 +482,7 @@ public final class Ast {
          */
         public Call pieces() {
             if (to != null || !(from instanceof Call c)) return null;
-            int arity = c.builtin == Builtin.SPLIT ? 2 : c.builtin == Builtin.WORDS ? 1 : -1;
+            int arity = c.builtin == Builtin.SPLIT ? 2 : c.builtin == Builtin.WORDS || c.builtin == Builtin.CHARS ? 1 : -1;
             return c.args.size() == arity ? c : null;
         }
 
@@ -409,17 +504,28 @@ public final class Ast {
         }
     }
 
-    public record Arm(Pattern pattern, Block body) {}
+    /** A match arm; {@code guard} is the condition of `Pattern if cond =>`, or null. */
+    public record Arm(Pattern pattern, Expr guard, Block body) {}
 
+    /** `break;` or `break label;`: {@code target} is the loop it leaves, set by the checker for a label. */
     public static final class Break extends Stmt {
-        public Break(Span span) {
+        public final String label;
+        public Loop target;
+
+        public Break(Span span, String label) {
             super(span);
+            this.label = label;
         }
     }
 
+    /** `continue;` or `continue label;`: {@code target} is the loop it continues, set by the checker for a label. */
     public static final class Continue extends Stmt {
-        public Continue(Span span) {
+        public final String label;
+        public Loop target;
+
+        public Continue(Span span, String label) {
             super(span);
+            this.label = label;
         }
     }
 
@@ -464,6 +570,8 @@ public final class Ast {
     }
 
     public static final class VariantPat extends Pattern {
+        /** The alias of `ns.Enum.Variant`, or null. */
+        public String qualifier;
         public final String enumName;
         public final String variantName;
         /** Binding names (null entries for `_`), or null if the pattern has no parentheses. */
@@ -575,7 +683,7 @@ public final class Ast {
 
         /** Places evaluate to the storage they name; everything else builds a new value. */
         public boolean isPlace() {
-            return this instanceof Name || this instanceof Index || (this instanceof FieldAccess f && f.variant == null);
+            return this instanceof Name || this instanceof Index || (this instanceof FieldAccess f && f.variant == null && f.constant == null);
         }
     }
 
@@ -646,13 +754,15 @@ public final class Ast {
         }
     }
 
-    /** `target.name`: a struct field, or a unit enum variant when target names an enum. */
+    /** `target.name`: a struct field, a tuple element (name "0", "1", ...), or a unit enum variant when target names an enum. */
     public static final class FieldAccess extends Expr {
         public final Expr target;
         public final String name;
         public final Span nameSpan;
         public int fieldIndex = -1;
         public Variant variant;
+        /** `ns.NAME`: a constant of the file imported as ns. */
+        public ConstDecl constant;
 
         public FieldAccess(Span span, Expr target, String name, Span nameSpan) {
             super(span);
@@ -673,6 +783,25 @@ public final class Ast {
         }
     }
 
+    /**
+     * `target[from..to]`, with either end left out for 0 or the length: the elements or bytes from..to, as a list
+     * (for an array) or a str or list of the target's capacity. Where it is only read, the C backend reads it where it
+     * is ({@code view}) instead of copying it.
+     */
+    public static final class SliceExpr extends Expr {
+        public final Expr target;
+        public final Expr from;
+        public final Expr to;
+        public boolean view;
+
+        public SliceExpr(Span span, Expr target, Expr from, Expr to) {
+            super(span);
+            this.target = target;
+            this.from = from;
+            this.to = to;
+        }
+    }
+
     public record Arg(Span span, boolean mut, Expr expr) {}
 
     /** A call of a user function or builtin. */
@@ -682,6 +811,8 @@ public final class Ast {
         public final List<Arg> args;
         public FnDecl fn;
         public Builtin builtin;
+        /** A call of a parameter of a function type, in a function checked as written: which one. */
+        public LocalVar fnParam;
         /**
          * A fixed, pad_left or pad_right call whose text print or append writes out directly, or pad_left or
          * pad_right pads: it builds no str, and its type is a nominal str[0].
@@ -702,6 +833,10 @@ public final class Ast {
 
     /** `Enum.Variant(args)`. */
     public static final class VariantCall extends Expr {
+        /** The alias of `ns.Enum.Variant(...)`, or null. */
+        public String qualifier;
+        /** `ns.f(...)`, which reads as Enum.Variant(...): the call of the function f of the file imported as ns. */
+        public Call asCall;
         public final String enumName;
         public final String variantName;
         public final List<Arg> args;
@@ -720,6 +855,8 @@ public final class Ast {
 
     /** `Point(x: 1, y: 2)`. */
     public static final class StructLit extends Expr {
+        /** The alias of `ns.Point(...)`, or null. */
+        public String qualifier;
         public final String name;
         public final List<FieldInit> fields;
         public StructDecl decl;
@@ -781,6 +918,30 @@ public final class Ast {
             this.op = op;
             this.left = left;
             this.right = right;
+        }
+    }
+
+    /** `(a, b, ...)`: a tuple. */
+    public static final class TupleLit extends Expr {
+        public final List<Expr> elems;
+
+        public TupleLit(Span span, List<Expr> elems) {
+            super(span);
+            this.elems = elems;
+        }
+    }
+
+    /** `if cond then a else b`: a or b, whichever cond picks; only that one is evaluated. */
+    public static final class IfExpr extends Expr {
+        public final Expr cond;
+        public final Expr then;
+        public final Expr otherwise;
+
+        public IfExpr(Span span, Expr cond, Expr then, Expr otherwise) {
+            super(span);
+            this.cond = cond;
+            this.then = then;
+            this.otherwise = otherwise;
         }
     }
 

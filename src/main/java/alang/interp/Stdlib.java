@@ -1,11 +1,13 @@
 package alang.interp;
 
 import alang.ast.Ast.Variant;
+import alang.ast.Builtin;
 import alang.diag.Code;
 import alang.diag.Span;
 import alang.interp.Values.ArrV;
 import alang.interp.Values.EnumV;
 import alang.interp.Values.ListV;
+import alang.interp.Values.MapV;
 import alang.interp.Values.StrV;
 import alang.interp.Values.StructV;
 import alang.types.PrimKind;
@@ -77,6 +79,29 @@ final class Stdlib {
         // q * mb must fit in 64 unsigned bits before it is checked against k.
         if (Long.compareUnsigned(mb, Long.divideUnsigned(-1L, q)) > 0) throw IntOps.overflow(at, k, "lcm");
         return fit(k, q * mb, at, "lcm");
+    }
+
+    /**
+     * wrapping_add/sub/mul and saturating_add/sub/mul: the exact result, then either its low k.bits bits (as a
+     * value of k) or the nearest value of k. Neither traps.
+     */
+    static long wrapOrSaturate(Builtin b, PrimKind k, long a, long y) {
+        BigInteger x = IntOps.toBig(k, a);
+        BigInteger z = IntOps.toBig(k, y);
+        BigInteger r = switch (b) {
+            case WRAPPING_ADD, SATURATING_ADD -> x.add(z);
+            case WRAPPING_SUB, SATURATING_SUB -> x.subtract(z);
+            default -> x.multiply(z);
+        };
+        boolean wrap = b == Builtin.WRAPPING_ADD || b == Builtin.WRAPPING_SUB || b == Builtin.WRAPPING_MUL;
+        if (wrap) {
+            long low = r.longValue();
+            if (k.bits == 64) return low;
+            return k.signed ? (low << (64 - k.bits)) >> (64 - k.bits) : low & ((1L << k.bits) - 1);
+        }
+        if (r.compareTo(k.max()) > 0) r = k.max();
+        if (r.compareTo(k.min()) < 0) r = k.min();
+        return r.longValue();
     }
 
     static Object clamp(Type t, Object x, Object lo, Object hi, Span at) {
@@ -478,6 +503,115 @@ final class Stdlib {
         return v[0];
     }
 
+    // =================================================================== UTF-8
+
+    /**
+     * The code point that starts at byte i of b[0..n), as (code point << 8) | (valid ? 0x80 : 0) | length. A
+     * byte that does not start a well-formed sequence (overlong, a surrogate, past U+10FFFF, or cut short)
+     * stands for U+FFFD on its own, so that every byte belongs to exactly one code point.
+     */
+    static long utf8Next(byte[] b, int n, int i) {
+        int b0 = b[i] & 0xFF;
+        if (b0 < 0x80) return ((long) b0 << 8) | 0x80 | 1;
+        int len;
+        int cp;
+        int lo = 0x80;
+        int hi = 0xBF;
+        if (b0 >= 0xC2 && b0 <= 0xDF) {
+            len = 2;
+            cp = b0 & 0x1F;
+        } else if (b0 >= 0xE0 && b0 <= 0xEF) {
+            len = 3;
+            cp = b0 & 0x0F;
+            if (b0 == 0xE0) lo = 0xA0;
+            if (b0 == 0xED) hi = 0x9F;
+        } else if (b0 >= 0xF0 && b0 <= 0xF4) {
+            len = 4;
+            cp = b0 & 0x07;
+            if (b0 == 0xF0) lo = 0x90;
+            if (b0 == 0xF4) hi = 0x8F;
+        } else {
+            return (0xFFFDL << 8) | 1;
+        }
+        if (n - i < len) return (0xFFFDL << 8) | 1;
+        for (int k = 1; k < len; k++) {
+            int c = b[i + k] & 0xFF;
+            if (c < (k == 1 ? lo : 0x80) || c > (k == 1 ? hi : 0xBF)) return (0xFFFDL << 8) | 1;
+            cp = (cp << 6) | (c & 0x3F);
+        }
+        return ((long) cp << 8) | 0x80 | len;
+    }
+
+    static boolean isUtf8(StrV s) {
+        for (int i = 0; i < s.len; ) {
+            long d = utf8Next(s.b, s.len, i);
+            if ((d & 0x80) == 0) return false;
+            i += (int) (d & 7);
+        }
+        return true;
+    }
+
+    static long charCount(StrV s) {
+        long count = 0;
+        for (int i = 0; i < s.len; i += (int) (utf8Next(s.b, s.len, i) & 7)) count++;
+        return count;
+    }
+
+    /** The code points of s as a list of type t; R0004 if there are more than it holds. */
+    static ListV chars(StrV s, Type.ListT t, Span at) {
+        ListV r = new ListV(new Object[t.cap()], 0);
+        for (int i = 0; i < s.len; ) {
+            long d = utf8Next(s.b, s.len, i);
+            if (r.len == t.cap()) {
+                throw new Trap(Code.R0004, at, "chars makes more than " + t.cap() + " code points, the capacity of " + t);
+            }
+            r.items[r.len++] = d >>> 8;
+            i += (int) (d & 7);
+        }
+        return r;
+    }
+
+    /** Appends the UTF-8 encoding of the code point c (of integer type k) to s. */
+    static void pushChar(StrV s, long c, PrimKind k, Span at) {
+        boolean scalar = !(k.signed && c < 0) && Long.compareUnsigned(c, 0x10FFFF) <= 0 && (c < 0xD800 || c > 0xDFFF);
+        if (!scalar) {
+            throw new Trap(Code.R0013, at, "push_char needs a Unicode code point from 0 to 1114111 that is not a surrogate "
+                + "(55296 to 57343), found " + IntOps.toString(k, c));
+        }
+        int n = c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+        if (s.len + n > s.b.length) {
+            throw new Trap(Code.R0004, at, "push_char exceeds str capacity " + s.b.length + " (length " + s.len + ", appending "
+                + n + " bytes)");
+        }
+        int v = (int) c;
+        if (n == 1) {
+            s.b[s.len++] = (byte) v;
+            return;
+        }
+        int lead = n == 2 ? 0xC0 : n == 3 ? 0xE0 : 0xF0;
+        s.b[s.len++] = (byte) (lead | (v >>> (6 * (n - 1))));
+        for (int k2 = n - 2; k2 >= 0; k2--) s.b[s.len++] = (byte) (0x80 | ((v >>> (6 * k2)) & 0x3F));
+    }
+
+    /** The code points from..to of s, as a str of the same capacity; R0003 unless 0 <= from <= to <= char_count(s). */
+    static StrV sliceChars(StrV s, long from, PrimKind fk, long to, PrimKind tk, Span at) {
+        long count = charCount(s);
+        if (from < 0 || from > count || to < 0 || to > count || from > to) {
+            throw new Trap(Code.R0003, at, "slice_chars " + IntOps.toString(fk, from) + ".." + IntOps.toString(tk, to)
+                + " is out of range for " + count + " code points");
+        }
+        int i = 0;
+        int start = 0;
+        for (long k = 0; k < to; k++) {
+            if (k == from) start = i;
+            i += (int) (utf8Next(s.b, s.len, i) & 7);
+        }
+        if (from == to) start = i;
+        byte[] b = new byte[s.b.length];
+        System.arraycopy(s.b, start, b, 0, i - start);
+        return new StrV(b, i - start);
+    }
+
     // =================================================================== collections
 
     /**
@@ -506,6 +640,27 @@ final class Stdlib {
                 Object[] y = ((StructV) b).fields;
                 for (int i = 0; i < x.length; i++) {
                     int c = compare(x[i], y[i], st.decl().fields.get(i).type);
+                    if (c != 0) yield c;
+                }
+                yield 0;
+            }
+            case Type.SetT st -> compareAll(((ListV) a).items, ((ListV) b).items, ((ListV) a).len, ((ListV) b).len, st.elem());
+            case Type.MapT mt -> {
+                // Entry by entry, key then value; a map that is a prefix of the other first.
+                MapV x = (MapV) a;
+                MapV y = (MapV) b;
+                for (int i = 0; i < x.len && i < y.len; i++) {
+                    int c = compare(x.keys[i], y.keys[i], mt.key());
+                    if (c == 0) c = compare(x.vals[i], y.vals[i], mt.value());
+                    if (c != 0) yield c;
+                }
+                yield Integer.compare(x.len, y.len);
+            }
+            case Type.TupleT tt -> {
+                Object[] x = ((StructV) a).fields;
+                Object[] y = ((StructV) b).fields;
+                for (int i = 0; i < x.length; i++) {
+                    int c = compare(x[i], y[i], tt.elems().get(i));
                     if (c != 0) yield c;
                 }
                 yield 0;
@@ -611,6 +766,88 @@ final class Stdlib {
         System.arraycopy(l.items, at0 + 1, l.items, at0, len - at0 - 1);
         l.items[--l.len] = null;
         return v;
+    }
+
+    // =================================================================== maps and sets
+
+    /** The position of k among keys[0..len), which are in order: its index, or -(where it would go) - 1. */
+    static int find(Object[] keys, int len, Object k, Type kt) {
+        int lo = 0;
+        int hi = len - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int c = compare(keys[mid], k, kt);
+            if (c < 0) lo = mid + 1;
+            else if (c > 0) hi = mid - 1;
+            else return mid;
+        }
+        return -lo - 1;
+    }
+
+    private static byte[] keyText(Object k, Type kt) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Format.format(ByteSink.of(out), k, kt, true);
+        return out.toByteArray();
+    }
+
+    /** m[k]: R0003 if the map has no key k. */
+    static Object mapGet(MapV m, Object k, Type kt, Span at) {
+        int i = find(m.keys, m.len, k, kt);
+        if (i < 0) {
+            ByteArrayOutputStream msg = new ByteArrayOutputStream();
+            msg.writeBytes("key ".getBytes(StandardCharsets.UTF_8));
+            msg.writeBytes(keyText(k, kt));
+            msg.writeBytes(" is not in the map".getBytes(StandardCharsets.UTF_8));
+            throw new Trap(Code.R0003, at, msg.toByteArray());
+        }
+        return m.vals[i];
+    }
+
+    /** m[k] = v, or insert(mut m, k, v): replaces the value of k, or adds k in its place; R0004 if that does not fit. */
+    static void mapPut(MapV m, Object k, Object v, Type kt, Span at) {
+        int i = find(m.keys, m.len, k, kt);
+        if (i >= 0) {
+            m.vals[i] = v;
+            return;
+        }
+        if (m.len == m.keys.length) throw new Trap(Code.R0004, at, "insert into a full map (capacity " + m.keys.length + ")");
+        int at0 = -i - 1;
+        System.arraycopy(m.keys, at0, m.keys, at0 + 1, m.len - at0);
+        System.arraycopy(m.vals, at0, m.vals, at0 + 1, m.len - at0);
+        m.keys[at0] = k;
+        m.vals[at0] = v;
+        m.len++;
+    }
+
+    /** remove(mut m, k): whether k was there. */
+    static boolean mapRemove(MapV m, Object k, Type kt) {
+        int i = find(m.keys, m.len, k, kt);
+        if (i < 0) return false;
+        System.arraycopy(m.keys, i + 1, m.keys, i, m.len - i - 1);
+        System.arraycopy(m.vals, i + 1, m.vals, i, m.len - i - 1);
+        m.len--;
+        m.keys[m.len] = null;
+        m.vals[m.len] = null;
+        return true;
+    }
+
+    /** insert(mut s, x): adds x in its place unless it is there; R0004 if that does not fit. */
+    static void setInsert(ListV s, Object x, Type t, Span at) {
+        int i = find(s.items, s.len, x, t);
+        if (i >= 0) return;
+        if (s.len == s.items.length) throw new Trap(Code.R0004, at, "insert into a full set (capacity " + s.items.length + ")");
+        int at0 = -i - 1;
+        System.arraycopy(s.items, at0, s.items, at0 + 1, s.len - at0);
+        s.items[at0] = x;
+        s.len++;
+    }
+
+    static boolean setRemove(ListV s, Object x, Type t) {
+        int i = find(s.items, s.len, x, t);
+        if (i < 0) return false;
+        System.arraycopy(s.items, i + 1, s.items, i, s.len - i - 1);
+        s.items[--s.len] = null;
+        return true;
     }
 
     // =================================================================== helpers

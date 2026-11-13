@@ -1,0 +1,7 @@
+error[E0102]: unknown function `hypot`
+ --> tests/errors/E0102_hypot.al:3:18
+  |
+3 |     let y: f64 = hypot(3.0, 4.0);
+  |                  ^^^^^
+  = hint: use sqrt(x * x + y * y)
+

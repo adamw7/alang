@@ -40,17 +40,65 @@ public final class Checker {
     /** Where diagnostics go; while an instance is checked, somewhere else (see {@link #instance}). */
     private Diagnostics diags;
 
-    private final Map<String, StructDecl> structs = new LinkedHashMap<>();
-    private final Map<String, EnumDecl> enums = new LinkedHashMap<>();
-    private final Map<String, ConstDecl> consts = new LinkedHashMap<>();
-    private final Map<String, FnDecl> fns = new LinkedHashMap<>();
+    /**
+     * The declarations of one kind, by scope and name. A plain name is looked up in the scope of the code being
+     * checked ({@link Ctx#scope}); `ns.name` in the scope that ns names (see {@link Program#aliases}).
+     */
+    private final class Table<T extends Item> {
+        private final Map<String, T> byKey = new LinkedHashMap<>();
+
+        private String key(int scope, String name) {
+            return scope + ":" + name;
+        }
+
+        T get(String name) {
+            return byKey.get(key(ctx.scope, name));
+        }
+
+        T in(int scope, String name) {
+            return byKey.get(key(scope, name));
+        }
+
+        boolean containsKey(String name) {
+            return get(name) != null;
+        }
+
+        void put(T item) {
+            byKey.put(key(item.scope, item.name), item);
+        }
+
+        Collection<T> values() {
+            return byKey.values();
+        }
+
+        /** The names in the current scope. */
+        List<String> keySet() {
+            List<String> out = new ArrayList<>();
+            for (T t : byKey.values()) {
+                if (t.scope == ctx.scope) out.add(t.name);
+            }
+            return out;
+        }
+    }
+
+    private final Table<StructDecl> structs = new Table<>();
+    private final Table<EnumDecl> enums = new Table<>();
+    private final Table<ConstDecl> consts = new Table<>();
+    private final Table<FnDecl> fns = new Table<>();
 
     /** Per-routine checking context; swapped out while checking constants lazily. */
     private static final class Ctx {
+        /** The scope of the declarations that plain names name here, and the file, whose aliases qualified ones use. */
+        int scope;
+        alang.diag.Source file;
         Routine routine;
         FnDecl fn;
         final Deque<Map<String, LocalVar>> scopes = new ArrayDeque<>();
         int loopDepth;
+        /** The type parameters of the function being checked: type variables as written, types in an instance. */
+        Map<String, Type> typeParams = Map.of();
+        /** The loops around the statement being checked, innermost first. */
+        final Deque<Loop> loops = new ArrayDeque<>();
         boolean inEnsures;
         Expr mutCallAllowed;
         /**
@@ -89,6 +137,9 @@ public final class Checker {
     }
 
     private CheckResult run() {
+        for (Item item : program.items) {
+            item.scope = item.span.file() == null ? 0 : program.scopes.getOrDefault(item.span.file(), 0);
+        }
         collect();
         for (StructDecl s : structs.values()) ensureStruct(s);
         for (EnumDecl e : enums.values()) ensureEnum(e);
@@ -98,12 +149,14 @@ public final class Checker {
         Set<FnDecl> failed = new HashSet<>();
         for (Item item : program.items) {
             int before = diags.errorCount();
+            enterScope(item);
             if (item instanceof FnDecl f && fns.get(f.name) == f) body(f);
             if (item instanceof TestDecl t) testBody(t);
             if (item instanceof FnDecl f && diags.errorCount() != before) failed.add(f);
         }
         checkInstances(failed);
         boolean recursion = checkRecursion();
+        if (!recursion && !diags.hasErrors()) recursion = checkInstanceRecursion();
         MemoryReport memory = null;
         if (!diags.hasErrors() && !recursiveTypes && !recursion) {
             // Only now: in a program with errors, a name can look unused because the code using it failed to check.
@@ -129,10 +182,11 @@ public final class Checker {
     private void collect() {
         Set<String> testNames = new HashSet<>();
         for (Item item : program.items) {
+            enterScope(item);
             switch (item) {
                 case StructDecl s -> {
                     if (typeExists(s.name)) duplicate(s.span, "type", s.name, typeSpan(s.name));
-                    else structs.put(s.name, s);
+                    else structs.put(s);
                     Set<String> seen = new HashSet<>();
                     for (Field f : s.fields) {
                         if (!seen.add(f.name)) duplicate(f.span, "field", f.name);
@@ -140,7 +194,7 @@ public final class Checker {
                 }
                 case EnumDecl e -> {
                     if (typeExists(e.name)) duplicate(e.span, "type", e.name, typeSpan(e.name));
-                    else enums.put(e.name, e);
+                    else enums.put(e);
                     Set<String> seen = new HashSet<>();
                     for (Variant v : e.variants) {
                         if (!seen.add(v.name)) duplicate(v.span, "variant", v.name);
@@ -148,7 +202,7 @@ public final class Checker {
                 }
                 case ConstDecl c -> {
                     if (consts.containsKey(c.name)) duplicate(c.span, "constant", c.name, consts.get(c.name).span);
-                    else consts.put(c.name, c);
+                    else consts.put(c);
                 }
                 case FnDecl f -> {
                     Builtin b = Builtin.byName(f.name);
@@ -159,7 +213,7 @@ public final class Checker {
                     } else if (fns.containsKey(f.name)) {
                         duplicate(f.nameSpan, "function", f.name, fns.get(f.name).nameSpan);
                     } else {
-                        fns.put(f.name, f);
+                        fns.put(f);
                     }
                 }
                 case TestDecl t -> {
@@ -168,12 +222,14 @@ public final class Checker {
             }
         }
         for (ConstDecl c : consts.values()) {
+            enterScope(c);
             if (typeExists(c.name)) {
                 diags.error(Code.E0104, c.span, "constant `" + c.name + "` has the same name as a type");
             }
         }
         // Items share one namespace (SPEC §3), even where the syntax would tell them apart: Color() and Color.Red.
         for (FnDecl f : fns.values()) {
+            enterScope(f);
             if (structs.containsKey(f.name)) {
                 diags.error(Code.E0104, f.nameSpan, "function `" + f.name + "` has the same name as a struct",
                     "struct literals and calls share syntax; rename one of them");
@@ -186,6 +242,32 @@ public final class Checker {
                     "names are unique across functions, types and constants; rename one of them");
             }
         }
+    }
+
+    /** Plain names in {@code item}'s code are those of its scope, qualified ones the aliases of its file. */
+    private void enterScope(Item item) {
+        ctx.scope = item.scope;
+        ctx.file = item.span.file();
+    }
+
+    /** The scope that `alias.` names in the file being checked, or null if it is no alias there. */
+    private Integer aliasScope(String alias) {
+        Map<String, Integer> m = ctx.file == null ? null : program.aliases.get(ctx.file);
+        return m == null ? null : m.get(alias);
+    }
+
+    /**
+     * The scope that the qualifier of `ns.name` names, or null after reporting that ns names no import of this file.
+     */
+    private Integer qualifierScope(String alias, Span at) {
+        Integer s = aliasScope(alias);
+        if (s == null) {
+            Map<String, Integer> m = ctx.file == null ? null : program.aliases.get(ctx.file);
+            diags.error(Code.E0101, at, "`" + alias + "` names no import of this file",
+                m == null || m.isEmpty() ? "import a file under a name to use its declarations as " + alias
+                    + ".name: import \"lib.al\" as " + alias + ";" : didYouMean(alias, m.keySet()));
+        }
+        return s;
     }
 
     private boolean typeExists(String name) {
@@ -210,7 +292,7 @@ public final class Checker {
     private void ensureStruct(StructDecl s) {
         if (s.state != State.NEW) return;
         s.state = State.IN_PROGRESS;
-        Ctx saved = enterTopLevel();
+        Ctx saved = enterTopLevel(s);
         for (Field f : s.fields) f.type = resolveType(f.typeRef);
         ctx = saved;
         s.state = State.DONE;
@@ -219,7 +301,7 @@ public final class Checker {
     private void ensureEnum(EnumDecl e) {
         if (e.state != State.NEW) return;
         e.state = State.IN_PROGRESS;
-        Ctx saved = enterTopLevel();
+        Ctx saved = enterTopLevel(e);
         for (Variant v : e.variants) {
             v.payload.clear();
             for (TypeRef r : v.payloadRefs) v.payload.add(resolveType(r));
@@ -228,9 +310,10 @@ public final class Checker {
         e.state = State.DONE;
     }
 
-    private Ctx enterTopLevel() {
+    private Ctx enterTopLevel(Item item) {
         Ctx saved = ctx;
         ctx = new Ctx();
+        enterScope(item);
         return saved;
     }
 
@@ -241,7 +324,7 @@ public final class Checker {
             return;
         }
         c.state = State.IN_PROGRESS;
-        Ctx saved = enterTopLevel();
+        Ctx saved = enterTopLevel(c);
         // Count errors from the declared type too: a constant whose type is unknown must not get a
         // value, or constants computed from it would be evaluated with an error type.
         int before = diags.errorCount();
@@ -314,7 +397,56 @@ public final class Checker {
                 int len = a.len() == null ? anyCapacity(a.span(), "[" + elem + "; _]") : typeSize(a.len(), "array length");
                 yield len == BAD_SIZE || Type.isError(elem) ? Type.ERROR : new Type.ArrayT(elem, len);
             }
+            case MapRef m -> {
+                Type k = resolveType(m.key());
+                Type v = resolveType(m.value());
+                int cap = m.cap() == null ? anyCapacity(m.span(), "map[" + k + ", " + v + "; _]") : typeSize(m.cap(), "map capacity");
+                yield cap == BAD_SIZE || Type.isError(k) || Type.isError(v) ? Type.ERROR : new Type.MapT(k, v, cap);
+            }
+            case SetRef st -> {
+                Type e = resolveType(st.elem());
+                int cap = st.cap() == null ? anyCapacity(st.span(), "set[" + e + "; _]") : typeSize(st.cap(), "set capacity");
+                yield cap == BAD_SIZE || Type.isError(e) ? Type.ERROR : new Type.SetT(e, cap);
+            }
+            case TupleRef t -> {
+                List<Type> elems = new ArrayList<>();
+                boolean bad = false;
+                for (TypeRef e : t.elems()) {
+                    Type et = resolveType(e);
+                    bad |= Type.isError(et);
+                    elems.add(et);
+                }
+                yield bad ? Type.ERROR : new Type.TupleT(elems);
+            }
+            case FnRef fr -> {
+                boolean allowed = fnTypeAllowed;
+                fnTypeAllowed = false;
+                List<Type> ps = new ArrayList<>();
+                boolean bad = false;
+                for (TypeRef pr : fr.params()) {
+                    Type pt = resolveType(pr);
+                    bad |= Type.isError(pt);
+                    ps.add(pt);
+                }
+                Type ret = fr.ret() == null ? Type.VOID : resolveType(fr.ret());
+                if (!allowed) {
+                    diags.error(Code.E0217, fr.span(), "a function type is only the type of a parameter",
+                        "a variable, field or result cannot hold a function; take it as a parameter: fn apply(f: " + new Type.FnT(ps, ret)
+                            + ", ...)");
+                    yield Type.ERROR;
+                }
+                yield bad || Type.isError(ret) ? Type.ERROR : new Type.FnT(ps, ret);
+            }
+            case NamedRef n when n.qualifier() != null -> {
+                Integer s = qualifierScope(n.qualifier(), n.span());
+                if (s == null) yield Type.ERROR;
+                if (structs.in(s, n.name()) != null) yield new Type.StructT(structs.in(s, n.name()));
+                if (enums.in(s, n.name()) != null) yield new Type.EnumT(enums.in(s, n.name()));
+                diags.error(Code.E0103, n.span(), "`" + n.qualifier() + "` has no type `" + n.name() + "`");
+                yield Type.ERROR;
+            }
             case NamedRef n -> {
+                if (ctx.typeParams.containsKey(n.name())) yield ctx.typeParams.get(n.name());
                 if (structs.containsKey(n.name())) yield new Type.StructT(structs.get(n.name()));
                 if (enums.containsKey(n.name())) yield new Type.EnumT(enums.get(n.name()));
                 diags.error(Code.E0103, n.span(), "unknown type `" + n.name() + "`", typeHint(n.name()));
@@ -349,6 +481,19 @@ public final class Checker {
     /** While a parameter's type is resolved: how many `_`s the function's parameters have so far. */
     private int[] paramCapacities;
 
+    /** Whether the type being resolved is a parameter's, at its top: the one place a function type may be. */
+    private boolean fnTypeAllowed;
+
+    /** The type parameters of {@code f}: type variables as written, and the types an instance was made for. */
+    private Map<String, Type> typeParamsOf(FnDecl f) {
+        Map<String, Type> m = new HashMap<>();
+        FnDecl owner = f.origin != null ? f.origin : f;
+        for (int i = 0; i < f.typeParams.size(); i++) {
+            m.put(f.typeParams.get(i), f.origin != null ? f.typeArgs.get(i) : new Type.TypeVar(f.typeParams.get(i), i, owner));
+        }
+        return m;
+    }
+
     private String typeHint(String name) {
         return switch (name) {
             case "int", "long", "isize", "usize", "Int", "integer" -> "use a sized integer type such as i32 or i64 (len() returns i64)";
@@ -359,7 +504,9 @@ public final class Checker {
             case "boolean", "Bool" -> "use bool";
             case "void", "unit", "None" -> "omit the return type for functions that return nothing";
             case "Vec", "List", "Array", "vector" -> "use list[T; N] (up to N items) or [T; N] (exactly N items)";
-            case "Option", "Optional", "Result" -> "there are no generics; declare an enum, e.g. enum MaybeI32 { None, Some(i32) }";
+            case "HashMap", "Map", "dict", "Dict", "BTreeMap", "TreeMap", "HashSet", "Set", "BTreeSet", "TreeSet" -> Hints.COLLECTIONS;
+            case "Option", "Optional", "Result" -> "declare an enum, e.g. enum MaybeI32 { None, Some(i32) }; type parameters "
+                + "are for functions only: fn first<T>(xs: list[T; _]) -> T";
             default -> {
                 List<String> names = new ArrayList<>(structs.keySet());
                 names.addAll(enums.keySet());
@@ -446,6 +593,12 @@ public final class Checker {
             }
             case Type.ArrayT a -> children.add(a.elem());
             case Type.ListT l -> children.add(l.elem());
+            case Type.TupleT tt -> children.addAll(tt.elems());
+            case Type.MapT mt -> {
+                children.add(mt.key());
+                children.add(mt.value());
+            }
+            case Type.SetT st -> children.add(st.elem());
             default -> {
             }
         }
@@ -467,14 +620,29 @@ public final class Checker {
         if (!signed.add(f)) return;
         Ctx saved = ctx;
         ctx = new Ctx();
+        enterScope(f);
         ctx.routine = f;
         ctx.fn = f;
+        ctx.typeParams = typeParamsOf(f);
+        if (f.origin == null) checkTypeParams(f);
         f.ret = f.retRef == null ? Type.VOID : resolveType(f.retRef);
         Set<String> names = new HashSet<>();
         int[] savedCapacities = paramCapacities;
         paramCapacities = new int[1];
         for (Param p : f.params) {
+            fnTypeAllowed = !p.mut();
             Type t = resolveType(p.typeRef());
+            fnTypeAllowed = false;
+            if (p.mut() && p.typeRef() instanceof FnRef) {
+                diags.error(Code.E0217, p.span(), "a parameter of a function type cannot be `mut`", "remove `mut`");
+                t = Type.ERROR;
+            }
+            if ((f.tool || f.name.equals("main")) && (t instanceof Type.FnT || Type.hasTypeVar(t))) {
+                diags.error(f.tool ? Code.E0601 : Code.E0602, p.typeRef().span(), (f.tool ? "a tool's" : "`main`'s")
+                    + " parameters have fixed types: no type parameters or functions",
+                    "callers send JSON values; have the tool call a generic function of your own");
+                t = Type.ERROR;
+            }
             // An instance's parameters have the capacities of the call that made it in place of their `_`s.
             if (f.origin != null) t = Type.substitute(t, f.capacities);
             if (Type.hasAnyCapacity(t) && (f.tool || f.name.equals("main"))) {
@@ -503,6 +671,18 @@ public final class Checker {
             }
         }
         paramCapacities = savedCapacities;
+        if (f.origin == null && f.paramVars.stream().noneMatch(v -> Type.isError(v.type))) {
+            // A call fixes each type parameter from the arguments, so each must appear in a parameter's type.
+            for (int i = 0; i < f.typeParams.size(); i++) {
+                Type v = ctx.typeParams.get(f.typeParams.get(i));
+                boolean used = false;
+                for (LocalVar pv : f.paramVars) used |= mentionsType(pv.type, v);
+                if (!used) {
+                    diags.error(Code.E0216, f.typeParamSpans.get(i), "type parameter `" + f.typeParams.get(i) + "` is in no parameter's "
+                        + "type, so a call cannot tell what it stands for", "use it in a parameter, as in fn first<T>(xs: list[T; _]) -> T");
+                }
+            }
+        }
         if (f.name.equals("main") && (f.params.size() > 1 || f.retRef != null)) {
             diags.error(Code.E0602, f.nameSpan, "`main` must return nothing and take at most one parameter",
                 "declare it as fn main() { ... }, or as fn main(input: str[4096]) { ... } to receive the standard input");
@@ -521,10 +701,47 @@ public final class Checker {
         ctx = saved;
     }
 
+    /** Whether the type variable {@code v} occurs in {@code t}. */
+    private static boolean mentionsType(Type t, Type v) {
+        if (t.equals(v)) return true;
+        return switch (t) {
+            case Type.ListT l -> mentionsType(l.elem(), v);
+            case Type.ArrayT a -> mentionsType(a.elem(), v);
+            case Type.TupleT tt -> tt.elems().stream().anyMatch(e -> mentionsType(e, v));
+            case Type.MapT m -> mentionsType(m.key(), v) || mentionsType(m.value(), v);
+            case Type.SetT st -> mentionsType(st.elem(), v);
+            case Type.FnT fn -> fn.params().stream().anyMatch(e -> mentionsType(e, v)) || mentionsType(fn.ret(), v);
+            default -> false;
+        };
+    }
+
+    /** The names of a function's type parameters: distinct, and none of them a type's or a constant's. */
+    private void checkTypeParams(FnDecl f) {
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < f.typeParams.size(); i++) {
+            String t = f.typeParams.get(i);
+            Span at = f.typeParamSpans.get(i);
+            if (!seen.add(t)) {
+                diags.error(Code.E0105, at, "duplicate type parameter `" + t + "`");
+            } else if (typeExists(t) || PrimKind.byName(t) != null) {
+                diags.error(Code.E0105, at, "type parameter `" + t + "` has the name of a type", "use a name of its own, such as T");
+            }
+        }
+        if (f.tool && !f.typeParams.isEmpty()) {
+            diags.error(Code.E0601, f.typeParamSpans.get(0), "a tool cannot have type parameters",
+                "callers send JSON values of fixed types; have the tool call a generic function of your own");
+        }
+        if (f.name.equals("main") && !f.typeParams.isEmpty()) {
+            diags.error(Code.E0602, f.typeParamSpans.get(0), "`main` cannot have type parameters");
+        }
+    }
+
     private void body(FnDecl f) {
         ctx = new Ctx();
+        enterScope(f);
         ctx.routine = f;
         ctx.fn = f;
+        ctx.typeParams = typeParamsOf(f);
         Map<String, LocalVar> params = new HashMap<>();
         for (LocalVar v : f.paramVars) params.putIfAbsent(v.name, v);
         ctx.scopes.push(params);
@@ -542,6 +759,7 @@ public final class Checker {
 
     private void testBody(TestDecl t) {
         ctx = new Ctx();
+        enterScope(t);
         ctx.routine = t;
         ctx.scopes.push(new HashMap<>());
         block(t.body);
@@ -562,6 +780,50 @@ public final class Checker {
             }
         }
         return found;
+    }
+
+    /**
+     * Recursion through a function passed as a value, which the functions as written do not show: g passes itself to
+     * apply, whose instance for g calls g. Checked on the functions that run: the plain ones and the instances.
+     */
+    private boolean checkInstanceRecursion() {
+        Map<FnDecl, Integer> state = new HashMap<>();
+        List<FnDecl> nodes = new ArrayList<>();
+        for (FnDecl f : fns.values()) {
+            if (f.generic()) nodes.addAll(f.instances.values());
+            else nodes.add(f);
+        }
+        for (FnDecl f : nodes) {
+            List<FnDecl> cycle = findConcreteCycle(f, state, new ArrayList<>());
+            if (cycle != null) {
+                FnDecl first = cycle.get(0).origin != null ? cycle.get(0).origin : cycle.get(0);
+                diags.error(Code.E0401, first.nameSpan,
+                    "recursion is not allowed: " + String.join(" -> ", cycle.stream().map(c -> c.name).toList())
+                        + ", through a function passed as a value",
+                    "rewrite with a loop; keep pending work in a fixed-capacity list (a stack) if needed");
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<FnDecl> findConcreteCycle(FnDecl f, Map<FnDecl, Integer> state, List<FnDecl> path) {
+        Integer st = state.get(f);
+        if (st != null && st == 2) return null;
+        if (st != null && st == 1) {
+            List<FnDecl> cycle = new ArrayList<>(path.subList(path.indexOf(f), path.size()));
+            cycle.add(f);
+            return cycle;
+        }
+        state.put(f, 1);
+        path.add(f);
+        for (FnDecl c : f.callees) {
+            List<FnDecl> cycle = findConcreteCycle(c, state, path);
+            if (cycle != null) return cycle;
+        }
+        path.remove(path.size() - 1);
+        state.put(f, 2);
+        return null;
     }
 
     /** DFS that returns a cycle (first element repeated at the end) or null. */
@@ -675,6 +937,10 @@ public final class Checker {
                 assign(a);
                 yield false;
             }
+            case Destructure d -> {
+                destructure(d);
+                yield false;
+            }
             case If i -> {
                 boolean all = i.elseBlock != null;
                 for (int k = 0; k < i.conds.size(); k++) {
@@ -689,7 +955,7 @@ public final class Checker {
                 if (!Type.isInt(lt) && !Type.isError(lt)) {
                     diags.error(Code.E0201, w.limit.span, "loop limit must be an integer, found " + lt);
                 }
-                loop(w.body);
+                loop(w, w.body);
                 yield false;
             }
             case For f -> {
@@ -699,10 +965,12 @@ public final class Checker {
             case Match m -> match(m);
             case Break b -> {
                 if (ctx.loopDepth == 0) diags.error(Code.E0302, b.span, "`break` outside of a loop");
+                else if (b.label != null) b.target = labelled(b.label, "break", b.span);
                 yield true;
             }
             case Continue c -> {
                 if (ctx.loopDepth == 0) diags.error(Code.E0302, c.span, "`continue` outside of a loop");
+                else if (c.label != null) c.target = labelled(c.label, "continue", c.span);
                 yield true;
             }
             case Return r -> {
@@ -717,10 +985,36 @@ public final class Checker {
         };
     }
 
-    private void loop(Block body) {
+    private void loop(Loop l, Block body) {
+        if (l.label != null) {
+            for (Loop outer : ctx.loops) {
+                if (l.label.equals(outer.label)) {
+                    diags.error(Code.E0105, l.labelSpan, "label `" + l.label + "` is already used by a loop around this one",
+                        "give each nested loop its own label");
+                    break;
+                }
+            }
+        }
         ctx.loopDepth++;
+        ctx.loops.push(l);
         block(body);
+        ctx.loops.pop();
         ctx.loopDepth--;
+    }
+
+    /** The loop around this statement labelled {@code label}, or null after reporting that there is none. */
+    private Loop labelled(String label, String jump, Span at) {
+        List<String> labels = new ArrayList<>();
+        for (Loop l : ctx.loops) {
+            if (label.equals(l.label)) return l;
+            if (l.label != null) labels.add(l.label);
+        }
+        String close = labels.isEmpty() ? null : didYouMean(label, labels);
+        String hint = labels.isEmpty()
+            ? "label the loop to " + jump + ": " + label + ": for x in xs { ... " + jump + " " + label + "; }"
+            : close != null ? close : "the loops around it are labelled " + String.join(", ", labels);
+        diags.error(Code.E0302, at, "`" + jump + " " + label + "` is not inside a loop labelled `" + label + "`", hint);
+        return null;
     }
 
     private void condition(Expr e, String what) {
@@ -728,6 +1022,30 @@ public final class Checker {
         if (!Type.isBool(t) && !Type.isError(t)) {
             String hint = Type.isNumeric(t) ? "there is no truthiness; compare explicitly, e.g. x != 0" : null;
             diags.error(Code.E0211, e.span, "condition of `" + what + "` must be bool, found " + t, hint);
+        }
+    }
+
+    /** `let (a, b): (T1, T2) = e;`: e is a tuple of that type, and each name a variable of its element's type. */
+    private void destructure(Destructure d) {
+        Type t = resolveType(d.typeRef);
+        ctx.mutCallAllowed = d.init;
+        Type it = expr(d.init, t);
+        ctx.mutCallAllowed = null;
+        requireAssignable(d.init, it, t);
+        List<Type> elems = null;
+        if (t instanceof Type.TupleT tt && tt.elems().size() == d.names.size()) {
+            elems = tt.elems();
+        } else if (t instanceof Type.TupleT tt) {
+            diags.error(Code.E0201, d.typeRef.span(), d.names.size() + " names for a tuple of " + tt.elems().size() + " elements",
+                "give one name per element, and _ for one you do not need");
+        } else if (!Type.isError(t)) {
+            diags.error(Code.E0201, d.typeRef.span(), "let (...) takes a tuple apart, but " + t + " is not a tuple",
+                "declare one variable: let x: " + t + " = ...;");
+        }
+        for (int i = 0; i < d.names.size(); i++) {
+            String name = d.names.get(i);
+            Type et = elems == null ? Type.ERROR : elems.get(i);
+            d.vars.add(name == null ? null : declare(name, d.nameSpans.get(i), et, d.mutable));
         }
     }
 
@@ -800,6 +1118,10 @@ public final class Checker {
             return Type.hasAnyCapacity(v.type) ? hint : hint + ", or copy it: var " + v.name + "2: " + v.type + " = " + v.name + ";";
         }
         For loop = loopVars.get(v);
+        if (loop != null && v == loop.indexVar) {
+            return "`" + v.name + "` is the index of each element, which the loop sets; to count something else, "
+                + "declare a var before the loop: var count: i64 = 0;";
+        }
         if (loop != null && loop.isRange()) {
             String from = exprText(loop.from);
             String to = exprText(loop.to);
@@ -864,13 +1186,38 @@ public final class Checker {
                     varType = Type.ERROR;
                 }
             }
+            if (f.step != null) {
+                Type st = expr(f.step, Type.isError(varType) ? Type.I64 : varType);
+                if (!Type.isError(st) && !Type.isError(varType) && !st.equals(varType)) {
+                    diags.error(Code.E0201, f.step.span, "the step of a range of " + varType + " must be " + varType + ", found " + st,
+                        "convert it: step " + varType + "(" + exprText(f.step) + ")");
+                } else if (f.step instanceof IntLit lit && lit.value.signum() <= 0) {
+                    String hint;
+                    if (lit.value.equals(java.math.BigInteger.ONE.negate()) && f.from instanceof IntLit a && f.to instanceof IntLit b) {
+                        // `10..0 step -1` counts 10 down to 1: the same values as rev 1..=10.
+                        java.math.BigInteger low = f.inclusive ? b.value : b.value.add(java.math.BigInteger.ONE);
+                        hint = "to count down from " + a.value + " to " + low + ", go through the range backwards: for " + f.name
+                            + " in rev " + low + "..=" + a.value + " { }";
+                    } else {
+                        hint = "to count down, go through the range backwards: `for i in rev a..b step k` takes the values "
+                            + "of a..b step k, the last one first";
+                    }
+                    diags.error(Code.E0202, f.step.span, "a range's step must be positive, found " + lit.value, hint);
+                }
+            }
+            if (f.indexName != null) {
+                diags.error(Code.E0212, f.indexSpan, "a range has no index: its values are the indexes",
+                    "write for " + f.name + " in " + exprText(f.from) + (f.inclusive ? "..=" : "..") + exprText(f.to) + " { }");
+            }
         } else {
             // split and words in a for loop make one piece at a time: there is no list for them to take a type from.
             Builtin b = f.from instanceof Call c ? Builtin.byName(c.name) : null;
-            if (b == Builtin.SPLIT || b == Builtin.WORDS) ctx.pieces = (Call) f.from;
+            if (b == Builtin.SPLIT || b == Builtin.WORDS || b == Builtin.CHARS) ctx.pieces = (Call) f.from;
             Type ct = expr(f.from, null);
             ctx.pieces = null;
             varType = Type.elementOf(ct);
+            if (ct instanceof Type.SetT st) varType = st.elem();
+            if (ct instanceof Type.MapT mt) varType = f.indexName != null ? mt.value() : mt.key();
             if (varType == null) {
                 if (!Type.isError(ct)) {
                     diags.error(Code.E0212, f.from.span, "cannot iterate over " + ct,
@@ -879,15 +1226,31 @@ public final class Checker {
                 varType = Type.ERROR;
             }
         }
+        if (f.rev && f.pieces() != null) {
+            diags.error(Code.E0212, f.from.span, "rev goes through a range, array, list or str backwards, not the pieces of "
+                    + f.pieces().name + ", which are made from the front",
+                "store them in a list first: let parts: list[str[32]; 16] = " + exprText(f.from) + "; for p in rev parts { }");
+        }
         ctx.scopes.push(new HashMap<>());
+        if (f.indexName != null) {
+            // For a map, `for k, v in m` gives each key with its value.
+            Type indexType = f.from.type instanceof Type.MapT mt ? mt.key() : Type.I64;
+            f.indexVar = declare(f.indexName, f.indexSpan, indexType, false);
+            loopVars.put(f.indexVar, f);
+        }
         f.var = declare(f.name, f.nameSpan, varType, false);
         loopVars.put(f.var, f);
-        loop(f.body);
+        loop(f, f.body);
         ctx.scopes.pop();
         if (!f.isRange()) {
             Expr src = f.source();
             Name root = src.isPlace() ? rootName(src) : null;
             f.snapshot = root != null && root.local != null && Uses.changes(f.body, root.local);
+            if (src instanceof SliceExpr sl) {
+                // A slice is read where it is, unless the body may change what it is part of.
+                Name sliced = sl.target.isPlace() ? rootName(sl.target) : null;
+                sl.view = sliced == null || sliced.local == null || !Uses.changes(f.body, sliced.local);
+            }
         }
     }
 
@@ -933,6 +1296,22 @@ public final class Checker {
             }
             return false;
         }
+        if (e instanceof VariantCall vc) {
+            // ns.f(...) is a call of a function of an imported file.
+            ctx.mutCallAllowed = vc;
+            Type t = expr(vc, null);
+            ctx.mutCallAllowed = null;
+            if (vc.asCall != null) {
+                if (!(t instanceof Type.Void) && !Type.isError(t)) {
+                    diags.warning(Code.W0302, vc.span, "the result of `" + exprText(vc) + "` (" + t + ") is not used",
+                        "store it: let value: " + t + " = " + exprText(vc) + ";");
+                }
+                return false;
+            }
+            if (Type.isError(t)) return false;
+            diags.error(Code.E0305, e.span, "this expression has no effect", "only function calls can be used as statements");
+            return false;
+        }
         Type t = expr(e, null);
         // `xs.push(1);` and `show(n: 1);` are calls written the wrong way. Their own error already says how
         // to write them, and "only function calls can be used as statements" would mislead.
@@ -948,6 +1327,7 @@ public final class Checker {
 
     private boolean match(Match m) {
         Type t = expr(m.subject, null);
+        if (t instanceof Type.Str) readInPlace(m.subject);
         boolean allJump = true;
         boolean wildcard = false;
         Set<Object> seen = new HashSet<>();
@@ -963,17 +1343,22 @@ public final class Checker {
                 diags.error(Code.E0307, p.span, "unreachable arm: `_` above already matches everything",
                     "move `_ => { }` to the end");
             }
+            // A guarded arm may not match, so it covers nothing: it is checked against what the arms above
+            // cover (a pattern they all take is unreachable) without adding to it.
+            Set<Object> seenHere = arm.guard() == null ? seen : new HashSet<>(seen);
             ctx.scopes.push(new HashMap<>());
             switch (p) {
-                case WildPat w -> wildcard = true;
-                case VariantPat v -> variantPattern(v, t, seen);
+                case WildPat w -> {
+                    if (arm.guard() == null) wildcard = true;
+                }
+                case VariantPat v -> variantPattern(v, t, seenHere);
                 case IntPat i -> {
                     if (supported && !Type.isError(t)) {
                         if (!Type.isInt(t)) {
                             diags.error(Code.E0308, p.span, "integer pattern cannot match a value of type " + t);
                         } else if (!Type.kind(t).fits(i.value)) {
                             diags.error(Code.E0202, p.span, "pattern " + i.value + " is out of range for " + t);
-                        } else if (!seen.add(i.value)) {
+                        } else if (!seenHere.add(i.value)) {
                             diags.error(Code.E0307, p.span, "duplicate pattern " + i.value);
                         }
                     }
@@ -982,7 +1367,7 @@ public final class Checker {
                     if (supported && !Type.isError(t)) {
                         if (!(t instanceof Type.Str)) {
                             diags.error(Code.E0308, p.span, "string pattern cannot match a value of type " + t);
-                        } else if (!seen.add(new String(sp.value, java.nio.charset.StandardCharsets.ISO_8859_1))) {
+                        } else if (!seenHere.add(new String(sp.value, java.nio.charset.StandardCharsets.ISO_8859_1))) {
                             diags.error(Code.E0307, p.span, "duplicate pattern");
                         }
                     }
@@ -991,12 +1376,13 @@ public final class Checker {
                     if (supported && !Type.isError(t)) {
                         if (!Type.isBool(t)) {
                             diags.error(Code.E0308, p.span, "bool pattern cannot match a value of type " + t);
-                        } else if (!seen.add(b.value)) {
+                        } else if (!seenHere.add(b.value)) {
                             diags.error(Code.E0307, p.span, "duplicate pattern " + b.value);
                         }
                     }
                 }
             }
+            if (arm.guard() != null) condition(arm.guard(), "if");
             if (!block(arm.body())) allJump = false;
             ctx.scopes.pop();
         }
@@ -1029,7 +1415,9 @@ public final class Checker {
             return;
         }
         EnumDecl d = et.decl();
-        if (!v.enumName.equals(d.name)) {
+        EnumDecl named = v.qualifier == null ? enums.get(v.enumName)
+            : aliasScope(v.qualifier) == null ? null : enums.in(aliasScope(v.qualifier), v.enumName);
+        if (!v.enumName.equals(d.name) || named != null && named != d) {
             diags.error(Code.E0308, v.span, "pattern of enum `" + v.enumName + "` cannot match a value of type " + d.name,
                 "write " + d.name + "." + v.variantName);
             return;
@@ -1101,6 +1489,9 @@ public final class Checker {
             case Binary b -> binary(b, expected);
             case ArrayLit a -> arrayLit(a, expected);
             case Repeat r -> repeat(r, expected);
+            case IfExpr i -> ifExpr(i, expected);
+            case TupleLit t -> tupleLit(t, expected);
+            case SliceExpr s -> sliceExpr(s);
         };
     }
 
@@ -1124,6 +1515,20 @@ public final class Checker {
 
     private Type index(Index ix) {
         Type tt = expr(ix.target, null);
+        if (tt instanceof Type.MapT mt) {
+            Type kt = expr(ix.index, mt.key());
+            if (!Type.isError(kt) && !Type.assignable(kt, mt.key())) {
+                diags.error(Code.E0201, ix.index.span, "the keys of " + mt + " are " + mt.key() + ", found " + kt);
+            }
+            return mt.value();
+        }
+        if (tt instanceof Type.SetT st) {
+            expr(ix.index, st.elem());
+            diags.error(Code.E0212, ix.target.span, "a set has no positions to index",
+                "ask whether it holds a value with contains(" + exprText(ix.target) + ", x), or go through it: for x in "
+                    + exprText(ix.target) + " { }");
+            return Type.ERROR;
+        }
         Type it = expr(ix.index, Type.I64);
         if (!Type.isInt(it) && !Type.isError(it)) {
             diags.error(Code.E0212, ix.index.span, "index must be an integer, found " + it);
@@ -1186,6 +1591,39 @@ public final class Checker {
     }
 
     private Type fieldAccess(FieldAccess f) {
+        // ns.NAME, a constant of the file imported as ns, and ns.Enum.Variant.
+        if (f.target instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name) && !enums.containsKey(n.name)
+            && aliasScope(n.name) != null) {
+            int s = aliasScope(n.name);
+            ConstDecl c = consts.in(s, f.name);
+            if (c == null) {
+                diags.error(Code.E0101, f.span, "`" + n.name + "` has no constant `" + f.name + "`",
+                    fns.in(s, f.name) != null ? "`" + f.name + "` is a function: call it, " + n.name + "." + f.name + "(...)" : null);
+                return Type.ERROR;
+            }
+            ensureConst(c);
+            f.constant = c;
+            return c.type;
+        }
+        if (f.target instanceof FieldAccess q && q.target instanceof Name n && lookupLocal(n.name) == null
+            && !consts.containsKey(n.name) && !enums.containsKey(n.name) && aliasScope(n.name) != null) {
+            EnumDecl d = enums.in(aliasScope(n.name), q.name);
+            if (d == null) {
+                diags.error(Code.E0103, q.span, "`" + n.name + "` has no enum `" + q.name + "`");
+                return Type.ERROR;
+            }
+            Variant v = d.variant(f.name);
+            if (v == null) {
+                diags.error(Code.E0107, f.nameSpan, "enum `" + d.name + "` has no variant `" + f.name + "`", didYouMean(f.name, variantNames(d)));
+                return Type.ERROR;
+            }
+            if (!v.payload.isEmpty()) {
+                diags.error(Code.E0204, f.span, d.name + "." + v.name + " needs " + v.payload.size() + " value(s)",
+                    "write " + n.name + "." + d.name + "." + v.name + "(" + joinTypes(v.payload) + ")");
+            }
+            f.variant = v;
+            return new Type.EnumT(d);
+        }
         if (f.target instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name)) {
             EnumDecl d = enums.get(n.name);
             if (d != null) {
@@ -1205,6 +1643,17 @@ public final class Checker {
         }
         Type t = expr(f.target, null);
         if (Type.isError(t)) return Type.ERROR;
+        if (t instanceof Type.TupleT tt) {
+            int n = tt.elems().size();
+            int idx = f.name.matches("[0-9]{1,6}") ? Integer.parseInt(f.name) : -1;
+            if (idx < 0 || idx >= n) {
+                diags.error(Code.E0106, f.nameSpan, "a tuple of " + n + " elements has no element `" + f.name + "`",
+                    "its elements are numbered from 0 to " + (n - 1) + ": " + exprText(f.target) + ".0");
+                return Type.ERROR;
+            }
+            f.fieldIndex = idx;
+            return tt.elems().get(idx);
+        }
         if (t instanceof Type.StructT st) {
             int idx = st.decl().fieldIndex(f.name);
             if (idx < 0) {
@@ -1244,6 +1693,12 @@ public final class Checker {
         }
         FnDecl f = fns.get(c.name);
         if (f == null) {
+            LocalVar fv = lookupLocal(c.name);
+            if (fv != null && fv.type instanceof Type.FnT ft) {
+                // A parameter of a function type: in an instance, the function the call gave it.
+                FnDecl bound = boundFunction(fv);
+                return bound != null ? callFunction(c, bound) : callFnParam(c, fv, ft);
+            }
             for (Arg a : c.args) expr(a.expr(), null);
             if (structs.containsKey(c.name)) {
                 diags.error(Code.E0213, c.span, "struct values need named fields",
@@ -1251,11 +1706,50 @@ public final class Checker {
             } else if (enums.containsKey(c.name)) {
                 diags.error(Code.E0201, c.nameSpan, "`" + c.name + "` is an enum type; build a variant instead",
                     "write " + c.name + "." + enums.get(c.name).variants.get(0).name);
+            } else if (fv != null) {
+                diags.error(Code.E0102, c.nameSpan, "`" + c.name + "` is a " + fv.type + ", not a function",
+                    "a parameter can hold a function: fn apply(f: fn(i64) -> i64, x: i64) -> i64 { return f(x); }");
             } else {
                 diags.error(Code.E0102, c.nameSpan, "unknown function `" + c.name + "`", functionHint(c.name));
             }
             return Type.ERROR;
         }
+        return callFunction(c, f);
+    }
+
+    /** The function that the parameter {@code fv} of a function type stands for in the instance being checked, or null. */
+    private FnDecl boundFunction(LocalVar fv) {
+        if (ctx.fn == null || ctx.fn.origin == null) return null;
+        int i = ctx.fn.paramVars.indexOf(fv);
+        return i >= 0 && i < ctx.fn.fnArgs.size() ? ctx.fn.fnArgs.get(i) : null;
+    }
+
+    /** A call of a parameter of a function type, in a function checked as written: its arguments against the type. */
+    private Type callFnParam(Call c, LocalVar fv, Type.FnT ft) {
+        c.fnParam = fv;
+        checkMutCallPosition(c, ft.ret());
+        if (c.args.size() != ft.params().size()) {
+            diags.error(Code.E0204, c.span, "`" + c.name + "` takes " + ft.params().size() + " argument(s) but " + c.args.size()
+                + " were given", "its type: " + ft);
+            for (Arg a : c.args) expr(a.expr(), null);
+            return ft.ret();
+        }
+        for (int i = 0; i < c.args.size(); i++) {
+            Arg a = c.args.get(i);
+            noMut(a);
+            Type want = ft.params().get(i);
+            requireAssignable(a.expr(), expr(a.expr(), want), want);
+        }
+        checkAliasing(c.args);
+        return ft.ret();
+    }
+
+    /** Whether {@code e} is a literal whose type its context decides: a number, or an array or tuple literal. */
+    private static boolean literalArgument(Expr e) {
+        return isUntyped(e) || isArrayLiteral(e);
+    }
+
+    private Type callFunction(Call c, FnDecl f) {
         c.fn = f;
         signature(f);
         checkMutCallPosition(c, f.ret);
@@ -1267,46 +1761,192 @@ public final class Checker {
             return f.ret;
         }
         int before = diags.errorCount();
-        // What each `_` of the parameters' types stands for in this call.
+        int n = c.args.size();
+        // What each `_` of the parameters' types stands for in this call, each type parameter, and each function.
         Map<Integer, Integer> caps = new HashMap<>();
-        for (int i = 0; i < c.args.size(); i++) {
-            Arg a = c.args.get(i);
-            LocalVar p = f.paramVars.get(i);
-            if (p.byRef) {
-                if (!a.mut()) {
-                    expr(a.expr(), argExpected(p.type, a.expr()));
-                    diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is `mut`",
-                        "pass a variable by reference: mut " + exprText(a.expr()));
+        Map<Integer, Type> types = new HashMap<>();
+        FnDecl[] fnArgs = new FnDecl[n];
+        // The arguments with types of their own come first, so that a literal can take the type that a type
+        // parameter gets from another argument: max_of(x, 1) with x: u8 makes the 1 a u8.
+        boolean[] done = new boolean[n];
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < n; i++) {
+                Arg a = c.args.get(i);
+                LocalVar p = f.paramVars.get(i);
+                if (done[i] || pass == 0 && Type.hasTypeVar(p.type) && literalArgument(a.expr())) continue;
+                done[i] = true;
+                if (p.type instanceof Type.FnT ft) {
+                    fnArgs[i] = functionValue(a, ft, f, caps, types);
                     continue;
                 }
-                Type at = mutPlace(a.expr());
-                if (!Type.bind(p.type, at, true, caps)) {
-                    diags.error(Code.E0207, a.span(), "`mut` argument must have exactly type " + p.type + ", found " + at,
-                        Type.hasAnyCapacity(p.type)
-                            ? "`mut` parameters cannot convert or widen; only the `_` capacities of " + p.type + " take any value"
-                            : "`mut` parameters cannot convert or widen; declare the variable as " + p.type);
+                Type want = Type.substituteTypes(p.type, f, types);
+                if (p.byRef) {
+                    if (!a.mut()) {
+                        expr(a.expr(), argExpected(want, a.expr()));
+                        diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is `mut`",
+                            "pass a variable by reference: mut " + exprText(a.expr()));
+                        continue;
+                    }
+                    Type at = mutPlace(a.expr());
+                    if (!Type.bind(want, at, true, caps, f, types)) {
+                        diags.error(Code.E0207, a.span(), "`mut` argument must have exactly type " + want + ", found " + at,
+                            Type.hasTypeVar(p.type)
+                                ? "`mut` parameters cannot convert or widen; only the `_` capacities and type parameters of "
+                                    + p.type + " take any value"
+                                : Type.hasAnyCapacity(want)
+                                ? "`mut` parameters cannot convert or widen; only the `_` capacities of " + want + " take any value"
+                                : "`mut` parameters cannot convert or widen; declare the variable as " + want);
+                    }
+                } else {
+                    if (a.mut()) {
+                        diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is not `mut`",
+                            "remove `mut`; the value is passed read-only");
+                    }
+                    if (Type.hasTypeVar(want)) {
+                        inferFromLiteral(a.expr(), want, f, caps, types);
+                        want = Type.substituteTypes(want, f, types);
+                    }
+                    Type at = expr(a.expr(), argExpected(want, a.expr()));
+                    if (!Type.bind(want, at, false, caps, f, types)) mismatch(a.expr(), at, want);
                 }
-            } else {
-                if (a.mut()) {
-                    diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is not `mut`",
-                        "remove `mut`; the value is passed read-only");
-                }
-                Type at = expr(a.expr(), argExpected(p.type, a.expr()));
-                if (!Type.bind(p.type, at, false, caps)) mismatch(a.expr(), at, p.type);
             }
         }
         checkAliasing(c.args);
+        for (int i = 0; i < f.typeParams.size(); i++) {
+            // One in no parameter's type was reported where it is declared.
+            Type v = new Type.TypeVar(f.typeParams.get(i), i, f);
+            boolean inParams = f.paramVars.stream().anyMatch(pv -> mentionsType(pv.type, v));
+            if (!types.containsKey(i) && inParams && diags.errorCount() == before) {
+                diags.error(Code.E0216, c.span, "cannot tell from the arguments what type `" + f.typeParams.get(i) + "` of `"
+                    + f.name + "` stands for", "signature: " + signatureText(f));
+            }
+        }
+        if (ctx.routine != null) {
+            for (FnDecl v : fnArgs) {
+                if (v != null) ctx.routine.fnValues.add(v);
+            }
+        }
         if (f.generic() && diags.errorCount() == before && ctx.routine != null && !(ctx.fn != null && ctx.fn.generic())) {
-            // Every capacity of the call is known: run the copy of `f` made for them. In a function that takes
-            // any capacity itself they are not known yet; its instances make theirs when they are checked. An
+            // Every capacity, type and function of the call is known: run the copy of `f` made for them. In a function
+            // that is generic itself they are not known yet; its instances make theirs when they are checked. An
             // argument whose type failed to resolve binds nothing, and the program does not run.
             List<Integer> known = new ArrayList<>();
-            int n = anyCapacities(f);
-            for (int i = 0; i < n && caps.get(i) != null && caps.get(i) >= 0; i++) known.add(caps.get(i));
-            if (known.size() == n) c.fn = instance(f, known);
+            int nc = anyCapacities(f);
+            for (int i = 0; i < nc && caps.get(i) != null && caps.get(i) >= 0; i++) known.add(caps.get(i));
+            List<Type> typeArgs = new ArrayList<>();
+            for (int i = 0; i < f.typeParams.size(); i++) typeArgs.add(types.get(i));
+            List<FnDecl> fns2 = java.util.Arrays.asList(fnArgs);
+            boolean allFns = true;
+            for (int i = 0; i < n; i++) {
+                if (f.paramVars.get(i).type instanceof Type.FnT && fnArgs[i] == null) allFns = false;
+            }
+            if (known.size() == nc && !typeArgs.contains(null) && allFns) c.fn = instance(f, known, typeArgs, fns2);
         }
         if (ctx.routine != null) ctx.routine.callees.add(c.fn);
-        return f.ret;
+        return Type.substituteTypes(f.ret, f, types);
+    }
+
+    /**
+     * A literal argument for a parameter whose type has type parameters that no other argument fixed: what the
+     * literal would be on its own decides them, as in first([1, 2, 3]), where T is i64.
+     */
+    private void inferFromLiteral(Expr arg, Type want, FnDecl f, Map<Integer, Integer> caps, Map<Integer, Type> types) {
+        if (!literalArgument(arg) || arg instanceof ArrayLit al && al.elems.isEmpty()) return;
+        Diagnostics saved = diags;
+        diags = new Diagnostics(saved.source());
+        Type natural = expr(arg, null);
+        diags = saved;
+        if (Type.isError(natural)) return;
+        Type wantElem = want instanceof Type.ListT || want instanceof Type.ArrayT ? Type.elementOf(want) : null;
+        if (wantElem != null && natural instanceof Type.ArrayT at) {
+            Type.bind(wantElem, at.elem(), true, caps, f, types);
+        } else {
+            Type.bind(want, natural, false, caps, f, types);
+        }
+    }
+
+    /**
+     * An argument for a parameter of a function type: a function, by its name, or a parameter of a function type
+     * passed on. Its parameter and result types must be the parameter's exactly, apart from the type parameters of
+     * {@code owner}, which they fix. Returns the function, or null when it is not known yet (a parameter passed on, in
+     * a function checked as written) or after reporting an error.
+     */
+    private FnDecl functionValue(Arg a, Type.FnT want, FnDecl owner, Map<Integer, Integer> caps, Map<Integer, Type> types) {
+        if (a.expr() instanceof FieldAccess fa && fa.target instanceof Name q && lookupLocal(q.name) == null
+            && aliasScope(q.name) != null && fns.in(aliasScope(q.name), fa.name) != null) {
+            // ns.f: a function of the file imported as ns.
+            FnDecl d = fns.in(aliasScope(q.name), fa.name);
+            Name n = new Name(fa.span, fa.name);
+            Arg plain = new Arg(a.span(), a.mut(), n);
+            int saved = ctx.scope;
+            ctx.scope = d.scope;
+            FnDecl got = functionValue(plain, want, owner, caps, types);
+            ctx.scope = saved;
+            fa.type = n.type;
+            return got;
+        }
+        if (!(a.expr() instanceof Name n)) {
+            Type t = expr(a.expr(), null);
+            if (!Type.isError(t)) {
+                diags.error(Code.E0201, a.span(), "expected a function of type " + want + ", found " + t,
+                    "pass a function by its name: f(is_even), where fn is_even(x: i64) -> bool");
+            }
+            return null;
+        }
+        if (a.mut()) diags.error(Code.E0207, a.span(), "a function is passed by its name, without `mut`");
+        Type.FnT given;
+        FnDecl fn = null;
+        LocalVar lv = lookupLocal(n.name);
+        if (lv != null) {
+            if (!(lv.type instanceof Type.FnT ft)) {
+                diags.error(Code.E0201, a.span(), "expected a function of type " + want + ", found " + lv.type + " `" + n.name + "`");
+                return null;
+            }
+            n.local = lv;
+            given = ft;
+            fn = boundFunction(lv);
+        } else {
+            FnDecl d = fns.get(n.name);
+            if (d == null) {
+                Builtin b = Builtin.byName(n.name);
+                if (b != null) {
+                    diags.error(Code.E0201, a.span(), "a builtin cannot be passed as a function",
+                        "wrap it in a function of your own: fn my_" + n.name + "(...) { return " + n.name + "(...); }");
+                } else {
+                    diags.error(Code.E0101, n.span, "unknown function `" + n.name + "`", functionHint(n.name));
+                }
+                return null;
+            }
+            signature(d);
+            if (d.generic()) {
+                diags.error(Code.E0201, a.span(), "`" + d.name + "` takes any capacity, type or function, so it has no single "
+                    + "type to pass", "pass a function with fixed types, which may call " + d.name + ": fn " + d.name
+                    + "_i64(...) { ... }");
+                return null;
+            }
+            if (d.paramVars.stream().anyMatch(v -> v.byRef)) {
+                diags.error(Code.E0201, a.span(), "`" + d.name + "` has `mut` parameters, which a function type cannot have",
+                    "pass a function whose parameters are read-only and that returns its result");
+                return null;
+            }
+            List<Type> ps = new ArrayList<>();
+            for (LocalVar v : d.paramVars) ps.add(v.type);
+            given = new Type.FnT(ps, d.ret);
+            fn = d;
+        }
+        n.type = given;
+        a.expr().type = given;
+        boolean ok = want.params().size() == given.params().size();
+        for (int i = 0; ok && i < want.params().size(); i++) {
+            ok = Type.bind(want.params().get(i), given.params().get(i), true, caps, owner, types);
+        }
+        ok = ok && Type.bind(want.ret(), given.ret(), true, caps, owner, types);
+        if (!ok) {
+            diags.error(Code.E0201, a.span(), "`" + n.name + "` is " + given + ", but " + Type.substituteTypes(want, owner, types)
+                + " is expected");
+            return null;
+        }
+        return fn;
     }
 
     /**
@@ -1339,6 +1979,9 @@ public final class Checker {
             case Type.Str s -> Math.max(0, -s.cap());
             case Type.ListT l -> Math.max(Math.max(0, -l.cap()), anyCapacities(l.elem()));
             case Type.ArrayT a -> Math.max(Math.max(0, -a.len()), anyCapacities(a.elem()));
+            case Type.TupleT tt -> tt.elems().stream().mapToInt(Checker::anyCapacities).max().orElse(0);
+            case Type.MapT m -> Math.max(Math.max(0, -m.cap()), Math.max(anyCapacities(m.key()), anyCapacities(m.value())));
+            case Type.SetT st -> Math.max(Math.max(0, -st.cap()), anyCapacities(st.elem()));
             default -> 0;
         };
     }
@@ -1351,14 +1994,22 @@ public final class Checker {
      * made on its first call with them, and checked later, after every function of the program. The interpreter,
      * the memory bound and the C backend see only instances, all of whose types are known.
      */
-    private FnDecl instance(FnDecl g, List<Integer> caps) {
-        FnDecl inst = g.instances.get(caps);
+    private FnDecl instance(FnDecl g, List<Integer> caps, List<Type> typeArgs, List<FnDecl> fnArgs) {
+        List<Object> key = new ArrayList<>(caps);
+        key.add("types");
+        key.addAll(typeArgs);
+        key.add("functions");
+        for (FnDecl fa : fnArgs) key.add(fa == null ? "-" : fa);
+        FnDecl inst = g.instances.get(key);
         if (inst != null) return inst;
         inst = g.copy.get();
         inst.origin = g;
         inst.capacities = List.copyOf(caps);
+        inst.typeArgs = List.copyOf(typeArgs);
+        inst.scope = g.scope;
+        inst.fnArgs = java.util.Collections.unmodifiableList(new ArrayList<>(fnArgs));
         inst.doc = g.doc;
-        g.instances.put(inst.capacities, inst);
+        g.instances.put(key, inst);
         // What the signature reports, it reported for `g` already.
         Diagnostics saved = diags;
         diags = new Diagnostics(saved.source());
@@ -1390,7 +2041,12 @@ public final class Checker {
 
     /** How an instance is named in messages and the memory report: lookup(list[Entry; 64], str[1024]). */
     static String instanceLabel(FnDecl f) {
-        return f.name + "(" + String.join(", ", f.paramVars.stream().map(v -> v.type.toString()).toList()) + ")";
+        List<String> ps = new ArrayList<>();
+        for (int i = 0; i < f.paramVars.size(); i++) {
+            FnDecl given = i < f.fnArgs.size() ? f.fnArgs.get(i) : null;
+            ps.add(given != null ? given.name : f.paramVars.get(i).type.toString());
+        }
+        return f.name + "(" + String.join(", ", ps) + ")";
     }
 
     private String functionHint(String name) {
@@ -1405,17 +2061,17 @@ public final class Checker {
             case "insert_at", "add_at" -> "use insert(mut xs, i, value)";
             case "remove_at", "delete", "erase", "pop_at" -> "use remove(mut xs, i), which returns the element";
             case "exit", "abort", "fail", "error", "throw", "raise" -> "use panic(\"message\")";
-            case "range" -> "use a range loop: for i in 0..n { }";
+            case "range" -> "use a range loop: for i in 0..n { }, for i in 0..=n step 2 { }, or backwards: for i in rev 0..n { }";
             case "sorted", "sort_by", "sort_by_key", "order_by" ->
                 "sort a list in place with sort(mut xs); to order by a key, sort structs whose first field is the key "
                     + "(structs order field by field), and reverse(mut xs) for descending";
-            case "reversed", "rev" -> "reverse in place with reverse(mut xs)";
+            case "reversed", "rev" -> "go through it backwards with for x in rev xs { }, or reverse it in place with reverse(mut xs)";
             case "implode", "join_with", "joined", "concat_with" -> "use join(parts, sep): let line: str[64] = join(parts, \", \");";
             case "includes", "has" -> "use contains(xs, x)";
             case "find", "indexOf", "index", "position", "find_index", "search" -> "use index_of(xs, x), which is -1 when x is absent";
             case "startswith", "startsWith", "has_prefix" -> "use starts_with(s, prefix)";
             case "endswith", "endsWith", "has_suffix" -> "use ends_with(s, suffix)";
-            case "substr", "substring", "sub", "mid", "subslice" -> "use slice(s, from, to): the bytes from..to as a copy";
+            case "substr", "substring", "sub", "mid", "subslice" -> "slice it: s[from..to], s[from..] or s[..to]";
             case "strip", "trim_start", "trim_end", "lstrip", "rstrip", "trim_left", "trim_right", "trimStart", "trimEnd" ->
                 "use trim(s), which removes ASCII whitespace at both ends";
             case "upper", "uppercase", "toUpperCase", "toupper" -> "use to_upper(x), for a u8 byte or a str";
@@ -1429,10 +2085,12 @@ public final class Checker {
                  "toInt", "to_i64", "to_number", "number", "Number" -> Hints.PARSE_NUMBER;
             case "parse_float", "parse_f64", "atof", "parseFloat", "strtod", "to_float", "toFloat" ->
                 "use f64(s), checked with is_float(s) first: it traps (R0009) on text that is not a decimal number";
-            case "powf", "powi", "exp2" -> "pow(x, n) takes an integer x and n >= 0; for a float, multiply: x * x";
-            case "exp", "log", "ln", "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "hypot", "cbrt" ->
-                "there is no " + name + ": it rounds differently in different math libraries, so ALang leaves it out; "
-                + "only + - * /, sqrt, floor, ceil, round, trunc, abs, min and max exist";
+            case "powf", "powi", "fpow" -> "use pow(x, y): on floats it takes a float exponent, pow(2.0, 0.5)";
+            case "exp2" -> "use pow(2.0, x)";
+            case "ln" -> "use log(x), the natural logarithm";
+            case "hypot" -> "use sqrt(x * x + y * y)";
+            case "cbrt" -> "use pow(x, 1.0 / 3.0) for x >= 0";
+            case "sinh", "cosh", "tanh" -> "write it with exp: sinh(x) is (exp(x) - exp(-x)) / 2.0";
             case "fabs" -> "use abs(x)";
             case "fmin", "fmax" -> "use " + name.substring(1) + "(a, b)";
             case "isdigit", "isDigit" -> "use is_digit(c) on a u8 byte";
@@ -1445,11 +2103,14 @@ public final class Checker {
             case "isfinite" -> "use is_finite(x)";
             case "sum" -> "there is no sum; add in a loop: var total: i64 = 0; for x in xs { total += x; }";
             case "map", "filter", "reduce", "fold", "any", "all", "zip", "foreach", "for_each", "forEach" ->
-                "there are no higher-order functions; write the loop: for x in xs { if x > 0 { push(mut out, x); } }";
-            case "enumerate" -> "loop over the indexes: for i in 0..len(xs) { let x: i64 = xs[i]; }";
+                "write the loop, or a function that takes one: fn keep<T>(xs: list[T; _], f: fn(T) -> bool, out: mut list[T; _]) "
+                    + "{ for x in xs { if f(x) { push(mut out, x); } } }";
+            case "enumerate" -> "for i, x in xs { } gives each element with its index";
             case "ord" -> "a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number";
             case "chr" -> "push(mut s, u8(n)) adds the byte n to a str";
-            case "dict", "HashMap", "hashmap", "Map", "set", "Set", "HashSet" -> Hints.COLLECTIONS;
+            case "dict", "HashMap", "hashmap", "Map", "Set", "HashSet", "BTreeMap", "TreeMap" -> Hints.COLLECTIONS;
+            case "get", "getOrDefault", "get_or_default" -> "use get_or(m, key, default), or m[key], which traps (R0003) when the key is missing";
+            case "keys", "values", "items", "entries" -> "go through a map in key order: for k, v in m { }";
             case "input", "read", "read_line", "readline", "readLine", "scanf", "gets", "getline", "open", "fopen",
                  "read_file", "readFile", "write_file", "writeFile", "fetch", "get_env", "getenv", "env" ->
                 "there is no input, file, network or environment access; a program's only inputs are its tool "
@@ -1580,6 +2241,9 @@ public final class Checker {
             case Binary b -> mentions(b.left, v) || mentions(b.right, v);
             case ArrayLit a -> a.elems.stream().anyMatch(x -> mentions(x, v));
             case Repeat r -> mentions(r.value, v);
+            case IfExpr i -> mentions(i.cond, v) || mentions(i.then, v) || mentions(i.otherwise, v);
+            case TupleLit t -> t.elems.stream().anyMatch(x -> mentions(x, v));
+            case SliceExpr s -> mentions(s.target, v) || s.from != null && mentions(s.from, v) || s.to != null && mentions(s.to, v);
             default -> false;
         };
     }
@@ -1596,10 +2260,12 @@ public final class Checker {
                 Arg a = args.get(0);
                 noMut(a);
                 Type t = expr(a.expr(), null);
-                boolean ok = b == Builtin.LEN ? Type.elementOf(t) != null : (t instanceof Type.ListT || t instanceof Type.Str);
+                readInPlace(a.expr());
+                boolean keyed = t instanceof Type.MapT || t instanceof Type.SetT;
+                boolean ok = keyed || (b == Builtin.LEN ? Type.elementOf(t) != null : (t instanceof Type.ListT || t instanceof Type.Str));
                 if (!ok && !Type.isError(t)) {
-                    diags.error(Code.E0203, a.span(), b.name + "() needs " + (b == Builtin.LEN ? "an array, list or str" : "a list or str")
-                        + ", found " + t);
+                    diags.error(Code.E0203, a.span(), b.name + "() needs " + (b == Builtin.LEN ? "an array, list, str, map or set"
+                        : "a list, str, map or set") + ", found " + t);
                 }
                 return Type.I64;
             }
@@ -1620,7 +2286,7 @@ public final class Checker {
             }
             case CLEAR -> {
                 if (!arity(c, 1)) return Type.VOID;
-                collectionArg(c, args.get(0));
+                if (keyedArg(c, args.get(0)) == null) collectionArg(c, args.get(0));
                 return Type.VOID;
             }
             case APPEND -> {
@@ -1671,7 +2337,7 @@ public final class Checker {
                 }
                 return ts[0];
             }
-            case SQRT, FLOOR, CEIL, ROUND, TRUNC -> {
+            case SQRT, FLOOR, CEIL, ROUND, TRUNC, EXP, LOG, LOG2, LOG10, SIN, COS, TAN, ASIN, ACOS, ATAN -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 noMut(args.get(0));
                 Type t = expr(args.get(0).expr(), Type.F64);
@@ -1682,6 +2348,19 @@ public final class Checker {
                     return Type.ERROR;
                 }
                 return t;
+            }
+            case ATAN2 -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0));
+                noMut(args.get(1));
+                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isFloat(expected) ? expected : Type.F64);
+                if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
+                if (!Type.isFloat(ts[0]) || !ts[0].equals(ts[1])) {
+                    diags.error(Code.E0201, c.span, "atan2() needs two floats of the same type, found " + ts[0] + " and " + ts[1],
+                        "convert them: atan2(f64(y), f64(x))");
+                    return Type.ERROR;
+                }
+                return ts[0];
             }
             case IS_NAN, IS_FINITE -> {
                 if (!arity(c, 1)) return Type.BOOL;
@@ -1708,22 +2387,36 @@ public final class Checker {
                 if (!arity(c, 2)) return Type.ERROR;
                 noMut(args.get(0));
                 noMut(args.get(1));
-                Type x = expr(args.get(0).expr(), Type.isInt(expected) ? expected : null);
-                Type n = expr(args.get(1).expr(), Type.I64);
+                Expr base = args.get(0).expr();
+                Expr power = args.get(1).expr();
+                // pow(2, 0.5) is a float pow, as 2 + 0.5 is a float sum.
+                Type hint = Type.isNumeric(expected) ? expected : isUntyped(base) && hasFloatLiteral(power) ? Type.F64 : null;
+                Type x = expr(base, hint);
+                if (Type.isFloat(x)) {
+                    Type n = expr(power, x);
+                    if (Type.isError(n)) return Type.ERROR;
+                    if (!n.equals(x)) {
+                        diags.error(Code.E0201, args.get(1).span(), "pow() of an " + x + " needs an exponent of the same type, found " + n,
+                            "convert it: pow(" + exprText(base) + ", " + x + "(" + exprText(power) + "))");
+                        return Type.ERROR;
+                    }
+                    return x;
+                }
+                Type n = expr(power, Type.I64);
                 if (Type.isError(x) || Type.isError(n)) return Type.ERROR;
                 if (!Type.isInt(x)) {
-                    diags.error(Code.E0203, args.get(0).span(), "pow() needs an integer base, found " + x,
-                        Type.isFloat(x) ? "there is no float pow, which rounds differently in different math libraries; "
-                            + "for a whole power, multiply: x * x * x" : null);
+                    diags.error(Code.E0203, args.get(0).span(), "pow() needs an integer or float base, found " + x);
                     return Type.ERROR;
                 }
                 if (!Type.isInt(n)) {
-                    diags.error(Code.E0203, args.get(1).span(), "pow() needs an integer exponent, found " + n);
+                    diags.error(Code.E0203, args.get(1).span(), "pow() of an integer needs an integer exponent, found " + n,
+                        Type.isFloat(n) ? "for a float result, make the base a float: pow(f64(" + exprText(base) + "), "
+                            + exprText(power) + ")" : null);
                     return Type.ERROR;
                 }
                 return x;
             }
-            case GCD, LCM -> {
+            case GCD, LCM, WRAPPING_ADD, WRAPPING_SUB, WRAPPING_MUL, SATURATING_ADD, SATURATING_SUB, SATURATING_MUL -> {
                 if (!arity(c, 2)) return Type.ERROR;
                 noMut(args.get(0));
                 noMut(args.get(1));
@@ -1764,6 +2457,11 @@ public final class Checker {
                 if (!arity(c, 2)) return ret;
                 noMut(args.get(0));
                 Type t = expr(args.get(0).expr(), null);
+                readInPlace(args.get(0).expr());
+                if (b == Builtin.CONTAINS && (t instanceof Type.MapT || t instanceof Type.SetT)) {
+                    keyArg(b, args.get(1), t instanceof Type.MapT mt ? mt.key() : ((Type.SetT) t).elem());
+                    return ret;
+                }
                 if (t instanceof Type.Str) {
                     textPattern(b, args.get(1), "what it looks for");
                 } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
@@ -1793,6 +2491,7 @@ public final class Checker {
                 if (!arity(c, 2)) return Type.I64;
                 noMut(args.get(0));
                 Type t = expr(args.get(0).expr(), null);
+                readInPlace(args.get(0).expr());
                 if (t instanceof Type.Str) {
                     textPattern(b, args.get(1), "what it counts");
                 } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
@@ -1857,6 +2556,54 @@ public final class Checker {
                 }
                 return stored;
             }
+            case IS_UTF8 -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                textArg(b, args.get(0));
+                return Type.BOOL;
+            }
+            case CHAR_COUNT -> {
+                if (!arity(c, 1)) return Type.I64;
+                textArg(b, args.get(0));
+                return Type.I64;
+            }
+            case CHARS -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                Type text = textArg(b, args.get(0));
+                if (ctx.pieces == c) {
+                    // One code point at a time; the list type is nominal, as for split in a loop.
+                    return text instanceof Type.Str s ? new Type.ListT(Type.U32, s.cap() < 0 ? s.cap() : s.cap() + 1) : Type.ERROR;
+                }
+                return storedType(c, b, expected);
+            }
+            case PUSH_CHAR -> {
+                if (!arity(c, 2)) return Type.VOID;
+                Arg target = args.get(0);
+                if (!target.mut()) {
+                    expr(target.expr(), null);
+                    diags.error(Code.E0207, target.span(), "push_char() modifies its first argument",
+                        "write push_char(mut " + exprText(target.expr()) + ", c)");
+                } else {
+                    Type t = mutPlace(target.expr());
+                    if (!(t instanceof Type.Str) && !Type.isError(t)) {
+                        diags.error(Code.E0203, target.span(), "push_char() needs a str[N] target, found " + t,
+                            t instanceof Type.ListT ? "use push(mut xs, value) for lists" : null);
+                    }
+                }
+                Arg v = args.get(1);
+                noMut(v);
+                Type vt = expr(v.expr(), Type.U32);
+                if (!Type.isInt(vt) && !Type.isError(vt)) {
+                    diags.error(Code.E0201, v.span(), "push_char() needs a code point, an integer, found " + vt,
+                        vt instanceof Type.Str ? "to add text, use append(mut s, " + exprText(v.expr()) + ")" : null);
+                }
+                return Type.VOID;
+            }
+            case SLICE_CHARS -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                Type t = textArg(b, args.get(0));
+                for (int i = 1; i < 3; i++) indexArg(b, args.get(i));
+                return t;
+            }
             case TRY_SPLIT, TRY_WORDS -> {
                 boolean split = b == Builtin.TRY_SPLIT;
                 if (!arity(c, split ? 3 : 2)) return Type.BOOL;
@@ -1900,6 +2647,18 @@ public final class Checker {
                 return Type.VOID;
             }
             case INSERT -> {
+                Type keyed = args.isEmpty() ? null : keyedArg(c, args.get(0));
+                if (keyed instanceof Type.MapT mt) {
+                    if (!arity(c, 3)) return Type.VOID;
+                    keyArg(b, args.get(1), mt.key());
+                    keyArg(b, args.get(2), mt.value());
+                    return Type.VOID;
+                }
+                if (keyed instanceof Type.SetT st) {
+                    if (!arity(c, 2)) return Type.VOID;
+                    keyArg(b, args.get(1), st.elem());
+                    return Type.VOID;
+                }
                 if (!arity(c, 3)) return Type.VOID;
                 Type t = collectionArg(c, args.get(0));
                 indexArg(b, args.get(1));
@@ -1911,10 +2670,42 @@ public final class Checker {
                 return Type.VOID;
             }
             case REMOVE -> {
+                Type keyed = args.isEmpty() ? null : keyedArg(c, args.get(0));
+                if (keyed != null) {
+                    if (!arity(c, 2)) return Type.BOOL;
+                    keyArg(b, args.get(1), keyed instanceof Type.MapT mt ? mt.key() : ((Type.SetT) keyed).elem());
+                    return Type.BOOL;
+                }
                 if (!arity(c, 2)) return Type.ERROR;
                 Type t = collectionArg(c, args.get(0));
                 indexArg(b, args.get(1));
                 return Type.isError(t) ? Type.ERROR : Type.elementOf(t);
+            }
+            case COMPARE -> {
+                if (!arity(c, 2)) return Type.I64;
+                noMut(args.get(0));
+                noMut(args.get(1));
+                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), null);
+                if (!Type.isError(ts[0]) && !Type.isError(ts[1]) && !ts[0].equals(ts[1])) {
+                    diags.error(Code.E0201, c.span, "compare() needs two values of the same type, found " + ts[0] + " and " + ts[1]);
+                }
+                return Type.I64;
+            }
+            case GET_OR -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                if (!(t instanceof Type.MapT mt)) {
+                    for (int i = 1; i < 3; i++) expr(args.get(i).expr(), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, args.get(0).span(), "get_or() needs a map, found " + t,
+                            Type.elementOf(t) != null ? "for a position, check it first: if i < len(xs) then xs[i] else d" : null);
+                    }
+                    return Type.ERROR;
+                }
+                keyArg(b, args.get(1), mt.key());
+                keyArg(b, args.get(2), mt.value());
+                return mt.value();
             }
             case FIXED -> {
                 boolean asText = ctx.text == c;
@@ -1973,6 +2764,7 @@ public final class Checker {
         ctx.text = a.expr();
         Type t = expr(a.expr(), null);
         ctx.text = outer;
+        if (t instanceof Type.Str) readInPlace(a.expr());
         if (t instanceof Type.Void) {
             diags.error(Code.E0201, a.span(), "cannot print a call that returns nothing");
         }
@@ -2061,6 +2853,7 @@ public final class Checker {
     private Type textArg(Builtin b, Arg a) {
         noMut(a);
         Type t = expr(a.expr(), null);
+        readInPlace(a.expr());
         if (Type.isError(t) || t instanceof Type.Str) return t;
         diags.error(Code.E0203, a.span(), b.name + "() needs a str, found " + t);
         return Type.ERROR;
@@ -2070,6 +2863,7 @@ public final class Checker {
     private void textPattern(Builtin b, Arg a, String what) {
         noMut(a);
         Type t = expr(a.expr(), isUntyped(a.expr()) ? Type.U8 : null);
+        readInPlace(a.expr());
         if (!Type.isError(t) && !(t instanceof Type.Str) && !t.equals(Type.U8)) {
             diags.error(Code.E0201, a.span(), b.name + "() needs a str or a u8 byte for " + what + ", found " + t,
                 Type.isInt(t) ? "convert it: u8(" + exprText(a.expr()) + ")" : null);
@@ -2090,10 +2884,11 @@ public final class Checker {
      * or of the function's return value, since the capacity of what they build cannot be computed.
      */
     private Type storedType(Call c, Builtin b, Type expected) {
-        boolean list = b == Builtin.SPLIT || b == Builtin.WORDS;
+        boolean list = b == Builtin.SPLIT || b == Builtin.WORDS || b == Builtin.CHARS;
         String example = switch (b) {
             case SPLIT -> "let parts: list[str[32]; 16] = ";
             case WORDS -> "let ws: list[str[32]; 16] = ";
+            case CHARS -> "let cs: list[u32; 64] = ";
             case JOIN -> "let line: str[256] = ";
             case FIXED, PAD_LEFT, PAD_RIGHT -> "let text: str[32] = ";
             default -> "let text: str[256] = ";
@@ -2108,12 +2903,14 @@ public final class Checker {
         if (ctx.stored != c || expected == null) {
             diags.error(Code.E0216, c.span, b.name + "() takes its type, and so its capacity, from the variable it is stored in",
                 "make the call the whole right-hand side of a typed let/var, an assignment or a return: " + example
-                    + (list ? " or, to go through the pieces one at a time without a list: for p in " + exprText(c) + " { }" : ""));
+                    + (b == Builtin.CHARS ? " or, to go through the code points one at a time without a list: for c in " + exprText(c) + " { }"
+                    : list ? " or, to go through the pieces one at a time without a list: for p in " + exprText(c) + " { }" : ""));
             return Type.ERROR;
         }
-        boolean ok = list ? expected instanceof Type.ListT l && l.elem() instanceof Type.Str : expected instanceof Type.Str;
+        boolean ok = b == Builtin.CHARS ? expected instanceof Type.ListT l && l.elem().equals(Type.U32)
+            : list ? expected instanceof Type.ListT l && l.elem() instanceof Type.Str : expected instanceof Type.Str;
         if (!ok) {
-            diags.error(Code.E0201, c.span, b.name + "() builds a " + (list ? "list[str[K]; M]" : "str[N]")
+            diags.error(Code.E0201, c.span, b.name + "() builds a " + (b == Builtin.CHARS ? "list[u32; M]" : list ? "list[str[K]; M]" : "str[N]")
                 + ", but " + expected + " is expected", "store it in a variable of that type: " + example);
             return Type.ERROR;
         }
@@ -2163,6 +2960,39 @@ public final class Checker {
         return t;
     }
 
+    /**
+     * The first argument of clear, insert and remove when it is a map or set: checked as a `mut` place, and its
+     * type returned. Null for anything else, which the list and str forms then check.
+     */
+    private Type keyedArg(Call c, Arg a) {
+        if (!(a.expr() instanceof Name || a.expr() instanceof FieldAccess || a.expr() instanceof Index)) return null;
+        Diagnostics saved = diags;
+        diags = new Diagnostics(saved.source());
+        Type t = expr(a.expr(), null);
+        diags = saved;
+        if (!(t instanceof Type.MapT) && !(t instanceof Type.SetT)) return null;
+        if (!a.mut()) {
+            diags.error(Code.E0207, a.span(), c.name + "() modifies its first argument",
+                "write " + c.name + "(mut " + exprText(a.expr()) + switch (c.builtin) {
+                    case INSERT -> t instanceof Type.MapT ? ", key, value)" : ", x)";
+                    case REMOVE -> ", key)";
+                    default -> ")";
+                });
+            return t;
+        }
+        mutPlace(a.expr());
+        return t;
+    }
+
+    /** A key, value or element of a map or set: read-only, checked against its type. */
+    private void keyArg(Builtin b, Arg a, Type want) {
+        noMut(a);
+        Type t = expr(a.expr(), want);
+        if (!Type.assignable(t, want) && !Type.isError(t)) {
+            diags.error(Code.E0201, a.span(), b.name + "() needs a " + want + ", found " + t);
+        }
+    }
+
     /** First argument of push/pop/clear: `mut` list or str. */
     private Type collectionArg(Call c, Arg a) {
         if (!a.mut()) {
@@ -2179,7 +3009,9 @@ public final class Checker {
         Type t = mutPlace(a.expr());
         if (!(t instanceof Type.ListT) && !(t instanceof Type.Str) && !Type.isError(t)) {
             diags.error(Code.E0203, a.span(), c.name + "() needs a list or str, found " + t,
-                t instanceof Type.ArrayT ? "arrays have a fixed length; use list[T; N] for a growable collection" : null);
+                t instanceof Type.ArrayT ? "arrays have a fixed length; use list[T; N] for a growable collection"
+                    : t instanceof Type.MapT ? "add to a map with m[key] = value or insert(mut m, key, value)"
+                    : t instanceof Type.SetT ? "add to a set with insert(mut s, x)" : null);
             return Type.ERROR;
         }
         return t;
@@ -2194,7 +3026,32 @@ public final class Checker {
     }
 
     private Type variantCall(VariantCall v) {
-        EnumDecl d = enums.get(v.enumName);
+        EnumDecl d;
+        if (v.qualifier != null) {
+            Integer s = qualifierScope(v.qualifier, v.span);
+            d = s == null ? null : enums.in(s, v.enumName);
+            if (d == null) {
+                for (Arg a : v.args) expr(a.expr(), null);
+                if (s != null) diags.error(Code.E0103, v.span, "`" + v.qualifier + "` has no enum `" + v.enumName + "`");
+                return Type.ERROR;
+            }
+        } else if (lookupLocal(v.enumName) == null && !consts.containsKey(v.enumName) && !enums.containsKey(v.enumName)
+            && aliasScope(v.enumName) != null) {
+            // ns.f(args): a function of the file imported as ns.
+            FnDecl f = fns.in(aliasScope(v.enumName), v.variantName);
+            if (f == null) {
+                for (Arg a : v.args) expr(a.expr(), null);
+                diags.error(Code.E0102, v.span, "`" + v.enumName + "` has no function `" + v.variantName + "`");
+                return Type.ERROR;
+            }
+            v.asCall = new Call(v.span, v.variantName, v.span, v.args);
+            ctx.mutCallAllowed = ctx.mutCallAllowed == v ? v.asCall : ctx.mutCallAllowed;
+            Type t = callFunction(v.asCall, f);
+            v.asCall.type = t;
+            return t;
+        } else {
+            d = enums.get(v.enumName);
+        }
         if (d == null) {
             for (Arg a : v.args) expr(a.expr(), null);
             if (lookupLocal(v.enumName) != null || consts.containsKey(v.enumName)) {
@@ -2236,7 +3093,18 @@ public final class Checker {
     }
 
     private Type structLit(StructLit s) {
-        StructDecl d = structs.get(s.name);
+        StructDecl d;
+        if (s.qualifier != null) {
+            Integer sc = qualifierScope(s.qualifier, s.span);
+            d = sc == null ? null : structs.in(sc, s.name);
+            if (d == null) {
+                for (FieldInit f : s.fields) expr(f.value(), null);
+                if (sc != null) diags.error(Code.E0103, s.span, "`" + s.qualifier + "` has no struct `" + s.name + "`");
+                return Type.ERROR;
+            }
+        } else {
+            d = structs.get(s.name);
+        }
         if (d == null) {
             for (FieldInit f : s.fields) expr(f.value(), null);
             if (fns.containsKey(s.name) || Builtin.byName(s.name) != null) {
@@ -2289,6 +3157,7 @@ public final class Checker {
             return target;
         }
         if (t instanceof Type.Str) {
+            readInPlace(c.arg);
             // i64("42") and f64("2.5") trap unless the text is a decimal integer that fits, or a decimal number
             // that converts exactly; is_int and is_float say so first.
             if (c.target == PrimKind.F32) {
@@ -2392,7 +3261,7 @@ public final class Checker {
 
     /** An array literal, [a, b] or [v; n], which can also build a list of the type its context expects. */
     private static boolean isArrayLiteral(Expr e) {
-        return e instanceof ArrayLit || e instanceof Repeat;
+        return e instanceof ArrayLit || e instanceof Repeat || e instanceof TupleLit;
     }
 
     /** True if an untyped expression contains a float literal, so that it must be a float. */
@@ -2458,6 +3327,11 @@ public final class Checker {
         Type lt = ts[0];
         Type rt = ts[1];
         if (Type.isError(lt) || Type.isError(rt)) return op.isArith() || op.isBitwise() ? Type.ERROR : Type.BOOL;
+        if ((op.isEquality() || op.isOrdering()) && lt instanceof Type.Str && rt instanceof Type.Str) {
+            // A failed assert prints the operands: a str as its bytes, which a slice read in place has.
+            readInPlace(b.left);
+            readInPlace(b.right);
+        }
         if (op.isEquality()) {
             if (!Type.comparable(lt, rt)) {
                 diags.error(Code.E0201, b.span, "cannot compare " + lt + " with " + rt,
@@ -2471,7 +3345,9 @@ public final class Checker {
                 return Type.BOOL;
             }
             if (!Type.isNumeric(lt) || !Type.isNumeric(rt)) {
-                String orderHint = lt instanceof Type.Str || rt instanceof Type.Str
+                String orderHint = lt instanceof Type.TypeVar || rt instanceof Type.TypeVar
+                    ? "a type parameter may stand for any type; compare(a, b) < 0 orders values of every type as sort does"
+                    : lt instanceof Type.Str || rt instanceof Type.Str
                     ? "a str is ordered only against another str; " + (Type.isInt(lt) || Type.isInt(rt)
                         ? "compare one byte, s[i], with a character such as 'a'" : "turn the other side into text first")
                     : "only numbers and strs are ordered; other values are compared with == and !=, so compare the numbers in them";
@@ -2543,6 +3419,30 @@ public final class Checker {
             for (Expr e : a.elems) requireAssignable(e, expr(e, lt.elem()), lt.elem());
             return lt;
         }
+        if (expected instanceof Type.MapT mt) {
+            // [(key, value), ...]: a key given twice keeps its last value.
+            if (mt.cap() >= 0 && a.elems.size() > mt.cap()) {
+                diags.error(Code.E0201, a.span, "map literal has " + a.elems.size() + " entries but the capacity of " + mt
+                    + " is " + mt.cap());
+            }
+            Type entry = new Type.TupleT(List.of(mt.key(), mt.value()));
+            for (Expr e : a.elems) {
+                Type et = expr(e, entry);
+                if (!Type.assignable(et, entry) && !Type.isError(et)) {
+                    diags.error(Code.E0201, e.span, "an entry of " + mt + " is a (key, value) pair " + entry + ", found " + et,
+                        "write each entry as a pair: [(\"a\", 1), (\"b\", 2)]");
+                }
+            }
+            return mt;
+        }
+        if (expected instanceof Type.SetT st) {
+            if (st.cap() >= 0 && a.elems.size() > st.cap()) {
+                diags.error(Code.E0201, a.span, "set literal has " + a.elems.size() + " values but the capacity of " + st
+                    + " is " + st.cap());
+            }
+            for (Expr e : a.elems) requireAssignable(e, expr(e, st.elem()), st.elem());
+            return st;
+        }
         if (a.elems.isEmpty()) {
             if (expected != null && Type.isError(expected)) return Type.ERROR;
             diags.error(Code.E0216, a.span, "cannot infer the type of an empty list literal",
@@ -2595,6 +3495,11 @@ public final class Checker {
      * here; only an empty list literal is sure to fit. Returns whether it did.
      */
     private boolean unknownSize(Expr lit, Type expected, boolean elements) {
+        if ((expected instanceof Type.MapT mt && mt.cap() < 0 || expected instanceof Type.SetT st && st.cap() < 0) && elements) {
+            diags.error(Code.E0201, lit.span, "a literal may not fit " + expected + ": its capacity is not known here",
+                "clear it and insert each entry, which traps (R0004) when it is full: clear(mut m); insert(mut m, k, v);");
+            return true;
+        }
         if (expected instanceof Type.ListT lt && lt.cap() < 0 && elements) {
             diags.error(Code.E0201, lit.span, "a list literal may not fit " + expected + ": its capacity is not known here",
                 "clear the list and push each element, which traps (R0004) when it is full: clear(mut xs); push(mut xs, v);");
@@ -2608,6 +3513,103 @@ public final class Checker {
         return false;
     }
 
+    /**
+     * `if c then a else b`: the branches share a type, as the operands of `+` do, and a str or list branch widens
+     * to the larger capacity. What split, join and the like build takes the type the whole expression is stored as.
+     */
+    private Type ifExpr(IfExpr i, Type expected) {
+        condition(i.cond, "if");
+        Expr outer = ctx.stored;
+        Type[] ts;
+        if (outer == i && (typedByTarget(i.then) || typedByTarget(i.otherwise))) {
+            ctx.stored = i.then;
+            Type a = expr(i.then, expected);
+            ctx.stored = i.otherwise;
+            Type b = expr(i.otherwise, expected);
+            ts = new Type[] {a, b};
+        } else {
+            ts = sameTypeOperands(i.then, i.otherwise, expected);
+        }
+        ctx.stored = outer;
+        Type a = ts[0];
+        Type b = ts[1];
+        if (Type.isError(a) || Type.isError(b)) return Type.ERROR;
+        if (a instanceof Type.Void || b instanceof Type.Void) {
+            diags.error(Code.E0201, (a instanceof Type.Void ? i.then : i.otherwise).span,
+                "a branch of an if expression returns nothing", "use an if statement: if c { f(); } else { g(); }");
+            return Type.ERROR;
+        }
+        Type t = widen(a, b);
+        if (!Type.assignable(a, t) || !Type.assignable(b, t)) {
+            String hint;
+            if (Type.isNumeric(a) && Type.isNumeric(b)) {
+                hint = "convert one: if c then " + exprText(i.then) + " else " + a + "(" + exprText(i.otherwise) + ")";
+            } else if (Type.hasAnyCapacity(a) || Type.hasAnyCapacity(b)) {
+                String to = (a instanceof Type.Str ? "str[64]" : a.toString().replaceAll("_]$", "16]"));
+                hint = "their `_` capacities are not known to be the same; convert both to one: if c then " + to + "("
+                    + exprText(i.then) + ") else " + to + "(" + exprText(i.otherwise) + ")";
+            } else {
+                hint = "give both branches the same type";
+            }
+            diags.error(Code.E0201, i.span, "the branches of an if expression have different types: " + a + " and " + b, hint);
+            return Type.ERROR;
+        }
+        return t;
+    }
+
+    /** Whether {@code e} is a call of split, words, chars, join, replace or a formatter, which takes its type from where it is stored. */
+    private static boolean typedByTarget(Expr e) {
+        return e instanceof Call c && Builtin.byName(c.name) != null && Builtin.byName(c.name).typedByTarget();
+    }
+
+    /** `xs[from..to]`: the type of slice(xs, from, to), a list for an array. */
+    private Type sliceExpr(SliceExpr s) {
+        Type t = expr(s.target, null);
+        for (Expr e : new Expr[] {s.from, s.to}) {
+            if (e == null) continue;
+            Type it = expr(e, Type.I64);
+            if (!Type.isInt(it) && !Type.isError(it)) diags.error(Code.E0212, e.span, "a slice's bounds are integers, found " + it);
+        }
+        if (Type.isError(t)) return t;
+        if (t instanceof Type.ArrayT a) return a.len() < 0 ? new Type.ListT(a.elem(), a.len()) : new Type.ListT(a.elem(), a.len());
+        if (t instanceof Type.Str || t instanceof Type.ListT) return t;
+        diags.error(Code.E0212, s.target.span, "cannot slice a value of type " + t, "a slice is part of a str, list or array: xs[1..3]");
+        return Type.ERROR;
+    }
+
+    /**
+     * Marks {@code e}, if it is a slice, as read where it is: its reader takes only its elements and length, at once,
+     * so the C backend need not copy it.
+     */
+    private static void readInPlace(Expr e) {
+        if (e instanceof SliceExpr s) s.view = true;
+    }
+
+    /** `(a, b, ...)`: with an expected tuple type of as many elements, each element is checked against its type. */
+    private Type tupleLit(TupleLit t, Type expected) {
+        if (expected instanceof Type.TupleT et && et.elems().size() == t.elems.size()) {
+            for (int i = 0; i < t.elems.size(); i++) {
+                Expr e = t.elems.get(i);
+                Type want = et.elems().get(i);
+                requireAssignable(e, expr(e, want), want);
+            }
+            return expected;
+        }
+        List<Type> ts = new ArrayList<>();
+        boolean bad = false;
+        for (Expr e : t.elems) {
+            Type x = expr(e, null);
+            if (x instanceof Type.Void) {
+                diags.error(Code.E0201, e.span, "`" + exprText(e) + "` returns nothing, so it cannot be an element of a tuple",
+                    "call it as a statement of its own");
+                bad = true;
+            }
+            bad |= Type.isError(x);
+            ts.add(x);
+        }
+        return bad ? Type.ERROR : new Type.TupleT(ts);
+    }
+
     private Type repeat(Repeat r, Type expected) {
         if (unknownSize(r, expected, true)) {
             constSize(r.count, "repeat count");
@@ -2616,6 +3618,12 @@ public final class Checker {
         }
         int n = constSize(r.count, "repeat count");
         r.n = Math.max(n, 0);
+        if (expected instanceof Type.MapT || expected instanceof Type.SetT) {
+            expr(r.value, null);
+            diags.error(Code.E0201, r.span, "[v; n] repeats one value, which a " + (expected instanceof Type.MapT ? "map" : "set")
+                + " holds once", "write the entries, or start empty: []");
+            return Type.ERROR;
+        }
         if (expected instanceof Type.ArrayT at) {
             if (n >= 0 && n != at.len()) {
                 diags.error(Code.E0201, r.span, "expected " + at.len() + " elements for " + at + ", found [_; " + n + "]");
@@ -2693,10 +3701,10 @@ public final class Checker {
             case StrLit s -> true;
             case BoolLit b -> true;
             case Name n -> n.constant != null && n.constant.value != null;
-            case FieldAccess f -> f.variant != null || isConst(f.target);
+            case FieldAccess f -> f.constant != null ? f.constant.value != null : f.variant != null || isConst(f.target);
             case Index i -> isConst(i.target) && isConst(i.index);
             case Call c -> c.builtin != null && c.builtin.pure && c.args.stream().allMatch(a -> isConst(a.expr()));
-            case VariantCall v -> v.args.stream().allMatch(a -> isConst(a.expr()));
+            case VariantCall v -> v.asCall == null && v.args.stream().allMatch(a -> isConst(a.expr()));
             case StructLit s -> s.fields.stream().allMatch(f -> isConst(f.value()));
             case Convert c -> isConst(c.arg);
             case Resize r -> isConst(r.arg);
@@ -2704,6 +3712,9 @@ public final class Checker {
             case Binary b -> isConst(b.left) && isConst(b.right);
             case ArrayLit a -> a.elems.stream().allMatch(Checker::isConst);
             case Repeat r -> isConst(r.value);
+            case IfExpr i -> isConst(i.cond) && isConst(i.then) && isConst(i.otherwise);
+            case TupleLit t -> t.elems.stream().allMatch(Checker::isConst);
+            case SliceExpr s -> isConst(s.target) && (s.from == null || isConst(s.from)) && (s.to == null || isConst(s.to));
         };
     }
 

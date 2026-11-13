@@ -35,6 +35,19 @@ public final class Values {
         }
     }
 
+    /** A map: its first {@code len} keys in order, each with the value at the same position. A set is a ListV in order. */
+    public static final class MapV {
+        public final Object[] keys;
+        public final Object[] vals;
+        public int len;
+
+        public MapV(Object[] keys, Object[] vals, int len) {
+            this.keys = keys;
+            this.vals = vals;
+            this.len = len;
+        }
+    }
+
     public static final class ArrV {
         public final Object[] items;
 
@@ -69,6 +82,7 @@ public final class Values {
             case ArrV a -> new ArrV(copy(a.items, a.items.length));
             case StructV s -> new StructV(copy(s.fields, s.fields.length));
             case EnumV e -> new EnumV(e.tag, copy(e.payload, e.payload.length));
+            case MapV m -> new MapV(copy(m.keys, m.len), copy(m.vals, m.len), m.len);
             default -> v;
         };
     }
@@ -88,6 +102,12 @@ public final class Values {
         if (target instanceof Type.ListT l && v instanceof ListV lv && lv.items.length != l.cap()) {
             return new ListV(Arrays.copyOf(lv.items, l.cap()), lv.len);
         }
+        if (target instanceof Type.SetT s && v instanceof ListV lv && lv.items.length != s.cap()) {
+            return new ListV(Arrays.copyOf(lv.items, s.cap()), lv.len);
+        }
+        if (target instanceof Type.MapT m && v instanceof MapV mv && mv.keys.length != m.cap()) {
+            return new MapV(Arrays.copyOf(mv.keys, m.cap()), Arrays.copyOf(mv.vals, m.cap()), mv.len);
+        }
         return v;
     }
 
@@ -104,6 +124,14 @@ public final class Values {
             case Type.ArrayT at -> allEqual(((ArrV) a).items, ((ArrV) b).items, ((ArrV) a).items.length, i -> at.elem());
             case Type.StructT st -> allEqual(((StructV) a).fields, ((StructV) b).fields, st.decl().fields.size(),
                 i -> st.decl().fields.get(i).type);
+            case Type.TupleT tt -> allEqual(((StructV) a).fields, ((StructV) b).fields, tt.elems().size(), i -> tt.elems().get(i));
+            case Type.SetT st -> ((ListV) a).len == ((ListV) b).len
+                && allEqual(((ListV) a).items, ((ListV) b).items, ((ListV) a).len, i -> st.elem());
+            case Type.MapT mt -> {
+                MapV x = (MapV) a;
+                MapV y = (MapV) b;
+                yield x.len == y.len && allEqual(x.keys, y.keys, x.len, i -> mt.key()) && allEqual(x.vals, y.vals, x.len, i -> mt.value());
+            }
             case Type.EnumT et -> {
                 EnumV x = (EnumV) a;
                 EnumV y = (EnumV) b;

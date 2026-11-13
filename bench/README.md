@@ -48,7 +48,7 @@ Some tasks favor one language; the table lists the pitfalls we expected, so you 
 | `balanced` | bracket matching | neutral |
 | `compare_versions` | compare "1.10.2" with "1.9" | neutral (string instead of numeric comparison) |
 | `days_between` | days between two dates | favors Python: `datetime` does it all |
-| `fnv1a_32` | 32-bit FNV-1a hash of UTF-8 bytes | Python: hashing characters instead of bytes, a missing `mod 2^32` gives silently huge values. ALang: a `u32` multiply traps |
+| `fnv1a_32` | 32-bit FNV-1a hash of UTF-8 bytes | Python: hashing characters instead of bytes, a missing `mod 2^32` gives silently huge values. ALang: a plain `u32` multiply traps, and `wrapping_mul` is the fix |
 | `format_thousands` | `1234567` to `"1,234,567"` | favors Python: `f"{n:,}"`. ALang: `abs(i64 min)` traps |
 | `grid_path` | shortest path in a small maze | neutral |
 | `insertion_point` | leftmost insertion index in a sorted list | neutral |

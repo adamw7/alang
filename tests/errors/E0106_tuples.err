@@ -1,0 +1,27 @@
+error[E0106]: a tuple of 2 elements has no element `2`
+ --> tests/errors/E0106_tuples.al:9:13
+  |
+9 |     print(p.2);
+  |             ^
+  = hint: its elements are numbered from 0 to 1: p.0
+
+error[E0201]: 3 names for a tuple of 2 elements
+  --> tests/errors/E0106_tuples.al:10:20
+   |
+10 |     let (a, b, c): (i64, str[4]) = pair();
+   |                    ^^^^^^^^^^^^^
+  = hint: give one name per element, and _ for one you do not need
+
+error[E0201]: let (...) takes a tuple apart, but i64 is not a tuple
+  --> tests/errors/E0106_tuples.al:11:17
+   |
+11 |     let (x, y): i64 = 5;
+   |                 ^^^
+  = hint: declare one variable: let x: i64 = ...;
+
+error[E0201]: type mismatch: expected i64, found str[3]
+  --> tests/errors/E0106_tuples.al:12:29
+   |
+12 |     let q: (i64, i64) = (1, "two");
+   |                             ^^^^^
+

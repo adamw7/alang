@@ -3,5 +3,5 @@ error[E0001]: unexpected 'match', expected a statement or expression
   |
 4 |     let word: str[8] = match n { 1 => { "one" } _ => { "many" } };
   |                        ^^^^^
-  = hint: `match` is a statement, not an expression; declare the variable first and assign it in every arm: var x: i64 = 0; match c { ... => { x = 1; } }
+  = hint: `match` is a statement, not an expression; declare the variable first and assign it in every arm: var x: i64 = 0; match c { ... => { x = 1; } }; for a choice between two values, if c then a else b is an expression
 

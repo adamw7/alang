@@ -1,0 +1,67 @@
+error[E0203]: `+` needs numbers, found T and T
+ --> tests/errors/E0201_generics.al:4:12
+  |
+4 |     return a + b;
+  |            ^^^^^
+
+error[E0203]: `<` needs two numbers or two strs, found T and T
+ --> tests/errors/E0201_generics.al:8:12
+  |
+8 |     return a < b;
+  |            ^^^^^
+  = hint: a type parameter may stand for any type; compare(a, b) < 0 orders values of every type as sort does
+
+error[E0216]: type parameter `T` is in no parameter's type, so a call cannot tell what it stands for
+  --> tests/errors/E0201_generics.al:11:9
+   |
+11 | fn make<T>() -> i64 {
+   |         ^
+  = hint: use it in a parameter, as in fn first<T>(xs: list[T; _]) -> T
+
+error[E0601]: a tool cannot have type parameters
+  --> tests/errors/E0201_generics.al:23:14
+   |
+23 | tool fn pick<T>(x: T) -> T {
+   |              ^
+  = hint: callers send JSON values of fixed types; have the tool call a generic function of your own
+
+error[E0601]: a tool's parameters have fixed types: no type parameters or functions
+  --> tests/errors/E0201_generics.al:23:20
+   |
+23 | tool fn pick<T>(x: T) -> T {
+   |                    ^
+  = hint: callers send JSON values; have the tool call a generic function of your own
+
+error[E0217]: a function type is only the type of a parameter
+  --> tests/errors/E0201_generics.al:28:12
+   |
+28 |     let f: fn(i64) -> i64 = half;
+   |            ^^^^^^^^^^^^^^
+  = hint: a variable, field or result cannot hold a function; take it as a parameter: fn apply(f: fn(i64) -> i64, ...)
+
+error[E0101]: unknown name `half`
+  --> tests/errors/E0201_generics.al:28:29
+   |
+28 |     let f: fn(i64) -> i64 = half;
+   |                             ^^^^
+  = hint: `half` is a function; call it with parentheses: half(...)
+
+error[E0201]: `half` is fn(i64) -> f64, but fn(i64) -> i64 is expected
+  --> tests/errors/E0201_generics.al:29:17
+   |
+29 |     print(apply(half, 2), apply(abs, 2), apply(nothing, 2), add(1, 2), less(1, 2), make(), pick(1));
+   |                 ^^^^
+
+error[E0201]: a builtin cannot be passed as a function
+  --> tests/errors/E0201_generics.al:29:33
+   |
+29 |     print(apply(half, 2), apply(abs, 2), apply(nothing, 2), add(1, 2), less(1, 2), make(), pick(1));
+   |                                 ^^^
+  = hint: wrap it in a function of your own: fn my_abs(...) { return abs(...); }
+
+error[E0101]: unknown function `nothing`
+  --> tests/errors/E0201_generics.al:29:48
+   |
+29 |     print(apply(half, 2), apply(abs, 2), apply(nothing, 2), add(1, 2), less(1, 2), make(), pick(1));
+   |                                                ^^^^^^^
+

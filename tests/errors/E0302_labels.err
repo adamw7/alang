@@ -1,0 +1,35 @@
+error[E0105]: label `outer` is already used by a loop around this one
+ --> tests/errors/E0302_labels.al:5:9
+  |
+5 |         outer: for j in 0..3 {
+  |         ^^^^^
+  = hint: give each nested loop its own label
+
+error[E0302]: `break inner` is not inside a loop labelled `inner`
+ --> tests/errors/E0302_labels.al:8:9
+  |
+8 |         break inner;
+  |         ^^^^^^^^^^^^
+  = hint: the loops around it are labelled outer
+
+error[E0302]: `continue outer` is not inside a loop labelled `outer`
+  --> tests/errors/E0302_labels.al:11:9
+   |
+11 |         continue outer;
+   |         ^^^^^^^^^^^^^^^
+  = hint: label the loop to continue: outer: for x in xs { ... continue outer; }
+
+error[E0212]: a range has no index: its values are the indexes
+  --> tests/errors/E0302_labels.al:13:9
+   |
+13 |     for i, x in 0..3 {
+   |         ^
+  = hint: write for x in 0..3 { }
+
+error[E0202]: a range's step must be positive, found -1
+  --> tests/errors/E0302_labels.al:16:25
+   |
+16 |     for i in 10..0 step -1 {
+   |                         ^^
+  = hint: to count down from 10 to 1, go through the range backwards: for i in rev 1..=10 { }
+

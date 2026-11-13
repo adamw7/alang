@@ -2,7 +2,7 @@ package alang.ast;
 
 /**
  * The builtin functions: the core ones and the standard library. Their names are reserved and cannot be
- * declared by programs. They are polymorphic where user functions cannot be (there are no generics):
+ * declared by programs. They are polymorphic in ways user functions are not (beyond type parameters):
  * {@code len} takes any array, list or str, {@code sort} any list, and so on.
  */
 public enum Builtin {
@@ -23,16 +23,44 @@ public enum Builtin {
     CLAMP(Group.MATH, true, "clamp", "clamp(x, lo, hi) -> T",
         "x limited to lo..hi (numbers of the same type). Traps (R0013) unless lo <= hi."),
     POW(Group.MATH, true, "pow", "pow(x, n) -> T",
-        "x to the power n, for an integer x and an integer n >= 0; pow(0, 0) is 1. Traps on overflow, and (R0013) if n < 0."),
+        "x to the power n. For integers: n >= 0, pow(0, 0) is 1, traps on overflow, and (R0013) if n < 0. For an f32/f64 x, "
+            + "n is a float of the same type: pow(2.0, 0.5); never traps (pow(-8.0, 0.5) is NaN), with the special cases of C99."),
     GCD(Group.MATH, true, "gcd", "gcd(a, b) -> T",
         "Greatest common divisor of two integers of the same type, never negative; gcd(0, 0) is 0. Traps if it does not fit."),
     LCM(Group.MATH, true, "lcm", "lcm(a, b) -> T",
         "Least common multiple of two integers of the same type, never negative; 0 if either is 0. Traps on overflow."),
+    WRAPPING_ADD(Group.MATH, true, "wrapping_add", "wrapping_add(a, b) -> T",
+        "a + b for two integers of the same type, wrapped around to fit (modulo 2^bits): wrapping_add(u8(250), 10) is 4. "
+            + "Never traps; for hashes and checksums."),
+    WRAPPING_SUB(Group.MATH, true, "wrapping_sub", "wrapping_sub(a, b) -> T",
+        "a - b for two integers of the same type, wrapped around to fit: wrapping_sub(u8(0), 1) is 255. Never traps."),
+    WRAPPING_MUL(Group.MATH, true, "wrapping_mul", "wrapping_mul(a, b) -> T",
+        "a * b for two integers of the same type, wrapped around to fit: the low bits of the product, as FNV and other "
+            + "hashes need. Never traps."),
+    SATURATING_ADD(Group.MATH, true, "saturating_add", "saturating_add(a, b) -> T",
+        "a + b for two integers of the same type, or the type's largest or smallest value if it does not fit: "
+            + "saturating_add(u8(250), 10) is 255. Never traps."),
+    SATURATING_SUB(Group.MATH, true, "saturating_sub", "saturating_sub(a, b) -> T",
+        "a - b for two integers of the same type, held to the type's range: saturating_sub(u8(3), 5) is 0. Never traps."),
+    SATURATING_MUL(Group.MATH, true, "saturating_mul", "saturating_mul(a, b) -> T",
+        "a * b for two integers of the same type, held to the type's range. Never traps."),
     SQRT(Group.MATH, true, "sqrt", "sqrt(x) -> f", "Square root of an f32/f64."),
     FLOOR(Group.MATH, true, "floor", "floor(x) -> f", "Largest integral value not greater than x (f32/f64)."),
     CEIL(Group.MATH, true, "ceil", "ceil(x) -> f", "Smallest integral value not less than x (f32/f64)."),
     ROUND(Group.MATH, true, "round", "round(x) -> f", "Nearest integral value, halves away from zero: round(2.5) is 3.0 (f32/f64)."),
     TRUNC(Group.MATH, true, "trunc", "trunc(x) -> f", "x without its fraction, rounded toward zero: trunc(-2.7) is -2.0 (f32/f64)."),
+    EXP(Group.MATH, true, "exp", "exp(x) -> f", "e to the power x (f32/f64)."),
+    LOG(Group.MATH, true, "log", "log(x) -> f", "Natural logarithm of x (f32/f64): -inf for 0, NaN below 0."),
+    LOG2(Group.MATH, true, "log2", "log2(x) -> f", "Base-2 logarithm of x (f32/f64); exact for powers of two."),
+    LOG10(Group.MATH, true, "log10", "log10(x) -> f", "Base-10 logarithm of x (f32/f64)."),
+    SIN(Group.MATH, true, "sin", "sin(x) -> f", "Sine of x radians (f32/f64)."),
+    COS(Group.MATH, true, "cos", "cos(x) -> f", "Cosine of x radians (f32/f64)."),
+    TAN(Group.MATH, true, "tan", "tan(x) -> f", "Tangent of x radians (f32/f64)."),
+    ASIN(Group.MATH, true, "asin", "asin(x) -> f", "Arc sine, in radians from -pi/2 to pi/2 (f32/f64); NaN outside -1..1."),
+    ACOS(Group.MATH, true, "acos", "acos(x) -> f", "Arc cosine, in radians from 0 to pi (f32/f64); NaN outside -1..1."),
+    ATAN(Group.MATH, true, "atan", "atan(x) -> f", "Arc tangent, in radians from -pi/2 to pi/2 (f32/f64)."),
+    ATAN2(Group.MATH, true, "atan2", "atan2(y, x) -> f",
+        "The angle of the point (x, y) from the positive x axis, in radians from -pi to pi (two floats of the same type)."),
     IS_NAN(Group.MATH, true, "is_nan", "is_nan(x) -> bool", "Whether an f32/f64 is NaN."),
     IS_FINITE(Group.MATH, true, "is_finite", "is_finite(x) -> bool", "Whether an f32/f64 is neither NaN nor infinite."),
 
@@ -102,6 +130,23 @@ public enum Builtin {
             + "digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are "
             + "left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. No exponents."),
 
+    IS_UTF8(Group.TEXT, true, "is_utf8", "is_utf8(s) -> bool",
+        "Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or "
+            + "cut-off sequences."),
+    CHAR_COUNT(Group.TEXT, true, "char_count", "char_count(s) -> i64",
+        "The number of Unicode code points in a str (len(s) counts bytes). Each byte that does not start a well-formed "
+            + "UTF-8 sequence counts as one."),
+    CHARS(Group.TEXT, true, "chars", "chars(s) -> list[u32; N]",
+        "The Unicode code points of a str, decoding UTF-8; a byte that does not start a well-formed sequence gives "
+            + "U+FFFD (65533). Its type is that of the variable it is stored in; traps (R0004) if they do not fit. "
+            + "for c in chars(s) goes through them one at a time instead, each a u32, and never traps."),
+    PUSH_CHAR(Group.TEXT, false, "push_char", "push_char(mut s, c)",
+        "Appends the UTF-8 encoding (1 to 4 bytes) of the code point c, an integer, to a str. Traps (R0013) unless c is "
+            + "0 to 0x10FFFF and not a surrogate, and (R0004) if it does not fit."),
+    SLICE_CHARS(Group.TEXT, true, "slice_chars", "slice_chars(s, from, to) -> str[N]",
+        "The code points from..to (half-open, counted as char_count counts them) of a str, as a str of the same capacity. "
+            + "Traps (R0003) unless 0 <= from <= to <= char_count(s)."),
+
     // ---- collections
     SORT(Group.COLLECTIONS, false, "sort", "sort(mut xs)",
         "Sorts a list, array or str in place, ascending. Every type is ordered: numbers by value (-0.0 before 0.0, "
@@ -110,10 +155,17 @@ public enum Builtin {
     REVERSE(Group.COLLECTIONS, false, "reverse", "reverse(mut xs)", "Reverses a list, array or str in place."),
     INSERT(Group.COLLECTIONS, false, "insert", "insert(mut xs, i, value)",
         "Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. "
-            + "Traps unless 0 <= i <= len(xs), or if full."),
+            + "Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and "
+            + "insert(mut s, x) adds x to a set; both trap (R0004) when a new key does not fit."),
     REMOVE(Group.COLLECTIONS, false, "remove", "remove(mut xs, i) -> T",
         "Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. "
-            + "Traps unless 0 <= i < len(xs).");
+            + "Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether "
+            + "it was there."),
+    COMPARE(Group.COLLECTIONS, true, "compare", "compare(a, b) -> i64",
+        "-1, 0 or 1 as a comes before b, is equal to it, or comes after it in the order of sort: two values of the same "
+            + "type, any type. For a type parameter, compare(a, b) < 0 is a < b."),
+    GET_OR(Group.COLLECTIONS, true, "get_or", "get_or(m, key, default) -> V",
+        "The value of key in the map m, or default when m has no such key; m[key] traps (R0003) instead.");
 
     /** Where fixed, pad_left and pad_right may be used. */
     private static final String TEXT_USE = "Pass it to print or append, as the value of pad_left or pad_right, or store it "
@@ -164,7 +216,7 @@ public enum Builtin {
      * text that fixed, pad_left and pad_right make when it is not written out at once (see {@link #formats}).
      */
     public boolean typedByTarget() {
-        return this == SPLIT || this == WORDS || this == JOIN || this == REPLACE || formats();
+        return this == SPLIT || this == WORDS || this == CHARS || this == JOIN || this == REPLACE || formats();
     }
 
     /** Whether it formats a value as text: fixed, pad_left and pad_right, which print and append write out directly. */
@@ -175,7 +227,7 @@ public enum Builtin {
     /** Whether the first argument is modified, and so passed as `mut`. */
     public boolean modifiesFirst() {
         return switch (this) {
-            case PUSH, POP, CLEAR, APPEND, SORT, REVERSE, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
+            case PUSH, POP, CLEAR, APPEND, PUSH_CHAR, SORT, REVERSE, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
             default -> false;
         };
     }

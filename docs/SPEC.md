@@ -23,9 +23,14 @@ syntax; this document describes semantics. Diagnostic codes are listed in [ERROR
 - Identifiers: `[a-zA-Z_][a-zA-Z0-9_]*`. `_` alone is the wildcard, not a name.
 - Reserved words: `fn let var const struct enum if else while for in match break continue return assert
   requires ensures mut and or not true false bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str list`.
-  `limit`, `test`, `tool`, `import` and `result` are contextual and may be used as names.
+  `limit`, `step`, `rev`, `then`, `map`, `set`, `as`, `test`, `tool`, `import` and `result` are contextual
+  and may be used as names.
 - The names of the builtin functions, the standard library included (§9), cannot be redefined (E0108),
   but may be variable names.
+- Whitespace between tokens has no meaning. `alang fmt` lays a file out the one way: four spaces per
+  block, four more for a line that continues a statement or a bracket opened on an earlier line, one space
+  around binary operators and after `,` and `:`, none inside brackets, and at most one blank line in a row.
+  It keeps the lines the author broke the code into and every comment, and changes no token.
 
 | Literal | Examples | Notes |
 |---------|----------|-------|
@@ -54,10 +59,14 @@ nearest-even, directly to `f32` or `f64`; one that would round to `inf` is E0202
 | `str[N]` | text of 0..N bytes (UTF-8), stored inline | 4 + N (aligned) |
 | `[T; N]` | array of exactly N elements | N × size(T) |
 | `list[T; N]` | list of 0..N elements, stored inline | 4 + N × size(T) (aligned) |
+| `(T1, T2, ...)` | a tuple of two or more values, read as `t.0`, `t.1`, ... | as a struct of those fields |
+| `map[K, V; N]` | up to N entries from distinct keys to values, in key order | 4 + N × (size(K) + size(V)) (aligned) |
+| `set[T; N]` | up to N distinct values, in order | as `list[T; N]` |
 | `Name` | a declared `struct` or `enum` | sum of fields / tag + largest payload |
 
 `N` is a compile-time integer constant (a literal or a `const`) from 1 to 1 048 576; only in the type of
-a function parameter may it be `_`, any capacity (§5). There are no pointer, reference, function, generic
+a function parameter may it be `_`, any capacity (§5). A function's type parameters (`fn first<T>(...)`) and
+function types (`fn(i64) -> bool`) also appear only in its parameters (§5). There are no pointer, reference
 or dynamically sized types.
 
 All types are **values**: assigning, passing, returning, storing in a field or element, and iterating
@@ -86,6 +95,22 @@ enum Shape {
     Empty,
 }
 ```
+
+**Tuples** group values without declaring a struct: `(1, "a")` is a `(i64, str[1])`, and a literal takes the
+tuple type its context expects, `let p: (str[8], i64) = ("ann", 7);`. Elements are read and written by position,
+`p.0`, `p.1` (and `t.0.1` for an element of an element), and `let (name, n): (str[8], i64) = p;` takes a tuple
+apart into new variables, with `_` for an element that is not needed. A function returns several values as a
+tuple: `fn divmod(a: i64, b: i64) -> (i64, i64)`. Tuples compare with `==` element by element, and `sort` orders
+them so; tuple types are equal only when every element type is (no widening, except in a literal).
+
+**Maps and sets** have a capacity, like lists, and keep their keys (a set its values) in the order of `sort`
+(§9.5), whatever order they were added in, so iterating, printing and comparing them never depends on
+history. `[]` is an empty one; `[("a", 1), ("b", 2)]` builds a map (a key given twice keeps its last value) and
+`[3, 1, 3]` a set (`{1, 3}`). `m[k]` reads the value of `k` and traps (R0003) if there is none; `m[k] = v` sets it,
+adding `k` if it is new, which traps (R0004) when the map is full; `m[k] += 1` and `m[k].field = x` need `k` to be
+there. `for k in m` goes through the keys, `for k, v in m` through the keys with their values, `for x in s`
+through a set, all in order (`rev` backwards). They print as `{"a": 1, "b": 2}` and `{1, 3}`, compare with `==`
+by contents (capacities may differ), and finding a key takes a binary search.
 
 **Enum** variants are always qualified (`Shape.Empty`, `Shape.Circle(2.0)`), and payloads are read only
 with `match`. There is no `null`: model absence with an enum such as `enum MaybeI32 { None, Some(i32) }`.
@@ -134,9 +159,16 @@ a file, before any declaration (E0001), and:
   `.al` file: `import "lib/text.al";`, `import "../shared/geometry.al";`. Absolute paths and backslashes
   are E0702, so a program means the same wherever it is copied. A file that cannot be read, or is not
   UTF-8, is E0701.
-- **One namespace.** The imported constants, structs, enums and functions are used by their plain names,
-  as if declared in the importing file, and every name in the program is unique (E0104 names both files).
-  There are no modules, qualified names or private declarations.
+- **One namespace, or a name of its own.** The constants, structs, enums and functions of a file imported
+  plainly are used by their plain names, as if declared in the importing file, and its names and the
+  importer's are unique together (E0104 names both files). `import "lib/geo.al" as geo;` instead keeps the
+  file's declarations apart, in a scope of their own: the importer reaches them as `geo.describe(p)`,
+  `geo.SCALE`, `geo.Point(x: 1, y: 2)`, `geo.Kind.Origin`, `geo.Shape.Circle(2.0)`, the type `geo.Point`, the
+  pattern `geo.Kind.Axis(d) =>` and the function value `geo.is_far`, and only so, while their names may be
+  the same as the importer's or another library's. Inside geo.al, and in the files it imports plainly, the
+  plain names are geo's own. A file shared by files of different scopes is imported with `as` in each, under
+  any name; importing it with `as` in one place and plainly in another is E0702, as is giving two imports of
+  one file the same name. There are no private declarations.
 - **Each file once.** A file reached through several imports is read once; importing the same file twice
   from one file is E0702. Files may not import each other, directly or through others (E0703, the import
   cycle).
@@ -154,10 +186,11 @@ a file, before any declaration (E0001), and:
 
 | Statement | Form |
 |-----------|------|
-| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable) |
+| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;` |
 | assignment | `place = expr;` and `+= -= *= /= %=` |
 | condition | `if c { } else if c { } else { }` |
-| loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for x in xs { }` (array, list or str: `u8` bytes), `for p in split(s, sep) { }`, `for w in words(s) { }` |
+| loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`; `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
+| labels | `outer: for ... { }` or `outer: while ... { }`, then `break outer;` or `continue outer;` from a loop inside it |
 | match | `match e { Pattern => { } ... }` |
 | jumps | `break;` `continue;` `return;` `return expr;` |
 | assertion | `assert cond;` `assert cond, "message";` |
@@ -171,9 +204,18 @@ a file, before any declaration (E0001), and:
   traps (R0008) when the body is about to run for the `n + 1`-th time. The limit is a promise about the
   algorithm, e.g. `limit 64` for a binary search over a 64-bit range.
 - `for i in a..b`: `a` and `b` are evaluated once and are integers of the same type, which `i` has
-  (`i64` for literals). `for x in xs` goes through what `xs` held before the first iteration: changing
+  (`i64` for literals). `a..=b` includes `b`. `step k` (`k` of the same type, evaluated once after the bounds)
+  counts by `k`: `0..10 step 3` is 0, 3, 6, 9; a step that is not positive traps (R0013), and a literal one is
+  E0202. `rev` takes the same values, the last one first: `rev 0..10 step 3` is 9, 6, 3, 0, and to count down
+  from 10 to 1 write `rev 1..=10`. Nothing overflows at the ends of a type: `for b in u8(250)..=u8(255)` stops
+  after 255. `for x in xs` goes through what `xs` held before the first iteration: changing
   `xs` in the loop does not affect it. (Only a variable that the body changes, by assigning to it or passing
   it as `mut`, is copied for this, §7; any other collection is used where it is.)
+- `for i, x in xs` also gives each element's position, an `i64`, as `i` (for split, words and chars, the
+  number of the piece or code point). `for x in rev xs` goes through an array, list or str from its last
+  element; `i` is then still the position, counting down.
+- `break label;` and `continue label;` leave or continue the loop labelled `label:` around them, from any
+  depth; `break;` and `continue;` the innermost loop. Labels of loops inside one another differ (E0105).
 - `for p in split(s, sep)` and `for w in words(s)` go through the pieces of `s` one at a time (§9.4),
   without building a list: each piece is a `str` of the capacity of `s`, which no piece can outgrow, so the
   loop never traps on the size or number of the pieces. `s` and `sep` are evaluated once, before the first
@@ -191,6 +233,11 @@ character literals (`3`, `-1`, `'x'`), string literals, `true`, `false`, and `_`
 last). Each arm body is a block. Match works on enums, integers, `bool` and `str`, and must be
 exhaustive (E0306): all enum variants or both bools, or a final `_`, which integers and strings always
 need. Duplicate or unreachable arms are E0307.
+
+An arm may have a **guard**: `Shape.Circle(r) if r > 10.0 => { }` matches only when the pattern does and then the
+`bool` condition, which can use the arm's bindings, holds; otherwise matching goes on with the next arm. A guarded
+arm covers nothing for exhaustiveness, so a match whose last arms are guarded still needs an unguarded one (often
+`_`) after them, and a guarded arm below an unguarded one with the same pattern is unreachable (E0307).
 
 ## 5. Functions and `mut` parameters
 
@@ -242,6 +289,36 @@ fn total(xs: list[i64; _]) -> i64 {
 }
 ```
 
+**Type parameters.** `fn largest<T>(xs: list[T; _]) -> T` takes a list of any element type. Inside, `T` is a type
+of its own, which values can be copied, stored, compared with `==` and `!=`, ordered with `compare(a, b)` (the order
+of `sort`; `<` is only for numbers and strs) and printed; anything else, such as `a + b`, is an error until a call
+says what `T` is. Each type parameter must appear in a parameter's type, and a call fixes it from the arguments:
+the first argument whose type gives it (arguments with types of their own before literals, so that
+`largest_of(x, 1)` with `x: u8` makes the `1` a `u8`), which the others must then match exactly. Like a `_`, each
+call with new types runs an instance made for them, checked again with the types filled in (`alang check
+--memory` lists them). Structs and enums have no type parameters; tuples and the built-in collections cover most
+of what they would.
+
+**Function parameters.** A parameter of a function type, `keep: fn(T) -> bool`, takes a function by its name,
+`count_if(xs, is_even)`, and the body calls it, `keep(x)`. The function's parameter and result types must be the
+parameter's exactly (type parameters aside, which they can fix), it cannot have `mut` parameters, and it cannot be
+a builtin (wrap one in a function of your own) or itself take a `_`, type parameter or function. A parameter of a
+function type can be passed on to another function, but not stored, returned or put in a variable: there are no
+closures. Each call with a new function runs an instance that calls that function directly, so the call graph
+stays known, and passing a function to something that calls it back is recursion (E0401).
+
+```
+fn count_if<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
+    var n: i64 = 0;
+    for x in xs {
+        if keep(x) {
+            n += 1;
+        }
+    }
+    return n;
+}
+```
+
 **Contracts.** `requires` clauses are checked on entry, in order; a failure is trap R0006, reported **at
 the call site** (the caller broke the contract). `ensures` clauses are checked on every return, with
 `result` as the return value and `mut` parameters at their final values; a failure is trap R0007,
@@ -277,6 +354,8 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 - `< <= > >=` take two numbers of the same type, or two strs of any capacities, ordered byte by byte
   (unsigned), a prefix first: the order of `sort`, C's `strcmp` and `<` on strs in Python or Rust.
 - Integer arithmetic is **checked**: overflow traps (R0001), division or remainder by zero traps (R0002).
+  Where wrapping around is wanted, as in a hash, say so: `wrapping_mul(h, k)`; `saturating_add(a, b)` stops at
+  the type's limits instead (§9.2).
   Division truncates toward zero; `%` has the dividend's sign; `MIN / -1` overflows and `MIN % -1` is `0`.
 - Shifts: the left operand gives the type; the amount may be any integer type and must be in
   `0..bits-1` (R0012). Bits shifted out are discarded. `>>` is arithmetic for signed types, logical for
@@ -301,6 +380,21 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 | anything → bool | not allowed (E0214); compare instead |
 | `str[M]` → `str[N]` | the same bytes; more than N bytes traps (R0004) |
 | `list[T; M]` → `list[T; N]` | the same elements, of the same type T; more than N traps (R0004) |
+
+**Slices.** `xs[a..b]` is the elements (or bytes) `a..b` of a str, list or array, the value `slice(xs, a, b)`
+gives: a str or list of the capacity of `xs`, or a list for an array. A left-out end is 0 or `len(xs)`: `s[i + 1..]`,
+`xs[..3]`, `xs[..]`. The bounds are evaluated after `xs`, and the slice traps (R0003) unless
+`0 <= a <= b <= len(xs)`. A slice is a value, not a place: `xs[1..3] = ...` is an error. Where it is only read
+(a `for` loop over it whose body leaves its variable alone, `len`, `contains`, `index_of`, `count`, the text
+functions, a comparison or `print` of a str, a conversion `i64(s[2..5])`, a `match` on it), the C backend reads it
+where it is, through a pointer and a length, and the memory bound counts no copy of it.
+
+**If expressions.** `if c then a else b` is `a` when the `bool` `c` holds and `b` otherwise; only that branch is
+evaluated, so `if len(xs) > 0 then xs[0] else 0` never indexes an empty list. The branches have one type, as
+the operands of `+` do (literals take the other branch's type or the expected one), and a str or list branch
+widens to the larger capacity. An if expression is a whole expression, never an operand:
+`(if c then 1 else 2) + 3`, and `else if c2 then ...` chains. A call with `mut` arguments cannot be a branch
+(E0215).
 
 **Evaluation order** is fully specified, so side effects (`print`, traps) always happen in the same
 order:
@@ -355,9 +449,10 @@ time, everywhere:**
 - **No undefined or implementation-defined behavior:** integer widths are fixed, and overflow, bad
   indexes, shifts and conversions, and failed contracts trap with a fixed code, message and location.
   Evaluation order is fixed (§6).
-- **Portable floats:** only correctly rounded IEEE 754 operations exist (`+ - * /`, `sqrt`, `floor`,
-  `ceil`, `round`, `trunc`, `abs`, `min`, `max`, `clamp`, conversions); `sin`, `exp`, a float `pow` and
-  the like differ between math libraries and are left out. `min`/`max` are `if b < a then b else a` / `if b > a then b else a`, which
+- **Portable floats:** every float operation is built from correctly rounded IEEE 754 operations (`+ - * /`,
+  `sqrt`, `floor`, `ceil`, `round`, `trunc`, `abs`, `min`, `max`, `clamp`, conversions). Math libraries round
+  `sin`, `exp`, `pow` and the like differently, so ALang computes them itself (§9.2), with the same operations
+  in the same order in the interpreter and the C backend. `min`/`max` are `if b < a then b else a` / `if b > a then b else a`, which
   fixes NaN handling. The C backend refuses `-ffast-math` and x87 excess precision, and disables fused
   multiply-add contraction.
 - **Exact text formatting** (§9.6), independent of locale and C library.
@@ -398,15 +493,24 @@ them all.
 |----------|-------------|
 | `abs(x)`, `min(a, b)`, `max(a, b)` | Same-type numbers. `abs` of the minimum integer traps (R0001). |
 | `clamp(x, lo, hi) -> T` | `lo` if `x < lo`, `hi` if `x > hi`, else `x`; same-type numbers. Traps (R0013) unless `lo <= hi`, so a NaN bound traps. |
-| `pow(x, n) -> T` | `x` (any integer type) to the power `n` (any integer type); `pow(0, 0)` is 1. Traps if `n < 0` (R0013) or the result does not fit (R0001). There is no float `pow`. |
+| `pow(x, n) -> T` | `x` (any integer type) to the power `n` (any integer type); `pow(0, 0)` is 1. Traps if `n < 0` (R0013) or the result does not fit (R0001). For an `f32`/`f64` `x`, `n` is a float of the same type (`pow(2.0, 0.5)`, `pow(x, 3.0)`) and nothing traps: the special cases are C99's (`pow(-8.0, 0.5)` is NaN, `pow(0.0, -1.0)` is `inf`), an integer `n` gives the correctly rounded power (`pow(2.0, 10.0)` is `1024.0`), and `pow(x, 0.5)` is `sqrt(x)`. |
 | `gcd(a, b) -> T` | Greatest common divisor of same-type integers, never negative; `gcd(0, 0)` is 0. `gcd(x, 0)` for the minimum `x` does not fit and traps (R0001). |
 | `lcm(a, b) -> T` | Least common multiple, never negative; 0 if either is 0. Traps if it does not fit (R0001). |
+| `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | Same-type integers; the exact result wrapped around to the type (modulo 2^bits), so they never trap: `wrapping_add(u8(250), 10)` is `4`, `wrapping_mul(h, 16777619)` is the multiply of 32-bit FNV. |
+| `saturating_add(a, b)`, `saturating_sub(a, b)`, `saturating_mul(a, b)` | Same-type integers; the exact result, or the type's largest or smallest value when it does not fit: `saturating_sub(u8(3), 5)` is `0`. Never trap. |
 | `sqrt(x)`, `floor(x)`, `ceil(x)` | On `f32`/`f64`, correctly rounded. |
 | `round(x)`, `trunc(x)` | On `f32`/`f64`, exact: `round` halves away from zero (`round(2.5)` is `3.0`, `round(-0.5)` is `-1.0`); `trunc` drops the fraction (`trunc(-2.7)` is `-2.0`). |
+| `exp(x)`, `log(x)`, `log2(x)`, `log10(x)` | On `f32`/`f64`: e^x and the logarithms; `log` of 0 is `-inf` and of a negative number NaN. `log2` of a power of two and `log10` of a power of ten are exact. |
+| `sin(x)`, `cos(x)`, `tan(x)` | On `f32`/`f64`, in radians, for every finite `x` (a large argument is reduced exactly). |
+| `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y, x)` | On `f32`/`f64`, in radians: `asin` and `atan` from -pi/2 to pi/2, `acos` from 0 to pi (NaN outside -1..1), `atan2` the angle of the point (x, y) from -pi to pi. |
 | `is_nan(x)`, `is_finite(x)` | On `f32`/`f64`. |
 
-A literal argument takes the type of the other arguments or, for `min`, `max`, `clamp`, `pow`, `gcd` and
-`lcm`, of the variable the result is stored in: `let b: u8 = pow(2, 7);`.
+The elementary functions are within one unit in the last place of the exact result (`tan` within two), and the
+same bits everywhere: ALang computes them itself (`exp`, `log`, `log10`, `sin`, `cos`, `asin`, `acos`, `atan` and
+`atan2` as fdlibm does, see THIRD-PARTY-NOTICES), and an `f32` result is the `f64` one rounded once.
+
+A literal argument takes the type of the other arguments or, for `min`, `max`, `clamp`, `pow`, `gcd`,
+`lcm` and the wrapping and saturating functions, of the variable the result is stored in: `let b: u8 = pow(2, 7);`.
 
 ### 9.3 Characters
 
@@ -432,7 +536,7 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `index_of(xs, x) -> i64` | Where the first occurrence starts, as for `contains`, or -1. |
 | `count(xs, x) -> i64` | In a str, the non-overlapping occurrences of the pattern `x`, left to right (`count("aaaa", "aa")` is 2); traps (R0013) if `x` is an empty str. In an array or list, the elements `== x`. |
 | `starts_with(s, p) -> bool`, `ends_with(s, p) -> bool` | Whether the str `s` begins or ends with the pattern `p`. |
-| `slice(xs, from, to) -> T` | A copy of the elements `from..to` (half-open) of a str or list, of the same type, or of an array, as a `list[T; N]`. Traps (R0003) unless `0 <= from <= to <= len(xs)`. |
+| `slice(xs, from, to) -> T` | The elements `from..to` (half-open) of a str or list, of the same type, or of an array, as a `list[T; N]`. Traps (R0003) unless `0 <= from <= to <= len(xs)`. `xs[from..to]` is the same, and either end may be left out: `s[1..]`, `xs[..n]`, `xs[..]` (§6). |
 | `trim(s) -> str[N]` | `s` without the ASCII whitespace at its start and end. |
 | `split(s, sep) -> list[str[K]; M]` | The pieces of `s` between occurrences of the pattern `sep`, left to right, empty pieces included: `split("a,,b", ",")` is `["a", "", "b"]`, `split("", ",")` is `[""]`. Traps if `sep` is empty (R0013). |
 | `words(s) -> list[str[K]; M]` | The pieces of `s` between runs of ASCII whitespace; never empty pieces. |
@@ -538,6 +642,20 @@ test "empty items are skipped and bad ones reported" {
 }
 ```
 
+Text is bytes, and these read and write it as UTF-8:
+
+| Function | Description |
+|----------|-------------|
+| `is_utf8(s) -> bool` | Whether `s` is well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or cut-off sequences. |
+| `char_count(s) -> i64` | The number of code points in `s` (`len` counts bytes). |
+| `chars(s) -> list[u32; N]` | The code points of `s`; its type is that of the variable it is stored in, and too many trap (R0004). `for c in chars(s) { }` goes through them one at a time instead, each a `u32`, and never traps. |
+| `push_char(mut s, c)` | Appends the UTF-8 encoding of the code point `c` (any integer type), 1 to 4 bytes. Traps (R0013) unless `c` is 0 to 0x10FFFF and not a surrogate, and (R0004) if it does not fit. |
+| `slice_chars(s, from, to) -> str[N]` | The code points `from..to` of `s`, as a str of the capacity of `s`; never cuts a character in half. Traps (R0003) unless `0 <= from <= to <= char_count(s)`. |
+
+A byte that does not start a well-formed sequence is one code point of its own, U+FFFD (65533), so every
+byte belongs to exactly one code point and the same bytes always decode the same way. Case changes and
+the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
+
 ### 9.5 Collections
 
 | Function | Description |
@@ -547,12 +665,18 @@ test "empty items are skipped and bad ones reported" {
 | `insert(mut xs, i, v)` | Inserts `v` into a list (a `u8` into a str) at position `i`, moving the rest up. Traps unless `0 <= i <= len(xs)` (R0003), then if full (R0004). |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position `i` of a list (a byte of a str), moving the rest down. Traps unless `0 <= i < len(xs)` (R0003). Like `pop`, it may be a statement of its own. |
 
-`contains`, `index_of`, `count` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
+| `insert(mut m, k, v)`, `insert(mut s, x)` | Sets `k` to `v` in a map (as `m[k] = v`), or adds `x` to a set; a key or value already there is kept once. Traps (R0004) when a new one does not fit. |
+| `remove(mut m, k) -> bool`, `remove(mut s, x) -> bool` | Removes a key (with its value) or a value; whether it was there. |
+| `get_or(m, k, d) -> V` | The value of `k` in the map `m`, or `d` when there is none. |
+
+| `compare(a, b) -> i64` | -1, 0 or 1 as `a` comes before, equals or comes after `b` in the order below; two values of any one type, so it orders the values of a type parameter. |
+
+`len`, `cap`, `clear` and `contains` work on maps and sets too, by key. `contains`, `index_of`, `count` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
 be of any integer type, as indexes may.
 
 **The order of `sort`** is defined for every type: numbers by value, with `-0.0` before `0.0` and every
 NaN after everything else; `false` before `true`; strs (by unsigned byte), arrays and lists element by
-element, a prefix before a longer value; structs field by field, in the order they are declared; enums
+element, a prefix before a longer value (sets too; maps entry by entry, key then value); tuples and structs field by field, in the order they are declared; enums
 by the order of their variants, then by payload. So a list of structs sorts by its first field, then its
 second: put the key first, and sort on a negated key, or `reverse` afterwards, for descending order. Two
 values this order calls equal cannot be told apart, so the result is the same whatever the algorithm,
@@ -568,8 +692,8 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
   but one decimal kept: `1.5`, `2.0`, `0.333333`, `100000000000000000000.0` for `1e20`, `-0.0`, `nan`,
   `inf`, `-inf`;
 - a top-level `str` as its raw bytes; a `str` inside an aggregate quoted with escapes: `"a\n"`;
-- arrays and lists as `[1, 2, 3]`, structs as `Point(x: 1.0, y: 2.0)`, enums as `Shape.Empty` or
-  `Shape.Circle(2.0)`;
+- arrays and lists as `[1, 2, 3]`, tuples as `(1, "a")`, structs as `Point(x: 1.0, y: 2.0)`, enums as
+  `Shape.Empty` or `Shape.Circle(2.0)`;
 - a `u8` (a character literal too) as a number: add a character to a string with `push(mut s, 'a')`;
   `append(mut s, 'a')` appends `97` (warning W0303).
 
@@ -639,6 +763,10 @@ of a function it calls is not. The calls are the same on every run, at most 200 
 | `[T; N]` | array of exactly N items |
 | `list[T; N]` | array of at most N items |
 | struct | object with every field required, no extra fields |
+| `(T1, T2)` | array of exactly that many items, each of its element's type (`prefixItems`) |
+| `map[str[K], V; N]` | object of at most N properties, each a value of V |
+| `map[K, V; N]` (other keys) | array of at most N `[key, value]` pairs, each key once |
+| `set[T; N]` | array of at most N distinct items, in any order |
 | enum | `"Variant"` without payload, `{"Variant": [v1, v2]}` with |
 
 Arguments must be strict JSON (RFC 8259: ASCII digits, no leading zeros, escaped control characters,

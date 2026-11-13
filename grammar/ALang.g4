@@ -40,8 +40,9 @@ program
     ;
 
 // import "helpers.al";  (a path relative to this file; its declarations join the program)
+// import "lib/text.al" as text;  keeps that file's declarations apart: text.trim_all(s), text.Point(x: 1)
 importDecl
-    : IMPORT STRING_LIT SEMI
+    : IMPORT STRING_LIT (AS identifier)? SEMI
     ;
 
 item
@@ -76,8 +77,13 @@ variantDecl
     ;
 
 // tool fn area(w: f64, h: f64) -> f64 requires w >= 0.0 ensures result >= 0.0 { ... }
+// fn first<T>(xs: list[T; _]) -> T: a type parameter stands for any type; each call fixes it from the arguments.
 functionDecl
-    : TOOL? FN identifier LPAREN paramList? RPAREN (ARROW type)? contract* block
+    : TOOL? FN identifier typeParams? LPAREN paramList? RPAREN (ARROW type)? contract* block
+    ;
+
+typeParams
+    : LT identifier (COMMA identifier)* GT
     ;
 
 paramList
@@ -107,7 +113,11 @@ type
     | STR LBRACK capacity RBRACK                 # strTypeRef      // str[64]: text, up to 64 bytes
     | LIST LBRACK type SEMI capacity RBRACK      # listTypeRef     // list[i32; 16]: up to 16 items
     | LBRACK type SEMI capacity RBRACK           # arrayTypeRef    // [i32; 16]: exactly 16 items
-    | identifier                                 # namedTypeRef    // struct or enum name
+    | LPAREN type (COMMA type)+ COMMA? RPAREN    # tupleTypeRef    // (i64, str[8]): a pair
+    | MAP LBRACK type COMMA type SEMI capacity RBRACK  # mapTypeRef  // map[str[16], i64; 64]: up to 64 entries, in key order
+    | SET LBRACK type SEMI capacity RBRACK       # setTypeRef      // set[i64; 32]: up to 32 distinct values, in order
+    | FN LPAREN (type (COMMA type)*)? RPAREN (ARROW type)?  # fnTypeRef  // fn(i64) -> bool: a function, as a parameter
+    | (qual=identifier DOT)? identifier          # namedTypeRef    // struct or enum name, or ns.Name from an import ... as ns
     ;
 
 // A constant capacity or length. In the type of a function parameter, `_` accepts any:
@@ -138,6 +148,7 @@ statement
     | ifStmt
     | whileStmt
     | forStmt
+    | labeledStmt
     | matchStmt
     | breakStmt
     | continueStmt
@@ -147,8 +158,9 @@ statement
     ;
 
 // `let` is immutable, `var` is mutable. Both must be initialized.
+// let (q, r): (i64, i64) = divmod(a, b);  takes a tuple apart, one variable per element (`_` skips one)
 letStmt
-    : kind=(LET | VAR) identifier COLON type ASSIGN expression SEMI
+    : kind=(LET | VAR) (identifier | LPAREN binding (COMMA binding)+ COMMA? RPAREN) COLON type ASSIGN expression SEMI
     ;
 
 assignStmt
@@ -162,6 +174,8 @@ place
 
 placeSuffix
     : DOT identifier
+    | DOT INT_LIT                        // t.0: an element of a tuple
+    | DOT FLOAT_LIT                      // t.0.1, which the lexer reads as t . 0.1
     | LBRACK expression RBRACK
     ;
 
@@ -174,10 +188,18 @@ whileStmt
     : WHILE expression LIMIT expression block
     ;
 
-// for i in 0..n { }      (half-open integer range)
-// for item in items { }  (array, list or str; iterates over copies)
+// for i in 0..n { }            (half-open integer range)
+// for i in 0..=n step 2 { }    (inclusive, counting by 2)
+// for i in rev 0..n { }        (the same values, last first)
+// for item in items { }        (array, list or str; iterates over copies)
+// for i, item in items { }     (with each element's index)
 forStmt
-    : FOR identifier IN expression (DOTDOT expression)? block
+    : FOR identifier (COMMA identifier)? IN REV? expression (range=(DOTDOT | DOTDOTEQ) expression (STEP expression)?)? block
+    ;
+
+// outer: for i in 0..n { ... break outer; ... }
+labeledStmt
+    : identifier COLON (whileStmt | forStmt)
     ;
 
 // Arms are checked for exhaustiveness. `_` matches anything and must be last.
@@ -185,12 +207,13 @@ matchStmt
     : MATCH expression LBRACE matchArm+ RBRACE
     ;
 
+// A guard `if cond` makes the arm match only when cond holds too; guarded arms do not count toward exhaustiveness.
 matchArm
-    : pattern FAT_ARROW block
+    : pattern (IF expression)? FAT_ARROW block
     ;
 
 pattern
-    : identifier DOT identifier (LPAREN binding (COMMA binding)* COMMA? RPAREN)?   # variantPattern
+    : (qual=identifier DOT)? identifier DOT identifier (LPAREN binding (COMMA binding)* COMMA? RPAREN)?   # variantPattern
     | MINUS? INT_LIT                                                              # intPattern
     | CHAR_LIT                                                                    # charPattern
     | STRING_LIT                                                                  # stringPattern
@@ -204,11 +227,11 @@ binding
     ;
 
 breakStmt
-    : BREAK SEMI
+    : BREAK identifier? SEMI
     ;
 
 continueStmt
-    : CONTINUE SEMI
+    : CONTINUE identifier? SEMI
     ;
 
 returnStmt
@@ -228,8 +251,10 @@ exprStmt
 // Expressions
 // =====================================================================
 
+// `if c then a else b` is a whole expression, never an operand: (if c then a else b) + 1.
 expression
-    : unary (AMP unary)+                 # bitAndExpr
+    : IF expression THEN expression ELSE expression   # ifExpr
+    | unary (AMP unary)+                 # bitAndExpr
     | unary (PIPE unary)+                # bitOrExpr
     | unary (CARET unary)+               # bitXorExpr
     | unary op=(SHL | SHR) unary         # shiftExpr
@@ -270,7 +295,9 @@ postfix
 
 postfixOp
     : DOT identifier                     # fieldAccess
+    | DOT (INT_LIT | FLOAT_LIT)          # tupleAccess   // t.0, and t.0.1 (lexed as t . 0.1)
     | LBRACK expression RBRACK           # indexAccess
+    | LBRACK (from=expression)? DOTDOT (to=expression)? RBRACK   # sliceAccess  // s[1..], xs[a..b]: the elements from..to
     ;
 
 primary
@@ -280,10 +307,13 @@ primary
     | STR LBRACK expression RBRACK LPAREN expression RPAREN               # strResizeExpr
     | LIST LBRACK type SEMI expression RBRACK LPAREN expression RPAREN    # listResizeExpr
     | identifier LPAREN fieldInit (COMMA fieldInit)* COMMA? RPAREN      # structExpr
+    | identifier DOT identifier LPAREN fieldInit (COMMA fieldInit)* COMMA? RPAREN   # qualifiedStructExpr
+    | identifier DOT identifier DOT identifier LPAREN argList? RPAREN    # qualifiedVariantExpr
     | identifier DOT identifier LPAREN argList? RPAREN                  # variantExpr
     | identifier LPAREN argList? RPAREN                                 # callExpr
     | identifier                                                        # nameExpr
     | LPAREN expression RPAREN                                          # parenExpr
+    | LPAREN expression (COMMA expression)+ COMMA? RPAREN               # tupleExpr
     | LBRACK expression SEMI expression RBRACK                          # repeatExpr
     | LBRACK (expression (COMMA expression)* COMMA?)? RBRACK            # arrayExpr
     ;
@@ -311,13 +341,19 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool` and `import` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set` and `as` are contextual keywords and remain usable as names.
 identifier
     : IDENT
     | LIMIT
     | TEST
     | TOOL
     | IMPORT
+    | STEP
+    | REV
+    | THEN
+    | MAP
+    | SET
+    | AS
     ;
 
 // =====================================================================
@@ -337,6 +373,12 @@ IF        : 'if' ;
 ELSE      : 'else' ;
 WHILE     : 'while' ;
 LIMIT     : 'limit' ;
+STEP      : 'step' ;
+AS        : 'as' ;
+MAP       : 'map' ;
+SET       : 'set' ;
+THEN      : 'then' ;
+REV       : 'rev' ;
 FOR       : 'for' ;
 IN        : 'in' ;
 MATCH     : 'match' ;
@@ -372,6 +414,7 @@ LIST      : 'list' ;
 // ---- multi-character operators ----
 ARROW          : '->' ;
 FAT_ARROW      : '=>' ;
+DOTDOTEQ       : '..=' ;
 DOTDOT         : '..' ;
 EQ             : '==' ;
 NEQ            : '!=' ;
@@ -449,8 +492,9 @@ DOC_COMMENT
     : '///' ~[\r\n]* -> channel(HIDDEN)
     ;
 
+// Kept off the parser's channel, like doc comments, so that `alang fmt` can keep them.
 LINE_COMMENT
-    : '//' ~[\r\n]* -> skip
+    : '//' ~[\r\n]* -> channel(HIDDEN)
     ;
 
 WS

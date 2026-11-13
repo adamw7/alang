@@ -63,6 +63,9 @@ public final class Main {
           serve <file.al>              serve the `tool fn` functions to an agent host over MCP: JSON-RPC
                                        messages, one per line, on stdin and stdout
           build <file.al> [-o out.c]   compile to heap-free C99 (no malloc; stack and static data only)
+          fmt <file.al>                print the file laid out the one way (indentation, spaces, blank
+                                       lines; its line breaks and comments are kept); --write rewrites it,
+                                       --check fails if it is not laid out so
           explain <CODE>               explain a diagnostic or trap code, e.g. E0201 (or --all, markdown)
           grammar                      print the path of the ANTLR grammar, grammar/ALang.g4
           version                      print the version
@@ -77,6 +80,8 @@ public final class Main {
           --filter TEXT      only run tests whose name contains TEXT (test)
           --memory           print the per-function memory table (check)
           -o FILE            output file (build)
+          --write            rewrite the file in place (fmt)
+          --check            report a file that is not formatted, and change nothing (fmt)
 
         exit codes: 0 success, 1 errors / traps / failed tests, 2 usage error
         """;
@@ -94,6 +99,7 @@ public final class Main {
         Map.entry("fuzz", Set.of("--json", "--max-steps", "--max-stack")),
         Map.entry("serve", Set.of("--max-steps", "--max-stack")),
         Map.entry("build", Set.of("-o", "--max-stack")),
+        Map.entry("fmt", Set.of("--write", "--check")),
         Map.entry("explain", Set.of()),
         Map.entry("grammar", Set.of()),
         Map.entry("version", Set.of()),
@@ -102,7 +108,8 @@ public final class Main {
     /** The options that take a value, the next argument. */
     private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--filter", "-o");
 
-    private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--filter", "-o");
+    private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--filter", "-o",
+        "--write", "--check");
 
     private final PrintStream out;
     private final PrintStream err;
@@ -110,6 +117,8 @@ public final class Main {
 
     private boolean json;
     private boolean memoryTable;
+    private boolean write;
+    private boolean checkOnly;
     private long maxSteps = Interpreter.DEFAULT_MAX_STEPS;
     private long maxStack = Checker.DEFAULT_MAX_STACK;
     private String filter;
@@ -159,6 +168,8 @@ public final class Main {
                     switch (a) {
                         case "--json" -> json = true;
                         case "--memory" -> memoryTable = true;
+                        case "--write" -> write = true;
+                        case "--check" -> checkOnly = true;
                         case "--max-steps" -> maxSteps = nonNegative(next(args, ++i, a), a);
                         case "--max-stack" -> maxStack = nonNegative(next(args, ++i, a), a);
                         case "--filter" -> filter = next(args, ++i, a);
@@ -190,6 +201,7 @@ public final class Main {
                 case "fuzz" -> fuzz(file());
                 case "serve" -> serve(file());
                 case "build" -> build(file());
+                case "fmt" -> fmt(file());
                 case "explain" -> explain();
                 case "grammar" -> {
                     line(out, "grammar/ALang.g4 (ANTLR 4) in the ALang repository");
@@ -829,6 +841,37 @@ public final class Main {
     }
 
     // =================================================================== build
+
+    /** alang fmt: the file laid out by {@link alang.parse.Formatter}, printed, checked or written back. */
+    private int fmt(Source src) {
+        if (write && checkOnly) throw new UsageException("--write and --check cannot be used together");
+        alang.diag.Diagnostics diags = new alang.diag.Diagnostics(src);
+        String formatted = alang.parse.Formatter.format(src, diags);
+        if (formatted == null) {
+            err.print(diags.renderText());
+            line(err, "fmt failed: " + diags.errorCount() + " syntax error(s); nothing was changed");
+            return 1;
+        }
+        boolean same = formatted.equals(src.text);
+        if (checkOnly) {
+            if (same) return 0;
+            line(err, src.path + " is not formatted; run: alang fmt " + src.path + " --write");
+            return 1;
+        }
+        if (!write) {
+            out.print(formatted);
+            return 0;
+        }
+        if (same) return 0;
+        try {
+            Files.writeString(Path.of(positional.get(0)), formatted, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            line(err, "alang: cannot write " + src.path + ": " + e.getMessage());
+            return 1;
+        }
+        line(out, "formatted " + src.path);
+        return 0;
+    }
 
     private int build(Source src) {
         Frontend.Result r = compile(src);

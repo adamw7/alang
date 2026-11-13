@@ -1273,4 +1273,34 @@ class CliTest {
         assertEquals(0, n.code());
         assertEquals("fuzz: " + none + " has no `tool fn` and no fn main(input: str[N]) to call\n", n.out());
     }
+
+    @Test
+    void fmtPrintsChecksAndWritesTheLayout() throws IOException {
+        String messy = "fn main(){\nprint(1+2);\n}\n";
+        String tidy = "fn main() {\n    print(1 + 2);\n}\n";
+        Path p = write("messy.al", messy);
+
+        Result printed = run("fmt", p.toString());
+        assertEquals(0, printed.code(), printed.err());
+        assertEquals(tidy, printed.out());
+        assertEquals(messy, Files.readString(p, StandardCharsets.UTF_8), "printing changes nothing");
+
+        Result checked = run("fmt", p.toString(), "--check");
+        assertEquals(1, checked.code());
+        assertTrue(checked.err().contains("is not formatted; run: alang fmt "), checked.err());
+
+        Result written = run("fmt", p.toString(), "--write");
+        assertEquals(0, written.code(), written.err());
+        assertEquals(tidy, Files.readString(p, StandardCharsets.UTF_8));
+        assertEquals(0, run("fmt", p.toString(), "--check").code());
+
+        Result both = run("fmt", p.toString(), "--check", "--write");
+        assertEquals(2, both.code());
+
+        Path bad = write("bad.al", "fn main() {\n    let x: i64 = ;\n}\n");
+        Result failed = run("fmt", bad.toString(), "--write");
+        assertEquals(1, failed.code());
+        assertTrue(failed.err().contains("fmt failed: 1 syntax error(s); nothing was changed"), failed.err());
+        assertEquals("fn main() {\n    let x: i64 = ;\n}\n", Files.readString(bad, StandardCharsets.UTF_8));
+    }
 }

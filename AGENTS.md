@@ -14,6 +14,7 @@ bin/alang fuzz  prog.al           # 3. call each tool fn, and a main that reads 
 bin/alang run   prog.al           # 4. run fn main()
 bin/alang run   prog.al < in.txt  #    a fn main(input: str[N]) gets all of stdin
 bin/alang explain E0215           #    explain any code
+bin/alang fmt   prog.al --write   #    lay the file out the one way
 ```
 
 Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. Results are
@@ -97,7 +98,7 @@ test "counts repeated words" {
 
 1. **Every variable has a type and a value**: `let x: i32 = 0;` (immutable) or `var x: i32 = 0;` (mutable).
 2. **No implicit conversions.** `i64(x)`, `f64(n)`, `u8(c)`. Integer literals adapt to context and default to `i64`; `for i in 0..n` gives `i: i64` when the bounds are literals. `len()` returns `i64`.
-3. **No heap, no null, no pointers.** Fixed-capacity types: `str[64]`, `list[T; 16]`, `[T; 4]`. Capacity overflow traps.
+3. **No heap, no null, no pointers.** Fixed-capacity types: `str[64]`, `list[T; 16]`, `[T; 4]`, `map[K, V; 16]`, `set[T; 16]`. Capacity overflow traps.
    A smaller capacity widens on its own; to narrow, convert: `str[16](s)`, `list[T; 8](xs)` (traps if it
    does not fit, so check `len` first). A parameter takes any capacity with `_`: `fn total(xs: list[i64; _])`,
    `fn shout(s: mut str[_])` work on every list of i64 and every str; inside, `cap(s)` is the caller's.
@@ -105,7 +106,8 @@ test "counts repeated words" {
 5. **Enum variants are qualified with a dot**: `Color.Red`, `Shape.Circle(2.0)`. Never `Color::Red`.
 6. **Logic uses words**: `and`, `or`, `not`. `&&`, `||`, `!x` are errors (`!=` is fine).
 7. **No precedence guessing**: `* / %` bind tighter than `+ -`; everything else needs parentheses when mixed: `(a and b) or c`, `(flags & 4) != 0`, `(x << 2) + 1`. Comparisons do not chain: `0 < x and x < 10`.
-8. **`while` needs a limit**: `while lo < hi limit 64 { }`. Exceeding it traps. Prefer `for i in 0..n` or `for x in xs` when you can.
+8. **`while` needs a limit**: `while lo < hi limit 64 { }`. Exceeding it traps. Prefer `for i in 0..n` or `for x in xs` when you can:
+   ranges also go `0..=n`, `step 2` and `rev 0..n` (backwards), and `for i, x in xs` gives each index.
 9. **No recursion.** Use a loop with an explicit work list (`list[T; N]` as a stack or queue).
 10. **`mut` is explicit on both sides**: `fn grow(xs: mut list[i32; 8])` and `grow(mut xs)`. Plain parameters are read-only copies.
     So is every variable: `var it: Item = items[0]; it.qty += 1;` changes the copy, not the list (warning
@@ -113,10 +115,12 @@ test "counts repeated words" {
 11. **A call with a `mut` argument is its own statement** or the whole right side of `let`/assignment/`return`: `let top: i32 = pop(mut stack);` then use `top`.
 12. **A `mut` variable cannot appear twice in one call**: `append(mut s, s)` and `swap(mut xs[i], mut xs[j])` are errors. Numbers passed without `mut` are copied first, so `remove(mut xs, len(xs) - 1)` is fine.
 13. **No shadowing.** Pick a new name instead of redeclaring one in an inner block.
-14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings.
+14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings. An arm may have a guard,
+    `MaybeI64.Some(v) if v > 0 => { }`; guarded arms do not count toward exhaustiveness.
 15. **Functions with a return type return on every path.** Add a final `return` after loops.
 16. **No methods.** `len(xs)`, not `xs.len()`; `push(mut xs, v)`, not `xs.push(v)`; `trim(s)`, not `s.trim()`.
-17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`. Two strs compare with `==` and order with `<`, byte by byte.
+17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`. Two strs compare with `==` and order with `<`, byte by byte. For characters beyond ASCII, `char_count(s)` counts
+    code points, `for c in chars(s) { }` goes through them (each a `u32`), and `slice_chars` cuts between them.
 18. **No exceptions.** Return an enum for recoverable failures; `panic("...")` or `assert` for bugs.
 19. **Input arrives whole; nothing else is read.** `fn main(input: str[4096])` gets all of stdin as bytes
     (`bin/alang run prog.al < data.txt`; more than 4096 bytes traps), a `tool fn` gets JSON. No files.
@@ -124,6 +128,7 @@ test "counts repeated words" {
     Split a line into a list with `try_split(mut fields, line, ',')`: false, not a trap, when it does not fit.
 20. **`import "lib/text.al";` at the top of a file** adds that file's declarations, by their plain names.
     The path is relative to the importing file, with `/`. Its `fn main`, tests and tools stay its own.
+    `import "lib/text.al" as text;` keeps them apart instead: `text.pad(s)`, `text.WIDTH`, `text.Cell(...)`.
 
 ## Translating habits from other languages
 
@@ -134,8 +139,15 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `let x = 5;` / `x := 5` | `let x: i64 = 5;` |
 | `int`, `usize`, `String`, `Vec<T>` | `i32`/`i64`, `i64`, `str[N]`, `list[T; N]` |
 | `Option<T>`, `null` | `enum MaybeT { None, Some(T) }` |
+| `dict`, `HashMap<K, V>`, `set()`, `HashSet<T>` | `map[str[16], i64; 64]`, `set[i64; 32]`: a capacity, keys always in order; `var m: map[str[8], i64; 16] = [];` then `m[k] = v;` |
+| `d.get(k, 0)`, `d[k] = d.get(k, 0) + 1`, `for k, v in d.items()` | `get_or(m, k, 0)`, `m[k] = get_or(m, k, 0) + 1;`, `for k, v in m { }` |
+| `return a, b`, `(a, b) = f()`, `let (q, r) = divmod(a, b)` | `return (a, b);` with `-> (i64, i64)`, then `let (q, r): (i64, i64) = divmod(a, b);` and `p.0`, `p.1` |
 | `i++` | `i += 1;` |
 | `for (i = 0; i < n; i++)` | `for i in 0..n { }` |
+| `for i in range(0, n + 1, 2)`, `(0..=n).step_by(2)` | `for i in 0..=n step 2 { }` |
+| `for i in range(n - 1, -1, -1)`, `(0..n).rev()`, `reversed(xs)` | `for i in rev 0..n { }`, `for x in rev xs { }` |
+| `for i, x in enumerate(xs)`, `xs.iter().enumerate()` | `for i, x in xs { }` |
+| `'outer: for ...` / `break 'outer` (Rust), `break outer` (Go, Java) | `outer: for ... { }` and `break outer;`, `continue outer;` |
 | `loop { }` | `while true limit 1000 { ... break; }` |
 | `s.push_str("a")`, `format!("{} {}", a, b)` | `append(mut s, "a")`, `var s: str[64] = ""; append(mut s, a, " ", b);` |
 | `for line in text.splitlines()`, `for w in s.split()` | `for line in split(text, '\n') { }`, `for w in words(s) { }` |
@@ -147,29 +159,34 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `f"{x:.2f}"`, `format!("{:.2}", x)`, `x.toFixed(2)` | `fixed(x, 2)`, in `print`/`append` or stored in a typed str |
 | `f"{n:03}"`, `s.rjust(8)`, `s.ljust(8)`, `padStart` | `pad_left(n, 3, '0')`, `pad_left(s, 8, ' ')`, `pad_right(s, 8, ' ')` |
 | `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
-| `s[a:b]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `slice(s, a, b)`, `trim(s)`, `to_upper(s)` |
+| `fn first<T>(xs: &[T]) -> T`, `def first(xs)` | `fn first<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
+| `xs.filter(f)`, `map(f, xs)`, `sort(key=f)`, a callback | a parameter `f: fn(T) -> bool`, passed by name: `count_if(xs, is_even)`; no closures or lambdas |
+| `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
 | a `str[256]` passed where `str[16]` is wanted | `str[16](s)` after checking `len(s) <= 16` |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
 | `xs.sort()`, `sorted(xs, reverse=True)` | `sort(mut xs);` then `reverse(mut xs);` |
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
 | `println!("{}", x)` | `print(x);` |
 | `throw` / `raise` | return an enum, or `panic("message")` |
+| `c ? a : b`, `a if c else b`, `if c { a } else { b }` as a value | `if c then a else b` |
+| `case x if x > 0 =>`, `Some(v) if v > 0 =>` | `_ if x > 0 => { }`, `MaybeI64.Some(v) if v > 0 => { }` (guards) |
 | `sys.stdin.read()`, `open(path).read()`, `input()` | `fn main(input: str[4096])`, run with `< path`; split it into lines |
 | `import utils`, `#include "utils.h"`, `use crate::utils` | `import "utils.al";` before any declaration |
+| `import utils as u`, `u.f(x)`, `utils::f(x)` | `import "utils.al" as u;` then `u.f(x)`, `u.CONST`, `u.Type` |
 | `if x { }` with `x: i32` | `if x != 0 { }` |
 
 ## The standard library
 
 Builtins that work on any type and capacity. Their names are reserved: call `gcd`, do not define it. For
-what it leaves out (parsing into an enum instead of trapping, pseudo-random numbers, a map as a list of
-structs), [examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
+what it leaves out (parsing into an enum instead of trapping, pseudo-random numbers, a map that keeps
+the order its keys were added in), [examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
 
 | Area | Functions |
 |------|-----------|
-| Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers) `gcd` `lcm` `sqrt` `floor` `ceil` `round` `trunc` `is_nan` `is_finite` |
+| Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` |
-| Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays |
+| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
+| Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear` |
 
 - `split`, `words`, `join` and `replace` take their type from the variable they are stored in, so make the
   call the whole right side of a typed `let`/`var`, assignment or `return`:
@@ -225,6 +242,42 @@ test "best first, bad lines skipped" {
 ```
 
 ## Patterns
+
+**One function for every type**
+
+```alang
+// A type parameter takes any type, and a parameter of a function type a function, passed by name.
+fn count_if<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
+    var n: i64 = 0;
+    for x in xs {
+        if keep(x) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
+fn largest<T>(xs: list[T; _]) -> T
+    requires len(xs) > 0
+{
+    var best: T = xs[0];
+    for x in xs {
+        if compare(x, best) > 0 {
+            best = x;
+        }
+    }
+    return best;
+}
+
+fn is_even(x: i64) -> bool {
+    return x % 2 == 0;
+}
+
+fn main() {
+    let xs: list[i64; 8] = [3, 8, 1, 6];
+    print(count_if(xs, is_even), " ", largest(xs), " ", largest(["b", "a"]));
+}
+```
 
 **One function for every capacity**
 
@@ -353,7 +406,9 @@ fn main() {
 ```
 
 `bin/alang check report.al` checks both files; a diagnostic or trap in `lib/fmt.al` names that file (a
-`"file"` key in JSON). There are no namespaces: every name in the program must be unique.
+`"file"` key in JSON). Every name of the importer and of the files it imports this way must be unique; to use
+two libraries that declare the same names, import each under a name of its own,
+`import "lib/fmt.al" as fmt;`, and write `fmt.pad("42")`, `fmt.WIDTH`.
 
 **Contracts document and check intent**
 
@@ -408,7 +463,9 @@ it out with `requires`, which the schema then shows too.
 
 JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string of at most N UTF-8
 bytes (a non-ASCII character takes 2 to 4, so size N in bytes, not characters), arrays and lists as
-arrays, structs as objects (all fields required), enum variants as `"Name"` or `{"Name": [payload...]}`.
+arrays, tuples as arrays of fixed length, maps with str keys as objects (others as `[key, value]` pairs), sets as
+arrays of distinct items, structs as objects (all fields required), enum variants as `"Name"` or
+`{"Name": [payload...]}`.
 Tools cannot take `mut` parameters. A trap inside a tool returns `{"ok": false, "error": {"code":
 "R....", ...}}` instead of crashing the caller. JSON has no NaN or infinity, so a float result holding one
 fails with `bad_result` (check for it in the tool); a `str` result must be UTF-8 text, so return raw
@@ -427,8 +484,7 @@ You get these for free; do not work around them:
 - Same input, same output, same trap, on every run, machine, compiler and locale.
 - No time, randomness, environment, threads or I/O other than `print` and the stdin of `fn main`. For a
   "random" value, take a seed as a tool argument and compute from it.
-- Floats are bit-exact across the interpreter and the C backend: only `+ - * /`, `sqrt`, `floor`, `ceil`,
-  `round`, `trunc`, `abs`, `min`, `max`, `clamp` and conversions exist (no `sin`/`exp`, and `pow` is for
-  integers only).
+- Floats are bit-exact across the interpreter and the C backend, `sin`, `exp`, `log` and float `pow` included:
+  ALang computes them itself rather than calling a math library, whose last bits differ.
 - `print` shows floats with at most 6 decimals (`0.1 + 0.2` prints `0.3`); compare floats in tests with a
   tolerance, e.g. `assert abs(x - 0.3) < 0.000001;`.

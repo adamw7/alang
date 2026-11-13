@@ -114,9 +114,30 @@ class CBackendTest {
         }
         if (available("clang")) {
             out.add(concat(new String[] {"clang", "-O0"}, flags));
-            out.add(concat(new String[] {"clang", "-O3", "-ffp-contract=fast"}, flags));
+            out.add(concat(concat(new String[] {"clang", "-O3", "-ffp-contract=fast"}, fusedMultiplyAdd()), flags));
         }
         return out;
+    }
+
+    /**
+     * The flag that gives clang a fused multiply-add instruction to contract a product and a sum into, where this
+     * CPU has one: -mfma on an x86 that has FMA (arm64 always has it). With -ffp-contract=fast, clang then fuses
+     * every product it can, and the C must still round each product on its own, as the interpreter does.
+     */
+    private static String[] fusedMultiplyAdd() {
+        String arch = System.getProperty("os.arch");
+        Path cpuinfo = Path.of("/proc/cpuinfo");
+        if (!(arch.equals("amd64") || arch.equals("x86_64")) || !Files.isReadable(cpuinfo)) return new String[0];
+        try {
+            for (String line : Files.readAllLines(cpuinfo, StandardCharsets.UTF_8)) {
+                if (!line.startsWith("flags")) continue;
+                List<String> cpu = Arrays.asList(line.split("\\s+"));
+                return cpu.contains("fma") && cpu.contains("avx") ? new String[] {"-mfma"} : new String[0];
+            }
+        } catch (IOException e) {
+            return new String[0];
+        }
+        return new String[0];
     }
 
     private static String[] concat(String[] a, String[] b) {

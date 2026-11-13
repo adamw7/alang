@@ -1,0 +1,7 @@
+error[E0001]: unexpected '..', expected a statement or expression
+ --> tests/errors/E0001_range_value.al:3:30
+  |
+3 |     let xs: list[i64; 8] = [1..5];
+  |                              ^^
+  = hint: a range is not a value; a slice is xs[a..b], and a list of numbers is built in a loop: for i in a..b { push(mut xs, i); }
+

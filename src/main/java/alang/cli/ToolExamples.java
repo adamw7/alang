@@ -10,6 +10,7 @@ import alang.ast.Ast.BoolLit;
 import alang.ast.Ast.Break;
 import alang.ast.Ast.Call;
 import alang.ast.Ast.Continue;
+import alang.ast.Ast.Destructure;
 import alang.ast.Ast.Convert;
 import alang.ast.Ast.Expr;
 import alang.ast.Ast.ExprStmt;
@@ -19,6 +20,7 @@ import alang.ast.Ast.FloatLit;
 import alang.ast.Ast.FnDecl;
 import alang.ast.Ast.For;
 import alang.ast.Ast.If;
+import alang.ast.Ast.IfExpr;
 import alang.ast.Ast.Index;
 import alang.ast.Ast.IntLit;
 import alang.ast.Ast.Let;
@@ -29,10 +31,12 @@ import alang.ast.Ast.Program;
 import alang.ast.Ast.Repeat;
 import alang.ast.Ast.Resize;
 import alang.ast.Ast.Return;
+import alang.ast.Ast.SliceExpr;
 import alang.ast.Ast.Stmt;
 import alang.ast.Ast.StrLit;
 import alang.ast.Ast.StructLit;
 import alang.ast.Ast.TestDecl;
+import alang.ast.Ast.TupleLit;
 import alang.ast.Ast.Unary;
 import alang.ast.Ast.VariantCall;
 import alang.ast.Ast.While;
@@ -113,6 +117,7 @@ final class ToolExamples {
     private static void calls(Stmt s, List<Call> out) {
         switch (s) {
             case Let l -> calls(l.init, out);
+            case Destructure d -> calls(d.init, out);
             case Assign a -> {
                 calls(a.value, out);
                 calls(a.target, out);
@@ -132,11 +137,15 @@ final class ToolExamples {
             case For f -> {
                 calls(f.from, out);
                 if (f.to != null) calls(f.to, out);
+                if (f.step != null) calls(f.step, out);
                 calls(f.body, out);
             }
             case Match m -> {
                 calls(m.subject, out);
-                for (Arm arm : m.arms) calls(arm.body(), out);
+                for (Arm arm : m.arms) {
+                    if (arm.guard() != null) calls(arm.guard(), out);
+                    calls(arm.body(), out);
+                }
             }
             case Return r -> {
                 if (r.value != null) calls(r.value, out);
@@ -163,6 +172,17 @@ final class ToolExamples {
             case Repeat r -> {
                 calls(r.value, out);
                 calls(r.count, out);
+            }
+            case IfExpr i -> {
+                calls(i.cond, out);
+                calls(i.then, out);
+                calls(i.otherwise, out);
+            }
+            case TupleLit t -> t.elems.forEach(x -> calls(x, out));
+            case SliceExpr s -> {
+                calls(s.target, out);
+                if (s.from != null) calls(s.from, out);
+                if (s.to != null) calls(s.to, out);
             }
             case Unary u -> calls(u.operand, out);
             case Binary b -> {

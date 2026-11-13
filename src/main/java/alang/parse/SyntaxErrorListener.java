@@ -96,6 +96,22 @@ final class SyntaxErrorListener extends BaseErrorListener {
         };
     }
 
+    /** Whether the brackets that {@code close} ends hold a `..` of their own: they slice. */
+    private static boolean slicedBefore(TokenStream ts, Token close) {
+        int depth = 0;
+        for (int i = close.getTokenIndex() - 1; i >= 0; i--) {
+            int t = ts.get(i).getType();
+            if (t == ALangLexer.RBRACK || t == ALangLexer.RPAREN) depth++;
+            else if (t == ALangLexer.LBRACK || t == ALangLexer.LPAREN) {
+                if (depth == 0) return false;
+                depth--;
+            } else if (t == ALangLexer.DOTDOT && depth == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static Token previous(TokenStream ts, Token tok) {
         for (int i = tok.getTokenIndex() - 1; i >= 0; i--) {
             Token t = ts.get(i);
@@ -129,7 +145,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 names.add("a name");
                 continue;
             }
-            if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT) {
+            if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT
+                || t == ALangParser.STEP || t == ALangParser.REV || t == ALangParser.THEN || t == ALangParser.MAP
+                || t == ALangParser.SET || t == ALangParser.AS) {
                 if (expected.contains(ALangParser.IDENT)) continue;
             }
             String lit = ALangParser.VOCABULARY.getLiteralName(t);
@@ -195,11 +213,11 @@ final class SyntaxErrorListener extends BaseErrorListener {
             && !expected.contains(ALangLexer.INT_LIT)) {
             return "while loops must state an iteration limit: while cond limit 1000 { ... }";
         }
+        if (t == ALangLexer.ASSIGN && p == ALangLexer.RBRACK && slicedBefore(ts, prev)) {
+            return "a slice is a value, not a place; set the elements one at a time: for i in a..b { xs[i] = v; }";
+        }
         if (p == ALangLexer.FOR && t == ALangLexer.LPAREN) {
             return "for loops iterate a range or a collection: for i in 0..n { ... } or for x in xs { ... }";
-        }
-        if (p == ALangLexer.DOTDOT && t == ALangLexer.ASSIGN) {
-            return "ranges are half-open (end excluded); write a..(b + 1) instead of a..=b";
         }
         if (expected != null && expected.contains(ALangLexer.COLON) && t == ALangLexer.ASSIGN) {
             return "every variable needs an explicit type: let x: i32 = 0;";
@@ -233,8 +251,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
     private static final String NO_STR_CONVERSION = "there is no str() conversion; build text with append(mut s, value) "
         + "into a str[N] variable, and change the capacity of a str with str[N](s)";
 
-    private static final String TUPLES = "there are no tuples; declare a struct with named fields, "
-        + "e.g. struct Pair { a: i64, b: i64 }, and build it with Pair(a: 1, b: 2)";
+    private static final String TUPLES = "a tuple is built as (a, b), read as t.0 and t.1, and taken apart with a typed "
+        + "let: let (a, b): (i64, i64) = pair;";
 
     /** Constructs common in other languages that ALang leaves out, each with the ALang way to write it. */
     private static String missingFeature(TokenStream ts, Token tok, Token prev, Token prev2, IntervalSet expected) {
@@ -288,9 +306,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if ((t == ALangLexer.LT || t == ALangLexer.LBRACK && prev2 != null
                 && (prev2.getType() == ALangLexer.COLON || prev2.getType() == ALangLexer.ARROW))
             && p == ALangLexer.IDENT && !expectsOperator(expected)) {
-            return "there are no type parameters; write a function or type for each element type, "
-                + "e.g. fn max_i64(a: i64, b: i64) -> i64, and use list[T; N] instead of Vec<T>; a parameter can take "
-                + "any capacity: fn total(xs: list[i64; _]) -> i64";
+            return "a type takes its element types in brackets: list[i64; 16], map[str[8], i64; 16]; only a function has "
+                + "type parameters, fn first<T>(xs: list[T; _]) -> T, and an optional value is an enum: "
+                + "enum MaybeI64 { None, Some(i64) }";
         }
         if (expected.contains(ALangLexer.FAT_ARROW)) {
             // After a pattern, where `=>` should come.
@@ -301,30 +319,26 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 return "there are no range patterns; use an if/else if chain instead: if 1 <= x and x < 5 { ... }";
             }
         }
-        if (t == ALangLexer.IF && arrowAhead(ts, tok)) {
-            return "there are no match guards; use an if/else if chain, or test the condition inside the arm: "
-                + "_ => { if x > 2 { ... } }";
+        if (t == ALangLexer.LBRACE && expected.contains(ALangLexer.THEN)) {
+            return "an if expression is written with `then` and no braces: let x: i64 = if c then 1 else 2;";
         }
-        if ((t == ALangLexer.IF || t == ALangLexer.MATCH) && expected.contains(ALangLexer.INT_LIT)
-            && !expected.contains(ALangLexer.LET)) {
-            // Where an expression must start.
-            return t == ALangLexer.IF
-                ? "`if` is a statement, not an expression; declare the variable first and assign it in every "
-                    + "branch: var x: i64 = 0; if c { x = 1; } else { x = 2; }"
-                : "`match` is a statement, not an expression; declare the variable first and assign it in every "
-                    + "arm: var x: i64 = 0; match c { ... => { x = 1; } }";
+        if (t == ALangLexer.IF && expected.contains(ALangLexer.INT_LIT) && !expected.contains(ALangLexer.LET)) {
+            // Where an operand must start: an if expression is a whole expression.
+            return "an if expression is never an operand; put it in parentheses: 1 + (if c then 2 else 3)";
+        }
+        if (t == ALangLexer.MATCH && expected.contains(ALangLexer.INT_LIT) && !expected.contains(ALangLexer.LET)) {
+            return "`match` is a statement, not an expression; declare the variable first and assign it in every "
+                + "arm: var x: i64 = 0; match c { ... => { x = 1; } }; for a choice between two values, "
+                + "if c then a else b is an expression";
         }
         if (t == ALangLexer.FN) {
             if (expected.contains(ALangLexer.LET)) {
                 return "functions cannot be nested; declare every fn at the top level";
             }
             if (expected.contains(ALangLexer.I64)) {
-                return "there are no function types or closures; call functions by name, and choose between "
-                    + "behaviors with an enum and match";
+                return "a function type is only the type of a parameter: fn apply(f: fn(i64) -> i64, x: i64); there are "
+                    + "no closures, so pass a function declared at the top level by its name";
             }
-        }
-        if (t == ALangLexer.LPAREN && expected.contains(ALangLexer.I64) && !expected.contains(ALangLexer.INT_LIT)) {
-            return TUPLES; // where a type must start
         }
         if (t == ALangLexer.COMMA) {
             // A comma inside parentheses that do not belong to a call, constructor, pattern or declaration.
@@ -337,14 +351,14 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (t == ALangLexer.DOTDOT) {
             Token open = opener(ts, tok);
             if (open != null && open.getType() == ALangLexer.LBRACK) {
-                return "there are no slices or range values; copy the part you need in a loop: "
-                    + "for i in a..b { push(mut part, xs[i]); }";
+                return "a range is not a value; a slice is xs[a..b], and a list of numbers is built in a loop: "
+                    + "for i in a..b { push(mut xs, i); }";
             }
         }
-        if (t == ALangLexer.IDENT && (word.equals("step") || word.equals("by")) && expected.contains(ALangLexer.LBRACE)
+        if (t == ALangLexer.IDENT && (word.equals("by") || word.equals("step_by")) && expected.contains(ALangLexer.LBRACE)
             && inForHeader(ts, tok)) {
-            return "ranges always count up by 1; compute other sequences from the loop variable: "
-                + "for k in 0..5 { let i: i64 = k * 2; }";
+            return "a range counts by a step with `step`: for i in 0..10 step 2 { }; to count down, add `rev`: "
+                + "for i in rev 0..10 { } goes 9, 8, ..., 0";
         }
         if (t == ALangLexer.ASSIGN && expected.contains(ALangLexer.COMMA) && expected.contains(ALangLexer.RBRACE)) {
             // `=` in a struct's fields or an enum's variants.
@@ -376,6 +390,11 @@ final class SyntaxErrorListener extends BaseErrorListener {
             // or a literal. (A stray `]`, as in `xs[0]];`, closes nothing.)
             Token open = opener(ts, tok);
             if (open != null && open.getType() == ALangLexer.LBRACK) {
+                Token kind = previous(ts, open);
+                if (kind != null && (kind.getType() == ALangLexer.MAP || kind.getType() == ALangLexer.SET)) {
+                    return "maps and sets need a capacity after `;`: map[str[16], i64; 64] holds up to 64 entries, "
+                        + "set[i64; 32] up to 32 values";
+                }
                 return "lists and arrays need a capacity after `;`: list[i64; 16] holds up to 16 items, "
                     + "[i64; 4] exactly 4";
             }
@@ -411,21 +430,6 @@ final class SyntaxErrorListener extends BaseErrorListener {
         return null;
     }
 
-    /** Whether a `=>` follows {@code tok} before the next block or statement: {@code tok} is in a match arm's pattern. */
-    private static boolean arrowAhead(TokenStream ts, Token tok) {
-        for (int i = tok.getTokenIndex() + 1; i < ts.size(); i++) {
-            switch (ts.get(i).getType()) {
-                case ALangLexer.FAT_ARROW -> {
-                    return true;
-                }
-                case ALangLexer.LBRACE, ALangLexer.RBRACE, ALangLexer.SEMI, Token.EOF -> {
-                    return false;
-                }
-                default -> { }
-            }
-        }
-        return false;
-    }
 
     /** Whether {@code tok} is between `for` and the loop's `{`. */
     private static boolean inForHeader(TokenStream ts, Token tok) {
@@ -446,7 +450,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
     /** Tokens that can come right before the `(` of a call, constructor, pattern or declaration. */
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
-            || t == ALangLexer.IMPORT || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 
     private static boolean expectsOperator(IntervalSet expected) {

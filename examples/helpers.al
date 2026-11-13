@@ -48,10 +48,10 @@ fn next_random(seed: i64) -> i64
     return (seed * 1103515245 + 12345) % 2147483648;
 }
 
-// ------------------------------------------------------------------ a map as a list of entries
+// ------------------------------------------------------------------ a map in insertion order
 
-/// One key and its value. ALang has no maps or dictionaries: a list of entries, searched with a loop,
-/// takes their place, and keeps the order the keys were added in.
+/// One key and its value. A map[K, V; N] keeps its keys in order; a list of entries, searched with a loop,
+/// keeps them in the order they were added in instead.
 struct Entry {
     key: str[TEXT],
     value: i64,
