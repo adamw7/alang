@@ -1,101 +1,104 @@
-// Type parameters and functions as parameters: each call runs a copy made for its types and functions.
-struct Point {
-    x: i64,
-    y: i64,
+// Structs and enums with type parameters, and the built-in Option<T> and Result<T, E>.
+struct Pair<A, B> {
+    first: A,
+    second: B,
 }
 
-/// The largest element, by the order of sort.
-fn largest<T>(xs: list[T; _]) -> T
-    requires len(xs) > 0
-{
-    var best: T = xs[0];
-    for x in xs {
-        if compare(x, best) > 0 {
-            best = x;
+enum Tree<T> {
+    Leaf(T),
+    Empty,
+}
+
+struct Stack<T> {
+    items: list[T; 8],
+}
+
+fn find(xs: list[i64; _], want: i64) -> Option<i64> {
+    for i, x in xs {
+        if x == want {
+            return Option.Some(i);
         }
     }
-    return best;
+    return Option.None;
 }
 
-fn swap<A, B>(p: (A, B)) -> (B, A) {
-    return (p.1, p.0);
+fn parse(s: str[_]) -> Result<i64, str[32]> {
+    let t: str[32] = str[32](trim(s));
+    if is_int(t) {
+        return Result.Ok(i64(t));
+    }
+    var why: str[32] = "not a number: ";
+    append(mut why, t);
+    return Result.Err(why);
 }
 
-fn count_if<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
-    var n: i64 = 0;
+fn unwrap_or<T>(m: Option<T>, d: T) -> T {
+    return match m {
+        Option.Some(v) => v,
+        Option.None => d,
+    };
+}
+
+fn swap<A, B>(p: Pair<A, B>) -> Pair<B, A> {
+    return Pair(first: p.second, second: p.first);
+}
+
+fn push_all<T>(s: mut Stack<T>, xs: list[T; _]) {
     for x in xs {
-        if keep(x) {
-            n += 1;
-        }
+        push(mut s.items, x);
     }
-    return n;
-}
-
-fn map_into<T, U>(xs: list[T; _], f: fn(T) -> U, out: mut list[U; _]) {
-    clear(mut out);
-    for x in xs {
-        push(mut out, f(x));
-    }
-}
-
-/// Sorts by a key that a function computes, smallest first; equal keys keep their order.
-fn sort_by_key<T, K>(xs: mut list[T; _], key: fn(T) -> K) {
-    for i in 1..len(xs) {
-        var j: i64 = i;
-        while j > 0 and compare(key(xs[j - 1]), key(xs[j])) > 0 limit len(xs) {
-            let tmp: T = xs[j];
-            xs[j] = xs[j - 1];
-            xs[j - 1] = tmp;
-            j -= 1;
-        }
-    }
-}
-
-/// A function passed on to another.
-fn count_twice<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
-    return count_if(xs, keep) * 2;
-}
-
-fn is_even(x: i64) -> bool {
-    return x % 2 == 0;
-}
-
-fn is_long(s: str[8]) -> bool {
-    return len(s) > 3;
-}
-
-fn square(x: i64) -> i64 {
-    return x * x;
-}
-
-fn norm(p: Point) -> i64 {
-    return p.x * p.x + p.y * p.y;
-}
-
-fn shout(s: str[8]) -> str[9] {
-    var out: str[9] = to_upper(s);
-    push(mut out, '!');
-    return out;
 }
 
 fn main() {
-    let nums: list[i64; 8] = [3, 8, 1, 6];
-    let words: list[str[8]; 4] = ["ab", "cdef", "ghijk"];
-    print(largest(nums), " ", largest(words), " ", largest([2.5, -1.0]), " ", largest([Point(x: 1, y: 9), Point(x: 2, y: 0)]));
-    print(swap((1, "one")), " ", swap(("a", true)));
-    print(count_if(nums, is_even), " ", count_if(words, is_long), " ", count_twice(nums, is_even));
-    var squares: list[i64; 8] = [];
-    map_into(nums, square, mut squares);
-    var loud: list[str[9]; 4] = [];
-    map_into(words, shout, mut loud);
-    print(squares, " ", loud);
-    var points: list[Point; 4] = [Point(x: 3, y: 4), Point(x: 1, y: 1), Point(x: 0, y: 2)];
-    sort_by_key(mut points, norm);
-    print(points);
-    print(compare(1, 2), " ", compare("b", "a"), " ", compare(Point(x: 1, y: 1), Point(x: 1, y: 1)));
+    let xs: list[i64; 8] = [4, 5, 6];
+    print(find(xs, 5), " ", find(xs, 9));
+    print(unwrap_or(find(xs, 6), -1), " ", unwrap_or(find(xs, 7), -1));
+    print(unwrap_or(Option.None, "none"), " ", unwrap_or(Option.Some(2.5), 0.0));
+    print(parse(" 42 "), " ", parse("x"));
+    match parse("17") {
+        Result.Ok(n) if n > 10 => { print("big ", n); }
+        Result.Ok(n) => { print("small ", n); }
+        Result.Err(e) => { print(e); }
+    }
+    let p: Pair<i64, str[4]> = Pair(first: 1, second: "one");
+    print(p, " ", swap(p));
+    let q: Pair<Option<i64>, bool> = Pair(first: Option.None, second: true);
+    print(q);
+    let nested: Option<Option<i64>> = Option.Some(Option.Some(3));
+    if let Option.Some(Option.Some(v)) = nested {
+        print("nested ", v);
+    }
+    var s: Stack<str[2]> = Stack(items: []);
+    push_all(mut s, ["a", "b"]);
+    print(s);
+    let t: Tree<u8> = Tree.Leaf(7);
+    print(t, " ", t == Tree.Leaf(7), " ", Tree.Empty == t);
+    var opts: list[Option<i64>; 4] = [Option.Some(3), Option.None, Option.Some(1)];
+    sort(mut opts);
+    print(opts);
 }
 
-test "largest of a list of one" {
-    let one: list[u8; 1] = [7];
-    assert largest(one) == 7;
+test "a value takes its type arguments from where it goes" {
+    let none: Option<str[4]> = Option.None;
+    assert none == Option.None;
+    assert Option.Some(3) != Option.None;
+    let r: Result<u8, bool> = Result.Err(true);
+    match r {
+        Result.Ok(_) => { panic("not ok"); }
+        Result.Err(e) => { assert e; }
+    }
+}
+
+test "instances of one declaration are different types" {
+    let a: Pair<i64, bool> = Pair(first: 1, second: true);
+    let b: Pair<bool, i64> = swap(a);
+    assert b.first and b.second == 1;
+}
+
+test "a missing value traps where it is unwrapped" traps R0010 {
+    let m: Option<i64> = Option.None;
+    match m {
+        Option.Some(_) => { }
+        Option.None => { panic("no value"); }
+    }
 }

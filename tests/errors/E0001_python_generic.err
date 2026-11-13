@@ -3,5 +3,5 @@ error[E0001]: unexpected '[', expected one of 'requires', 'ensures', '{'
   |
 2 | fn first(xs: list[i64; 8]) -> Optional[i64] {
   |                                       ^
-  = hint: a type takes its element types in brackets: list[i64; 16], map[str[8], i64; 16]; only a function has type parameters, fn first<T>(xs: list[T; _]) -> T, and an optional value is an enum: enum MaybeI64 { None, Some(i64) }
+  = hint: a list, array or map takes its element types in brackets: list[i64; 16], map[str[8], i64; 16]; a struct or enum takes its type arguments in angle brackets, Option<i64>, Pair<i64, str[8]>
 

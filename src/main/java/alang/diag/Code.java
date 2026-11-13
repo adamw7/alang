@@ -18,8 +18,10 @@ public enum Code {
         "A call names a function, struct or builtin that does not exist.",
         "let n: i64 = length(xs);  // error: the builtin is `len`"),
     E0103("unknown type",
-        "A type name is not a primitive type and no struct or enum with that name exists.",
-        "let p: Pointt = Point(x: 1, y: 2);  // typo"),
+        "A type name is not a primitive type and no struct or enum with that name exists, or a struct or enum is given "
+            + "the wrong number of type arguments: one per type parameter, as in Option<i64> or Pair<i64, str[8]>, and none "
+            + "for one without type parameters.",
+        "let p: Pointt = Point(x: 1, y: 2);  // typo\nlet m: Option = Option.None;      // error: write Option<i64>"),
     E0104("duplicate declaration",
         "Two top-level items (functions, structs, enums, constants) share a name, or a struct/enum declares the same field/variant twice.",
         "fn f() { }\nfn f() { }  // error"),
@@ -33,8 +35,9 @@ public enum Code {
         "The enum has no variant with this name.",
         "enum Color { Red, Green }\nlet c: Color = Color.Blue;  // error"),
     E0108("reserved name",
-        "The name is reserved for a builtin function and cannot be used for a declaration.",
-        "fn print() { }  // error: `print` is a builtin"),
+        "The name is reserved for a builtin function, or for a built-in type every program has (Option<T> and "
+            + "Result<T, E>), and cannot be used for a declaration.",
+        "fn print() { }  // error: `print` is a builtin\nenum Option { None }  // error: Option<T> is built in"),
 
     // ---- types ----
     E0201("type mismatch",
@@ -84,8 +87,10 @@ public enum Code {
         "print(pop(mut xs));          // error\nlet top: i32 = pop(mut xs);  // ok\nprint(top);"),
     E0216("type cannot be inferred",
         "The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list. "
-            + "split, words, join and replace take their type from the variable they are stored in; split and words may also be what a for loop goes through.",
-        "print([]);  // error"),
+            + "split, words, join and replace take their type from the variable they are stored in; split and words may also be what a for loop goes through. "
+            + "A value of a struct or enum with type parameters takes their types from where it goes, or from its fields or payload: "
+            + "Option.None needs a typed variable, parameter or comparison, and a type parameter must be in a field's or payload's type.",
+        "print([]);  // error\nprint(Option.None);  // error\nlet m: Option<i64> = Option.None;  // ok"),
     E0217("`_` capacity not allowed here",
         "A `_` in place of a capacity or length, as in str[_], list[T; _] or [T; _], is allowed only in the type of a "
             + "function parameter: the function then takes a str, list or array of any capacity there, and each call "

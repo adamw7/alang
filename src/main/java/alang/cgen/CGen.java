@@ -292,7 +292,8 @@ public final class CGen {
 
     /** A declaration's name, after the number of its scope when it is in one of its own (import ... as ns): n2_Point. */
     static String scoped(Item item) {
-        return item.scope == 0 ? item.name : "n" + item.scope + "_" + item.name;
+        // A built-in name is reserved in every scope, so it is the same everywhere.
+        return item.scope == 0 || item.builtin ? item.name : "n" + item.scope + "_" + item.name;
     }
 
     /**
@@ -305,14 +306,29 @@ public final class CGen {
         return "al_d_" + f.length() + f + "_" + c.name;
     }
 
+    /**
+     * The name of a struct or enum in the names of C types: its scoped name, and for an instance of one with type
+     * parameters, G, their number, then each type argument's name after its length: Pair<i64, s8> is Pair_G2_3i64_2s8.
+     */
+    static String typeKey(Item decl, Generics g) {
+        String base = scoped(g.origin != null ? g.origin : decl);
+        if (g.origin == null) return base;
+        StringBuilder sb = new StringBuilder(base).append("_G").append(g.args.size());
+        for (Type a : g.args) {
+            String m = mangle(a);
+            sb.append('_').append(m.length()).append(m);
+        }
+        return sb.toString();
+    }
+
     static String mangle(Type t) {
         return switch (t) {
             case Type.Prim p -> p.kind().name;
             case Type.Str s -> "s" + s.cap();
             case Type.ArrayT a -> "a" + a.len() + "_" + mangle(a.elem());
             case Type.ListT l -> "l" + l.cap() + "_" + mangle(l.elem());
-            case Type.StructT s -> "S" + scoped(s.decl()).length() + scoped(s.decl());
-            case Type.EnumT e -> "E" + scoped(e.decl()).length() + scoped(e.decl());
+            case Type.StructT s -> "S" + typeKey(s.decl(), s.decl().generics).length() + typeKey(s.decl(), s.decl().generics);
+            case Type.EnumT e -> "E" + typeKey(e.decl(), e.decl().generics).length() + typeKey(e.decl(), e.decl().generics);
             // m, the capacity, then the key's name after its length, then the value's: map[i64, s8; 4] is m4_3i64s8.
             case Type.MapT m -> {
                 String k = mangle(m.key());

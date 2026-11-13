@@ -53,8 +53,10 @@ public final class Checker {
             return scope + ":" + name;
         }
 
+        /** The declaration a plain name names here: one of this scope, else a built-in one, seen from every scope. */
         T get(String name) {
-            return byKey.get(key(ctx.scope, name));
+            T t = byKey.get(key(ctx.scope, name));
+            return t != null ? t : byKey.get(key(BUILTIN_SCOPE, name));
         }
 
         T in(int scope, String name) {
@@ -77,11 +79,14 @@ public final class Checker {
         List<String> keySet() {
             List<String> out = new ArrayList<>();
             for (T t : byKey.values()) {
-                if (t.scope == ctx.scope) out.add(t.name);
+                if (t.scope == ctx.scope || t.scope == BUILTIN_SCOPE) out.add(t.name);
             }
             return out;
         }
     }
+
+    /** The scope of the built-in declarations, Option and Result, which every scope sees. */
+    private static final int BUILTIN_SCOPE = -1;
 
     private final Table<StructDecl> structs = new Table<>();
     private final Table<EnumDecl> enums = new Table<>();
@@ -142,7 +147,7 @@ public final class Checker {
 
     private CheckResult run() {
         for (Item item : program.items) {
-            item.scope = item.span.file() == null ? 0 : program.scopes.getOrDefault(item.span.file(), 0);
+            item.scope = item.builtin ? BUILTIN_SCOPE : item.span.file() == null ? 0 : program.scopes.getOrDefault(item.span.file(), 0);
         }
         collect();
         for (StructDecl s : structs.values()) ensureStruct(s);
@@ -191,16 +196,20 @@ public final class Checker {
             enterScope(item);
             switch (item) {
                 case StructDecl s -> {
+                    if (builtinType(s.name, s.span)) break;
                     if (typeExists(s.name)) duplicate(s.span, "type", s.name, typeSpan(s.name));
                     else structs.put(s);
+                    if (s.generics.generic()) s.generics.instantiate = args -> instantiate(s, args);
                     Set<String> seen = new HashSet<>();
                     for (Field f : s.fields) {
                         if (!seen.add(f.name)) duplicate(f.span, "field", f.name);
                     }
                 }
                 case EnumDecl e -> {
+                    if (builtinType(e.name, e.span)) break;
                     if (typeExists(e.name)) duplicate(e.span, "type", e.name, typeSpan(e.name));
                     else enums.put(e);
+                    if (e.generics.generic()) e.generics.instantiate = args -> instantiate(e, args);
                     Set<String> seen = new HashSet<>();
                     for (Variant v : e.variants) {
                         if (!seen.add(v.name)) duplicate(v.span, "variant", v.name);
@@ -248,6 +257,16 @@ public final class Checker {
                     "names are unique across functions, types and constants; rename one of them");
             }
         }
+    }
+
+    /** E0108 for a declaration of a program with the name of a built-in type; whether it is one. */
+    private boolean builtinType(String name, Span at) {
+        Item b = structs.get(name) != null ? structs.get(name) : enums.get(name);
+        if (b == null || !b.builtin || at.file() != null && b.span.file() == at.file()) return false;
+        diags.error(Code.E0108, at, "`" + name + "` is a built-in type and cannot be redefined",
+            "use it: Option<T> is Option.None or Option.Some(value), Result<T, E> is Result.Ok(value) or Result.Err(error); "
+                + "or choose another name");
+        return true;
     }
 
     /** Plain names in {@code item}'s code are those of its scope, qualified ones the aliases of its file. */
@@ -299,7 +318,9 @@ public final class Checker {
         if (s.state != State.NEW) return;
         s.state = State.IN_PROGRESS;
         Ctx saved = enterTopLevel(s);
+        ctx.typeParams = declTypeParams(s);
         for (Field f : s.fields) f.type = resolveType(f.typeRef);
+        unusedTypeParams(s, s.fields.stream().map(f -> f.type).toList(), "field");
         ctx = saved;
         s.state = State.DONE;
     }
@@ -308,12 +329,151 @@ public final class Checker {
         if (e.state != State.NEW) return;
         e.state = State.IN_PROGRESS;
         Ctx saved = enterTopLevel(e);
+        ctx.typeParams = declTypeParams(e);
+        List<Type> all = new ArrayList<>();
         for (Variant v : e.variants) {
             v.payload.clear();
             for (TypeRef r : v.payloadRefs) v.payload.add(resolveType(r));
+            all.addAll(v.payload);
         }
+        unusedTypeParams(e, all, "payload");
         ctx = saved;
         e.state = State.DONE;
+    }
+
+    /** The type parameters of a struct or enum as type variables, by name; their names are distinct, and no type's. */
+    private Map<String, Type> declTypeParams(Item d) {
+        Generics g = Ast.generics(d);
+        Map<String, Type> m = new HashMap<>();
+        for (int i = 0; i < g.params.size(); i++) {
+            String t = g.params.get(i);
+            Span at = g.paramSpans.get(i);
+            if (m.containsKey(t)) {
+                diags.error(Code.E0105, at, "duplicate type parameter `" + t + "`");
+            } else if (typeExists(t) || PrimKind.byName(t) != null) {
+                diags.error(Code.E0105, at, "type parameter `" + t + "` has the name of a type", "use a name of its own, such as T");
+            }
+            m.put(t, new Type.TypeVar(t, i, d));
+        }
+        return m;
+    }
+
+    /** E0216 for a type parameter that no field or payload has: a value could never say what it stands for. */
+    private void unusedTypeParams(Item d, List<Type> types, String what) {
+        Generics g = Ast.generics(d);
+        for (int i = 0; i < g.params.size(); i++) {
+            Type v = new Type.TypeVar(g.params.get(i), i, d);
+            if (types.stream().noneMatch(t -> mentionsType(t, v))) {
+                diags.error(Code.E0216, g.paramSpans.get(i), "type parameter `" + g.params.get(i) + "` is in no " + what + "'s type",
+                    "use it in one, as in struct Pair<A, B> { first: A, second: B }, or remove it");
+            }
+        }
+    }
+
+    /** The declarations that a type of their own was found to contain while their instances were made (E0403, once). */
+    private final Set<Item> selfContaining = new HashSet<>();
+
+    /**
+     * The instance of {@code d}, a struct or enum with type parameters, for the types {@code args}: made once, with
+     * those types in place of the parameters in its fields or payloads, and an ordinary declaration from then on.
+     * Null after reporting that d would contain itself: its fields name it while they are resolved.
+     */
+    private Item instantiate(Item d, List<Type> args) {
+        Generics g = Ast.generics(d);
+        List<Type> key = List.copyOf(args);
+        Item made = g.instances.get(key);
+        if (made != null) return made;
+        State st = d instanceof StructDecl sd ? sd.state : ((EnumDecl) d).state;
+        if (st == State.IN_PROGRESS) {
+            if (selfContaining.add(d)) {
+                diags.error(Code.E0403, d.span, (d instanceof StructDecl ? "struct" : "enum") + " `" + d.name
+                    + "` contains itself and would have infinite size",
+                    "store related items in a fixed-capacity list and refer to them by index");
+            }
+            return null;
+        }
+        if (d instanceof StructDecl sd) ensureStruct(sd);
+        else ensureEnum((EnumDecl) d);
+        Map<Integer, Type> types = new HashMap<>();
+        for (int i = 0; i < key.size(); i++) types.put(i, key.get(i));
+        Generics ig = new Generics(g.params, g.paramSpans);
+        ig.origin = d;
+        ig.args = key;
+        if (d instanceof StructDecl sd) {
+            List<Field> fields = new ArrayList<>();
+            for (Field f : sd.fields) {
+                Field c = new Field(f.span, f.name, f.typeRef);
+                c.doc = f.doc;
+                c.type = Type.substituteTypes(f.type, sd, types);
+                fields.add(c);
+            }
+            StructDecl inst = new StructDecl(sd.span, sd.name, fields, ig);
+            inst.state = State.DONE;
+            made = inst;
+        } else {
+            EnumDecl ed = (EnumDecl) d;
+            List<Variant> variants = new ArrayList<>();
+            for (Variant v : ed.variants) {
+                Variant c = new Variant(v.span, v.name, v.index, v.payloadRefs);
+                c.doc = v.doc;
+                for (Type p : v.payload) c.payload.add(Type.substituteTypes(p, ed, types));
+                variants.add(c);
+            }
+            EnumDecl inst = new EnumDecl(ed.span, ed.name, variants, ig);
+            inst.state = State.DONE;
+            made = inst;
+        }
+        made.scope = d.scope;
+        made.doc = d.doc;
+        made.builtin = d.builtin;
+        g.instances.put(key, made);
+        return made;
+    }
+
+    /** The type a struct or enum declaration is. */
+    private static Type typeOf(Item d) {
+        return d instanceof StructDecl s ? new Type.StructT(s) : new Type.EnumT((EnumDecl) d);
+    }
+
+    /**
+     * The type `Name` or `Name<A, B>` names: a struct or enum without type parameters, or the instance of one with
+     * them for the given type arguments, one per parameter.
+     */
+    private Type named(Item d, NamedRef n) {
+        Generics g = Ast.generics(d);
+        String kind = d instanceof StructDecl ? "struct" : "enum";
+        if (g.params.isEmpty()) {
+            if (!n.args().isEmpty()) {
+                diags.error(Code.E0103, n.span(), kind + " `" + d.name + "` has no type parameters", "write " + d.name);
+                return Type.ERROR;
+            }
+            return typeOf(d);
+        }
+        String example = d.name + "<" + String.join(", ", g.params) + ">";
+        if (n.args().size() != g.params.size()) {
+            for (TypeRef a : n.args()) resolveType(a);
+            diags.error(Code.E0103, n.span(), n.args().isEmpty()
+                    ? kind + " `" + d.name + "` needs its type arguments: " + example
+                    : kind + " `" + d.name + "` takes " + g.params.size() + " type argument(s) but " + n.args().size() + " were given",
+                "write a type for each parameter, as in " + d.name + "<" + String.join(", ", java.util.Collections.nCopies(g.params.size(), "i64"))
+                    + ">");
+            return Type.ERROR;
+        }
+        List<Type> args = new ArrayList<>();
+        boolean bad = false;
+        for (TypeRef a : n.args()) {
+            Type t = resolveType(a);
+            if (Type.hasAnyCapacity(t)) {
+                diags.error(Code.E0217, a.span(), "a type argument has constant capacities, not `_`",
+                    "write the most it holds, e.g. " + t.toString().replace("_", t instanceof Type.Str ? "64" : "16"));
+                bad = true;
+            }
+            bad |= Type.isError(t);
+            args.add(t);
+        }
+        if (bad) return Type.ERROR;
+        Item inst = instantiate(d, args);
+        return inst == null ? Type.ERROR : typeOf(inst);
     }
 
     private Ctx enterTopLevel(Item item) {
@@ -450,15 +610,22 @@ public final class Checker {
             case NamedRef n when n.qualifier() != null -> {
                 Integer s = qualifierScope(n.qualifier(), n.span());
                 if (s == null) yield Type.ERROR;
-                if (structs.in(s, n.name()) != null) yield new Type.StructT(structs.in(s, n.name()));
-                if (enums.in(s, n.name()) != null) yield new Type.EnumT(enums.in(s, n.name()));
+                if (structs.in(s, n.name()) != null) yield named(structs.in(s, n.name()), n);
+                if (enums.in(s, n.name()) != null) yield named(enums.in(s, n.name()), n);
                 diags.error(Code.E0103, n.span(), "`" + n.qualifier() + "` has no type `" + n.name() + "`");
                 yield Type.ERROR;
             }
             case NamedRef n -> {
-                if (ctx.typeParams.containsKey(n.name())) yield ctx.typeParams.get(n.name());
-                if (structs.containsKey(n.name())) yield new Type.StructT(structs.get(n.name()));
-                if (enums.containsKey(n.name())) yield new Type.EnumT(enums.get(n.name()));
+                if (ctx.typeParams.containsKey(n.name())) {
+                    if (!n.args().isEmpty()) {
+                        diags.error(Code.E0103, n.span(), "type parameter `" + n.name() + "` takes no type arguments",
+                            "write " + n.name());
+                        yield Type.ERROR;
+                    }
+                    yield ctx.typeParams.get(n.name());
+                }
+                if (structs.containsKey(n.name())) yield named(structs.get(n.name()), n);
+                if (enums.containsKey(n.name())) yield named(enums.get(n.name()), n);
                 String to = switch (n.name()) {
                     case "int", "long", "isize", "usize", "Int", "integer" -> "i64";
                     case "float", "double", "Float" -> "f64";
@@ -523,8 +690,8 @@ public final class Checker {
             case "void", "unit", "None" -> "omit the return type for functions that return nothing";
             case "Vec", "List", "Array", "vector" -> "use list[T; N] (up to N items) or [T; N] (exactly N items)";
             case "HashMap", "Map", "dict", "Dict", "BTreeMap", "TreeMap", "HashSet", "Set", "BTreeSet", "TreeSet" -> Hints.COLLECTIONS;
-            case "Option", "Optional", "Result" -> "declare an enum, e.g. enum MaybeI32 { None, Some(i32) }; type parameters "
-                + "are for functions only: fn first<T>(xs: list[T; _]) -> T";
+            case "Optional", "Maybe", "Nullable" -> "an optional value is an Option<T>: Option.Some(x) or Option.None";
+            case "Either", "Expected" -> "a value or an error is a Result<T, E>: Result.Ok(x) or Result.Err(e)";
             default -> {
                 List<String> names = new ArrayList<>(structs.keySet());
                 names.addAll(enums.keySet());
@@ -622,8 +789,8 @@ public final class Checker {
         }
         if (key != null && !visiting.add(key)) return false;
         for (Type c : children) {
-            if (c instanceof Type.StructT s && s.decl() == target) return true;
-            if (c instanceof Type.EnumT e && e.decl() == target) return true;
+            if (c instanceof Type.StructT s && Ast.origin(s.decl()) == target) return true;
+            if (c instanceof Type.EnumT e && Ast.origin(e.decl()) == target) return true;
             if (contains(c, target, visiting)) return true;
         }
         return false;
@@ -801,6 +968,8 @@ public final class Checker {
             case Type.MapT m -> mentionsType(m.key(), v) || mentionsType(m.value(), v);
             case Type.SetT st -> mentionsType(st.elem(), v);
             case Type.FnT fn -> fn.params().stream().anyMatch(e -> mentionsType(e, v)) || mentionsType(fn.ret(), v);
+            case Type.StructT st -> Type.typeArgs(st).stream().anyMatch(e -> mentionsType(e, v));
+            case Type.EnumT et -> Type.typeArgs(et).stream().anyMatch(e -> mentionsType(e, v));
             default -> false;
         };
     }
@@ -1605,8 +1774,8 @@ public final class Checker {
         EnumDecl d = et.decl();
         EnumDecl named = v.qualifier == null ? enums.get(v.enumName)
             : aliasScope(v.qualifier) == null ? null : enums.in(aliasScope(v.qualifier), v.enumName);
-        Variant variant = v.enumName.equals(d.name) && (named == null || named == d) ? d.variant(v.variantName) : null;
-        if (!v.enumName.equals(d.name) || named != null && named != d) {
+        Variant variant = v.enumName.equals(d.name) && (named == null || named == Ast.origin(d)) ? d.variant(v.variantName) : null;
+        if (!v.enumName.equals(d.name) || named != null && named != Ast.origin(d)) {
             diags.error(Code.E0308, v.span, "pattern of enum `" + v.enumName + "` cannot match a value of type " + d.name,
                 "write " + d.name + "." + v.variantName);
         } else if (variant == null) {
@@ -1639,7 +1808,7 @@ public final class Checker {
     private boolean structPattern(StructPat sp, Type t, Binder binder) {
         StructDecl named = sp.qualifier == null ? structs.get(sp.name)
             : aliasScope(sp.qualifier) == null ? null : structs.in(aliasScope(sp.qualifier), sp.name);
-        if (!(t instanceof Type.StructT st) || named == null || named != st.decl()) {
+        if (!(t instanceof Type.StructT st) || named == null || named != Ast.origin(st.decl())) {
             for (BindPat b : Ast.bindings(sp)) b.var = binder.bind(b, Type.ERROR);
             if (named == null && sp.qualifier == null && !structs.containsKey(sp.name)) {
                 diags.error(Code.E0103, sp.span, "unknown struct `" + sp.name + "`", didYouMean(sp.name, new ArrayList<>(structs.keySet())));
@@ -1835,11 +2004,11 @@ public final class Checker {
             case StrLit s -> new Type.Str(s.value.length);
             case BoolLit b -> Type.BOOL;
             case Name n -> name(n);
-            case FieldAccess f -> fieldAccess(f);
+            case FieldAccess f -> fieldAccess(f, expected);
             case Index ix -> index(ix);
             case Call c -> call(c, expected);
-            case VariantCall v -> variantCall(v);
-            case StructLit s -> structLit(s);
+            case VariantCall v -> variantCall(v, expected);
+            case StructLit s -> structLit(s, expected);
             case Convert c -> convert(c);
             case Resize r -> resize(r);
             case Unary u -> unary(u, expected);
@@ -1944,7 +2113,7 @@ public final class Checker {
         }
         String hint = switch (n.name) {
             case "null", "nil", "None", "NULL", "undefined" ->
-                "ALang has no null; model absence with an enum, e.g. enum MaybeI32 { None, Some(i32) }";
+                "ALang has no null; a value that may be absent is an Option<T>: Option.None, or Option.Some(x)";
             case "self", "this" -> "there are no methods or `self`; pass the value as a parameter";
             case "True", "False", "TRUE", "FALSE" -> "booleans are lowercase: true, false";
             default -> fns.containsKey(n.name) || Builtin.byName(n.name) != null
@@ -1958,7 +2127,7 @@ public final class Checker {
         diags.fixable(Code.E0101, n.span, "unknown name `" + n.name + "`", hint, fix);
     }
 
-    private Type fieldAccess(FieldAccess f) {
+    private Type fieldAccess(FieldAccess f, Type expected) {
         // ns.NAME, a constant of the file imported as ns, and ns.Enum.Variant.
         if (f.target instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name) && !enums.containsKey(n.name)
             && aliasScope(n.name) != null) {
@@ -1989,8 +2158,7 @@ public final class Checker {
                 diags.error(Code.E0204, f.span, d.name + "." + v.name + " needs " + v.payload.size() + " value(s)",
                     "write " + n.name + "." + d.name + "." + v.name + "(" + joinTypes(v.payload) + ")");
             }
-            f.variant = v;
-            return new Type.EnumT(d);
+            return unitVariant(f, d, v, expected);
         }
         if (f.target instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name)) {
             EnumDecl d = enums.get(n.name);
@@ -2005,8 +2173,7 @@ public final class Checker {
                     diags.error(Code.E0204, f.span, d.name + "." + v.name + " needs " + v.payload.size() + " value(s)",
                         "write " + d.name + "." + v.name + "(" + joinTypes(v.payload) + ")");
                 }
-                f.variant = v;
-                return new Type.EnumT(d);
+                return unitVariant(f, d, v, expected);
             }
         }
         Type t = expr(f.target, null);
@@ -2156,7 +2323,7 @@ public final class Checker {
             for (int i = 0; i < n; i++) {
                 Arg a = c.args.get(i);
                 LocalVar p = f.paramVars.get(i);
-                if (done[i] || pass == 0 && Type.hasTypeVar(p.type) && literalArgument(a.expr())) continue;
+                if (done[i] || pass == 0 && Type.hasTypeVar(p.type) && contextTyped(a.expr())) continue;
                 done[i] = true;
                 if (p.type instanceof Type.FnT ft) {
                     fnArgs[i] = functionValue(a, ft, f, caps, types);
@@ -2234,14 +2401,17 @@ public final class Checker {
             if (known.size() == nc && !typeArgs.contains(null) && allFns) c.fn = instance(f, known, typeArgs, fns2);
         }
         if (ctx.routine != null) ctx.routine.callees.add(c.fn);
-        return Type.substituteTypes(f.ret, f, types);
+        Type result = Type.substituteTypes(f.ret, f, types);
+        // A type parameter the arguments did not fix was reported; its type variable must not reach the caller.
+        if (diags.errorCount() != before && !ownTypeVarsOnly(result)) return Type.ERROR;
+        return result;
     }
 
     /**
      * A literal argument for a parameter whose type has type parameters that no other argument fixed: what the
      * literal would be on its own decides them, as in first([1, 2, 3]), where T is i64.
      */
-    private void inferFromLiteral(Expr arg, Type want, FnDecl f, Map<Integer, Integer> caps, Map<Integer, Type> types) {
+    private void inferFromLiteral(Expr arg, Type want, Object f, Map<Integer, Integer> caps, Map<Integer, Type> types) {
         if (!literalArgument(arg) || arg instanceof ArrayLit al && al.elems.isEmpty()) return;
         Diagnostics saved = diags;
         diags = new Diagnostics(saved.source());
@@ -3435,7 +3605,7 @@ public final class Checker {
         return f != null && !f.params.isEmpty() && f.params.get(0).mut();
     }
 
-    private Type variantCall(VariantCall v) {
+    private Type variantCall(VariantCall v, Type expected) {
         EnumDecl d;
         if (v.qualifier != null) {
             Integer s = qualifierScope(v.qualifier, v.span);
@@ -3490,19 +3660,149 @@ public final class Checker {
                 : "write " + d.name + "." + variant.name + "(" + joinTypes(variant.payload) + ")";
             diags.error(Code.E0204, v.span, d.name + "." + variant.name + " takes " + variant.payload.size()
                 + " value(s) but " + v.args.size() + " were given", hint);
-            return new Type.EnumT(d);
+            return d.generics.generic() ? Type.ERROR : new Type.EnumT(d);
+        }
+        for (Arg a : v.args) noMut(a);
+        boolean checked = false;
+        if (d.generics.generic()) {
+            // Option.Some(x): the instance the expected type names, else the one the payload's types make.
+            EnumDecl inst = expected instanceof Type.EnumT et && Ast.origin(et.decl()) == d && ownTypeVarsOnly(expected) ? et.decl() : null;
+            if (inst == null) {
+                List<Type> args = inferTypeArgs(d, v.args.stream().map(Arg::expr).toList(), variant.payload, v.span);
+                if (args == null) return Type.ERROR;
+                Item made = instantiate(d, args);
+                if (made == null) return Type.ERROR;
+                inst = (EnumDecl) made;
+                checked = true;
+            }
+            d = inst;
+            v.enumDecl = d;
+            variant = d.variant(v.variantName);
+            v.variant = variant;
         }
         for (int i = 0; i < v.args.size(); i++) {
             Arg a = v.args.get(i);
-            noMut(a);
             Type pt = variant.payload.get(i);
-            Type at = expr(a.expr(), pt);
+            Type at = checked ? a.expr().type : expr(a.expr(), pt);
             requireAssignable(a.expr(), at, pt);
         }
         return new Type.EnumT(d);
     }
 
-    private Type structLit(StructLit s) {
+    /**
+     * `Enum.Variant` without a payload, as a value: of an enum with type parameters, the instance the expected type
+     * names, as nothing else says what they stand for (E0216).
+     */
+    private Type unitVariant(FieldAccess f, EnumDecl d, Variant v, Type expected) {
+        if (d.generics.generic()) {
+            if (!(expected instanceof Type.EnumT et && Ast.origin(et.decl()) == d && ownTypeVarsOnly(expected))) {
+                String ps = String.join(", ", d.generics.params.stream().map(p -> "`" + p + "`").toList());
+                diags.error(Code.E0216, f.span, "cannot tell what type" + (d.generics.params.size() > 1 ? "s " : " ") + ps + " of `"
+                    + d.name + "` stand" + (d.generics.params.size() > 1 ? "" : "s") + " for here",
+                    "give the value a type: let x: " + d.name + "<" + String.join(", ", java.util.Collections.nCopies(d.generics.params.size(),
+                        "i64")) + "> = " + exprText(f) + ";, or compare it with a value that has one");
+                return Type.ERROR;
+            }
+            d = et.decl();
+            v = d.variant(v.name);
+        }
+        f.variant = v;
+        return new Type.EnumT(d);
+    }
+
+    /**
+     * Whether every type variable in {@code t} is a type parameter of the function being checked: a type the code here
+     * can build a value of. A parameter of a function being called is not: a call works it out from its arguments.
+     */
+    private boolean ownTypeVarsOnly(Type t) {
+        if (!Type.hasTypeVar(t)) return true;
+        Object own = ctx.fn == null ? null : ctx.fn.origin != null ? ctx.fn.origin : ctx.fn;
+        return typeVarsOwnedBy(t, own);
+    }
+
+    private static boolean typeVarsOwnedBy(Type t, Object owner) {
+        return switch (t) {
+            case Type.TypeVar v -> v.owner() == owner;
+            case Type.ListT l -> typeVarsOwnedBy(l.elem(), owner);
+            case Type.ArrayT a -> typeVarsOwnedBy(a.elem(), owner);
+            case Type.TupleT tt -> tt.elems().stream().allMatch(e -> typeVarsOwnedBy(e, owner));
+            case Type.MapT m -> typeVarsOwnedBy(m.key(), owner) && typeVarsOwnedBy(m.value(), owner);
+            case Type.SetT st -> typeVarsOwnedBy(st.elem(), owner);
+            case Type.FnT fn -> fn.params().stream().allMatch(e -> typeVarsOwnedBy(e, owner)) && typeVarsOwnedBy(fn.ret(), owner);
+            case Type.StructT st -> Type.typeArgs(st).stream().allMatch(e -> typeVarsOwnedBy(e, owner));
+            case Type.EnumT et -> Type.typeArgs(et).stream().allMatch(e -> typeVarsOwnedBy(e, owner));
+            default -> true;
+        };
+    }
+
+    /**
+     * What the type parameters of {@code d} stand for in a value built from {@code values}, the fields or payload whose
+     * types in d are {@code declared}: each value is checked, those with types of their own first, so that a literal
+     * takes the type another value gave a parameter, and the first value whose type gives a parameter fixes it. Null
+     * after reporting a value that does not fit, or a parameter no value says (E0216).
+     */
+    private List<Type> inferTypeArgs(Item d, List<Expr> values, List<Type> declared, Span at) {
+        Generics g = Ast.generics(d);
+        Map<Integer, Integer> caps = new HashMap<>();
+        Map<Integer, Type> types = new HashMap<>();
+        int before = diags.errorCount();
+        boolean[] done = new boolean[values.size()];
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < values.size(); i++) {
+                Expr e = values.get(i);
+                if (done[i] || pass == 0 && contextTyped(e)) continue;
+                done[i] = true;
+                Type want = Type.substituteTypes(declared.get(i), d, types);
+                if (Type.hasTypeVar(want) && !ownTypeVarsOnly(want)) {
+                    // A literal says what it would be on its own: [true] makes a list[T; 4]'s T a bool.
+                    inferFromLiteral(e, want, d, caps, types);
+                    want = Type.substituteTypes(want, d, types);
+                }
+                Type vt = expr(e, Type.hasTypeVar(want) && !ownTypeVarsOnly(want) ? null : want);
+                if (Type.isError(vt)) continue;
+                if (!Type.bind(declared.get(i), vt, false, caps, d, types)) mismatch(e, vt, Type.substituteTypes(declared.get(i), d, types));
+            }
+        }
+        if (diags.errorCount() != before) return null;
+        List<Type> args = new ArrayList<>();
+        for (int i = 0; i < g.params.size(); i++) {
+            Type t = types.get(i);
+            if (t == null) {
+                diags.error(Code.E0216, at, "cannot tell from the values what type `" + g.params.get(i) + "` of `" + d.name
+                    + "` stands for", "give the value a type: let x: " + d.name + "<" + String.join(", ",
+                        java.util.Collections.nCopies(g.params.size(), "i64")) + "> = ...;");
+                return null;
+            }
+            args.add(t);
+        }
+        return args;
+    }
+
+    /**
+     * Whether {@code e} takes its type from where it goes, so it is checked after the values that have types of their
+     * own: a number, an array literal, and a value of a struct or enum with type parameters, such as Option.None.
+     */
+    private boolean contextTyped(Expr e) {
+        if (isUntyped(e) || isArrayLiteral(e)) return true;
+        return switch (e) {
+            case VariantCall v -> v.asCall == null && genericNamed(v.qualifier, v.enumName, enums);
+            case FieldAccess f -> f.target instanceof Name n && lookupLocal(n.name) == null && genericNamed(null, n.name, enums)
+                || f.target instanceof FieldAccess q && q.target instanceof Name ns && lookupLocal(ns.name) == null
+                && aliasScope(ns.name) != null && genericNamed(ns.name, q.name, enums);
+            case StructLit st -> genericNamed(st.qualifier, st.name, structs);
+            default -> false;
+        };
+    }
+
+    /** Whether `Name` or `ns.Name` names a declaration with type parameters in {@code table}. */
+    private <T extends Item> boolean genericNamed(String qualifier, String name, Table<T> table) {
+        Integer s = qualifier == null ? null : aliasScope(qualifier);
+        if (qualifier != null && s == null) return false;
+        T d = qualifier == null ? table.get(name) : table.in(s, name);
+        return d != null && Ast.generics(d).generic();
+    }
+
+    private Type structLit(StructLit s, Type expected) {
         StructDecl d;
         if (s.qualifier != null) {
             Integer sc = qualifierScope(s.qualifier, s.span);
@@ -3526,6 +3826,34 @@ public final class Checker {
             }
             return Type.ERROR;
         }
+        boolean checked = false;
+        if (d.generics.generic()) {
+            // Pair(first: 1, second: x): the instance the expected type names, else the one the fields' types make.
+            StructDecl inst = expected instanceof Type.StructT et && Ast.origin(et.decl()) == d && ownTypeVarsOnly(expected) ? et.decl() : null;
+            if (inst == null) {
+                List<Expr> values = new ArrayList<>();
+                List<Type> declared = new ArrayList<>();
+                Set<Integer> given = new HashSet<>();
+                for (FieldInit fi : s.fields) {
+                    int idx = d.fieldIndex(fi.name());
+                    if (idx >= 0 && given.add(idx)) {
+                        values.add(fi.value());
+                        declared.add(d.fields.get(idx).type);
+                    }
+                }
+                List<Type> args = inferTypeArgs(d, values, declared, s.span);
+                Item made = args == null ? null : instantiate(d, args);
+                if (made == null) {
+                    for (FieldInit fi : s.fields) {
+                        if (!values.contains(fi.value())) expr(fi.value(), null);
+                    }
+                    return Type.ERROR;
+                }
+                inst = (StructDecl) made;
+                checked = true;
+            }
+            d = inst;
+        }
         s.decl = d;
         int[] order = new int[d.fields.size()];
         java.util.Arrays.fill(order, -1);
@@ -3540,10 +3868,12 @@ public final class Checker {
             }
             if (order[idx] >= 0) {
                 diags.error(Code.E0213, fi.span(), "field `" + fi.name() + "` is given twice");
+                if (checked) expr(fi.value(), d.fields.get(idx).type);
             }
+            boolean first = order[idx] < 0;
             order[idx] = i;
             Type ft = d.fields.get(idx).type;
-            Type vt = expr(fi.value(), ft);
+            Type vt = checked && first ? fi.value().type : expr(fi.value(), ft);
             requireAssignable(fi.value(), vt, ft);
         }
         List<String> missing = new ArrayList<>();
@@ -3695,7 +4025,9 @@ public final class Checker {
         Type rt;
         boolean rightFirst = isUntyped(l)
             && (!isUntyped(r) || hint == null && !hasFloatLiteral(l) && hasFloatLiteral(r))
-            || isArrayLiteral(l) && !isArrayLiteral(r) && !isUntyped(r);
+            || isArrayLiteral(l) && !isArrayLiteral(r) && !isUntyped(r)
+            // m == Option.None: the variant takes its type from m.
+            || hint == null && contextTyped(l) && !contextTyped(r);
         if (rightFirst) {
             rt = expr(r, hint);
             lt = expr(l, Type.isError(rt) ? hint : rt);

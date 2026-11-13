@@ -1,5 +1,6 @@
 package alang.parse;
 
+import alang.ast.Ast.Item;
 import alang.ast.Ast.Program;
 import alang.diag.Diagnostics;
 import alang.diag.Source;
@@ -49,6 +50,36 @@ public final class Parser {
         ALangParser.ProgramContext tree = parser.program();
         if (listener.hasError()) return null;
         return new Parsed(AstBuilder.build(diags, file, tokens, tree, imported), nesting);
+    }
+
+    /** The declarations every program has: the types an optional value and a result that can fail are. */
+    public static final String PRELUDE = """
+        /// An optional value: Option.Some(value), or Option.None when there is none.
+        enum Option<T> {
+            /// No value.
+            None,
+            /// A value.
+            Some(T),
+        }
+
+        /// The outcome of something that can fail: Result.Ok(value), or Result.Err(error) saying why.
+        enum Result<T, E> {
+            /// It worked: the value.
+            Ok(T),
+            /// It failed: why.
+            Err(E),
+        }
+        """;
+
+    /**
+     * A fresh copy of the prelude's declarations, for one program, whose checker annotates them: built in, so that
+     * every file sees them and none can declare their names.
+     */
+    public static List<Item> prelude() {
+        Source src = new Source("<builtin>", PRELUDE);
+        Parsed p = parse(src, new Diagnostics(src), true);
+        for (Item item : p.program.items) item.builtin = true;
+        return p.program.items;
     }
 
     /**

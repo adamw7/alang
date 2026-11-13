@@ -84,11 +84,52 @@ public final class Ast {
         public String doc = "";
         /** The scope of its names: 0 for the main file and what it imports without `as` (see {@link Program#aliases}). */
         public int scope;
+        /** A declaration every program has, Option and Result: seen from every scope, and reserved. */
+        public boolean builtin;
 
         Item(Span span, String name) {
             this.span = span;
             this.name = name;
         }
+    }
+
+    /**
+     * The type parameters of a struct or enum, `struct Pair<A, B>`, and what makes it types. The declaration as written
+     * has fields (or payloads) of type parameters; each list of types its parameters stand for, Pair<i64, bool>, is an
+     * instance: a declaration of its own, made once, with those types in place, which every later phase sees as an
+     * ordinary struct or enum. An instance knows its origin and its type arguments.
+     */
+    public static final class Generics {
+        public final List<String> params;
+        public final List<Span> paramSpans;
+        /** For an instance: the declaration it is made from, and the types its parameters stand for. */
+        public Item origin;
+        public List<Type> args = List.of();
+        /** For a declaration with parameters: its instances, by their type arguments, in the order they were made. */
+        public final Map<List<Type>, Item> instances = new LinkedHashMap<>();
+        /** Set by the checker on a declaration with parameters: its instance for the given types, or null if it has none. */
+        public java.util.function.Function<List<Type>, Item> instantiate;
+
+        public Generics(List<String> params, List<Span> paramSpans) {
+            this.params = params;
+            this.paramSpans = paramSpans;
+        }
+
+        /** Whether the declaration as written has type parameters (an instance has none left). */
+        public boolean generic() {
+            return !params.isEmpty() && origin == null;
+        }
+    }
+
+    /** The generics of a struct or enum declaration. */
+    public static Generics generics(Item d) {
+        return d instanceof StructDecl s ? s.generics : ((EnumDecl) d).generics;
+    }
+
+    /** The declaration an instance is made from, or the declaration itself. */
+    public static Item origin(Item d) {
+        Generics g = generics(d);
+        return g.origin != null ? g.origin : d;
     }
 
     /** Resolution state used by the checker for lazily resolved items. */
@@ -117,10 +158,17 @@ public final class Ast {
     public static final class StructDecl extends Item {
         public final List<Field> fields;
         public State state = State.NEW;
+        /** The type parameters of `struct Pair<A, B>`, how a struct and an enum with them become types. */
+        public final Generics generics;
 
         public StructDecl(Span span, String name, List<Field> fields) {
+            this(span, name, fields, new Generics(List.of(), List.of()));
+        }
+
+        public StructDecl(Span span, String name, List<Field> fields, Generics generics) {
             super(span, name);
             this.fields = fields;
+            this.generics = generics;
         }
 
         public int fieldIndex(String name) {
@@ -150,10 +198,17 @@ public final class Ast {
     public static final class EnumDecl extends Item {
         public final List<Variant> variants;
         public State state = State.NEW;
+        /** The type parameters of `enum Maybe<T>`: see {@link Generics}. */
+        public final Generics generics;
 
         public EnumDecl(Span span, String name, List<Variant> variants) {
+            this(span, name, variants, new Generics(List.of(), List.of()));
+        }
+
+        public EnumDecl(Span span, String name, List<Variant> variants, Generics generics) {
             super(span, name);
             this.variants = variants;
+            this.generics = generics;
         }
 
         public Variant variant(String name) {
@@ -320,8 +375,12 @@ public final class Ast {
     /** {@code len} is null for `_`: any length, in the type of a function parameter. */
     public record ArrayRef(Span span, TypeRef elem, Expr len) implements TypeRef {}
 
-    /** A struct or enum by name; {@code qualifier} is the alias of `ns.Name`, or null. */
-    public record NamedRef(Span span, String name, String qualifier) implements TypeRef {}
+    /** A struct or enum by name, with its type arguments, Pair<i64, bool>; {@code qualifier} is the alias of `ns.Name`, or null. */
+    public record NamedRef(Span span, String name, String qualifier, List<TypeRef> args) implements TypeRef {
+        public NamedRef(Span span, String name, String qualifier) {
+            this(span, name, qualifier, List.of());
+        }
+    }
 
     /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
     public record MapRef(Span span, TypeRef key, TypeRef value, Expr cap) implements TypeRef {}

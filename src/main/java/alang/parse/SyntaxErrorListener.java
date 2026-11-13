@@ -572,9 +572,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if ((t == ALangLexer.LT || t == ALangLexer.LBRACK && prev2 != null
                 && (prev2.getType() == ALangLexer.COLON || prev2.getType() == ALangLexer.ARROW))
             && p == ALangLexer.IDENT && !expectsOperator(expected)) {
-            return "a type takes its element types in brackets: list[i64; 16], map[str[8], i64; 16]; only a function has "
-                + "type parameters, fn first<T>(xs: list[T; _]) -> T, and an optional value is an enum: "
-                + "enum MaybeI64 { None, Some(i64) }";
+            return "a list, array or map takes its element types in brackets: list[i64; 16], map[str[8], i64; 16]; a struct "
+                + "or enum takes its type arguments in angle brackets, Option<i64>, Pair<i64, str[8]>";
         }
         if (t == ALangLexer.LBRACE && p == ALangLexer.FAT_ARROW) {
             // `=>` then `{` where a value must come: an arm of a match expression.

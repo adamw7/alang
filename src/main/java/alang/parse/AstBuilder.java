@@ -112,7 +112,7 @@ final class AstBuilder {
                 field.doc = docComment(f.getStart());
                 fields.add(field);
             }
-            return new StructDecl(span(s.identifier()), s.identifier().getText(), fields);
+            return new StructDecl(span(s.identifier()), s.identifier().getText(), fields, generics(s.typeParams()));
         }
         if (ctx.enumDecl() != null) {
             EnumDeclContext e = ctx.enumDecl();
@@ -124,7 +124,7 @@ final class AstBuilder {
                 variant.doc = docComment(v.getStart());
                 variants.add(variant);
             }
-            return new EnumDecl(span(e.identifier()), e.identifier().getText(), variants);
+            return new EnumDecl(span(e.identifier()), e.identifier().getText(), variants, generics(e.typeParams()));
         }
         if (ctx.functionDecl() != null) {
             return function(ctx.functionDecl());
@@ -156,6 +156,19 @@ final class AstBuilder {
         }
         diags.error(Code.E0001, at, "`" + text + "` is not a trap code", hint);
         return null;
+    }
+
+    /** The type parameters of `struct Pair<A, B>` or `enum Maybe<T>`. */
+    private Generics generics(TypeParamsContext ctx) {
+        List<String> names = new ArrayList<>();
+        List<Span> spans = new ArrayList<>();
+        if (ctx != null) {
+            for (IdentifierContext t : ctx.identifier()) {
+                names.add(t.getText());
+                spans.add(span(t));
+            }
+        }
+        return new Generics(names, spans);
     }
 
     private FnDecl function(FunctionDeclContext f) {
@@ -247,8 +260,21 @@ final class AstBuilder {
             for (TypeContext e : t.type()) elems.add(type(e));
             return new TupleRef(sp, elems);
         }
+        if (ctx instanceof NestedTypeRefContext n) {
+            // Name<A, Inner<B>>: the `>>` closes Inner's arguments and Name's.
+            List<TypeRef> args = new ArrayList<>();
+            for (TypeContext t : n.type()) args.add(type(t));
+            InnerTypeContext in = n.innerType();
+            List<TypeRef> innerArgs = new ArrayList<>();
+            for (TypeContext t : in.type()) innerArgs.add(type(t));
+            args.add(new NamedRef(span(in.getStart(), n.SHR().getSymbol()), in.identifier(in.identifier().size() - 1).getText(),
+                in.qual == null ? null : in.qual.getText(), innerArgs));
+            return new NamedRef(sp, n.identifier(n.identifier().size() - 1).getText(), n.qual == null ? null : n.qual.getText(), args);
+        }
         NamedTypeRefContext n = (NamedTypeRefContext) ctx;
-        return new NamedRef(sp, n.identifier(n.identifier().size() - 1).getText(), n.qual == null ? null : n.qual.getText());
+        List<TypeRef> args = new ArrayList<>();
+        for (TypeContext t : n.type()) args.add(type(t));
+        return new NamedRef(sp, n.identifier(n.identifier().size() - 1).getText(), n.qual == null ? null : n.qual.getText(), args);
     }
 
     /** A capacity or length: its expression, or null for `_` (any capacity, in a parameter's type). */

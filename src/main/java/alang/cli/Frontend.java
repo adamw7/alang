@@ -52,6 +52,7 @@ public final class Frontend {
         Diagnostics diags = new Diagnostics(source);
         Program program = load(source, diags);
         if (program == null) return new Result(diags, null, null);
+        program.items.addAll(0, Parser.prelude());
         CheckResult check = Checker.check(program, diags, maxStack);
         return new Result(diags, program, check);
     }

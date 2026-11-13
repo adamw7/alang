@@ -104,10 +104,11 @@ let n: i64 = length(xs);  // error: the builtin is `len`
 
 ## E0103
 
-**unknown type**: A type name is not a primitive type and no struct or enum with that name exists.
+**unknown type**: A type name is not a primitive type and no struct or enum with that name exists, or a struct or enum is given the wrong number of type arguments: one per type parameter, as in Option<i64> or Pair<i64, str[8]>, and none for one without type parameters.
 
 ```
 let p: Pointt = Point(x: 1, y: 2);  // typo
+let m: Option = Option.None;      // error: write Option<i64>
 ```
 
 ## E0104
@@ -148,10 +149,11 @@ let c: Color = Color.Blue;  // error
 
 ## E0108
 
-**reserved name**: The name is reserved for a builtin function and cannot be used for a declaration.
+**reserved name**: The name is reserved for a builtin function, or for a built-in type every program has (Option<T> and Result<T, E>), and cannot be used for a declaration.
 
 ```
 fn print() { }  // error: `print` is a builtin
+enum Option { None }  // error: Option<T> is built in
 ```
 
 ## E0201
@@ -287,10 +289,12 @@ print(top);
 
 ## E0216
 
-**type cannot be inferred**: The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list. split, words, join and replace take their type from the variable they are stored in; split and words may also be what a for loop goes through.
+**type cannot be inferred**: The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list. split, words, join and replace take their type from the variable they are stored in; split and words may also be what a for loop goes through. A value of a struct or enum with type parameters takes their types from where it goes, or from its fields or payload: Option.None needs a typed variable, parameter or comparison, and a type parameter must be in a field's or payload's type.
 
 ```
 print([]);  // error
+print(Option.None);  // error
+let m: Option<i64> = Option.None;  // ok
 ```
 
 ## E0217

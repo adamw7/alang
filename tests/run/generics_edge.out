@@ -1,0 +1,4 @@
+Option.None Stack(items: [1, 2]) Option.Some(2) Option.Some(true)
+Option.Some("x") false
+Option.None true
+{"a": Option.Some(1), "b": Option.None}

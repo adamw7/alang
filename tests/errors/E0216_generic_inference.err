@@ -1,0 +1,21 @@
+error[E0216]: type parameter `T` is in no field's type
+ --> tests/errors/E0216_generic_inference.al:2:15
+  |
+2 | struct Tagged<T> {
+  |               ^
+  = hint: use it in one, as in struct Pair<A, B> { first: A, second: B }, or remove it
+
+error[E0216]: cannot tell what type `T` of `Option` stands for here
+ --> tests/errors/E0216_generic_inference.al:7:11
+  |
+7 |     print(Option.None);
+  |           ^^^^^^^^^^^
+  = hint: give the value a type: let x: Option<i64> = Option.None;, or compare it with a value that has one
+
+error[E0216]: cannot tell from the values what type `E` of `Result` stands for
+ --> tests/errors/E0216_generic_inference.al:8:11
+  |
+8 |     print(Result.Ok(1));
+  |           ^^^^^^^^^^^^
+  = hint: give the value a type: let x: Result<i64, i64> = ...;
+

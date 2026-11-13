@@ -118,15 +118,18 @@ test "counts repeated words" {
 12. **A `mut` variable cannot appear twice in one call**: `append(mut s, s)` and `swap(mut xs[i], mut xs[j])` are errors. Numbers passed without `mut` are copied first, so `remove(mut xs, len(xs) - 1)` is fine.
 13. **No shadowing.** Pick a new name instead of redeclaring one in an inner block.
 14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings. Patterns nest:
-    `MaybeI64.Some(0)`, `(Color.Red, true)`, `Point(x: 0, y: py)`, `1..=9`, `'a'..='z'`, `6 | 7`, and a plain
+    `Option.Some(0)`, `(Color.Red, true)`, `Point(x: 0, y: py)`, `1..=9`, `'a'..='z'`, `6 | 7`, and a plain
     name, which binds a copy (there are no float patterns). An arm may have a guard,
-    `MaybeI64.Some(v) if v > 0 => { }`; guarded arms do not count toward exhaustiveness. As a value:
-    `let s: str[8] = match n { 0 => "zero", _ => "many" };`. One case only: `if let MaybeI64.Some(v) = m { }`.
+    `Option.Some(v) if v > 0 => { }`; guarded arms do not count toward exhaustiveness. As a value:
+    `let s: str[8] = match n { 0 => "zero", _ => "many" };`. One case only: `if let Option.Some(v) = m { }`.
 15. **Functions with a return type return on every path.** Add a final `return` after loops.
 16. **No methods.** `len(xs)`, not `xs.len()`; `push(mut xs, v)`, not `xs.push(v)`; `trim(s)`, not `s.trim()`.
 17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`. Two strs compare with `==` and order with `<`, byte by byte. For characters beyond ASCII, `char_count(s)` counts
     code points, `for c in chars(s) { }` goes through them (each a `u32`), and `slice_chars` cuts between them.
-18. **No exceptions.** Return an enum for recoverable failures; `panic("...")` or `assert` for bugs.
+18. **No exceptions, no null.** Return `Option<T>` (`Option.Some(x)`, `Option.None`) for a value that may be
+    absent and `Result<T, E>` (`Result.Ok(x)`, `Result.Err(why)`) for one that can fail; both are built in.
+    `panic("...")` or `assert` for bugs. Structs and enums of your own take type parameters too:
+    `struct Pair<A, B> { first: A, second: B }`, used as `Pair<i64, str[8]>`.
 19. **Input arrives whole; nothing else is read.** `fn main(input: str[4096])` gets all of stdin as bytes
     (`bin/alang run prog.al < data.txt`; more than 4096 bytes traps), a `tool fn` gets JSON. No files.
     Go through it with `for line in split(input, '\n') { }`: one line at a time, never a trap on a long one.
@@ -143,7 +146,9 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 |-----------------|----------------|
 | `let x = 5;` / `x := 5` | `let x: i64 = 5;` |
 | `int`, `usize`, `String`, `Vec<T>` | `i32`/`i64`, `i64`, `str[N]`, `list[T; N]` |
-| `Option<T>`, `null` | `enum MaybeT { None, Some(T) }` |
+| `Option<T>`, `null`, `T?` | `Option<T>`: `Option.Some(x)`, `Option.None` |
+| `Result<T, E>`, throwing an error | `Result<T, E>`: `Result.Ok(x)`, `Result.Err(why)` |
+| `struct Pair<A, B>`, `class Box<T>` | `struct Pair<A, B> { first: A, second: B }`, used as `Pair<i64, bool>` |
 | `dict`, `HashMap<K, V>`, `set()`, `HashSet<T>` | `map[str[16], i64; 64]`, `set[i64; 32]`: a capacity, keys always in order; `var m: map[str[8], i64; 16] = [];` then `m[k] = v;` |
 | `d.get(k, 0)`, `d[k] = d.get(k, 0) + 1`, `for k, v in d.items()` | `get_or(m, k, 0)`, `m[k] = get_or(m, k, 0) + 1;`, `for k, v in m { }` |
 | `return a, b`, `(a, b) = f()`, `let (q, r) = divmod(a, b)` | `return (a, b);` with `-> (i64, i64)`, then `let (q, r): (i64, i64) = divmod(a, b);` and `p.0`, `p.1` |
@@ -175,10 +180,10 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `println!("{}", x)` | `print(x);` |
 | `throw` / `raise` | return an enum, or `panic("message")` |
 | `c ? a : b`, `a if c else b`, `if c { a } else { b }` as a value | `if c then a else b` |
-| `case x if x > 0 =>`, `Some(v) if v > 0 =>` | `_ if x > 0 => { }`, `MaybeI64.Some(v) if v > 0 => { }` (guards) |
+| `case x if x > 0 =>`, `Some(v) if v > 0 =>` | `_ if x > 0 => { }`, `Option.Some(v) if v > 0 => { }` (guards) |
 | `1 \| 2 =>`, `case 1, 2:`, `1..=5 =>`, `'a'..='z'` | `1 \| 2 => { }`, `1..=5 => { }`, `'a'..='z' => { }` |
 | `let x = match v { ... }`, `x = switch ...` | `let x: T = match v { P => a, _ => b };`: arms are values, separated by commas |
-| `if let Some(v) = m { }`, `if (m != null)` | `if let MaybeI64.Some(v) = m { } else { }` |
+| `if let Some(v) = m { }`, `if (m != null)` | `if let Option.Some(v) = m { } else { }` |
 | `let Point { x, y } = p;`, `const { x, y } = p` | `let Point(x: px, y: py): Point = p;` |
 | `sys.stdin.read()`, `open(path).read()`, `input()` | `fn main(input: str[4096])`, run with `< path`; split it into lines |
 | `import utils`, `#include "utils.h"`, `use crate::utils` | `import "utils.al";` before any declaration |
@@ -315,28 +320,40 @@ fn main() {
 }
 ```
 
-**Optional value**
+**Optional values and errors**
 
 ```alang
-enum MaybeI64 {
-    None,
-    Some(i64),
-}
-
-fn first_negative(xs: [i64; 4]) -> MaybeI64 {
+// Option<T> and Result<T, E> are built in; a value takes its type from where it goes.
+fn first_negative(xs: [i64; 4]) -> Option<i64> {
     for x in xs {
         if x < 0 {
-            return MaybeI64.Some(x);
+            return Option.Some(x);
         }
     }
-    return MaybeI64.None;
+    return Option.None;
+}
+
+fn parse_age(s: str[_]) -> Result<u8, str[32]> {
+    let t: str[32] = str[32](trim(s));
+    if not is_int(t) {
+        return Result.Err("not a number");
+    }
+    let n: i64 = i64(t);
+    if n < 0 or n > 150 {
+        return Result.Err("out of range");
+    }
+    return Result.Ok(u8(n));
 }
 
 fn main() {
     match first_negative([3, -1, 4, -5]) {
-        MaybeI64.Some(v) => { print("found ", v); }
-        MaybeI64.None => { print("none"); }
+        Option.Some(v) => { print("found ", v); }
+        Option.None => { print("none"); }
     }
+    if let Result.Ok(age) = parse_age(" 42 ") {
+        print("age ", age);
+    }
+    print(parse_age("x"));
 }
 ```
 

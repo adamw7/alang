@@ -113,7 +113,28 @@ through a set, all in order (`rev` backwards). They print as `{"a": 1, "b": 2}` 
 by contents (capacities may differ), and finding a key takes a binary search.
 
 **Enum** variants are always qualified (`Shape.Empty`, `Shape.Circle(2.0)`), and payloads are read only
-with `match`. There is no `null`: model absence with an enum such as `enum MaybeI32 { None, Some(i32) }`.
+with `match` (or `if let`). There is no `null`: a value that may be absent is an `Option<T>` (below).
+
+**Type parameters.** A struct or enum can take types as parameters, `struct Pair<A, B> { first: A, second: B }`,
+`enum Tree<T> { Leaf(T), Empty }`, and is then a type only with a type for each, `Pair<i64, str[8]>`: an instance,
+a struct of its own with those types in place of A and B (E0103 for the wrong number of them). Two instances are
+different types, as two structs are. A value takes its type arguments from the type it is stored as, passed as or
+compared with, `let p: Pair<i64, bool> = Pair(first: 1, second: true);`, or else from its fields or payload,
+`Pair(first: 1, second: true)`; a value that says nothing about one, `Option.None` on its own, is E0216, as is a type
+parameter in no field's or payload's type. A type argument has constant capacities (E0217), and a declaration
+cannot contain an instance of itself (E0403). Inside a generic function, `Option<T>` takes the function's `T`.
+
+**Option and Result.** Every program has two enums of this kind, built in, which nothing may redeclare (E0108):
+
+```
+enum Option<T> { None, Some(T) }        // a value, or none
+enum Result<T, E> { Ok(T), Err(E) }     // a value, or the error that kept it from being made
+```
+
+Return `Option.Some(i)` or `Option.None` from a search, and `Result.Ok(n)` or `Result.Err(why)` from something that
+can fail; a caller takes them apart with `match` or `if let Option.Some(i) = find(xs, x) { }`. Like every enum they
+compare with `==`, sort (`None` before `Some`, `Ok` before `Err`), print as `Option.Some(3)`, and are JSON values in
+a tool's arguments and result (§10): `"None"`, `{"Some": [3]}`.
 
 **Equality and ordering.** `==` and `!=` work on every type (strings, and lists of the same element type,
 of different capacities may be compared; aggregates compare element-wise). `< <= > >=` work on numbers of
@@ -128,7 +149,9 @@ everything):
 import "path/to/file.al";
 const NAME: Type = constant-expression;
 struct Name { field: Type, ... }
+struct Name<T, U> { field: T, ... }
 enum Name { Variant, Variant(Type, ...), ... }
+enum Name<T> { Variant, Variant(T), ... }
 fn name(param: Type, param: mut Type, param: Type = constant) -> ReturnType requires cond ensures cond { ... }
 tool fn name(param: Type) -> ReturnType { ... }
 test "description" { ... }
@@ -194,7 +217,7 @@ a file, before any declaration (E0001), and:
 |-----------|------|
 | binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;`, `let Point(x: px, y: _): Point = p;` (a pattern that always matches) |
 | assignment | `place = expr;` and `+= -= *= /= %=` |
-| condition | `if c { } else if c { } else { }`; any condition may be `let Pattern = expr` (`if let MaybeI64.Some(v) = m { }`) |
+| condition | `if c { } else if c { } else { }`; any condition may be `let Pattern = expr` (`if let Option.Some(v) = m { }`) |
 | loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`; `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
 | labels | `outer: for ... { }` or `outer: while ... { }`, then `break outer;` or `continue outer;` from a loop inside it |
 | match | `match e { Pattern => { } ... }` (and as a value: `match e { Pattern => value, ... }`, §6) |
@@ -320,8 +343,7 @@ says what `T` is. Each type parameter must appear in a parameter's type, and a c
 the first argument whose type gives it (arguments with types of their own before literals, so that
 `largest_of(x, 1)` with `x: u8` makes the `1` a `u8`), which the others must then match exactly. Like a `_`, each
 call with new types runs an instance made for them, checked again with the types filled in (`alang check
---memory` lists them). Structs and enums have no type parameters; tuples and the built-in collections cover most
-of what they would.
+--memory` lists them). Structs and enums take type parameters too (§2).
 
 **Function parameters.** A parameter of a function type, `keep: fn(T) -> bool`, takes a function by its name,
 `count_if(xs, is_even)`, and the body calls it, `keep(x)`. The function's parameter and result types must be the

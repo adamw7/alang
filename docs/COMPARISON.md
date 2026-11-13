@@ -382,7 +382,7 @@ common ones with the ALang spelling:
 | `x > 0 ? 1 : 2` | E0001: there is no `?:` operator; use if/else or match |
 | `a and b or c` | E0001: `and` and `or` cannot be mixed without parentheses: `(a and b) or c` |
 | `xs.len()` | E0102: there are no methods; pass the value as the first argument: `len(xs)` |
-| `let x: i64 = null;` | E0101: ALang has no null; model absence with an enum |
+| `let x: i64 = null;` | E0101: ALang has no null; a value that may be absent is an `Option<T>` |
 | `if count { }` | E0211: there is no truthiness; compare explicitly, e.g. `x != 0` |
 | `10.0 / n` with `n: i64` | E0201: convert one side explicitly, e.g. `f64(n)` |
 | a `match` that forgets a variant | E0306: match is not exhaustive: missing `Color.Blue` |

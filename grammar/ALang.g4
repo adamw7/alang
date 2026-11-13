@@ -59,8 +59,9 @@ constDecl
     ;
 
 // struct Point { x: i32, y: i32 }
+// struct Pair<A, B> { first: A, second: B }: a type parameter stands for any type; Pair<i64, bool> fixes them.
 structDecl
-    : STRUCT identifier LBRACE fieldDecl (COMMA fieldDecl)* COMMA? RBRACE
+    : STRUCT identifier typeParams? LBRACE fieldDecl (COMMA fieldDecl)* COMMA? RBRACE
     ;
 
 fieldDecl
@@ -68,8 +69,9 @@ fieldDecl
     ;
 
 // enum Shape { Circle(f64), Rect(f64, f64), Empty }
+// enum Maybe<T> { None, Some(T) }
 enumDecl
-    : ENUM identifier LBRACE variantDecl (COMMA variantDecl)* COMMA? RBRACE
+    : ENUM identifier typeParams? LBRACE variantDecl (COMMA variantDecl)* COMMA? RBRACE
     ;
 
 variantDecl
@@ -119,7 +121,14 @@ type
     | MAP LBRACK type COMMA type SEMI capacity RBRACK  # mapTypeRef  // map[str[16], i64; 64]: up to 64 entries, in key order
     | SET LBRACK type SEMI capacity RBRACK       # setTypeRef      // set[i64; 32]: up to 32 distinct values, in order
     | FN LPAREN (type (COMMA type)*)? RPAREN (ARROW type)?  # fnTypeRef  // fn(i64) -> bool: a function, as a parameter
-    | (qual=identifier DOT)? identifier          # namedTypeRef    // struct or enum name, or ns.Name from an import ... as ns
+    | (qual=identifier DOT)? identifier (LT type (COMMA type)* GT)?   # namedTypeRef  // struct or enum, or ns.Name; Pair<i64, bool>
+    // Option<Option<i64>>: the lexer reads `>>` as one token, which closes the last type argument's list and this one.
+    | (qual=identifier DOT)? identifier LT (type COMMA)* innerType SHR   # nestedTypeRef
+    ;
+
+// The last type argument of a nestedTypeRef, whose `>` is the first half of the `>>`.
+innerType
+    : (qual=identifier DOT)? identifier LT type (COMMA type)*
     ;
 
 // A constant capacity or length. In the type of a function parameter, `_` accepts any:
