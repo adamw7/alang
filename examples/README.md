@@ -35,15 +35,15 @@ bin/alang check examples/game_of_life.al --memory
 bin/alang run examples/tally.al < examples/tally.in
 
 bin/alang call examples/primes.al factorize '{"n": 600851475143}'
-# {"ok": true, "result": [71, 839, 1471, 6857], "stdout": "", "steps": 4919}
+# {"ok": true, "result": [71, 839, 1471, 6857], "stdout": "", "steps": 4920}
 bin/alang call examples/vending_machine.al simulate '{"events": [{"Coin": [200]}, {"Select": ["A2"]}, "Cancel"]}'
-# {"ok": true, "result": [{"Credit": [200]}, {"Vended": ["Juice", 25]}, {"Refunded": [0]}], "stdout": "", "steps": 40}
+# {"ok": true, "result": [{"Credit": [200]}, {"Vended": ["Juice", 25]}, {"Refunded": [0]}], "stdout": "", "steps": 44}
 bin/alang call examples/task_scheduler.al schedule '{"tasks": [{"name": "test", "deps": ["build"]}, {"name": "build", "deps": []}]}'
-# {"ok": true, "result": {"Order": [["build", "test"]]}, "stdout": "", "steps": 62}
+# {"ok": true, "result": {"Order": [["build", "test"]]}, "stdout": "", "steps": 63}
 bin/alang call examples/stats.al fit_line '{"xs": [0, 1, 2], "ys": [1, 3, 5]}'
 # {"ok": true, "result": {"Ok": [{"slope": 2.0, "intercept": 1.0, "r_squared": 1.0}]}, "stdout": "", "steps": 68}
 bin/alang call examples/base64.al encode '{"data": "agents"}'
-# {"ok": true, "result": "YWdlbnRz", "stdout": "", "steps": 34}
+# {"ok": true, "result": "YWdlbnRz", "stdout": "", "steps": 38}
 ```
 
 To add an example, put `NAME.al` here and its exact `bin/alang run` output in `tests/examples/NAME.out`;

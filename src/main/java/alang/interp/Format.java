@@ -54,7 +54,16 @@ public final class Format {
         return (negative ? "-" : "") + new BigDecimal(Math.abs(d)).setScale(decimals, RoundingMode.HALF_EVEN).toPlainString();
     }
 
+    /** Writes the text of a value, as a trap message shows it: at no cost. */
     public static void format(ByteSink out, Object v, Type t, boolean nested) {
+        format(out, v, t, nested, new Meter(0));
+    }
+
+    /**
+     * Writes the text of a value. It costs the bytes of each str, an element for each element, field and entry,
+     * and for each number the work of writing it ({@link Meter#INT_TEXT}, {@link Meter#floatText}).
+     */
+    public static void format(ByteSink out, Object v, Type t, boolean nested, Meter cost) {
         switch (t) {
             case Type.Prim p -> {
                 PrimKind k = p.kind();
@@ -62,23 +71,26 @@ public final class Format {
                 if (k == PrimKind.BOOL) s = ((Boolean) v) ? "true" : "false";
                 else if (k.isFloat) s = formatFloat((Double) v);
                 else s = IntOps.toString(k, (Long) v);
+                cost.units(k.isFloat ? Meter.floatText((Double) v) : Meter.INT_TEXT);
                 out.writeBytes(s.getBytes(StandardCharsets.US_ASCII));
             }
             case Type.Str s -> {
                 StrV sv = (StrV) v;
                 if (!nested) {
+                    cost.bytes(sv.len);
                     out.write(sv.b, 0, sv.len);
                 } else {
+                    cost.bytes(2L * sv.len);
                     quote(out, sv.b, sv.len);
                 }
             }
             case Type.ArrayT a -> {
                 ArrV av = (ArrV) v;
-                list(out, av.items, av.items.length, a.elem());
+                list(out, av.items, av.items.length, a.elem(), cost);
             }
             case Type.ListT l -> {
                 ListV lv = (ListV) v;
-                list(out, lv.items, lv.len, l.elem());
+                list(out, lv.items, lv.len, l.elem(), cost);
             }
             case Type.StructT st -> {
                 StructV sv = (StructV) v;
@@ -89,7 +101,8 @@ public final class Format {
                     if (i > 0) ascii(out, ", ");
                     ascii(out, f.name);
                     ascii(out, ": ");
-                    format(out, sv.fields[i], f.type, true);
+                    cost.elements(1);
+                    format(out, sv.fields[i], f.type, true, cost);
                     i++;
                 }
                 out.write(')');
@@ -99,7 +112,8 @@ public final class Format {
                 out.write('{');
                 for (int i = 0; i < lv.len; i++) {
                     if (i > 0) ascii(out, ", ");
-                    format(out, lv.items[i], st.elem(), true);
+                    cost.elements(1);
+                    format(out, lv.items[i], st.elem(), true, cost);
                 }
                 out.write('}');
             }
@@ -108,9 +122,10 @@ public final class Format {
                 out.write('{');
                 for (int i = 0; i < mv.len; i++) {
                     if (i > 0) ascii(out, ", ");
-                    format(out, mv.keys[i], mt.key(), true);
+                    cost.elements(1);
+                    format(out, mv.keys[i], mt.key(), true, cost);
                     ascii(out, ": ");
-                    format(out, mv.vals[i], mt.value(), true);
+                    format(out, mv.vals[i], mt.value(), true, cost);
                 }
                 out.write('}');
             }
@@ -119,7 +134,8 @@ public final class Format {
                 out.write('(');
                 for (int i = 0; i < tt.elems().size(); i++) {
                     if (i > 0) ascii(out, ", ");
-                    format(out, sv.fields[i], tt.elems().get(i), true);
+                    cost.elements(1);
+                    format(out, sv.fields[i], tt.elems().get(i), true, cost);
                 }
                 out.write(')');
             }
@@ -134,7 +150,8 @@ public final class Format {
                     out.write('(');
                     for (int i = 0; i < var.payload.size(); i++) {
                         if (i > 0) ascii(out, ", ");
-                        format(out, ev.payload[i], var.payload.get(i), true);
+                        cost.elements(1);
+                        format(out, ev.payload[i], var.payload.get(i), true, cost);
                     }
                     out.write(')');
                 }
@@ -143,11 +160,12 @@ public final class Format {
         }
     }
 
-    private static void list(ByteSink out, Object[] items, int n, Type elem) {
+    private static void list(ByteSink out, Object[] items, int n, Type elem, Meter cost) {
         out.write('[');
         for (int i = 0; i < n; i++) {
             if (i > 0) ascii(out, ", ");
-            format(out, items[i], elem, true);
+            cost.elements(1);
+            format(out, items[i], elem, true, cost);
         }
         out.write(']');
     }

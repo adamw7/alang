@@ -243,7 +243,9 @@ public enum Code {
         "The program called panic(message).",
         "panic(\"unreachable state\");"),
     R0011("step budget exhausted",
-        "The interpreter executed more statements than allowed by --max-steps. Raise the budget or reduce the work.",
+        "The run cost more steps than --max-steps allows. A step is a statement or a loop iteration, or about as much "
+            + "time spent on data: copying, comparing, searching, sorting, splitting or writing strs and collections. "
+            + "Raise the budget or reduce the work.",
         "alang run long.al --max-steps 1000000000"),
     R0012("invalid shift or empty pop",
         "A shift amount is negative or not smaller than the bit width, or pop() was called on an empty list/string.",

@@ -249,8 +249,8 @@ test "27 takes 111 steps" {
 ```
 
 A limit that is too small traps with R0008 instead of hanging, and `3 * n + 1` traps with R0001 instead
-of wrapping. The interpreter also counts executed statements (`--max-steps`), so a long program stops
-after exactly the same amount of work, not time, on every run.
+of wrapping. The interpreter also counts steps (`--max-steps`): statements, and the data they go through,
+so a long program stops after exactly the same amount of work on every run, and that work bounds its time.
 
 ## 4. Memory you can read before running
 

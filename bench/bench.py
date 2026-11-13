@@ -51,7 +51,7 @@ DEFAULT_MODEL = "claude-opus-5-5"
 # fallback model is recorded, and the report counts such replies.
 FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 
-ALANG_MAX_STEPS = 10_000_000  # deterministic statement budget per ALang call
+ALANG_MAX_STEPS = 10_000_000  # deterministic step budget per ALang call
 PYTHON_CPU_SECONDS = 10       # CPU limit per Python call
 CASE_TIMEOUT = 30             # wall-clock limit per call, both languages
 MEMORY_LIMIT = 2 << 30        # address-space limit per Python call

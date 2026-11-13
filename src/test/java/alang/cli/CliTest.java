@@ -556,13 +556,13 @@ class CliTest {
         Path p = write("t.al", "/// Negates.\ntool fn neg(d: f64) -> f64 { print(d); return -d; }\n"
             + "/// Negates.\ntool fn neg32(d: f32) -> f32 { return -d; }\n"
             + "/// Identity.\ntool fn id(x: i64) -> i64 { return x; }\n");
-        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": 0}").out());
-        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": -0.0}").out());
-        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": -0e5}").out());
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 3}\n", run("call", p.toString(), "neg", "{\"d\": 0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 3}\n", run("call", p.toString(), "neg", "{\"d\": -0.0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 3}\n", run("call", p.toString(), "neg", "{\"d\": -0e5}").out());
         assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "neg32", "{\"d\": 0.0}").out());
         // Written as an integer, -0 is the integer 0 (as jsonIsReadStrictly expects), and an integer
         // parameter takes -0.0 as 0.
-        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": -0}").out());
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 3}\n", run("call", p.toString(), "neg", "{\"d\": -0}").out());
         assertEquals("{\"ok\": true, \"result\": 0, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "id", "{\"x\": -0.0}").out());
     }
 
@@ -611,6 +611,90 @@ class CliTest {
         assertEquals(BigInteger.valueOf(10), trap.get("steps"), trap.toString());
         assertEquals("{\"ok\": false, \"error\": {\"code\": \"bad_arguments\", \"message\": \"n: expected an integer\"}}\n",
             run("call", p.toString(), "sum", "{\"n\": \"2\"}").out());
+    }
+
+    /**
+     * A step is a statement, or the time one takes spent on data: a builtin that goes through a str costs a
+     * step for every 128 bytes (Meter.UNITS_PER_STEP), so the budget bounds the time a call takes.
+     */
+    @Test
+    void stepsCountTheDataABuiltinGoesThrough() throws IOException {
+        Path p = write("t.al", """
+            tool fn find_b(s: str[65536]) -> i64 {
+                return index_of(s, "b");
+            }
+
+            tool fn occurrences(s: str[65536], pattern: str[512]) -> i64 {
+                return count(s, pattern);
+            }
+            """);
+        // The return, then 1 + 1 bytes for "b" and its copy, 16 for the search, and a byte for each of the
+        // positions it looks at: 1 + (60018 / 128) and 1 + (30018 / 128) steps.
+        String a60k = "a".repeat(60000);
+        assertEquals("{\"ok\": true, \"result\": -1, \"stdout\": \"\", \"steps\": 469}\n",
+            run("call", p.toString(), "find_b", "{\"s\": \"" + a60k + "\"}").out());
+        assertEquals("{\"ok\": true, \"result\": -1, \"stdout\": \"\", \"steps\": 235}\n",
+            run("call", p.toString(), "find_b", "{\"s\": \"" + "a".repeat(30000) + "\"}").out());
+        // A pattern that almost matches everywhere costs its length at every position: one statement, yet
+        // past a budget of 100 000 steps, which once let it run for as long as it took.
+        Result r = run("call", p.toString(), "occurrences",
+            "{\"s\": \"" + a60k + "\", \"pattern\": \"" + "a".repeat(300) + "b\"}", "--max-steps", "100000");
+        assertEquals(1, r.code(), r.out());
+        assertTrue(r.out().contains("\"code\": \"R0011\""), r.out());
+        assertEquals(r, run("call", p.toString(), "occurrences",
+            "{\"s\": \"" + a60k + "\", \"pattern\": \"" + "a".repeat(300) + "b\"}", "--max-steps", "100000"),
+            "the same budget stops at the same point");
+    }
+
+    /** print writes its line whole: a budget that runs out while it is written stops the run after the line. */
+    @Test
+    void aPrintThatUsesUpTheBudgetWritesItsLineWhole() throws IOException {
+        Path p = write("p.al", """
+            fn main() {
+                var xs: list[i64; 1000] = [];
+                for i in 0..1000 {
+                    push(mut xs, i);
+                }
+                print(xs);
+                print("after");
+            }
+            """);
+        // Filling the list takes about 2000 steps, and writing its 1000 numbers about 1100 more.
+        Result r = run("run", p.toString(), "--max-steps", "2500");
+        assertEquals(1, r.code(), r.err());
+        assertTrue(r.out().startsWith("[0, 1, 2, ") && r.out().endsWith(", 998, 999]\n"), r.out());
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 2500 steps exhausted\n --> " + p + ":6:5\n"), r.err());
+    }
+
+    /** --timeout stops a call that runs too long, as a backstop to the step budget; it is not a trap. */
+    @Test
+    void aCallPastItsTimeLimitIsStopped() throws IOException {
+        Path p = write("t.al", """
+            tool fn spin(n: i64) -> i64 {
+                var s: i64 = 0;
+                for i in 0..n {
+                    s = wrapping_add(s, i);
+                }
+                return s;
+            }
+            """);
+        Result r = run("call", p.toString(), "spin", "{\"n\": 1000000000000000}", "--max-steps", "0", "--timeout", "0.2");
+        assertEquals(1, r.code(), r.out());
+        Map<?, ?> report = (Map<?, ?>) Json.parse(r.out());
+        assertEquals(Json.obj("code", "timeout", "message", "the call ran longer than its time limit of 0.2 s (--timeout)"),
+            report.get("error"), r.out());
+        assertTrue(((BigInteger) report.get("steps")).signum() > 0, r.out());
+        // A call that ends in time is not affected.
+        assertEquals("{\"ok\": true, \"result\": 3, \"stdout\": \"\", \"steps\": 9}\n",
+            run("call", p.toString(), "spin", "{\"n\": 3}", "--timeout", "0.2").out());
+
+        assertEquals(2, run("call", p.toString(), "spin", "{\"n\": 3}", "--timeout", "-1").code());
+        assertTrue(run("call", p.toString(), "spin", "{\"n\": 3}", "--timeout", "-1").out()
+            .contains("--timeout must be 0 (no limit) or more seconds, found -1"));
+        assertTrue(run("call", p.toString(), "spin", "{\"n\": 3}", "--timeout", "soon").out().contains("expected a number"));
+        Result run = run("run", p.toString(), "--timeout", "1");
+        assertEquals(2, run.code(), run.err());
+        assertTrue(run.err().contains("--timeout does not apply to `alang run`"), run.err());
     }
 
     @Test
@@ -1030,7 +1114,7 @@ class CliTest {
     }
 
     @Test
-    void theStepBudgetStopsAProgramAfterExactlyThatManyStatements() throws IOException {
+    void theStepBudgetStopsAProgramAfterExactlyThatManySteps() throws IOException {
         // Only the interpreter counts steps, so R0011 cannot be a tests/run case, which the C backend runs too.
         Path p = write("spin.al", """
             /// Counts up until the step budget stops it.
@@ -1052,27 +1136,28 @@ class CliTest {
                 assert spin() > 0;
             }
             """);
-        // A while costs one step, and one more per iteration. Steps: main's let (1), spin's var (2) and while
-        // (3), then iteration, print, += (4-6, 7-9) and the third iteration (10): its print is step 11.
+        // A while costs one step, and one more per iteration; writing a number as text costs a step too. Steps:
+        // main's let (1), spin's var (2) and while (3), then iteration, print, its number, += (4-7, 8-11): the
+        // second += is step 11.
         Result r = run("run", p.toString(), "--max-steps", "10");
         assertEquals(1, r.code(), r.err());
         assertEquals("0\n1\n", r.out());
-        assertTrue(r.err().startsWith("trap[R0011]: step budget of 10 statements exhausted\n --> " + p + ":5:9\n"), r.err());
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 10 steps exhausted\n --> " + p + ":6:9\n"), r.err());
         assertEquals(r, run("run", p.toString(), "--max-steps", "10"), "the same budget stops at the same statement");
 
         r = run("test", p.toString(), "--max-steps", "10");
         assertEquals(1, r.code(), r.out());
-        assertTrue(r.err().contains("  trap[R0011]: step budget of 10 statements exhausted\n"), r.err());
+        assertTrue(r.err().contains("  trap[R0011]: step budget of 10 steps exhausted\n"), r.err());
 
-        // A tool call has no main, so its count is one step ahead: the third print is step 10, its += step 11.
+        // A tool call has no main, so its count is one step ahead: the second += is step 10, the third iteration 11.
         r = run("call", p.toString(), "spin", "--max-steps", "10");
         assertEquals(1, r.code(), r.out());
         @SuppressWarnings("unchecked")
         Map<String, Object> error = (Map<String, Object>) ((Map<String, Object>) Json.parse(r.out())).get("error");
         assertEquals("R0011", error.get("code"));
-        assertEquals("step budget of 10 statements exhausted", error.get("message"));
-        assertEquals(BigInteger.valueOf(6), error.get("line"));
-        assertTrue(r.out().endsWith("\"stdout\": \"0\\n1\\n2\\n\", \"steps\": 11}\n"), r.out());
+        assertEquals("step budget of 10 steps exhausted", error.get("message"));
+        assertEquals(BigInteger.valueOf(4), error.get("line"));
+        assertTrue(r.out().endsWith("\"stdout\": \"0\\n1\\n\", \"steps\": 11}\n"), r.out());
 
         // 0 turns the budget off, so the loop runs into its own limit instead.
         r = run("run", p.toString(), "--max-steps", "0");
@@ -1088,7 +1173,7 @@ class CliTest {
         Path forever = write("forever.al", "fn main() {\n    while true limit 1000000000 {\n    }\n}\n");
         r = run("run", forever.toString());
         assertEquals(1, r.code(), r.err());
-        assertTrue(r.err().startsWith("trap[R0011]: step budget of 100000000 statements exhausted\n"), r.err());
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 100000000 steps exhausted\n"), r.err());
     }
 
     @Test

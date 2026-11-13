@@ -45,6 +45,7 @@ import alang.ast.Ast.While;
 import alang.diag.Source;
 import alang.interp.Interpreter;
 import alang.interp.JsonValues;
+import alang.interp.Meter;
 import alang.interp.Trap;
 import alang.interp.Values;
 import alang.types.Type;
@@ -93,7 +94,7 @@ final class ToolExamples {
         try {
             for (int i = 0; i < args.length; i++) {
                 LocalVar p = tool.paramVars.get(i);
-                args[i] = Values.coerce(Interpreter.evalConst(c.args.get(i).expr()), p.type);
+                args[i] = Values.coerce(Interpreter.evalConst(c.args.get(i).expr()), p.type, new Meter(0));
                 // An argument the call leaves out to its default, the example leaves out too.
                 if (c.given < 0 || i < c.given) json.put(p.name, JsonValues.toJson(args[i], p.type));
             }

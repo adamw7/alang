@@ -128,7 +128,7 @@ guide, because no model knows ALang otherwise.
 - **Python runs unsandboxed.** Each Python call runs in a fresh process with a 10 s CPU limit and a 2 GB
   memory limit, but as you, with access to your files: run the benchmark in a container or VM. ALang
   calls need no sandbox: they cannot reach the host, and stop deterministically after 10 million
-  executed statements.
+  steps, a second or two of work.
 - **ALang is version 0.2.** The guide and diagnostics will change; the results file records the revision
   as `alang_revision`.
 

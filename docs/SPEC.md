@@ -515,8 +515,16 @@ time, everywhere:**
   fixes NaN handling. The C backend refuses `-ffast-math` and x87 excess precision, and disables fused
   multiply-add contraction.
 - **Exact text formatting** (§9.6), independent of locale and C library.
-- **A deterministic step budget:** the interpreter counts executed statements, and `--max-steps`
-  (default 100 000 000) stops a runaway program with R0011 after exactly the same number of steps.
+- **A deterministic step budget:** the interpreter counts steps. A statement or a loop iteration is one,
+  and work on data adds steps in proportion to it: a byte of a str, or a slot of a list, array, map or set
+  that an operation makes, moves or clears, is 1/128 of a step; an element, field or entry it handles one
+  at a time is 1/8, and a comparison of `sort` a little under 1/2; writing an integer as text, and each
+  float function (`sqrt`, `sin`, `pow` and the like), is one step, and writing a float about 22, more for
+  very large or very small ones, since its exact decimal value is worked out first. So a step takes about as long as a simple statement
+  whatever the program does, and `--max-steps` (default 100 000 000, a few seconds of work) bounds the
+  time a run takes, not only the statements it runs. The count depends only on the program and its input:
+  R0011 stops a runaway program after exactly the same number of steps every time. Only the interpreter
+  counts steps; the C backend has no budget.
 - **Deterministic tooling:** diagnostics are sorted by file and position, JSON has a fixed key order, generated C
   is byte-identical for identical input, and nothing depends on the host locale or line endings.
 
@@ -799,8 +807,14 @@ runs one call and prints `{"ok": true, "result": ..., "stdout": "...", "steps": 
 `{"ok": false, "error": {...}}`. With `-` in place of the JSON the arguments are read from stdin (as
 UTF-8; other bytes are an error); with nothing they are `{}`. `stdout` keeps the first 1 MiB of output;
 past that, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are added. `steps` is the
-number of statements the call executed (as for `--max-steps`), a cost that is the same on every run;
-a call that ran into a trap or `bad_result` reports it too, one refused before it ran does not.
+call's cost (§8): the statements it ran and the data they went through, the same on every run; a call that
+ran into a trap or `bad_result` reports it too, one refused before it ran does not.
+
+`--timeout SECONDS` (default 60; 0 for none) stops a call that runs longer, as a backstop to the step
+budget for a host that must answer in time: the report is then
+`{"ok": false, "error": {"code": "timeout", "message": "..."}, "stdout": "...", "steps": N}`. It is the one
+limit that depends on the machine, so it is not a trap, and where it stops a call can differ from run to
+run; within the default step budget a call ends long before it.
 
 `alang fuzz file.al` calls every tool, and a `fn main(input: str[N])` with its input, with arguments at
 the limits of the schema: the plainest arguments (those of the first `input_examples`, if any), then one
@@ -843,9 +857,17 @@ description are those of `alang tools`; a tool that returns a value also has an 
 `{"result": <schema of the return type>}`, and every tool is annotated read-only, not destructive,
 idempotent and closed-world. The text of a call's result is the JSON `alang call` prints; a successful
 call of a tool that returns a value also gives `{"result": value}` as `structuredContent`; and a call that
-fails, from `bad_arguments` to a trap, is a result with `"isError": true`. Only a name that is not a
+fails, from `bad_arguments` to a trap or `timeout`, is a result with `"isError": true`. Only a name that is not a
 `tool fn` is a JSON-RPC error (-32602). The program is checked once, at start: one with errors starts no
 server, and its diagnostics, like any warning, go to stderr, which is the only other output.
+
+Calls run at the same time, up to four, each on a thread of its own and each still one deterministic run;
+more wait their turn. So a long call holds up neither the others nor the answers to `ping`, `tools/list`
+and the rest, which come at once; a call's answer is written when it ends, so answers can come in another
+order than the requests, as JSON-RPC allows. Each call gets `--max-steps` and `--timeout` (60 s by
+default). `notifications/cancelled` stops a call that is running or waiting, which then gets no answer, as
+MCP asks; one for a call that has ended is ignored. When stdin ends, the server finishes the calls it has
+started, writes their answers, and exits.
 
 ## 11. Runtime errors (traps)
 

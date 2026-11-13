@@ -143,7 +143,9 @@ and any may use JSON. The rules behind the arrows, from
   fields, so a checked program can be run, tested and compiled any number of times.
 - **I/O at the edge**: only the CLI touches files, stdin or `System.exit`. No component reads a clock,
   randomness or the environment, starts threads, reflects or logs, and no text depends on the host
-  locale or charset.
+  locale or charset. The one exception is at the edge too: `alang serve` runs tool calls on threads of
+  their own, and a watchdog thread stops one that runs past `--timeout`. Each call is still one run on one
+  thread, which another thread can only stop, through its `Meter`.
 
 ## Dynamic view: a tool call
 
@@ -173,7 +175,7 @@ sequenceDiagram
     Interp-->>CLI: result and captured print output, or a trap (R code)
     CLI->>Interp: JsonValues.toJson(result)
     Interp-->>CLI: JSON value, or bad_result (NaN, infinity)
-    CLI-->>Host: {"ok": true, "result": [...], "stdout": "", "steps": 41}
+    CLI-->>Host: {"ok": true, "result": [...], "stdout": "", "steps": 45}
 ```
 
 Every step is deterministic: the same program and arguments give the same bytes, step count and trap on
