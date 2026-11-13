@@ -1,5 +1,6 @@
 package alang.check;
 
+import alang.ast.Ast;
 import alang.ast.Ast.*;
 import alang.ast.Builtin;
 import alang.diag.Code;
@@ -1114,27 +1115,39 @@ public final class Checker {
         }
     }
 
-    /** `let (a, b): (T1, T2) = e;`: e is a tuple of that type, and each name a variable of its element's type. */
+    /**
+     * `let (a, b): (T1, T2) = e;`, `let Point(x: px, y: _): Point = p;`: e is a value of that type, and the pattern takes
+     * it apart into new variables; it must match every value of the type (E0306), as a let cannot fail.
+     */
     private void destructure(Destructure d) {
         Type t = resolveType(d.typeRef);
         ctx.mutCallAllowed = d.init;
         Type it = expr(d.init, t);
         ctx.mutCallAllowed = null;
         requireAssignable(d.init, it, t);
-        List<Type> elems = null;
-        if (t instanceof Type.TupleT tt && tt.elems().size() == d.names.size()) {
-            elems = tt.elems();
-        } else if (t instanceof Type.TupleT tt) {
-            diags.error(Code.E0201, d.typeRef.span(), d.names.size() + " names for a tuple of " + tt.elems().size() + " elements",
-                "give one name per element, and _ for one you do not need");
-        } else if (!Type.isError(t)) {
-            diags.error(Code.E0201, d.typeRef.span(), "let (...) takes a tuple apart, but " + t + " is not a tuple",
-                "declare one variable: let x: " + t + " = ...;");
+        if (d.pattern instanceof TuplePat tp && !Type.isError(t)) {
+            String problem = null;
+            String hint = null;
+            if (!(t instanceof Type.TupleT tt)) {
+                problem = "let (...) takes a tuple apart, but " + t + " is not a tuple";
+                hint = "declare one variable: let x: " + t + " = ...;";
+            } else if (tt.elems().size() != tp.elems.size()) {
+                problem = tp.elems.size() + " names for a tuple of " + tt.elems().size() + " elements";
+                hint = "give one name per element, and _ for one you do not need";
+            }
+            if (problem != null) {
+                diags.error(Code.E0201, d.typeRef.span(), problem, hint);
+                t = Type.ERROR;
+            }
         }
-        for (int i = 0; i < d.names.size(); i++) {
-            String name = d.names.get(i);
-            Type et = elems == null ? Type.ERROR : elems.get(i);
-            d.vars.add(name == null ? null : declare(name, d.nameSpans.get(i), et, d.mutable));
+        boolean ok = pattern(d.pattern, t, (b, bt) -> declare(b.name, b.span, bt, d.mutable));
+        if (ok && !Type.isError(t)) {
+            String missing = Coverage.missing(List.of(d.pattern), t);
+            if (missing != null) {
+                diags.error(Code.E0306, d.pattern.span, "the pattern of a let does not match every value of " + t + ": missing "
+                    + (missing.equals("_") ? "values other than the one it names" : missing),
+                    "a let cannot fail; use match, or if let " + exprTextOf(d.pattern.span) + " = ... { } else { }");
+            }
         }
     }
 
@@ -1418,129 +1431,381 @@ public final class Checker {
     // ------------------------------------------------------------------ match
 
     private boolean match(Match m) {
-        Type t = expr(m.subject, null);
-        if (t instanceof Type.Str) readInPlace(m.subject);
+        Type t = matchSubject(m.subject, m.arms.stream().map(Arm::pattern).toList());
         boolean allJump = true;
-        boolean wildcard = false;
-        Set<Object> seen = new HashSet<>();
-        boolean supported = Type.isError(t) || t instanceof Type.EnumT || Type.isInt(t) || Type.isBool(t)
-            || t instanceof Type.Str;
-        if (!supported) {
-            diags.error(Code.E0308, m.subject.span, "cannot match on a value of type " + t,
-                "match works on enums, integers, bool and str; use if/else for other types");
-        }
+        boolean ok = true;
         for (Arm arm : m.arms) {
-            Pattern p = arm.pattern();
-            if (wildcard) {
-                diags.error(Code.E0307, p.span, "unreachable arm: `_` above already matches everything",
-                    "move `_ => { }` to the end");
-            }
-            // A guarded arm may not match, so it covers nothing: it is checked against what the arms above
-            // cover (a pattern they all take is unreachable) without adding to it.
-            Set<Object> seenHere = arm.guard() == null ? seen : new HashSet<>(seen);
             ctx.scopes.push(new HashMap<>());
-            switch (p) {
-                case WildPat w -> {
-                    if (arm.guard() == null) wildcard = true;
-                }
-                case VariantPat v -> variantPattern(v, t, seenHere);
-                case IntPat i -> {
-                    if (supported && !Type.isError(t)) {
-                        if (!Type.isInt(t)) {
-                            diags.error(Code.E0308, p.span, "integer pattern cannot match a value of type " + t);
-                        } else if (!Type.kind(t).fits(i.value)) {
-                            diags.error(Code.E0202, p.span, "pattern " + i.value + " is out of range for " + t);
-                        } else if (!seenHere.add(i.value)) {
-                            diags.error(Code.E0307, p.span, "duplicate pattern " + i.value);
-                        }
-                    }
-                }
-                case StrPat sp -> {
-                    if (supported && !Type.isError(t)) {
-                        if (!(t instanceof Type.Str)) {
-                            diags.error(Code.E0308, p.span, "string pattern cannot match a value of type " + t);
-                        } else if (!seenHere.add(new String(sp.value, java.nio.charset.StandardCharsets.ISO_8859_1))) {
-                            diags.error(Code.E0307, p.span, "duplicate pattern");
-                        }
-                    }
-                }
-                case BoolPat b -> {
-                    if (supported && !Type.isError(t)) {
-                        if (!Type.isBool(t)) {
-                            diags.error(Code.E0308, p.span, "bool pattern cannot match a value of type " + t);
-                        } else if (!seenHere.add(b.value)) {
-                            diags.error(Code.E0307, p.span, "duplicate pattern " + b.value);
-                        }
-                    }
-                }
-            }
+            ok &= pattern(arm.pattern(), t, this::matchBinding);
             if (arm.guard() != null) condition(arm.guard(), "if");
             if (!block(arm.body())) allJump = false;
             ctx.scopes.pop();
         }
-        if (!wildcard && supported && !Type.isError(t)) {
-            String missing = null;
-            if (t instanceof Type.EnumT et) {
-                List<String> names = new ArrayList<>();
-                for (Variant v : et.decl().variants) {
-                    if (!seen.contains(v)) names.add(et.decl().name + "." + v.name);
-                }
-                if (!names.isEmpty()) missing = String.join(", ", names);
-            } else if (Type.isBool(t)) {
-                if (!seen.contains(true)) missing = "true";
-                else if (!seen.contains(false)) missing = "false";
-            } else {
-                missing = "values other than the listed ones";
-            }
-            if (missing != null) {
-                diags.error(Code.E0306, m.span, "match is not exhaustive: missing " + missing,
-                    "add arms for them, or add `_ => { }` as the last arm");
-            }
+        if (ok && !Type.isError(t)) {
+            coverage(m.arms.stream().map(Arm::pattern).toList(), m.arms.stream().map(a -> a.guard() != null).toList(), t,
+                m.span, m.ifLet);
         }
         return allJump && !m.arms.isEmpty();
     }
 
-    private void variantPattern(VariantPat v, Type t, Set<Object> seen) {
-        if (Type.isError(t)) return;
+    /** `match e { P => a, ... }` as an expression: the type of its arms' values, which share one, as an if expression's do. */
+    private Type matchExpr(MatchExpr m, Type expected) {
+        Type t = matchSubject(m.subject, m.arms.stream().map(ExprArm::pattern).toList());
+        Expr outer = ctx.stored;
+        boolean ok = true;
+        Type result = null;
+        List<Type> types = new ArrayList<>();
+        for (ExprArm arm : m.arms) {
+            ctx.scopes.push(new HashMap<>());
+            ok &= pattern(arm.pattern(), t, this::matchBinding);
+            if (arm.guard() != null) condition(arm.guard(), "if");
+            ctx.stored = outer == m && typedByTarget(arm.value()) ? arm.value() : null;
+            Type vt = expr(arm.value(), expected != null ? expected : result);
+            ctx.stored = outer;
+            ctx.scopes.pop();
+            if (vt instanceof Type.Void) {
+                diags.error(Code.E0201, arm.value().span, "an arm of a match expression returns nothing",
+                    "use a match statement: match e { P => { f(); } ... }");
+                return Type.ERROR;
+            }
+            if (Type.isError(vt)) ok = false;
+            types.add(vt);
+            if (!Type.isError(vt)) result = result == null ? vt : widen(result, vt);
+        }
+        if (ok && !Type.isError(t)) {
+            coverage(m.arms.stream().map(ExprArm::pattern).toList(), m.arms.stream().map(a -> a.guard() != null).toList(), t,
+                m.span, false);
+        }
+        if (!ok || result == null) return Type.ERROR;
+        for (int i = 0; i < types.size(); i++) {
+            if (!Type.assignable(types.get(i), result)) {
+                diags.error(Code.E0201, m.arms.get(i).value().span, "the arms of a match expression have different types: "
+                    + types.get(0) + " and " + types.get(i), Type.isNumeric(types.get(0)) && Type.isNumeric(types.get(i))
+                        ? "convert one: " + types.get(0) + "(" + exprText(m.arms.get(i).value()) + ")" : "give every arm the same type");
+                return Type.ERROR;
+            }
+        }
+        return result;
+    }
+
+    /** The subject of a match, checked: the type its patterns match, or ERROR after reporting one they cannot. */
+    private Type matchSubject(Expr subject, List<Pattern> patterns) {
+        Type t = expr(subject, null);
+        // A str is read where it is unless an arm binds it to a name, which takes a copy.
+        if (t instanceof Type.Str && patterns.stream().allMatch(p -> Ast.allBindings(p).isEmpty())) readInPlace(subject);
+        boolean supported = Type.isError(t) || t instanceof Type.EnumT || Type.isInt(t) || Type.isBool(t)
+            || t instanceof Type.Str || t instanceof Type.TupleT || t instanceof Type.StructT;
+        if (!supported) {
+            diags.error(Code.E0308, subject.span, "cannot match on a value of type " + t,
+                "match works on enums, integers, bool, str, tuples and structs; use if/else for other types");
+            return Type.ERROR;
+        }
+        return t;
+    }
+
+    /** A name in a match arm's pattern: a new, read-only variable. */
+    private LocalVar matchBinding(BindPat b, Type t) {
+        LocalVar v = declare(b.name, b.span, t, false);
+        matchBindings.add(v);
+        return v;
+    }
+
+    /** How the names of a pattern become variables, of the type of the value they take. */
+    private interface Binder {
+        LocalVar bind(BindPat b, Type t);
+    }
+
+    /**
+     * Checks a pattern against a value of type {@code t}, and declares its names with {@code binder}. Returns false
+     * after reporting an error (or when t already is one), so that coverage is not checked on top of it.
+     */
+    private boolean pattern(Pattern p, Type t, Binder binder) {
+        if (Type.isError(t)) {
+            for (BindPat b : Ast.bindings(p)) b.var = binder.bind(b, Type.ERROR);
+            return false;
+        }
+        switch (p) {
+            case WildPat w -> {
+                return true;
+            }
+            case BindPat b -> {
+                b.var = binder.bind(b, t);
+                return true;
+            }
+            case IntPat i -> {
+                if (!Type.isInt(t)) return mismatchedPattern(p, "integer pattern", t);
+                if (!Type.kind(t).fits(i.value)) {
+                    diags.error(Code.E0202, p.span, "pattern " + i.value + " is out of range for " + t);
+                    return false;
+                }
+                return true;
+            }
+            case RangePat r -> {
+                if (!Type.isInt(t)) return mismatchedPattern(p, "range pattern", t);
+                for (java.math.BigInteger bound : List.of(r.lo, r.inclusive ? r.hi : r.hi.add(java.math.BigInteger.ONE))) {
+                    if (!Type.kind(t).fits(bound) && !(!r.inclusive && bound.equals(Type.kind(t).max().add(java.math.BigInteger.ONE)))) {
+                        diags.error(Code.E0202, p.span, "bound " + bound + " of the range is out of range for " + t,
+                            t + " holds " + Type.kind(t).min() + ".." + Type.kind(t).max());
+                        return false;
+                    }
+                }
+                if (r.lo.compareTo(r.hi) > 0) {
+                    diags.error(Code.E0308, p.span, "range pattern " + exprTextOf(p.span) + " matches no value",
+                        "write the smaller bound first, and use ..= to include the second: 1..=5");
+                    return false;
+                }
+                r.kind = Type.kind(t);
+                return true;
+            }
+            case StrPat sp -> {
+                return t instanceof Type.Str || mismatchedPattern(p, "string pattern", t);
+            }
+            case BoolPat b -> {
+                return Type.isBool(t) || mismatchedPattern(p, "bool pattern", t);
+            }
+            case VariantPat v -> {
+                return variantPattern(v, t, binder);
+            }
+            case TuplePat tp -> {
+                if (!(t instanceof Type.TupleT tt)) return mismatchedPattern(p, "tuple pattern", t);
+                if (tt.elems().size() != tp.elems.size()) {
+                    diags.error(Code.E0308, p.span, "a pattern of " + tp.elems.size() + " elements cannot match a tuple of "
+                        + tt.elems().size(), "write one pattern per element, and _ for one you do not need");
+                    for (BindPat b : Ast.bindings(p)) b.var = binder.bind(b, Type.ERROR);
+                    return false;
+                }
+                boolean ok = true;
+                for (int i = 0; i < tp.elems.size(); i++) ok &= pattern(tp.elems.get(i), tt.elems().get(i), binder);
+                return ok;
+            }
+            case StructPat sp -> {
+                return structPattern(sp, t, binder);
+            }
+            case OrPat o -> {
+                return orPattern(o, t, binder);
+            }
+        }
+    }
+
+    /** E0308 for a pattern of the wrong kind; its names are declared all the same, so their uses are no errors. */
+    private boolean mismatchedPattern(Pattern p, String what, Type t) {
+        diags.error(Code.E0308, p.span, what + " cannot match a value of type " + t);
+        return false;
+    }
+
+    private String exprTextOf(Span s) {
+        return (s.file() == null ? diags.source() : s.file()).text(s);
+    }
+
+    private boolean variantPattern(VariantPat v, Type t, Binder binder) {
         if (!(t instanceof Type.EnumT et)) {
-            diags.error(Code.E0308, v.span, "enum pattern cannot match a value of type " + t);
-            return;
+            for (BindPat b : Ast.bindings(v)) b.var = binder.bind(b, Type.ERROR);
+            return mismatchedPattern(v, "enum pattern", t);
         }
         EnumDecl d = et.decl();
         EnumDecl named = v.qualifier == null ? enums.get(v.enumName)
             : aliasScope(v.qualifier) == null ? null : enums.in(aliasScope(v.qualifier), v.enumName);
+        Variant variant = v.enumName.equals(d.name) && (named == null || named == d) ? d.variant(v.variantName) : null;
         if (!v.enumName.equals(d.name) || named != null && named != d) {
             diags.error(Code.E0308, v.span, "pattern of enum `" + v.enumName + "` cannot match a value of type " + d.name,
                 "write " + d.name + "." + v.variantName);
-            return;
-        }
-        Variant variant = d.variant(v.variantName);
-        if (variant == null) {
+        } else if (variant == null) {
             diags.error(Code.E0107, v.span, "enum `" + d.name + "` has no variant `" + v.variantName + "`",
                 didYouMean(v.variantName, variantNames(d)));
-            return;
+        }
+        if (variant == null) {
+            for (BindPat b : Ast.bindings(v)) b.var = binder.bind(b, Type.ERROR);
+            return false;
         }
         v.variant = variant;
-        if (!seen.add(variant)) {
-            diags.error(Code.E0307, v.span, "duplicate pattern " + d.name + "." + variant.name);
-        }
         int n = variant.payload.size();
-        if (n == 0 && v.bindings != null) {
+        if (n == 0 && v.args != null) {
             diags.error(Code.E0308, v.span, d.name + "." + variant.name + " has no payload",
                 "write " + d.name + "." + variant.name + " without parentheses");
-            return;
+            for (BindPat b : Ast.bindings(v)) b.var = binder.bind(b, Type.ERROR);
+            return false;
         }
-        if (n > 0 && (v.bindings == null || v.bindings.size() != n)) {
-            diags.error(Code.E0308, v.span, d.name + "." + variant.name + " carries " + n + " value(s); bind each one",
+        if (n > 0 && (v.args == null || v.args.size() != n)) {
+            diags.error(Code.E0308, v.span, d.name + "." + variant.name + " carries " + n + " value(s); match each one",
                 "write " + d.name + "." + variant.name + "(" + "_, ".repeat(n - 1) + "_) or name them");
-            return;
+            for (BindPat b : Ast.bindings(v)) b.var = binder.bind(b, Type.ERROR);
+            return false;
         }
-        for (int i = 0; i < n; i++) {
-            String b = v.bindings.get(i);
-            LocalVar binding = b == null ? null : declare(b, v.bindingSpans.get(i), variant.payload.get(i), false);
-            if (binding != null) matchBindings.add(binding);
-            v.vars.add(binding);
+        boolean ok = true;
+        for (int i = 0; i < n; i++) ok &= pattern(v.args.get(i), variant.payload.get(i), binder);
+        return ok;
+    }
+
+    private boolean structPattern(StructPat sp, Type t, Binder binder) {
+        StructDecl named = sp.qualifier == null ? structs.get(sp.name)
+            : aliasScope(sp.qualifier) == null ? null : structs.in(aliasScope(sp.qualifier), sp.name);
+        if (!(t instanceof Type.StructT st) || named == null || named != st.decl()) {
+            for (BindPat b : Ast.bindings(sp)) b.var = binder.bind(b, Type.ERROR);
+            if (named == null && sp.qualifier == null && !structs.containsKey(sp.name)) {
+                diags.error(Code.E0103, sp.span, "unknown struct `" + sp.name + "`", didYouMean(sp.name, new ArrayList<>(structs.keySet())));
+                return false;
+            }
+            return mismatchedPattern(sp, "pattern of struct `" + sp.name + "`", t);
         }
+        StructDecl d = st.decl();
+        sp.decl = d;
+        sp.fieldIndexes = new int[sp.fields.size()];
+        boolean ok = true;
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < sp.fields.size(); i++) {
+            String name = sp.fieldNames.get(i);
+            int idx = d.fieldIndex(name);
+            Pattern fp = sp.fields.get(i);
+            if (idx < 0 || !seen.add(name)) {
+                if (idx < 0) {
+                    diags.error(Code.E0106, sp.fieldSpans.get(i), "struct `" + d.name + "` has no field `" + name + "`",
+                        didYouMean(name, d.fieldNames()));
+                } else {
+                    diags.error(Code.E0213, sp.fieldSpans.get(i), "field `" + name + "` is given twice");
+                }
+                for (BindPat b : Ast.bindings(fp)) b.var = binder.bind(b, Type.ERROR);
+                ok = false;
+                continue;
+            }
+            sp.fieldIndexes[i] = idx;
+            ok &= pattern(fp, d.fields.get(idx).type, binder);
+        }
+        return ok;
+    }
+
+    /**
+     * `p1 | p2`: each alternative is checked against the same type, and binds the same names, of the same types, to the
+     * same variables, those the first alternative declares.
+     */
+    private boolean orPattern(OrPat o, Type t, Binder binder) {
+        boolean ok = pattern(o.alts.get(0), t, binder);
+        Map<String, LocalVar> first = new LinkedHashMap<>();
+        for (BindPat b : Ast.bindings(o.alts.get(0))) {
+            if (b.var != null) first.put(b.name, b.var);
+        }
+        for (int k = 1; k < o.alts.size(); k++) {
+            Pattern alt = o.alts.get(k);
+            Set<String> bound = new HashSet<>();
+            boolean[] bad = {false};
+            ok &= pattern(alt, t, (b, bt) -> {
+                LocalVar v = first.get(b.name);
+                bound.add(b.name);
+                if (v == null) {
+                    diags.error(Code.E0308, b.span, "`" + b.name + "` is bound in this alternative but not in the first",
+                        "every alternative of `|` binds the same names; use _ here, or an arm of its own");
+                    bad[0] = true;
+                    return null;
+                }
+                if (!Type.isError(bt) && !Type.isError(v.type) && !bt.equals(v.type)) {
+                    diags.error(Code.E0308, b.span, "`" + b.name + "` is " + bt + " here but " + v.type + " in the first alternative",
+                        "every alternative of `|` binds each name to a value of one type");
+                    bad[0] = true;
+                }
+                return v;
+            });
+            for (String name : first.keySet()) {
+                if (!bound.contains(name)) {
+                    diags.error(Code.E0308, alt.span, "this alternative does not bind `" + name + "`, which the first one does",
+                        "every alternative of `|` binds the same names; use an arm of its own for each");
+                    bad[0] = true;
+                }
+            }
+            ok &= !bad[0];
+        }
+        return ok;
+    }
+
+    /**
+     * What the arms of a match cover: none is unreachable (E0307), and together they take every value (E0306), unless
+     * one takes every value at the top. Guarded arms cover nothing. An `if let` (see {@link Match#ifLet}) has the
+     * pattern and a final `_`, which is unreachable only when the pattern always matches.
+     */
+    private void coverage(List<Pattern> patterns, List<Boolean> guarded, Type t, Span at, boolean ifLet) {
+        List<Pattern> rows = new ArrayList<>();
+        Pattern all = null;
+        for (int i = 0; i < patterns.size(); i++) {
+            Pattern p = patterns.get(i);
+            if (ifLet && i == 1) {
+                if (!Coverage.useful(rows, p, t)) {
+                    Pattern given = patterns.get(0);
+                    diags.error(Code.E0307, given.span, "this `if let` always matches: its pattern takes every value of " + t,
+                        "take the value apart with a let: let " + exprTextOf(given.span) + ": " + t + " = ...;");
+                }
+                break;
+            }
+            String dup = all == null ? duplicate(rows, p, t) : null;
+            if (all != null) {
+                diags.error(Code.E0307, p.span, "unreachable arm: `" + (all instanceof BindPat b ? b.name : "_")
+                    + "` above already matches everything", "move `" + (all instanceof BindPat b ? b.name : "_") + " => { }` to the end");
+            } else if (dup != null) {
+                diags.error(Code.E0307, p.span, "duplicate pattern" + (dup.isEmpty() ? "" : " " + dup));
+            } else if (!Coverage.useful(rows, p, t)) {
+                diags.error(Code.E0307, p.span, "unreachable arm: the arms above already match every value it does",
+                    "remove it, or move it above the arms that take its values");
+            }
+            if (!guarded.get(i)) {
+                rows.add(p);
+                if (all == null && Coverage.takesAll(p)) all = p;
+            }
+        }
+        if (ifLet || all != null) return;
+        String missing = missingVariants(rows, t);
+        if (missing == null) {
+            String w = Coverage.missing(rows, t);
+            if (w != null) missing = w.equals("_") ? "values other than the listed ones" : w;
+        }
+        if (missing != null) {
+            diags.error(Code.E0306, at, "match is not exhaustive: missing " + missing, "add arms for them, or add `_ => { }` as the last arm");
+        }
+    }
+
+    /**
+     * The variants of an enum that no arm names at its top, as the message lists them, or null when there are none: then
+     * the arms may still miss a value inside a variant, which {@link Coverage#missing} finds.
+     */
+    private static String missingVariants(List<Pattern> rows, Type t) {
+        if (!(t instanceof Type.EnumT et)) return null;
+        Set<Variant> named = new HashSet<>();
+        for (Pattern p : rows) {
+            for (Pattern alt : p instanceof OrPat o ? o.alts : List.of(p)) {
+                if (alt instanceof VariantPat v) named.add(v.variant);
+            }
+        }
+        List<String> names = new ArrayList<>();
+        for (Variant v : et.decl().variants) {
+            if (!named.contains(v)) names.add(et.decl().name + "." + v.name);
+        }
+        return names.isEmpty() ? null : String.join(", ", names);
+    }
+
+    /**
+     * For a pattern an earlier arm repeats exactly, a literal or a variant whose payload it takes whole: the text the
+     * message names it by ("" for a str), else null.
+     */
+    private static String duplicate(List<Pattern> rows, Pattern p, Type t) {
+        for (Pattern r : rows) {
+            switch (p) {
+                case IntPat i when r instanceof IntPat ri && ri.value.equals(i.value) -> {
+                    return i.value.toString();
+                }
+                case StrPat s when r instanceof StrPat rs && java.util.Arrays.equals(rs.value, s.value) -> {
+                    return "";
+                }
+                case BoolPat b when r instanceof BoolPat rb && rb.value == b.value -> {
+                    return String.valueOf(b.value);
+                }
+                case VariantPat v when r instanceof VariantPat rv && rv.variant == v.variant && takesPayload(v) && takesPayload(rv)
+                    && t instanceof Type.EnumT et -> {
+                    return et.decl().name + "." + v.variant.name;
+                }
+                default -> { }
+            }
+        }
+        return null;
+    }
+
+    private static boolean takesPayload(VariantPat v) {
+        return v.args == null || v.args.stream().allMatch(Coverage::takesAll);
     }
 
     private static List<String> variantNames(EnumDecl d) {
@@ -1582,6 +1847,7 @@ public final class Checker {
             case ArrayLit a -> arrayLit(a, expected);
             case Repeat r -> repeat(r, expected);
             case IfExpr i -> ifExpr(i, expected);
+            case MatchExpr m -> matchExpr(m, expected);
             case TupleLit t -> tupleLit(t, expected);
             case SliceExpr s -> sliceExpr(s);
         };
@@ -2368,6 +2634,8 @@ public final class Checker {
             case ArrayLit a -> a.elems.stream().anyMatch(x -> mentions(x, v));
             case Repeat r -> mentions(r.value, v);
             case IfExpr i -> mentions(i.cond, v) || mentions(i.then, v) || mentions(i.otherwise, v);
+            case MatchExpr m -> mentions(m.subject, v) || m.arms.stream().anyMatch(a -> a.guard() != null && mentions(a.guard(), v)
+                || mentions(a.value(), v));
             case TupleLit t -> t.elems.stream().anyMatch(x -> mentions(x, v));
             case SliceExpr s -> mentions(s.target, v) || s.from != null && mentions(s.from, v) || s.to != null && mentions(s.to, v);
             default -> false;
@@ -3941,6 +4209,8 @@ public final class Checker {
             case ArrayLit a -> a.elems.stream().allMatch(Checker::isConst);
             case Repeat r -> isConst(r.value);
             case IfExpr i -> isConst(i.cond) && isConst(i.then) && isConst(i.otherwise);
+            // Its arms bind names, which need a frame.
+            case MatchExpr m -> false;
             case TupleLit t -> t.elems.stream().allMatch(Checker::isConst);
             case SliceExpr s -> isConst(s.target) && (s.from == null || isConst(s.from)) && (s.to == null || isConst(s.to));
         };

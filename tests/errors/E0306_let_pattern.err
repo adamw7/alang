@@ -1,0 +1,7 @@
+error[E0306]: the pattern of a let does not match every value of MaybeI64: missing MaybeI64.None
+ --> tests/errors/E0306_let_pattern.al:9:9
+  |
+9 |     let MaybeI64.Some(v): MaybeI64 = m;
+  |         ^^^^^^^^^^^^^^^^
+  = hint: a let cannot fail; use match, or if let MaybeI64.Some(v) = ... { } else { }
+

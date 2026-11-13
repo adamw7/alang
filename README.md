@@ -293,8 +293,9 @@ published once; to redo one, delete its release and package first.
 Version 0.2. A program can span several files with `import "file.al";`, or keep each file's names
 apart with `import "file.al" as name;` ([SPEC.md §3.1](docs/SPEC.md#31-imports)). Functions take type
 parameters and function values (no closures), and the language has tuples, maps and sets, slices,
-labelled loops, match guards, `if ... then ... else` expressions, UTF-8 text functions, wrapping and
-saturating arithmetic, and the elementary float functions, bit-identical on every backend.
+labelled loops, nested patterns (or-patterns, ranges, tuples, structs) with guards, `if let`, `match` and
+`if ... then ... else` expressions, default parameter values, tests that expect a trap, UTF-8 text functions,
+wrapping and saturating arithmetic, and the elementary float functions, bit-identical on every backend.
 
 ## License
 

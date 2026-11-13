@@ -15,6 +15,7 @@ import alang.ast.Ast.IfExpr;
 import alang.ast.Ast.Index;
 import alang.ast.Ast.IntLit;
 import alang.ast.Ast.LocalVar;
+import alang.ast.Ast.MatchExpr;
 import alang.ast.Ast.Name;
 import alang.ast.Ast.Repeat;
 import alang.ast.Ast.Resize;
@@ -109,6 +110,7 @@ final class ToolDefinitions {
             case ArrayLit a -> a.elems.stream().allMatch(ToolDefinitions::isConstant);
             case Repeat r -> isConstant(r.value) && isConstant(r.count);
             case IfExpr i -> isConstant(i.cond) && isConstant(i.then) && isConstant(i.otherwise);
+            case MatchExpr m -> false;
             case TupleLit t -> t.elems.stream().allMatch(ToolDefinitions::isConstant);
             case SliceExpr s -> isConstant(s.target) && (s.from == null || isConstant(s.from)) && (s.to == null || isConstant(s.to));
         };

@@ -1,7 +1,7 @@
-error[E0001]: unexpected 'match', expected a statement or expression
- --> tests/errors/E0001_match_expression.al:4:24
+error[E0001]: unexpected '{', expected a statement or expression
+ --> tests/errors/E0001_match_expression.al:4:39
   |
 4 |     let word: str[8] = match n { 1 => { "one" } _ => { "many" } };
-  |                        ^^^^^
-  = hint: `match` is a statement, not an expression; declare the variable first and assign it in every arm: var x: i64 = 0; match c { ... => { x = 1; } }; for a choice between two values, if c then a else b is an expression
+  |                                       ^
+  = hint: the arms of a match expression are values, not blocks: let x: str[8] = match n { 1 => "one", _ => "many" }; for statements in an arm, use a match statement: match n { 1 => { ... } _ => { ... } }
 

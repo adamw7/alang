@@ -375,21 +375,20 @@ public final class Ast {
         }
     }
 
-    /** `let (a, b): (T1, T2) = e;`: one variable per element of a tuple; a null name is a `_`. */
+    /**
+     * `let (a, b): (T1, T2) = e;` or `let Point(x: px, y: _): Point = p;`: a value taken apart by a pattern that always
+     * matches, each name of it a new variable.
+     */
     public static final class Destructure extends Stmt {
         public final boolean mutable;
-        public final List<String> names;
-        public final List<Span> nameSpans;
+        public final Pattern pattern;
         public final TypeRef typeRef;
         public final Expr init;
-        /** One per element; null for a `_`. */
-        public final List<LocalVar> vars = new ArrayList<>();
 
-        public Destructure(Span span, boolean mutable, List<String> names, List<Span> nameSpans, TypeRef typeRef, Expr init) {
+        public Destructure(Span span, boolean mutable, Pattern pattern, TypeRef typeRef, Expr init) {
             super(span);
             this.mutable = mutable;
-            this.names = names;
-            this.nameSpans = nameSpans;
+            this.pattern = pattern;
             this.typeRef = typeRef;
             this.init = init;
         }
@@ -519,11 +518,21 @@ public final class Ast {
     public static final class Match extends Stmt {
         public final Expr subject;
         public final List<Arm> arms;
+        /**
+         * `if let P = e { A } else { B }`, which is this match: `match e { P => { A } _ => { B } }`; the `_` arm is the
+         * last, and never unreachable unless P always matches.
+         */
+        public final boolean ifLet;
 
         public Match(Span span, Expr subject, List<Arm> arms) {
+            this(span, subject, arms, false);
+        }
+
+        public Match(Span span, Expr subject, List<Arm> arms, boolean ifLet) {
             super(span);
             this.subject = subject;
             this.arms = arms;
+            this.ifLet = ifLet;
         }
     }
 
@@ -592,24 +601,89 @@ public final class Ast {
         }
     }
 
+    /** `Enum.Variant` or `Enum.Variant(p1, p2)`: a variant whose payload values match the patterns. */
     public static final class VariantPat extends Pattern {
         /** The alias of `ns.Enum.Variant`, or null. */
         public String qualifier;
         public final String enumName;
         public final String variantName;
-        /** Binding names (null entries for `_`), or null if the pattern has no parentheses. */
-        public final List<String> bindings;
-        public final List<Span> bindingSpans;
+        /** The patterns of the payload values, or null if the pattern has no parentheses. */
+        public final List<Pattern> args;
         public Variant variant;
-        /** Locals for the bindings (null entries for `_`). */
-        public final List<LocalVar> vars = new ArrayList<>();
 
-        public VariantPat(Span span, String enumName, String variantName, List<String> bindings, List<Span> bindingSpans) {
+        public VariantPat(Span span, String enumName, String variantName, List<Pattern> args) {
             super(span);
             this.enumName = enumName;
             this.variantName = variantName;
-            this.bindings = bindings;
-            this.bindingSpans = bindingSpans;
+            this.args = args;
+        }
+    }
+
+    /** A name: matches anything, and binds the value to a new variable. */
+    public static final class BindPat extends Pattern {
+        public final String name;
+        public LocalVar var;
+
+        public BindPat(Span span, String name) {
+            super(span);
+            this.name = name;
+        }
+    }
+
+    /** `(p1, p2, ...)`: a tuple whose elements match the patterns. */
+    public static final class TuplePat extends Pattern {
+        public final List<Pattern> elems;
+
+        public TuplePat(Span span, List<Pattern> elems) {
+            super(span);
+            this.elems = elems;
+        }
+    }
+
+    /** `Point(x: p1, y: p2)`: a struct whose named fields match the patterns; fields it leaves out match anything. */
+    public static final class StructPat extends Pattern {
+        /** The alias of `ns.Point(...)`, or null. */
+        public String qualifier;
+        public final String name;
+        public final List<String> fieldNames;
+        public final List<Span> fieldSpans;
+        public final List<Pattern> fields;
+        public StructDecl decl;
+        /** For each entry of {@link #fields}, the index of its field in the struct. */
+        public int[] fieldIndexes;
+
+        public StructPat(Span span, String name, List<String> fieldNames, List<Span> fieldSpans, List<Pattern> fields) {
+            super(span);
+            this.name = name;
+            this.fieldNames = fieldNames;
+            this.fieldSpans = fieldSpans;
+            this.fields = fields;
+        }
+    }
+
+    /** `lo..=hi` or `lo..hi`: an integer from lo to hi, which {@link #hi} holds inclusive either way. */
+    public static final class RangePat extends Pattern {
+        public final BigInteger lo;
+        public final BigInteger hi;
+        public final boolean inclusive;
+        /** The integer type it matches, set by the checker. */
+        public PrimKind kind;
+
+        public RangePat(Span span, BigInteger lo, BigInteger hi, boolean inclusive) {
+            super(span);
+            this.lo = lo;
+            this.hi = inclusive ? hi : hi.subtract(BigInteger.ONE);
+            this.inclusive = inclusive;
+        }
+    }
+
+    /** `p1 | p2 | ...`: any of the alternatives; each binds the same names, to the same variables. */
+    public static final class OrPat extends Pattern {
+        public final List<Pattern> alts;
+
+        public OrPat(Span span, List<Pattern> alts) {
+            super(span);
+            this.alts = alts;
         }
     }
 
@@ -643,6 +717,40 @@ public final class Ast {
     public static final class WildPat extends Pattern {
         public WildPat(Span span) {
             super(span);
+        }
+    }
+
+    /** The names a pattern binds, in order; each of an or-pattern's alternatives binds the same ones, once listed. */
+    public static List<BindPat> bindings(Pattern p) {
+        List<BindPat> out = new ArrayList<>();
+        bindings(p, out, false);
+        return out;
+    }
+
+    /** Every name of a pattern, those of each alternative of an or-pattern included: where each is written. */
+    public static List<BindPat> allBindings(Pattern p) {
+        List<BindPat> out = new ArrayList<>();
+        bindings(p, out, true);
+        return out;
+    }
+
+    private static void bindings(Pattern p, List<BindPat> out, boolean everyAlternative) {
+        switch (p) {
+            case BindPat b -> out.add(b);
+            case VariantPat v -> {
+                if (v.args != null) for (Pattern a : v.args) bindings(a, out, everyAlternative);
+            }
+            case TuplePat t -> {
+                for (Pattern e : t.elems) bindings(e, out, everyAlternative);
+            }
+            case StructPat s -> {
+                for (Pattern f : s.fields) bindings(f, out, everyAlternative);
+            }
+            case OrPat o -> {
+                if (everyAlternative) for (Pattern a : o.alts) bindings(a, out, true);
+                else bindings(o.alts.get(0), out, false);
+            }
+            default -> { }
         }
     }
 
@@ -956,6 +1064,21 @@ public final class Ast {
         public TupleLit(Span span, List<Expr> elems) {
             super(span);
             this.elems = elems;
+        }
+    }
+
+    /** An arm of a match expression: `Pattern if guard => value`. */
+    public record ExprArm(Pattern pattern, Expr guard, Expr value) {}
+
+    /** `match e { P => a, Q => b }`: the value of the first arm whose pattern (and guard) matches; only it is evaluated. */
+    public static final class MatchExpr extends Expr {
+        public final Expr subject;
+        public final List<ExprArm> arms;
+
+        public MatchExpr(Span span, Expr subject, List<ExprArm> arms) {
+            super(span);
+            this.subject = subject;
+            this.arms = arms;
         }
     }
 

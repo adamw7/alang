@@ -287,10 +287,8 @@ public final class Interpreter {
                 yield NORMAL;
             }
             case Destructure d -> {
-                StructV t = (StructV) Values.coerce(owned(d.init, slots), d.init.type);
-                for (int i = 0; i < d.vars.size(); i++) {
-                    if (d.vars.get(i) != null) slots[d.vars.get(i).slot] = t.fields[i];
-                }
+                // The pattern always matches; matching it binds its names.
+                matches(d.pattern, Values.coerce(owned(d.init, slots), d.init.type), slots);
                 yield NORMAL;
             }
             case If i -> {
@@ -522,17 +520,51 @@ public final class Interpreter {
         throw new IllegalStateException("non-exhaustive match passed the checker");
     }
 
+    /** Whether the value {@code v} matches the pattern; the names of a pattern that matches are bound in {@code slots}. */
     private boolean matches(Pattern p, Object v, Object[] slots) {
         return switch (p) {
             case WildPat w -> true;
+            case BindPat b -> {
+                // A copy, as the C backend makes: the arm may change the value it was taken from.
+                slots[b.var.slot] = Values.copy(v);
+                yield true;
+            }
             case VariantPat vp -> {
                 EnumV e = (EnumV) v;
                 if (e.tag != vp.variant.index) yield false;
-                for (int i = 0; i < vp.vars.size(); i++) {
-                    LocalVar lv = vp.vars.get(i);
-                    if (lv != null) slots[lv.slot] = e.payload[i];
+                if (vp.args != null) {
+                    for (int i = 0; i < vp.args.size(); i++) {
+                        if (!matches(vp.args.get(i), e.payload[i], slots)) yield false;
+                    }
                 }
                 yield true;
+            }
+            case TuplePat tp -> {
+                StructV t = (StructV) v;
+                for (int i = 0; i < tp.elems.size(); i++) {
+                    if (!matches(tp.elems.get(i), t.fields[i], slots)) yield false;
+                }
+                yield true;
+            }
+            case StructPat sp -> {
+                StructV t = (StructV) v;
+                for (int i = 0; i < sp.fields.size(); i++) {
+                    if (!matches(sp.fields.get(i), t.fields[sp.fieldIndexes[i]], slots)) yield false;
+                }
+                yield true;
+            }
+            case OrPat o -> {
+                for (Pattern alt : o.alts) {
+                    if (matches(alt, v, slots)) yield true;
+                }
+                yield false;
+            }
+            case RangePat r -> {
+                long x = (Long) v;
+                // A u64 above 2^63 is a negative long: its order is the unsigned one.
+                yield r.kind == PrimKind.U64
+                    ? Long.compareUnsigned(x, r.lo.longValue()) >= 0 && Long.compareUnsigned(x, r.hi.longValue()) <= 0
+                    : x >= r.lo.longValue() && x <= r.hi.longValue();
             }
             case IntPat ip -> ((Long) v) == ip.value.longValue();
             case StrPat sp -> {
@@ -743,6 +775,15 @@ public final class Interpreter {
                 yield a.type instanceof Type.ListT l ? new ListV(Arrays.copyOf(vals, l.cap()), vals.length) : new ArrV(vals);
             }
             case IfExpr i -> Values.coerce(owned((Boolean) eval(i.cond, slots) ? i.then : i.otherwise, slots), i.type);
+            case MatchExpr m -> {
+                Object v = eval(m.subject, slots);
+                for (ExprArm arm : m.arms) {
+                    if (matches(arm.pattern(), v, slots) && (arm.guard() == null || (Boolean) eval(arm.guard(), slots))) {
+                        yield Values.coerce(owned(arm.value(), slots), m.type);
+                    }
+                }
+                throw new IllegalStateException("non-exhaustive match passed the checker");
+            }
             case SliceExpr s -> {
                 Object xs = eval(s.target, slots);
                 long from = s.from == null ? 0L : (Long) eval(s.from, slots);

@@ -1,5 +1,6 @@
 package alang.check;
 
+import alang.ast.Ast;
 import alang.ast.Ast.*;
 import alang.ast.Builtin;
 import alang.diag.Code;
@@ -84,20 +85,17 @@ final class Uses {
                         "what it is given is lost: use its value, or remove it");
                 }
             }
-            for (Destructure d : s.destructures) {
-                for (int i = 0; i < d.vars.size(); i++) {
-                    LocalVar v = d.vars.get(i);
-                    if (v == null || v.name.startsWith("_") || s.read.contains(v)) continue;
-                    Span at = d.nameSpans.get(i);
-                    diags.fixable(Code.W0304, at, "`" + v.name + "` is never used", "write _ in its place", List.of(new Edit(at, "_")));
-                }
-            }
-            for (VariantPat p : s.patterns) {
-                for (int i = 0; i < p.vars.size(); i++) {
-                    LocalVar v = p.vars.get(i);
-                    if (v == null || v.name.startsWith("_") || s.read.contains(v)) continue;
-                    Span at = p.bindingSpans.get(i);
-                    diags.fixable(Code.W0304, at, "`" + v.name + "` is never used", "write _ in its place", List.of(new Edit(at, "_")));
+            for (Pattern p : s.patterns) {
+                // A name of an or-pattern is one variable, written in each alternative: each place becomes `_`.
+                Set<LocalVar> reported = new HashSet<>();
+                for (BindPat b : Ast.bindings(p)) {
+                    LocalVar v = b.var;
+                    if (v == null || v.name.startsWith("_") || s.read.contains(v) || !reported.add(v)) continue;
+                    List<Edit> fix = new ArrayList<>();
+                    for (BindPat each : Ast.allBindings(p)) {
+                        if (each.var == v) fix.add(new Edit(each.span, "_"));
+                    }
+                    diags.fixable(Code.W0304, b.span, "`" + v.name + "` is never used", "write _ in its place", fix);
                 }
             }
         }
@@ -108,8 +106,8 @@ final class Uses {
         final Set<LocalVar> read = new HashSet<>();
         final Set<LocalVar> changed = new HashSet<>();
         final List<Let> lets = new ArrayList<>();
-        final List<VariantPat> patterns = new ArrayList<>();
-        final List<Destructure> destructures = new ArrayList<>();
+        /** The patterns of let statements, match arms and match expressions. */
+        final List<Pattern> patterns = new ArrayList<>();
 
         void block(Block b) {
             for (Stmt s : b.stmts()) stmt(s);
@@ -122,7 +120,7 @@ final class Uses {
                     read(l.init);
                 }
                 case Destructure d -> {
-                    destructures.add(d);
+                    patterns.add(d.pattern);
                     read(d.init);
                 }
                 case Assign a -> {
@@ -149,7 +147,7 @@ final class Uses {
                 case Match m -> {
                     read(m.subject);
                     for (Arm a : m.arms) {
-                        if (a.pattern() instanceof VariantPat p) patterns.add(p);
+                        patterns.add(a.pattern());
                         if (a.guard() != null) read(a.guard());
                         block(a.body());
                     }
@@ -223,6 +221,14 @@ final class Uses {
                     read(i.cond);
                     read(i.then);
                     read(i.otherwise);
+                }
+                case MatchExpr m -> {
+                    read(m.subject);
+                    for (ExprArm a : m.arms) {
+                        patterns.add(a.pattern());
+                        if (a.guard() != null) read(a.guard());
+                        read(a.value());
+                    }
                 }
                 case SliceExpr s -> {
                     read(s.target);

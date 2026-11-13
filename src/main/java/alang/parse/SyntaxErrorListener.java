@@ -52,6 +52,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         TokenStream ts = parser.getInputStream();
         Token prev = previous(ts, tok);
         Token prev2 = prev == null ? null : previous(ts, prev);
+        expected = letExpected(ts, tok, prev, expected);
 
         String text = tok.getType() == Token.EOF ? "end of file"
             : tok.getType() == ALangLexer.ERROR_CHAR ? "character " + strayCharacter(tok.getText())
@@ -315,6 +316,34 @@ final class SyntaxErrorListener extends BaseErrorListener {
     }
 
     /**
+     * What a `let` expects, said plainly: a pattern could start or go on at its name, so the parser also expects the
+     * tokens of one, which would turn "expected ':'" into a list of operators and literals.
+     */
+    private static IntervalSet letExpected(TokenStream ts, Token tok, Token prev, IntervalSet expected) {
+        if (prev == null || expected == null) return expected;
+        if (prev.getType() == ALangLexer.LET || prev.getType() == ALangLexer.VAR) {
+            return IntervalSet.of(ALangLexer.IDENT).or(IntervalSet.of(ALangLexer.LPAREN));
+        }
+        if (tok.getType() == ALangLexer.ASSIGN) {
+            // `let x = ...` or `let (a, b) = ...`: the `=` of a let before its type.
+            int depth = 0;
+            for (int i = prev.getTokenIndex(); i >= 0; i--) {
+                Token t = ts.get(i);
+                if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+                int k = t.getType();
+                if (k == ALangLexer.RPAREN || k == ALangLexer.RBRACK) depth++;
+                else if ((k == ALangLexer.LPAREN || k == ALangLexer.LBRACK) && --depth < 0) return expected;
+                else if (depth == 0 && (k == ALangLexer.LET || k == ALangLexer.VAR)) return IntervalSet.of(ALangLexer.COLON);
+                else if (depth == 0 && (k == ALangLexer.SEMI || k == ALangLexer.LBRACE || k == ALangLexer.RBRACE
+                    || k == ALangLexer.COLON)) {
+                    return expected;
+                }
+            }
+        }
+        return expected;
+    }
+
+    /**
      * A character the lexer does not know, as a message shows it: in backticks, or by its code point when
      * it would not show there. A byte order mark, a no-break space or a form feed printed as itself made
      * "unexpected character ``", which names nothing the reader can find.
@@ -547,14 +576,10 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 + "type parameters, fn first<T>(xs: list[T; _]) -> T, and an optional value is an enum: "
                 + "enum MaybeI64 { None, Some(i64) }";
         }
-        if (expected.contains(ALangLexer.FAT_ARROW)) {
-            // After a pattern, where `=>` should come.
-            if (t == ALangLexer.PIPE) {
-                return "a match arm has exactly one pattern; write one arm per value: 1 => { ... } 2 => { ... }";
-            }
-            if (t == ALangLexer.DOTDOT) {
-                return "there are no range patterns; use an if/else if chain instead: if 1 <= x and x < 5 { ... }";
-            }
+        if (t == ALangLexer.LBRACE && p == ALangLexer.FAT_ARROW) {
+            // `=>` then `{` where a value must come: an arm of a match expression.
+            return "the arms of a match expression are values, not blocks: let x: str[8] = match n { 1 => \"one\", _ => \"many\" }; "
+                + "for statements in an arm, use a match statement: match n { 1 => { ... } _ => { ... } }";
         }
         if (t == ALangLexer.LBRACE && expected.contains(ALangLexer.THEN)) {
             return "an if expression is written with `then` and no braces: let x: i64 = if c then 1 else 2;";
@@ -562,11 +587,6 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (t == ALangLexer.IF && expected.contains(ALangLexer.INT_LIT) && !expected.contains(ALangLexer.LET)) {
             // Where an operand must start: an if expression is a whole expression.
             return "an if expression is never an operand; put it in parentheses: 1 + (if c then 2 else 3)";
-        }
-        if (t == ALangLexer.MATCH && expected.contains(ALangLexer.INT_LIT) && !expected.contains(ALangLexer.LET)) {
-            return "`match` is a statement, not an expression; declare the variable first and assign it in every "
-                + "arm: var x: i64 = 0; match c { ... => { x = 1; } }; for a choice between two values, "
-                + "if c then a else b is an expression";
         }
         if (t == ALangLexer.FN) {
             if (expected.contains(ALangLexer.LET)) {

@@ -1,0 +1,14 @@
+error[E0306]: match is not exhaustive: missing MaybeI64.Some(_)
+  --> tests/errors/E0306_nested_patterns.al:14:5
+   |
+14 |     match m {
+   |     ^^^^^
+  = hint: add arms for them, or add `_ => { }` as the last arm
+
+error[E0306]: match is not exhaustive: missing (Color.Blue, true)
+  --> tests/errors/E0306_nested_patterns.al:21:12
+   |
+21 |     return match (c, on) {
+   |            ^^^^^
+  = hint: add arms for them, or add `_ => { }` as the last arm
+

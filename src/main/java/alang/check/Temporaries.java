@@ -146,6 +146,15 @@ final class Temporaries {
             case Repeat r -> Layout.add(expr(r.value), stored(r.value, Type.elementOf(r.type)));
             case IfExpr i -> Layout.add(expr(i.cond), Layout.add(Layout.add(expr(i.then), stored(i.then, i.type)),
                 Layout.add(expr(i.otherwise), stored(i.otherwise, i.type))));
+            case MatchExpr m -> {
+                // As for an if expression: what each arm builds, and its value's copy into the result.
+                long t = expr(m.subject);
+                for (ExprArm a : m.arms) {
+                    if (a.guard() != null) t = Layout.add(t, expr(a.guard()));
+                    t = Layout.add(t, Layout.add(expr(a.value()), stored(a.value(), m.type)));
+                }
+                yield t;
+            }
             case SliceExpr s -> Layout.add(expr(s.target), Layout.add(s.from == null ? 0 : expr(s.from), s.to == null ? 0 : expr(s.to)));
             case TupleLit t -> {
                 List<Type> elems = ((Type.TupleT) t.type).elems();

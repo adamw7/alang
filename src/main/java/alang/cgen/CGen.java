@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -865,13 +866,11 @@ public final class CGen {
             }
             case Assign a -> assign(a);
             case Destructure d -> {
-                String v = lower(d.init);
-                for (int i = 0; i < d.vars.size(); i++) {
-                    LocalVar lv = d.vars.get(i);
-                    if (lv == null) continue;
-                    emit(ct(lv.type) + " " + cName(lv) + " = (" + v + ").e" + i + ";");
-                    emit("(void)" + cName(lv) + ";");
-                }
+                // The pattern always matches: only its names are taken from the value.
+                String v = lowerLvalue(d.init);
+                Map<LocalVar, String> binds = new LinkedHashMap<>();
+                patternCond(d.pattern, v, d.init.type, binds);
+                bind(binds);
             }
             case If i -> ifStmt(i);
             case While w -> whileLoop(w);
@@ -1248,54 +1247,47 @@ public final class CGen {
     }
 
     private void match(Match m) {
-        Type t = m.subject.type;
+        matchArms(m.subject, m.arms.stream().map(Arm::pattern).toList(), m.arms.stream().map(Arm::guard).toList(),
+            k -> block(m.arms.get(k).body()));
+    }
+
+    /**
+     * The arms of a match: the subject is read once, then each arm tests its pattern and guard, binds its names, and runs
+     * {@code body}; the one that matches jumps past the rest.
+     */
+    private void matchArms(Expr subject, List<alang.ast.Ast.Pattern> patterns, List<Expr> guards, java.util.function.IntConsumer body) {
+        Type t = subject.type;
         open("{");
         // Every arm test and binding reads the subject before any arm body runs, so an aggregate is read
         // where it is: in its variable, or in the temporary its expression already built. Copying it would
         // take stack the checker does not count.
-        String s = Type.isAggregate(t) ? lower(m.subject) : tmp(t, lower(m.subject));
+        String s = Type.isAggregate(t) ? lower(subject) : tmp(t, lower(subject));
         // As in an if statement, the arms follow one another and the one that matches jumps past the rest:
         // compilers parse an else-if chain recursively, and clang crashed on a match with 10 000 arms.
         String end = null;
-        for (int k = 0; k < m.arms.size(); k++) {
-            Arm arm = m.arms.get(k);
-            boolean last = k == m.arms.size() - 1;
-            String cond = switch (arm.pattern()) {
-                case WildPat w -> null;
-                case VariantPat v -> s + ".tag == " + v.variant.index + "u";
-                case IntPat ip -> s + " == " + intLiteral(ip.value.longValue(), Type.kind(t));
-                case BoolPat bp -> bp.value ? s : "!" + s;
-                case StrPat sp -> {
-                    String lit = strLiteral(sp.value);
-                    yield "al_eq_bytes(" + s + ".b, " + s + ".len, " + lit + ".b, " + lit + ".len)";
-                }
-            };
+        for (int k = 0; k < patterns.size(); k++) {
+            boolean last = k == patterns.size() - 1;
+            Map<LocalVar, String> binds = new LinkedHashMap<>();
+            String cond = patternCond(patterns.get(k), s, t, binds);
+            Expr guard = guards.get(k);
             // Matches are exhaustive, so the final arm needs no test, unless a guard may turn it down.
-            boolean tested = arm.guard() != null || !last && cond != null;
+            boolean tested = guard != null || !last && cond != null;
             if (tested) {
                 if (end == null) end = "al_endmatch" + ++tmpCount;
                 open(cond != null ? "if (" + cond + ") {" : "{");
             } else {
                 open("{");
             }
-            if (arm.pattern() instanceof VariantPat v) {
-                for (int i = 0; i < v.vars.size(); i++) {
-                    LocalVar lv = v.vars.get(i);
-                    if (lv != null) {
-                        emit(ct(lv.type) + " " + cName(lv) + " = " + s + ".u.v_" + v.variant.name + ".p" + i + ";");
-                        emit("(void)" + cName(lv) + ";");
-                    }
-                }
-            }
-            if (arm.guard() != null) {
+            bind(binds);
+            if (guard != null) {
                 // The guard reads the bindings, so it is lowered after them.
-                String g = lower(arm.guard());
+                String g = lower(guard);
                 open("if (" + g + ") {");
-                block(arm.body());
+                body.accept(k);
                 emit("goto " + end + ";");
                 close("}");
             } else {
-                block(arm.body());
+                body.accept(k);
                 if (tested) emit("goto " + end + ";");
             }
             close("}");
@@ -1303,6 +1295,96 @@ public final class CGen {
         }
         if (end != null) emit(end + ":;");
         close("}");
+    }
+
+    /** Declares the names a pattern binds, each a copy of the part of the value it takes. */
+    private void bind(Map<LocalVar, String> binds) {
+        for (Map.Entry<LocalVar, String> b : binds.entrySet()) {
+            emit(ct(b.getKey().type) + " " + cName(b.getKey()) + " = " + b.getValue() + ";");
+            emit("(void)" + cName(b.getKey()) + ";");
+        }
+    }
+
+    /**
+     * The C condition under which the value {@code v} (an expression without side effects, of type {@code t}) matches
+     * pattern {@code p}, or null if it always does; the C expression each name of p takes goes into {@code binds}. A
+     * name of an or-pattern takes the part of the alternative that matched.
+     */
+    private String patternCond(alang.ast.Ast.Pattern p, String v, Type t, Map<LocalVar, String> binds) {
+        return switch (p) {
+            case WildPat w -> null;
+            case BindPat b -> {
+                binds.put(b.var, v);
+                yield null;
+            }
+            case IntPat ip -> v + " == " + intLiteral(ip.value.longValue(), Type.kind(t));
+            case RangePat r -> {
+                PrimKind k = Type.kind(t);
+                List<String> parts = new ArrayList<>();
+                // A bound at the end of the type is always true, which -Wtype-limits reports.
+                if (r.lo.compareTo(k.min()) > 0) parts.add(v + " >= " + intLiteral(r.lo.longValue(), k));
+                if (r.hi.compareTo(k.max()) < 0) parts.add(v + " <= " + intLiteral(r.hi.longValue(), k));
+                yield parts.isEmpty() ? null : "(" + String.join(" && ", parts) + ")";
+            }
+            case BoolPat bp -> bp.value ? v : "!(" + v + ")";
+            case StrPat sp -> {
+                String lit = strLiteral(sp.value);
+                yield "al_eq_bytes(" + v + ".b, " + v + ".len, " + lit + ".b, " + lit + ".len)";
+            }
+            case VariantPat vp -> {
+                List<String> parts = new ArrayList<>();
+                parts.add(v + ".tag == " + vp.variant.index + "u");
+                if (vp.args != null) {
+                    for (int i = 0; i < vp.args.size(); i++) {
+                        String c = patternCond(vp.args.get(i), v + ".u.v_" + vp.variant.name + ".p" + i, vp.variant.payload.get(i), binds);
+                        if (c != null) parts.add(c);
+                    }
+                }
+                yield parts.size() == 1 ? parts.get(0) : "(" + String.join(" && ", parts) + ")";
+            }
+            case TuplePat tp -> {
+                List<Type> elems = ((Type.TupleT) t).elems();
+                List<String> parts = new ArrayList<>();
+                for (int i = 0; i < tp.elems.size(); i++) {
+                    String c = patternCond(tp.elems.get(i), v + ".e" + i, elems.get(i), binds);
+                    if (c != null) parts.add(c);
+                }
+                yield parts.isEmpty() ? null : "(" + String.join(" && ", parts) + ")";
+            }
+            case StructPat sp -> {
+                List<String> parts = new ArrayList<>();
+                for (int i = 0; i < sp.fields.size(); i++) {
+                    Field f = sp.decl.fields.get(sp.fieldIndexes[i]);
+                    String c = patternCond(sp.fields.get(i), v + ".f_" + f.name, f.type, binds);
+                    if (c != null) parts.add(c);
+                }
+                yield parts.isEmpty() ? null : "(" + String.join(" && ", parts) + ")";
+            }
+            case OrPat o -> {
+                List<String> conds = new ArrayList<>();
+                List<Map<LocalVar, String>> altBinds = new ArrayList<>();
+                for (alang.ast.Ast.Pattern alt : o.alts) {
+                    Map<LocalVar, String> mine = new LinkedHashMap<>();
+                    conds.add(patternCond(alt, v, t, mine));
+                    altBinds.add(mine);
+                }
+                if (conds.contains(null)) {
+                    // An alternative that always matches: the others come before it, as written.
+                    int all = conds.indexOf(null);
+                    conds = conds.subList(0, all + 1);
+                }
+                for (LocalVar lv : altBinds.get(0).keySet()) {
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < conds.size(); i++) {
+                        String e = altBinds.get(i).get(lv);
+                        if (i == conds.size() - 1) sb.append(e);
+                        else sb.append("(").append(conds.get(i)).append(") ? ").append(e).append(" : ");
+                    }
+                    binds.put(lv, conds.size() == 1 ? altBinds.get(0).get(lv) : "(" + sb + ")");
+                }
+                yield conds.contains(null) ? null : "(" + String.join(" || ", conds.stream().map(c -> "(" + c + ")").toList()) + ")";
+            }
+        };
     }
 
     private void assertStmt(Assert a) {
@@ -1436,6 +1518,15 @@ public final class CGen {
                 }
                 String r = tmp(t.type, "{0}");
                 for (int i = 0; i < vals.size(); i++) emit(r + ".e" + i + " = " + vals.get(i) + ";");
+                yield r;
+            }
+            case MatchExpr m -> {
+                String r = tmp(m.type, zeroInit(m.type));
+                matchArms(m.subject, m.arms.stream().map(ExprArm::pattern).toList(), m.arms.stream().map(ExprArm::guard).toList(),
+                    k -> {
+                        Expr value = m.arms.get(k).value();
+                        emit(r + " = " + coerce(lower(value), value.type, m.type) + ";");
+                    });
                 yield r;
             }
             case IfExpr i -> {

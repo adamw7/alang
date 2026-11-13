@@ -192,12 +192,12 @@ a file, before any declaration (E0001), and:
 
 | Statement | Form |
 |-----------|------|
-| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;` |
+| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;`, `let Point(x: px, y: _): Point = p;` (a pattern that always matches) |
 | assignment | `place = expr;` and `+= -= *= /= %=` |
-| condition | `if c { } else if c { } else { }` |
+| condition | `if c { } else if c { } else { }`; any condition may be `let Pattern = expr` (`if let MaybeI64.Some(v) = m { }`) |
 | loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`; `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
 | labels | `outer: for ... { }` or `outer: while ... { }`, then `break outer;` or `continue outer;` from a loop inside it |
-| match | `match e { Pattern => { } ... }` |
+| match | `match e { Pattern => { } ... }` (and as a value: `match e { Pattern => value, ... }`, §6) |
 | jumps | `break;` `continue;` `return;` `return expr;` |
 | assertion | `assert cond;` `assert cond, "message";` |
 | call | `f(args);` |
@@ -226,7 +226,7 @@ a file, before any declaration (E0001), and:
   without building a list: each piece is a `str` of the capacity of `s`, which no piece can outgrow, so the
   loop never traps on the size or number of the pieces. `s` and `sep` are evaluated once, before the first
   piece, like a collection. Narrow a piece with `str[N](p)` after checking `len(p)`.
-- Loop variables, match bindings and `let` bindings are immutable.
+- Loop variables, match bindings and `let` bindings are immutable; the names of a `var` pattern are mutable.
 - Only calls may be expression statements (E0305); ignoring a non-void result is warning W0302.
 - A program without errors is also checked for work that is lost: a local or match binding that is never
   used (W0304; write `_` for a binding), a variable that is changed but never read (W0305), often a copy
@@ -234,11 +234,29 @@ a file, before any declaration (E0001), and:
   checked file that nothing calls (W0306). Names that start with `_` are left alone.
 - A function with a return type must return on every path; loops never count as returning (E0301).
 
-**Match** patterns: `Enum.Variant`, `Enum.Variant(a, b)` (bindings; `_` ignores one), integer and
-character literals (`3`, `-1`, `'x'`), string literals, `true`, `false`, and `_` (anything; must be
-last). Each arm body is a block. Match works on enums, integers, `bool` and `str`, and must be
-exhaustive (E0306): all enum variants or both bools, or a final `_`, which integers and strings always
-need. Duplicate or unreachable arms are E0307.
+**Match** works on enums, integers, `bool`, `str`, tuples and structs. Each arm body is a block; the first arm
+whose pattern matches runs. Patterns nest:
+
+| Pattern | Matches |
+|---------|---------|
+| `_` | anything |
+| `name` | anything, and binds a copy of it to a new variable `name` |
+| `3`, `-1`, `'x'`, `"text"`, `true` | that value |
+| `1..=9`, `'a'..='z'`, `0..10` | an integer from the first bound to the second (`..` leaves the second out) |
+| `Enum.Variant`, `Enum.Variant(p1, p2)` | that variant, with each payload value matching its pattern |
+| `(p1, p2)` | a tuple whose elements match |
+| `Point(x: p1, y: p2)` | a struct whose named fields match; the fields left out match anything |
+| `p1 \| p2` | any of the alternatives, which bind the same names (of the same types) |
+
+A match must be exhaustive (E0306): together its arms take every value, which an enum, `bool`, tuple or struct can
+do arm by arm, while integers and strs always need a final `_` or name. An arm that takes no value the arms above it
+leave, such as `5` below `1..=10`, is unreachable (E0307), as is any arm below a `_`. The names of an or-pattern take
+their values from the first alternative that matches.
+
+`let Pattern: Type = value;` takes a value apart with a pattern that matches every value of the type (E0306
+otherwise): a tuple or struct of names, `_`s and such patterns. `if let Pattern = value { A } else { B }` runs A,
+with the pattern's names bound, when the value matches, and B otherwise; it is `match value { Pattern => { A } _ =>
+{ B } }`, so a pattern that always matches is E0307, and `else if` may chain more conditions of either kind.
 
 An arm may have a **guard**: `Shape.Circle(r) if r > 10.0 => { }` matches only when the pattern does and then the
 `bool` condition, which can use the arm's bindings, holds; otherwise matching goes on with the next arm. A guarded
@@ -402,6 +420,11 @@ gives: a str or list of the capacity of `xs`, or a list for an array. A left-out
 (a `for` loop over it whose body leaves its variable alone, `len`, `contains`, `index_of`, `count`, the text
 functions, a comparison or `print` of a str, a conversion `i64(s[2..5])`, a `match` on it), the C backend reads it
 where it is, through a pointer and a length, and the memory bound counts no copy of it.
+
+**Match expressions.** `match e { P => a, Q if c => b, _ => d }` is the value of the first arm whose pattern (and
+guard) matches; only that arm's value is evaluated. Its arms are values, separated by commas, and checked like a match
+statement's (E0306, E0307); their values have one type, as an if expression's branches do. Like an if expression it is
+a whole expression, never an operand, and a call with `mut` arguments cannot be an arm's value (E0215).
 
 **If expressions.** `if c then a else b` is `a` when the `bool` `c` holds and `b` otherwise; only that branch is
 evaluated, so `if len(xs) > 0 then xs[0] else 0` never indexes an empty list. The branches have one type, as

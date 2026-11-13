@@ -13,6 +13,7 @@ import alang.ast.Ast.Continue;
 import alang.ast.Ast.Destructure;
 import alang.ast.Ast.Convert;
 import alang.ast.Ast.Expr;
+import alang.ast.Ast.ExprArm;
 import alang.ast.Ast.ExprStmt;
 import alang.ast.Ast.FieldAccess;
 import alang.ast.Ast.FieldInit;
@@ -26,6 +27,7 @@ import alang.ast.Ast.IntLit;
 import alang.ast.Ast.Let;
 import alang.ast.Ast.LocalVar;
 import alang.ast.Ast.Match;
+import alang.ast.Ast.MatchExpr;
 import alang.ast.Ast.Name;
 import alang.ast.Ast.Program;
 import alang.ast.Ast.Repeat;
@@ -180,6 +182,13 @@ final class ToolExamples {
                 calls(i.cond, out);
                 calls(i.then, out);
                 calls(i.otherwise, out);
+            }
+            case MatchExpr m -> {
+                calls(m.subject, out);
+                for (ExprArm arm : m.arms) {
+                    if (arm.guard() != null) calls(arm.guard(), out);
+                    calls(arm.value(), out);
+                }
             }
             case TupleLit t -> t.elems.forEach(x -> calls(x, out));
             case SliceExpr s -> {

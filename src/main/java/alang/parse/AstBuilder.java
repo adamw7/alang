@@ -283,13 +283,7 @@ final class AstBuilder {
             LetStmtContext l = ctx.letStmt();
             boolean mutable = l.kind.getType() == ALangLexer.VAR;
             if (l.identifier() == null) {
-                List<String> names = new ArrayList<>();
-                List<Span> spans = new ArrayList<>();
-                for (BindingContext b : l.binding()) {
-                    names.add(b.UNDERSCORE() != null ? null : b.identifier().getText());
-                    spans.add(span(b));
-                }
-                return new Destructure(sp, mutable, names, spans, type(l.type()), expr(l.expression()));
+                return new Destructure(sp, mutable, pattern(l.pattern()), type(l.type()), expr(l.expression()));
             }
             return new Let(sp, mutable, l.identifier().getText(), span(l.identifier()), type(l.type()), expr(l.expression()));
         }
@@ -307,13 +301,10 @@ final class AstBuilder {
         }
         if (ctx.ifStmt() != null) {
             IfStmtContext i = ctx.ifStmt();
-            List<Expr> conds = new ArrayList<>();
-            List<Block> blocks = new ArrayList<>();
-            for (ExpressionContext e : i.expression()) conds.add(expr(e));
+            List<ConditionContext> cs = i.condition();
             List<BlockContext> bs = i.block();
-            for (int k = 0; k < conds.size(); k++) blocks.add(block(bs.get(k)));
-            Block elseBlock = bs.size() > conds.size() ? block(bs.get(bs.size() - 1)) : null;
-            return new If(sp, conds, blocks, elseBlock);
+            Block elseBlock = bs.size() > cs.size() ? block(bs.get(bs.size() - 1)) : null;
+            return ifChain(sp, cs, bs, 0, elseBlock);
         }
         if (ctx.whileStmt() != null) return whileLoop(sp, ctx.whileStmt());
         if (ctx.forStmt() != null) return forLoop(sp, ctx.forStmt());
@@ -352,6 +343,32 @@ final class AstBuilder {
         return new ExprStmt(sp, expr(ctx.exprStmt().expression()));
     }
 
+    /**
+     * The conditions from {@code from} on of an if statement, and its else block: plain conditions make an if
+     * statement, and `if let P = e { A } else { B }` is `match e { P => { A } _ => { B } }`, where B holds the rest of
+     * the chain.
+     */
+    private Stmt ifChain(Span sp, List<ConditionContext> cs, List<BlockContext> bs, int from, Block elseBlock) {
+        List<Expr> conds = new ArrayList<>();
+        List<Block> blocks = new ArrayList<>();
+        int k = from;
+        for (; k < cs.size() && cs.get(k).LET() == null; k++) {
+            conds.add(expr(cs.get(k).expression()));
+            blocks.add(block(bs.get(k)));
+        }
+        if (k == cs.size()) return new If(sp, conds, blocks, elseBlock);
+        ConditionContext c = cs.get(k);
+        Span at = span(c);
+        Block then = block(bs.get(k));
+        Block rest = k + 1 < cs.size()
+            ? new Block(span(cs.get(k + 1)), List.of(ifChain(span(cs.get(k + 1)), cs, bs, k + 1, elseBlock)))
+            : elseBlock != null ? elseBlock : new Block(at, List.of());
+        Match m = new Match(conds.isEmpty() ? sp : at, expr(c.expression()),
+            List.of(new Arm(pattern(c.pattern()), null, then), new Arm(new WildPat(at), null, rest)), true);
+        if (conds.isEmpty()) return m;
+        return new If(sp, conds, blocks, new Block(at, List.of(m)));
+    }
+
     private While whileLoop(Span sp, WhileStmtContext w) {
         return new While(sp, expr(w.expression(0)), expr(w.expression(1)), block(w.block()));
     }
@@ -386,22 +403,50 @@ final class AstBuilder {
     }
 
     private Pattern pattern(PatternContext ctx) {
+        List<SinglePatternContext> alts = ctx.singlePattern();
+        if (alts.size() == 1) return pattern(alts.get(0));
+        List<Pattern> ps = new ArrayList<>();
+        for (SinglePatternContext a : alts) ps.add(pattern(a));
+        return new OrPat(span(ctx), ps);
+    }
+
+    private Pattern pattern(SinglePatternContext ctx) {
         Span sp = span(ctx);
         if (ctx instanceof VariantPatternContext v) {
-            List<String> names = null;
-            List<Span> spans = new ArrayList<>();
+            List<Pattern> args = null;
             if (v.LPAREN() != null) {
-                names = new ArrayList<>();
-                for (BindingContext b : v.binding()) {
-                    names.add(b.UNDERSCORE() != null ? null : b.identifier().getText());
-                    spans.add(span(b));
-                }
+                args = new ArrayList<>();
+                for (PatternContext p : v.pattern()) args.add(pattern(p));
             }
             int k = v.qual == null ? 0 : 1;
-            VariantPat vp = new VariantPat(sp, v.identifier(k).getText(), v.identifier(k + 1).getText(), names, spans);
+            VariantPat vp = new VariantPat(sp, v.identifier(k).getText(), v.identifier(k + 1).getText(), args);
             if (v.qual != null) vp.qualifier = v.qual.getText();
             return vp;
         }
+        if (ctx instanceof StructPatternContext st) {
+            List<String> names = new ArrayList<>();
+            List<Span> spans = new ArrayList<>();
+            List<Pattern> fields = new ArrayList<>();
+            for (FieldPatternContext f : st.fieldPattern()) {
+                names.add(f.identifier().getText());
+                spans.add(span(f.identifier()));
+                fields.add(pattern(f.pattern()));
+            }
+            int k = st.qual == null ? 0 : 1;
+            StructPat p = new StructPat(sp, st.identifier(k).getText(), names, spans, fields);
+            if (st.qual != null) p.qualifier = st.qual.getText();
+            return p;
+        }
+        if (ctx instanceof TuplePatternContext t) {
+            List<Pattern> elems = new ArrayList<>();
+            for (PatternContext p : t.pattern()) elems.add(pattern(p));
+            return new TuplePat(sp, elems);
+        }
+        if (ctx instanceof ParenPatternContext p) return pattern(p.pattern());
+        if (ctx instanceof RangePatternContext r) {
+            return new RangePat(sp, rangeBound(r.rangeBound(0)), rangeBound(r.rangeBound(1)), r.op.getType() == ALangLexer.DOTDOTEQ);
+        }
+        if (ctx instanceof BindingPatternContext b) return new BindPat(sp, b.identifier().getText());
         if (ctx instanceof IntPatternContext i) {
             BigInteger val = parseInt(i.INT_LIT().getText());
             return new IntPat(sp, i.MINUS() != null ? val.negate() : val);
@@ -418,10 +463,25 @@ final class AstBuilder {
         return new WildPat(sp);
     }
 
+    private BigInteger rangeBound(RangeBoundContext ctx) {
+        if (ctx.CHAR_LIT() != null) return BigInteger.valueOf(charValue(ctx.CHAR_LIT().getSymbol()));
+        BigInteger val = parseInt(ctx.INT_LIT().getText());
+        return ctx.MINUS() != null ? val.negate() : val;
+    }
+
     // ------------------------------------------------------------------ expressions
 
     Expr expr(ExpressionContext ctx) {
         Span sp = span(ctx);
+        if (ctx instanceof MatchExprContext m) {
+            List<ExprArm> arms = new ArrayList<>();
+            for (MatchExprArmContext a : m.matchExprArm()) {
+                List<ExpressionContext> es = a.expression();
+                Expr guard = es.size() > 1 ? expr(es.get(0)) : null;
+                arms.add(new ExprArm(pattern(a.pattern()), guard, expr(es.get(es.size() - 1))));
+            }
+            return new MatchExpr(sp, expr(m.expression()), arms);
+        }
         if (ctx instanceof BitAndExprContext b) return chain(sp, BinOp.BAND, b.unary());
         if (ctx instanceof BitOrExprContext b) return chain(sp, BinOp.BOR, b.unary());
         if (ctx instanceof BitXorExprContext b) return chain(sp, BinOp.BXOR, b.unary());

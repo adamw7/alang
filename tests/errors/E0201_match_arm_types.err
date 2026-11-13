@@ -1,0 +1,7 @@
+error[E0201]: the arms of a match expression have different types: i64 and str[4]
+  --> tests/errors/E0201_match_arm_types.al:11:26
+   |
+11 |         MaybeI64.None => "none",
+   |                          ^^^^^^
+  = hint: give every arm the same type
+

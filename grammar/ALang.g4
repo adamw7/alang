@@ -160,9 +160,10 @@ statement
     ;
 
 // `let` is immutable, `var` is mutable. Both must be initialized.
-// let (q, r): (i64, i64) = divmod(a, b);  takes a tuple apart, one variable per element (`_` skips one)
+// let (q, r): (i64, i64) = divmod(a, b);  takes a value apart with a pattern that always matches (`_` skips a part):
+// let Point(x: px, y: _): Point = p;
 letStmt
-    : kind=(LET | VAR) (identifier | LPAREN binding (COMMA binding)+ COMMA? RPAREN) COLON type ASSIGN expression SEMI
+    : kind=(LET | VAR) (identifier | pattern) COLON type ASSIGN expression SEMI
     ;
 
 assignStmt
@@ -181,8 +182,14 @@ placeSuffix
     | LBRACK expression RBRACK
     ;
 
+// if let Maybe.Some(x) = m { ... } else { ... }: the block runs when the pattern matches, with its names bound.
 ifStmt
-    : IF expression block (ELSE IF expression block)* (ELSE block)?
+    : IF condition block (ELSE IF condition block)* (ELSE block)?
+    ;
+
+condition
+    : LET pattern ASSIGN expression
+    | expression
     ;
 
 // The limit is evaluated once; exceeding it is a runtime trap.
@@ -204,7 +211,7 @@ labeledStmt
     : identifier COLON (whileStmt | forStmt)
     ;
 
-// Arms are checked for exhaustiveness. `_` matches anything and must be last.
+// Arms are checked for exhaustiveness: together they cover every value, and none is covered by those above it.
 matchStmt
     : MATCH expression LBRACE matchArm+ RBRACE
     ;
@@ -214,18 +221,34 @@ matchArm
     : pattern (IF expression)? FAT_ARROW block
     ;
 
+// `1 | 2`: any of the alternatives, which bind the same names.
 pattern
-    : (qual=identifier DOT)? identifier DOT identifier (LPAREN binding (COMMA binding)* COMMA? RPAREN)?   # variantPattern
+    : singlePattern (PIPE singlePattern)*
+    ;
+
+singlePattern
+    : (qual=identifier DOT)? identifier DOT identifier (LPAREN pattern (COMMA pattern)* COMMA? RPAREN)?   # variantPattern
+    | (qual=identifier DOT)? identifier LPAREN fieldPattern (COMMA fieldPattern)* COMMA? RPAREN          # structPattern
+    | LPAREN pattern (COMMA pattern)+ COMMA? RPAREN                                                     # tuplePattern
+    | LPAREN pattern RPAREN                                                                             # parenPattern
+    | rangeBound op=(DOTDOT | DOTDOTEQ) rangeBound                                                      # rangePattern
     | MINUS? INT_LIT                                                              # intPattern
     | CHAR_LIT                                                                    # charPattern
     | STRING_LIT                                                                  # stringPattern
     | (TRUE | FALSE)                                                              # boolPattern
     | UNDERSCORE                                                                  # wildcardPattern
+    | identifier                                                                  # bindingPattern
     ;
 
-binding
-    : identifier
-    | UNDERSCORE
+// Point(x: 0, y: py): the fields it names match their patterns; the others match anything.
+fieldPattern
+    : identifier COLON pattern
+    ;
+
+// 1..=9, 'a'..='z', -5..0: the integers from the first to the second (`..` leaves it out).
+rangeBound
+    : MINUS? INT_LIT
+    | CHAR_LIT
     ;
 
 breakStmt
@@ -254,13 +277,19 @@ exprStmt
 // =====================================================================
 
 // `if c then a else b` is a whole expression, never an operand: (if c then a else b) + 1.
+// So is `match e { P => a, Q => b }`, the value of the first arm that matches.
 expression
     : IF expression THEN expression ELSE expression   # ifExpr
+    | MATCH expression LBRACE matchExprArm (COMMA matchExprArm)* COMMA? RBRACE   # matchExpr
     | unary (AMP unary)+                 # bitAndExpr
     | unary (PIPE unary)+                # bitOrExpr
     | unary (CARET unary)+               # bitXorExpr
     | unary op=(SHL | SHR) unary         # shiftExpr
     | logic                              # logicExpr
+    ;
+
+matchExprArm
+    : pattern (IF expression)? FAT_ARROW expression
     ;
 
 logic
