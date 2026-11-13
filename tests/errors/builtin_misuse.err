@@ -38,6 +38,7 @@ error[E0207]: clear() modifies its first argument
 16 |     clear(n);
    |           ^
   = hint: write clear(mut n)
+  = fix: insert `mut `
 
 error[E0101]: unknown name `missing`
   --> tests/errors/builtin_misuse.al:17:26
@@ -113,6 +114,7 @@ error[E0207]: this argument is not modified; remove `mut`
    |
 27 |     print(len(mut s));
    |               ^^^^^
+  = fix: delete `mut `
 
 error[E0204]: panic() takes 1 argument(s) but 0 were given
   --> tests/errors/builtin_misuse.al:28:5

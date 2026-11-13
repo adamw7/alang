@@ -38,6 +38,7 @@ error[E0207]: insert() modifies its first argument
 9 |     insert(m, "b", 2);
   |            ^
   = hint: write insert(mut m, key, value)
+  = fix: insert `mut `
 
 error[E0203]: get_or() needs a map, found set[i64; 4]
   --> tests/errors/E0212_maps.al:10:25

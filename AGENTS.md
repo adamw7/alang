@@ -14,10 +14,12 @@ bin/alang fuzz  prog.al           # 3. call each tool fn, and a main that reads 
 bin/alang run   prog.al           # 4. run fn main()
 bin/alang run   prog.al < in.txt  #    a fn main(input: str[N]) gets all of stdin
 bin/alang explain E0215           #    explain any code
+bin/alang fix   prog.al --write   #    apply every `= fix:` (`"fix"` in JSON): &&, x++, xs.len(), a missing ; or mut
 bin/alang fmt   prog.al --write   #    lay the file out the one way
 ```
 
-Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. Results are
+Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. A diagnostic
+with a `= fix:` line has a mechanical one: `alang fix --write` makes it, and every other such fix, for you. Results are
 deterministic: a test that fails once fails every time, identically. `fuzz` tries the inputs your tests
 did not: empty and full strs of many shapes, full lists, the smallest and largest numbers. Each trap it
 reports comes with the arguments that caused it; handle that input, or narrow it with `requires`.

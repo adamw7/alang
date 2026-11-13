@@ -4,4 +4,5 @@ error[E0001]: unexpected 'or', expected ';' or an operator
 4 |     let b: bool = a and a or a;
   |                           ^^
   = hint: `and` and `or` cannot be mixed without parentheses: (a and b) or c
+  = fix: insert `(`, then insert `)`
 

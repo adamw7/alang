@@ -4,6 +4,7 @@ error[E0102]: there are no methods: `xs.push(...)` is not valid
 11 |     xs.push(1);
    |     ^^^^^^^^^^
   = hint: pass the value as the first argument: push(mut xs, ...)
+  = fix: replace `xs.push(1)` with `push(mut xs, 1)`
 
 error[E0102]: there are no methods: `xs.grow(...)` is not valid
   --> tests/errors/E0102_method_mut.al:12:5
@@ -11,6 +12,7 @@ error[E0102]: there are no methods: `xs.grow(...)` is not valid
 12 |     xs.grow(2);
    |     ^^^^^^^^^^
   = hint: pass the value as the first argument: grow(mut xs, ...)
+  = fix: replace `xs.grow(2)` with `grow(mut xs, 2)`
 
 error[E0102]: there are no methods: `xs.pop(...)` is not valid
   --> tests/errors/E0102_method_mut.al:13:20
@@ -18,6 +20,7 @@ error[E0102]: there are no methods: `xs.pop(...)` is not valid
 13 |     let top: i64 = xs.pop();
    |                    ^^^^^^^^
   = hint: pass the value as the first argument: pop(mut xs)
+  = fix: replace `xs.pop()` with `pop(mut xs)`
 
 error[E0102]: there are no methods: `xs.clear(...)` is not valid
   --> tests/errors/E0102_method_mut.al:14:5
@@ -25,6 +28,7 @@ error[E0102]: there are no methods: `xs.clear(...)` is not valid
 14 |     xs.clear();
    |     ^^^^^^^^^^
   = hint: pass the value as the first argument: clear(mut xs)
+  = fix: replace `xs.clear()` with `clear(mut xs)`
 
 error[E0102]: there are no methods: `s.append(...)` is not valid
   --> tests/errors/E0102_method_mut.al:15:5
@@ -32,6 +36,7 @@ error[E0102]: there are no methods: `s.append(...)` is not valid
 15 |     s.append("x");
    |     ^^^^^^^^^^^^^
   = hint: pass the value as the first argument: append(mut s, ...)
+  = fix: replace `s.append("x")` with `append(mut s, "x")`
 
 error[E0102]: there are no methods: `xs.len(...)` is not valid
   --> tests/errors/E0102_method_mut.al:16:11
@@ -39,4 +44,5 @@ error[E0102]: there are no methods: `xs.len(...)` is not valid
 16 |     print(xs.len(), top);
    |           ^^^^^^^^
   = hint: pass the value as the first argument: len(xs)
+  = fix: replace `xs.len()` with `len(xs)`
 

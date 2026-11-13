@@ -1347,4 +1347,76 @@ class CliTest {
         assertTrue(failed.err().contains("fmt failed: 1 syntax error(s); nothing was changed"), failed.err());
         assertEquals("fn main() {\n    let x: i64 = ;\n}\n", Files.readString(bad, StandardCharsets.UTF_8));
     }
+
+    @Test
+    void fixAppliesEveryMechanicalFixRoundByRound() throws IOException {
+        // The parser reports one syntax error at a time, so each round of checking finds the next to fix.
+        String broken = """
+            struct Point {
+                x: i64,
+                y: i64,
+            }
+
+            fn main() {
+                var xs: list[i64; 4] = []
+                let n = 2;
+                xs.push(n);
+                let p: Point = Point { x: 1, y: n };
+                if len(xs) > 0 && p.x == 1 || n > 5 {
+                    print(xs.length(), " ", True);
+                }
+            }
+            """;
+        String fixed = """
+            struct Point {
+                x: i64,
+                y: i64,
+            }
+
+            fn main() {
+                var xs: list[i64; 4] = [];
+                let n: i64 = 2;
+                push(mut xs, n);
+                let p: Point = Point(x: 1, y: n);
+                if (len(xs) > 0 and p.x == 1) or n > 5 {
+                    print(len(xs), " ", true);
+                }
+            }
+            """;
+        Path p = write("broken.al", broken);
+        Result checked = run("check", p.toString());
+        assertTrue(checked.err().contains("  = fix: insert `;`\n"), checked.err());
+        assertTrue(checked.err().endsWith("; `alang fix " + p + " --write` fixes the 1 marked `= fix:`\n"), checked.err());
+
+        Result printed = run("fix", p.toString());
+        assertEquals(0, printed.code(), printed.err());
+        assertEquals(fixed, printed.out());
+        assertEquals(broken, Files.readString(p, StandardCharsets.UTF_8), "printing changes nothing");
+        assertTrue(printed.err().startsWith("fixed[E0001] " + p + ":7:29: insert `;`\nfixed[E0001] " + p + ":8:11: insert `: i64`\n"),
+            printed.err());
+
+        Result json = run("fix", p.toString(), "--json");
+        Map<?, ?> j = (Map<?, ?>) Json.parse(json.out());
+        assertEquals(true, j.get("ok"));
+        assertEquals(fixed, j.get("source"));
+        assertEquals(false, j.get("written"));
+        List<?> done = (List<?>) j.get("fixed");
+        assertEquals(9, done.size(), json.out());
+        assertEquals("insert `;`", ((Map<?, ?>) done.get(0)).get("description"));
+        assertEquals(List.of(Json.obj("line", java.math.BigInteger.valueOf(7), "column", java.math.BigInteger.valueOf(30),
+            "length", java.math.BigInteger.ZERO, "replacement", ";")), ((Map<?, ?>) done.get(0)).get("fix"));
+
+        Result written = run("fix", p.toString(), "--write");
+        assertEquals(0, written.code(), written.err());
+        assertTrue(written.out().endsWith("wrote " + p + ": 9 fix(es)\n"), written.out());
+        assertEquals(fixed, Files.readString(p, StandardCharsets.UTF_8));
+        Result again = run("fix", p.toString(), "--write");
+        assertEquals(p + ": nothing to fix\n", again.out());
+
+        // What has no mechanical fix is reported, and fails.
+        Path rest = write("rest.al", "fn main() {\n    let x: i64 = 1 &&& 2;\n}\n");
+        Result left = run("fix", rest.toString(), "--write");
+        assertEquals(1, left.code());
+        assertTrue(left.err().contains("fix: 1 error(s) remain without a mechanical fix"), left.err());
+    }
 }

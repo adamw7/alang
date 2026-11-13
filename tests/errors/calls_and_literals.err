@@ -4,6 +4,7 @@ error[E0207]: parameter `xs` of `grow` is `mut`
 24 |     grow(small, 1);
    |          ^^^^^
   = hint: pass a variable by reference: mut small
+  = fix: insert `mut `
 
 error[E0207]: `mut` argument must have exactly type list[i64; 4], found list[i64; 2]
   --> tests/errors/calls_and_literals.al:25:10
@@ -25,6 +26,7 @@ error[E0207]: parameter `n` of `show` is not `mut`
 27 |     show(mut n);
    |          ^^^^^
   = hint: remove `mut`; the value is passed read-only
+  = fix: delete `mut `
 
 error[E0213]: `show` is a function; named arguments are only used to build structs
   --> tests/errors/calls_and_literals.al:28:5
@@ -101,6 +103,7 @@ error[E0106]: a value of type list[i64; 2] has no field `len`
 37 |     let i: i64 = small.len;
    |                        ^^^
   = hint: use the builtin len(x)
+  = fix: replace `small.len` with `len(small)`
 
 error[E0106]: a value of type i64 has no field `size`
   --> tests/errors/calls_and_literals.al:38:20

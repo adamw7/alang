@@ -4,6 +4,7 @@ import alang.ast.Ast.*;
 import alang.ast.Builtin;
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Edit;
 import alang.diag.Span;
 import alang.types.Type;
 import java.util.ArrayList;
@@ -87,7 +88,8 @@ final class Uses {
                 for (int i = 0; i < d.vars.size(); i++) {
                     LocalVar v = d.vars.get(i);
                     if (v == null || v.name.startsWith("_") || s.read.contains(v)) continue;
-                    diags.warning(Code.W0304, d.nameSpans.get(i), "`" + v.name + "` is never used", "write _ in its place");
+                    Span at = d.nameSpans.get(i);
+                    diags.fixable(Code.W0304, at, "`" + v.name + "` is never used", "write _ in its place", List.of(new Edit(at, "_")));
                 }
             }
             for (VariantPat p : s.patterns) {
@@ -95,7 +97,7 @@ final class Uses {
                     LocalVar v = p.vars.get(i);
                     if (v == null || v.name.startsWith("_") || s.read.contains(v)) continue;
                     Span at = p.bindingSpans.get(i);
-                    diags.warning(Code.W0304, at, "`" + v.name + "` is never used", "write _ in its place");
+                    diags.fixable(Code.W0304, at, "`" + v.name + "` is never used", "write _ in its place", List.of(new Edit(at, "_")));
                 }
             }
         }

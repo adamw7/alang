@@ -5,6 +5,7 @@ import alang.ast.Builtin;
 import alang.diag.Code;
 import alang.diag.Diagnostic;
 import alang.diag.Diagnostics;
+import alang.diag.Edit;
 import alang.diag.Hints;
 import alang.diag.Span;
 import alang.interp.Interpreter;
@@ -457,7 +458,15 @@ public final class Checker {
                 if (ctx.typeParams.containsKey(n.name())) yield ctx.typeParams.get(n.name());
                 if (structs.containsKey(n.name())) yield new Type.StructT(structs.get(n.name()));
                 if (enums.containsKey(n.name())) yield new Type.EnumT(enums.get(n.name()));
-                diags.error(Code.E0103, n.span(), "unknown type `" + n.name() + "`", typeHint(n.name()));
+                String to = switch (n.name()) {
+                    case "int", "long", "isize", "usize", "Int", "integer" -> "i64";
+                    case "float", "double", "Float" -> "f64";
+                    case "boolean", "Bool" -> "bool";
+                    case "char", "byte" -> "u8";
+                    default -> null;
+                };
+                diags.fixable(Code.E0103, n.span(), "unknown type `" + n.name() + "`", typeHint(n.name()),
+                    to == null ? List.of() : List.of(new Edit(n.span(), to)));
                 yield Type.ERROR;
             }
         };
@@ -1671,12 +1680,16 @@ public final class Checker {
             case "null", "nil", "None", "NULL", "undefined" ->
                 "ALang has no null; model absence with an enum, e.g. enum MaybeI32 { None, Some(i32) }";
             case "self", "this" -> "there are no methods or `self`; pass the value as a parameter";
-            case "True", "False" -> "booleans are lowercase: true, false";
+            case "True", "False", "TRUE", "FALSE" -> "booleans are lowercase: true, false";
             default -> fns.containsKey(n.name) || Builtin.byName(n.name) != null
                 ? "`" + n.name + "` is a function; call it with parentheses: " + n.name + "(...)"
                 : didYouMean(n.name, visibleValueNames());
         };
-        diags.error(Code.E0101, n.span, "unknown name `" + n.name + "`", hint);
+        List<Edit> fix = switch (n.name) {
+            case "True", "False", "TRUE", "FALSE" -> List.of(new Edit(n.span, n.name.toLowerCase(java.util.Locale.ROOT)));
+            default -> List.of();
+        };
+        diags.fixable(Code.E0101, n.span, "unknown name `" + n.name + "`", hint, fix);
     }
 
     private Type fieldAccess(FieldAccess f) {
@@ -1754,14 +1767,21 @@ public final class Checker {
             return st.decl().fields.get(idx).type;
         }
         String hint = null;
-        if (Type.elementOf(t) != null) {
-            hint = switch (f.name) {
-                case "len", "length", "size", "count" -> "use the builtin len(x)";
-                case "cap", "capacity" -> "use the builtin cap(x)";
-                default -> "arrays, lists and strings have no fields; use builtins such as len(x)";
+        List<Edit> fix = List.of();
+        if (Type.elementOf(t) != null || t instanceof Type.MapT || t instanceof Type.SetT) {
+            String builtin = switch (f.name) {
+                case "len", "length", "size", "count" -> "len";
+                case "cap", "capacity" -> "cap";
+                default -> null;
             };
+            hint = builtin != null ? "use the builtin " + builtin + "(x)" : "arrays, lists and strings have no fields; use builtins such as len(x)";
+            String target = wholeText(f.target);
+            if (builtin != null && target != null && f.span.line() == f.nameSpan.line()) {
+                fix = List.of(new Edit(new Span(f.span.line(), f.span.col(), f.nameSpan.col() + f.nameSpan.length() - f.span.col(),
+                    f.span.file()), builtin + "(" + target + ")"));
+            }
         }
-        diags.error(Code.E0106, f.nameSpan, "a value of type " + t + " has no field `" + f.name + "`", hint);
+        diags.fixable(Code.E0106, f.nameSpan, "a value of type " + t + " has no field `" + f.name + "`", hint, fix);
         return Type.ERROR;
     }
 
@@ -1799,7 +1819,9 @@ public final class Checker {
                 diags.error(Code.E0102, c.nameSpan, "`" + c.name + "` is a " + fv.type + ", not a function",
                     "a parameter can hold a function: fn apply(f: fn(i64) -> i64, x: i64) -> i64 { return f(x); }");
             } else {
-                diags.error(Code.E0102, c.nameSpan, "unknown function `" + c.name + "`", functionHint(c.name));
+                String to = renamedBuiltin(c.name);
+                diags.fixable(Code.E0102, c.nameSpan, "unknown function `" + c.name + "`", functionHint(c.name),
+                    to == null ? List.of() : List.of(new Edit(c.nameSpan, to)));
             }
             return Type.ERROR;
         }
@@ -1878,7 +1900,7 @@ public final class Checker {
                 if (p.byRef) {
                     if (!a.mut()) {
                         expr(a.expr(), argExpected(want, a.expr()));
-                        diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is `mut`",
+                        missingMut(a, "parameter `" + p.name + "` of `" + f.name + "` is `mut`",
                             "pass a variable by reference: mut " + exprText(a.expr()));
                         continue;
                     }
@@ -1894,7 +1916,7 @@ public final class Checker {
                     }
                 } else {
                     if (a.mut()) {
-                        diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is not `mut`",
+                        extraMut(a, "parameter `" + p.name + "` of `" + f.name + "` is not `mut`",
                             "remove `mut`; the value is passed read-only");
                     }
                     if (Type.hasTypeVar(want)) {
@@ -1996,7 +2018,7 @@ public final class Checker {
             }
             return null;
         }
-        if (a.mut()) diags.error(Code.E0207, a.span(), "a function is passed by its name, without `mut`");
+        if (a.mut()) extraMut(a, "a function is passed by its name, without `mut`", null);
         Type.FnT given;
         FnDecl fn = null;
         LocalVar lv = lookupLocal(n.name);
@@ -2402,7 +2424,7 @@ public final class Checker {
                 Arg target = args.get(0);
                 if (!target.mut()) {
                     expr(target.expr(), null);
-                    diags.error(Code.E0207, target.span(), "append() modifies its first argument",
+                    missingMut(target, "append() modifies its first argument",
                         "write append(mut " + exprText(target.expr()) + ", ...)");
                 } else {
                     Type t = mutPlace(target.expr());
@@ -2684,7 +2706,7 @@ public final class Checker {
                 Arg target = args.get(0);
                 if (!target.mut()) {
                     expr(target.expr(), null);
-                    diags.error(Code.E0207, target.span(), "push_char() modifies its first argument",
+                    missingMut(target, "push_char() modifies its first argument",
                         "write push_char(mut " + exprText(target.expr()) + ", c)");
                 } else {
                     Type t = mutPlace(target.expr());
@@ -2715,7 +2737,7 @@ public final class Checker {
                 Type t;
                 if (!target.mut()) {
                     t = expr(target.expr(), null);
-                    diags.error(Code.E0207, target.span(), b.name + "() fills its first argument",
+                    missingMut(target, b.name + "() fills its first argument",
                         "write " + b.name + "(mut " + exprText(target.expr()) + ", ...)");
                 } else {
                     t = mutPlace(target.expr());
@@ -2911,8 +2933,24 @@ public final class Checker {
         return false;
     }
 
+    /** E0207 for a plain argument of a `mut` parameter; where it is a place, the fix writes `mut` before it. */
+    private void missingMut(Arg a, String message, String hint) {
+        Span at = a.span();
+        List<Edit> fix = a.expr().isPlace() ? List.of(new Edit(new Span(at.line(), at.col(), 0, at.file()), "mut ")) : List.of();
+        diags.fixable(Code.E0207, at, message, hint, fix);
+    }
+
+    /** E0207 for `mut` on a read-only argument; the fix deletes it. */
+    private void extraMut(Arg a, String message, String hint) {
+        Span at = a.span();
+        Span value = a.expr().span;
+        List<Edit> fix = value.line() == at.line() && value.col() > at.col()
+            ? List.of(new Edit(new Span(at.line(), at.col(), value.col() - at.col(), at.file()), "")) : List.of();
+        diags.fixable(Code.E0207, at, message, hint, fix);
+    }
+
     private void noMut(Arg a) {
-        if (a.mut()) diags.error(Code.E0207, a.span(), "this argument is not modified; remove `mut`");
+        if (a.mut()) extraMut(a, "this argument is not modified; remove `mut`", null);
     }
 
     /**
@@ -3053,7 +3091,7 @@ public final class Checker {
     private Type sequenceArg(Call c, Arg a) {
         if (!a.mut()) {
             Type t = expr(a.expr(), null);
-            diags.error(Code.E0207, a.span(), c.name + "() modifies its argument", "write " + c.name + "(mut " + exprText(a.expr()) + ")");
+            missingMut(a, c.name + "() modifies its argument", "write " + c.name + "(mut " + exprText(a.expr()) + ")");
             return t;
         }
         Type t = mutPlace(a.expr());
@@ -3076,7 +3114,7 @@ public final class Checker {
         diags = saved;
         if (!(t instanceof Type.MapT) && !(t instanceof Type.SetT)) return null;
         if (!a.mut()) {
-            diags.error(Code.E0207, a.span(), c.name + "() modifies its first argument",
+            missingMut(a, c.name + "() modifies its first argument",
                 "write " + c.name + "(mut " + exprText(a.expr()) + switch (c.builtin) {
                     case INSERT -> t instanceof Type.MapT ? ", key, value)" : ", x)";
                     case REMOVE -> ", key)";
@@ -3101,7 +3139,7 @@ public final class Checker {
     private Type collectionArg(Call c, Arg a) {
         if (!a.mut()) {
             Type t = expr(a.expr(), null);
-            diags.error(Code.E0207, a.span(), c.name + "() modifies its first argument",
+            missingMut(a, c.name + "() modifies its first argument",
                 "write " + c.name + "(mut " + exprText(a.expr()) + switch (c.builtin) {
                     case PUSH -> ", value)";
                     case INSERT -> ", i, value)";
@@ -3161,8 +3199,8 @@ public final class Checker {
             if (lookupLocal(v.enumName) != null || consts.containsKey(v.enumName)) {
                 String args = v.args.isEmpty() ? "" : ", ...";
                 String mut = modifiesFirstArgument(v.variantName) ? "mut " : "";
-                diags.error(Code.E0102, v.span, "there are no methods: `" + v.enumName + "." + v.variantName + "(...)` is not valid",
-                    "pass the value as the first argument: " + v.variantName + "(" + mut + v.enumName + args + ")");
+                diags.fixable(Code.E0102, v.span, "there are no methods: `" + v.enumName + "." + v.variantName + "(...)` is not valid",
+                    "pass the value as the first argument: " + v.variantName + "(" + mut + v.enumName + args + ")", methodFix(v));
             } else {
                 diags.error(Code.E0103, v.span, "unknown enum `" + v.enumName + "`",
                     didYouMean(v.enumName, new ArrayList<>(enums.keySet())));
@@ -3789,7 +3827,93 @@ public final class Checker {
         } else if (from instanceof Type.ArrayT && to instanceof Type.ListT) {
             hint = "arrays and lists are different types; only array literals like [1, 2] can initialize a list";
         }
-        diags.error(Code.E0201, e.span, "type mismatch: expected " + to + ", found " + from, hint);
+        List<Edit> fix = List.of();
+        String text = Type.isNumeric(from) && Type.isNumeric(to) && lossless(Type.kind(from), Type.kind(to)) ? wholeText(e) : null;
+        if (text != null) fix = List.of(new Edit(e.span, to + "(" + text + ")"));
+        diags.fixable(Code.E0201, e.span, "type mismatch: expected " + to + ", found " + from, hint, fix);
+    }
+
+    /** Whether every value of {@code from} converts to {@code to} exactly: a wider integer, or a float with enough bits. */
+    private static boolean lossless(PrimKind from, PrimKind to) {
+        if (from.isInt() && to.isInt()) {
+            return to.min().compareTo(from.min()) <= 0 && to.max().compareTo(from.max()) >= 0;
+        }
+        if (from.isInt() && to.isFloat) return from.bits <= (to == PrimKind.F32 ? 16 : 32);
+        return from == PrimKind.F32 && to == PrimKind.F64;
+    }
+
+    /**
+     * The source text of {@code e} when its span is sure to cover all of it, so that a fix can wrap it: a name, a field
+     * or index of one, or a call, each on one line. Null for anything else.
+     */
+    private String wholeText(Expr e) {
+        String text = exprText(e);
+        return switch (e) {
+            case Name n -> text.equals(n.name) ? text : null;
+            case FieldAccess f -> {
+                String target = wholeText(f.target);
+                yield target != null && text.equals(target + "." + f.name) ? text : null;
+            }
+            case Index ix -> {
+                String target = wholeText(ix.target);
+                yield target != null && text.startsWith(target + "[") && text.endsWith("]") && balanced(text) ? text : null;
+            }
+            case Call c -> text.startsWith(c.name + "(") && text.endsWith(")") && balanced(text) ? text : null;
+            default -> null;
+        };
+    }
+
+    /** Whether the brackets of {@code text} pair up, outside string and character literals. */
+    private static boolean balanced(String text) {
+        int depth = 0;
+        char quote = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (quote != 0) {
+                if (ch == '\\') i++;
+                else if (ch == quote) quote = 0;
+                continue;
+            }
+            if (ch == '"' || ch == '\'') quote = ch;
+            else if (ch == '(' || ch == '[') depth++;
+            else if ((ch == ')' || ch == ']') && --depth < 0) return false;
+        }
+        return depth == 0 && quote == 0;
+    }
+
+    /** The builtin that a function of another language with the same arguments is, or null. */
+    private static String renamedBuiltin(String name) {
+        return switch (name) {
+            case "println", "printLn", "puts", "console_log", "echo" -> "print";
+            case "length", "size", "strlen" -> "len";
+            case "capacity" -> "cap";
+            default -> null;
+        };
+    }
+
+    /**
+     * `xs.push(1)`, which has no methods to call, as the call it means: push(mut xs, 1). The method's name stays, or
+     * becomes the builtin another language's name stands for (xs.length() is len(xs)); only a function that exists.
+     */
+    private List<Edit> methodFix(VariantCall v) {
+        String text = exprText(v);
+        if (!text.startsWith(v.enumName + ".") || !text.endsWith(")") || !balanced(text)) return List.of();
+        String name = v.variantName;
+        LocalVar target = lookupLocal(v.enumName);
+        boolean list = target != null && target.type instanceof Type.ListT;
+        if (v.args.isEmpty() && (name.equals("length") || name.equals("size"))) name = "len";
+        else if (v.args.isEmpty() && name.equals("capacity")) name = "cap";
+        else if (list && v.args.size() == 1 && (name.equals("append") || name.equals("push_back") || name.equals("add"))) name = "push";
+        if (Builtin.byName(name) == null && !fns.containsKey(name)) return List.of();
+        StringBuilder sb = new StringBuilder(name).append('(');
+        if (modifiesFirstArgument(name)) sb.append("mut ");
+        sb.append(v.enumName);
+        for (Arg a : v.args) {
+            String arg = exprText(a.expr());
+            if (a.span().line() != v.span.line()) return List.of();
+            sb.append(", ").append(a.mut() ? "mut " : "").append(arg);
+        }
+        return List.of(new Edit(v.span, sb.append(')').toString()));
     }
 
     private String exprText(Expr e) {

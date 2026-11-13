@@ -113,6 +113,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `alang fuzz FILE [--json] [--max-steps N] [--max-stack B]` | Call every `tool fn`, and a `fn main(input: str[N])`, with arguments at their limits (empty and full strs of many shapes, full lists, the smallest and largest numbers); report each trap with the arguments that hit it |
 | `alang serve FILE [--max-steps N] [--max-stack B]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout) |
 | `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
+| `alang fix FILE [--write] [--json] [--max-stack B]` | Apply the fix of every diagnostic that has one (marked `= fix:`, `"fix"` in JSON), checking again after each round, since a fixed syntax error lets the parser reach the next; print the result, or `--write` it; fails while errors without a fix remain |
 | `alang fmt FILE [--write \| --check]` | Print the file laid out the one way (indentation, spaces between tokens, blank lines; the lines you broke stay broken); `--write` rewrites it, `--check` fails if it is not formatted |
 | `alang explain CODE \| --all \| --markdown` | Explain a diagnostic or trap code, or all of them |
 
@@ -176,7 +177,10 @@ error[E0215]: a call with `mut` arguments must be its own statement or the whole
 ```
 
 With `--json`, the report is one line of JSON that names the source `file` once, and each diagnostic
-has `severity`, `code`, `title`, `message`, `line`, `column`, `length`, `source_line` and `hint`. A trap
+has `severity`, `code`, `title`, `message`, `line`, `column`, `length`, `source_line` and `hint`. Where the
+hint's change is mechanical, a `"fix"` lists the edits that make it (`line`, `column`, `length` in code
+points, and the `replacement`), and the text shows it as `= fix:`: `&&` becomes `and`, `xs.len()` becomes
+`len(xs)`, a missing `;` or `mut` is inserted. `alang fix prog.al --write` applies them all. A trap
 gives its `line`, `column` and `source_line` the same way, and a diagnostic or trap in an imported file
 adds its `file`. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`, `xs.len()`,
 `let x = 5`, `while` without a limit, `null`, `use`/`#include`, `substr`, `parse_int`, `sorted`, ...) are answered with the ALang spelling.

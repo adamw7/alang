@@ -4,6 +4,7 @@ import alang.ast.Ast;
 import alang.ast.Ast.*;
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Edit;
 import alang.diag.Source;
 import alang.diag.Span;
 import alang.parser.ALangLexer;
@@ -691,8 +692,11 @@ final class AstBuilder {
     private int charValue(Token t) {
         byte[] b = unescape(t);
         if (b.length != 1) {
-            diags.error(Code.E0202, span(t), "character literal " + t.getText() + " is not a single byte",
-                "character literals hold one ASCII byte; use a string \"...\" for other text");
+            // 'abc' is the text "abc", in the quotes text takes; one with a `"` in it would need escapes.
+            String body = t.getText().substring(1, t.getText().length() - 1);
+            List<Edit> fix = body.contains("\"") ? List.of() : List.of(new Edit(span(t), "\"" + body + "\""));
+            diags.fixable(Code.E0202, span(t), "character literal " + t.getText() + " is not a single byte",
+                "character literals hold one ASCII byte; use a string \"...\" for other text", fix);
             return 0;
         }
         return b[0] & 0xFF;

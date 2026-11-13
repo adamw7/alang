@@ -11,6 +11,7 @@ warning[W0304]: `r` is never used
 11 |         Shape.Circle(r) => { return 3.0; }
    |                      ^
   = hint: write _ in its place
+  = fix: replace `r` with `_`
 
 warning[W0304]: `h` is never used
   --> tests/errors/W0304_unused_variable.al:12:23
@@ -18,4 +19,5 @@ warning[W0304]: `h` is never used
 12 |         Shape.Rect(w, h) => { return w * w; }
    |                       ^
   = hint: write _ in its place
+  = fix: replace `h` with `_`
 
