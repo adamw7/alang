@@ -1,0 +1,7 @@
+error[E0218]: `s` has a type that each call fixes (str[_]), so it has no default value
+ --> tests/errors/E0218_default_any_capacity.al:2:22
+  |
+2 | fn shout(s: str[_] = "hey") -> i64 {
+  |                      ^^^^^
+  = hint: remove ` = "hey"`
+

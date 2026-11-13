@@ -37,6 +37,7 @@ Codes are never reused for a different meaning.
 | [E0215](#e0215) | mut call not allowed here |
 | [E0216](#e0216) | type cannot be inferred |
 | [E0217](#e0217) | `_` capacity not allowed here |
+| [E0218](#e0218) | misplaced default value |
 | [E0301](#e0301) | missing return |
 | [E0302](#e0302) | break/continue outside loop |
 | [E0303](#e0303) | bad return |
@@ -103,10 +104,11 @@ let n: i64 = length(xs);  // error: the builtin is `len`
 
 ## E0103
 
-**unknown type**: A type name is not a primitive type and no struct or enum with that name exists.
+**unknown type**: A type name is not a primitive type and no struct or enum with that name exists, or a struct or enum is given the wrong number of type arguments: one per type parameter, as in Option<i64> or Pair<i64, str[8]>, and none for one without type parameters.
 
 ```
 let p: Pointt = Point(x: 1, y: 2);  // typo
+let m: Option = Option.None;      // error: write Option<i64>
 ```
 
 ## E0104
@@ -147,10 +149,11 @@ let c: Color = Color.Blue;  // error
 
 ## E0108
 
-**reserved name**: The name is reserved for a builtin function and cannot be used for a declaration.
+**reserved name**: The name is reserved for a builtin function, or for a built-in type every program has (Option<T> and Result<T, E>), and cannot be used for a declaration.
 
 ```
 fn print() { }  // error: `print` is a builtin
+enum Option { None }  // error: Option<T> is built in
 ```
 
 ## E0201
@@ -286,10 +289,12 @@ print(top);
 
 ## E0216
 
-**type cannot be inferred**: The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list. split, words, join and replace take their type from the variable they are stored in; split and words may also be what a for loop goes through.
+**type cannot be inferred**: The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list. split, words, join and replace take their type from the variable they are stored in; split and words may also be what a for loop goes through. A value of a struct or enum with type parameters takes their types from where it goes, or from its fields or payload: Option.None needs a typed variable, parameter or comparison, and a type parameter must be in a field's or payload's type.
 
 ```
 print([]);  // error
+print(Option.None);  // error
+let m: Option<i64> = Option.None;  // ok
 ```
 
 ## E0217
@@ -299,6 +304,15 @@ print([]);  // error
 ```
 fn total(xs: list[i64; _]) -> i64 { ... }  // ok: takes any list of i64
 let s: str[_] = "a";                 // error: write str[64]
+```
+
+## E0218
+
+**misplaced default value**: A parameter's default value, `n: i64 = 3`, is a constant that a call leaving the argument out passes instead. A call leaves out arguments from the end only, so every parameter after one with a default needs one too. A `mut` parameter refers to the caller's variable, so it has none, and neither has a parameter whose type is not fixed (a `_` capacity, a type parameter or a function type) nor the input of `main`.
+
+```
+fn greet(name: str[16], times: i64 = 1) { ... }  // ok: greet("ann") passes times = 1
+fn bad(times: i64 = 1, name: str[16]) { ... }  // error: name needs a default too
 ```
 
 ## E0301
@@ -551,10 +565,11 @@ append(mut s, "de");  // trap
 
 ## R0005
 
-**assertion failed**: An `assert` condition evaluated to false.
+**assertion failed**: An `assert` condition evaluated to false, or a test written `test "..." traps CODE { }` did not stop with that trap: it ran to its end, or stopped with another one, whose code and message follow.
 
 ```
 assert 1 + 1 == 3;  // trap
+test "refuses zero" traps R0006 { half(0); }  // R0005 if half(0) does not trap
 ```
 
 ## R0006

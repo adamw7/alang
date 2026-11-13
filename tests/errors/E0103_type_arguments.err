@@ -1,0 +1,21 @@
+error[E0103]: enum `Option` needs its type arguments: Option<T>
+  --> tests/errors/E0103_type_arguments.al:11:9
+   |
+11 | fn f(m: Option, p: Pair<i64>, q: Point<i64>) {
+   |         ^^^^^^
+  = hint: write a type for each parameter, as in Option<i64>
+
+error[E0103]: struct `Pair` takes 2 type argument(s) but 1 were given
+  --> tests/errors/E0103_type_arguments.al:11:20
+   |
+11 | fn f(m: Option, p: Pair<i64>, q: Point<i64>) {
+   |                    ^^^^^^^^^
+  = hint: write a type for each parameter, as in Pair<i64, i64>
+
+error[E0103]: struct `Point` has no type parameters
+  --> tests/errors/E0103_type_arguments.al:11:34
+   |
+11 | fn f(m: Option, p: Pair<i64>, q: Point<i64>) {
+   |                                  ^^^^^^^^^^
+  = hint: write Point
+

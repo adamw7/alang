@@ -1,0 +1,7 @@
+error[E0307]: this `if let` always matches: its pattern takes every value of (i64, i64)
+ --> tests/errors/E0307_if_let_always.al:4:12
+  |
+4 |     if let (a, b) = pair {
+  |            ^^^^^^
+  = hint: take the value apart with a let: let (a, b): (i64, i64) = ...;
+

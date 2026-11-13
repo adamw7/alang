@@ -2,6 +2,7 @@ package alang.parse;
 
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Edit;
 import alang.diag.Hints;
 import alang.diag.Source;
 import alang.diag.Span;
@@ -51,6 +52,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         TokenStream ts = parser.getInputStream();
         Token prev = previous(ts, tok);
         Token prev2 = prev == null ? null : previous(ts, prev);
+        expected = letExpected(ts, tok, prev, expected);
 
         String text = tok.getType() == Token.EOF ? "end of file"
             : tok.getType() == ALangLexer.ERROR_CHAR ? "character " + strayCharacter(tok.getText())
@@ -61,8 +63,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (expected != null && expected.contains(ALangLexer.SEMI) && prev != null
             && (tok.getLine() > prev.getLine() || tok.getType() == Token.EOF) && tok.getType() != ALangLexer.SEMI) {
             Span at = new Span(prev.getLine(), prev.getCharPositionInLine() + 1, Math.max(1, Source.columns(prev.getText())), file);
-            diags.error(Code.E0001, at, "missing ';' after '" + prev.getText() + "'",
-                "every statement and const declaration ends with `;`");
+            diags.fixable(Code.E0001, at, "missing ';' after '" + prev.getText() + "'",
+                "every statement and const declaration ends with `;`", List.of(new Edit(after(prev), ";")));
             return;
         }
 
@@ -75,7 +77,270 @@ final class SyntaxErrorListener extends BaseErrorListener {
             message = msg;
         }
         String hint = hint(ts, tok, prev, prev2, expected);
-        diags.error(Code.E0001, new Span(tok.getLine(), tok.getCharPositionInLine() + 1, len, file), message, hint);
+        diags.fixable(Code.E0001, new Span(tok.getLine(), tok.getCharPositionInLine() + 1, len, file), message, hint,
+            fixes(ts, tok, prev, expected));
+    }
+
+    // ------------------------------------------------------------------ fixes
+
+    /**
+     * The edits that fix the error at {@code tok} where the fix is mechanical, as its hint says: a habit from
+     * another language with exactly one ALang spelling. None otherwise.
+     */
+    private List<Edit> fixes(TokenStream ts, Token tok, Token prev, IntervalSet expected) {
+        int t = tok.getType();
+        int p = prev == null ? -1 : prev.getType();
+        Token next = next(ts, tok);
+        // `} elif x {`: the error can come after `elif`, which parses as a name, at the token that follows it.
+        if (elseIf(ts, prev)) return List.of(new Edit(span(prev), "else if"));
+        switch (t) {
+            case ALangLexer.AMPAMP -> {
+                return List.of(new Edit(span(tok), spaced(prev, tok, next, "and")));
+            }
+            case ALangLexer.PIPEPIPE -> {
+                return List.of(new Edit(span(tok), spaced(prev, tok, next, "or")));
+            }
+            case ALangLexer.BANG -> {
+                // `!x` is `not x`, and `!a == b` is `not a == b`: for bools, (not a) == b and not (a == b) agree.
+                if (next == null) return List.of();
+                String before = prev != null && touches(prev, tok) && wordLike(prev.getType()) ? " " : "";
+                return List.of(new Edit(span(tok), before + "not" + (touches(tok, next) ? " " : "")));
+            }
+            case ALangLexer.COLONCOLON -> {
+                return List.of(new Edit(span(tok), "."));
+            }
+            case ALangLexer.PLUSPLUS -> {
+                // `x++;`: the statement form only, where it is `x += 1;`.
+                if (prev != null && endsPlace(p) && next != null && next.getType() == ALangLexer.SEMI) {
+                    return List.of(new Edit(span(tok), " += 1"));
+                }
+                return List.of();
+            }
+            case ALangLexer.IDENT -> {
+                return elseIf(ts, tok) ? List.of(new Edit(span(tok), "else if")) : List.of();
+            }
+            default -> { }
+        }
+        // 'abc', text in single quotes, lexes as a stray quote: it is the str "abc".
+        if (t == ALangLexer.ERROR_CHAR && tok.getText().equals("'")) {
+            for (int i = tok.getTokenIndex() + 1; i < ts.size(); i++) {
+                Token q = ts.get(i);
+                if (q.getType() == Token.EOF || q.getLine() != tok.getLine()) break;
+                if (q.getType() != ALangLexer.ERROR_CHAR || !q.getText().equals("'")) continue;
+                int col = tok.getCharPositionInLine() + 1;
+                Span whole = new Span(tok.getLine(), col, q.getCharPositionInLine() + 1 - col + 1, file);
+                String body = file.text(whole);
+                body = body.substring(1, body.length() - 1);
+                if (body.contains("\"") || body.contains("\\")) break;
+                return List.of(new Edit(whole, "\"" + body + "\""));
+            }
+            return List.of();
+        }
+        if (expected == null) return List.of();
+        // `a and b or c` and `a or b and c`: parentheses that keep the meaning `and` has in C, Python or Rust, where it
+        // binds tighter than `or`: (a and b) or c, a or (b and c).
+        if ((t == ALangLexer.AND || t == ALangLexer.OR) && prev != null && expectsOperator(expected)) {
+            Token first;
+            Token last;
+            if (t == ALangLexer.OR) {
+                first = exprStart(ts, tok, false);
+                last = prev;
+            } else {
+                first = exprStart(ts, tok, true);
+                last = exprEnd(ts, tok);
+            }
+            if (first == null || last == null) return List.of();
+            return List.of(new Edit(before(first), "("), new Edit(after(last), ")"));
+        }
+        // `let x = 5;`: the type of a lone literal is the one it has on its own.
+        if (t == ALangLexer.ASSIGN && expected.contains(ALangLexer.COLON) && prev != null && isNameLike(p)) {
+            Token kw = previous(ts, prev);
+            Token value = next;
+            if (value != null && value.getType() == ALangLexer.MINUS) value = next(ts, value);
+            Token end = value == null ? null : next(ts, value);
+            if (kw != null && (kw.getType() == ALangLexer.LET || kw.getType() == ALangLexer.VAR) && end != null
+                && end.getType() == ALangLexer.SEMI) {
+                String type = switch (value.getType()) {
+                    case ALangLexer.INT_LIT -> "i64";
+                    case ALangLexer.FLOAT_LIT -> "f64";
+                    case ALangLexer.TRUE, ALangLexer.FALSE -> value == next ? "bool" : null;
+                    default -> null;
+                };
+                if (type != null) return List.of(new Edit(after(prev), ": " + type));
+            }
+        }
+        // `Point { x: 1, y: 2 }` is Point(x: 1, y: 2): only where a field and `:` follow the brace.
+        if (t == ALangLexer.LBRACE && p == ALangLexer.IDENT && Character.isUpperCase(prev.getText().charAt(0))
+            && next != null && isNameLike(next.getType()) && next(ts, next) != null
+            && next(ts, next).getType() == ALangLexer.COLON) {
+            Token close = closer(ts, tok);
+            if (close == null) return List.of();
+            Token last = previous(ts, close);
+            return List.of(new Edit(between(prev, tok, next), "("), new Edit(between(last, close, null), ")"));
+        }
+        return List.of();
+    }
+
+    /**
+     * The first token of the expression that {@code tok} is in the middle of, scanning back to what cannot be part of
+     * it at its own depth; with {@code afterOr}, the first token after the nearest `or` at that depth instead, if any.
+     */
+    private static Token exprStart(TokenStream ts, Token tok, boolean afterOr) {
+        int depth = 0;
+        Token first = null;
+        for (int i = tok.getTokenIndex() - 1; i >= 0; i--) {
+            Token t = ts.get(i);
+            if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+            int k = t.getType();
+            if (k == ALangLexer.RPAREN || k == ALangLexer.RBRACK) depth++;
+            else if (k == ALangLexer.LPAREN || k == ALangLexer.LBRACK) {
+                if (depth == 0) return first;
+                depth--;
+            } else if (depth == 0 && (endsExpression(k) || afterOr && k == ALangLexer.OR)) {
+                return first;
+            }
+            first = t;
+        }
+        return first;
+    }
+
+    /** The last token of the operand chain that starts at {@code tok}'s operator: up to an `or` or the expression's end. */
+    private static Token exprEnd(TokenStream ts, Token tok) {
+        int depth = 0;
+        Token last = null;
+        for (int i = tok.getTokenIndex() + 1; i < ts.size(); i++) {
+            Token t = ts.get(i);
+            if (t.getType() == Token.EOF) return last;
+            if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+            int k = t.getType();
+            if (k == ALangLexer.LPAREN || k == ALangLexer.LBRACK) depth++;
+            else if (k == ALangLexer.RPAREN || k == ALangLexer.RBRACK) {
+                if (depth == 0) return last;
+                depth--;
+            } else if (depth == 0 && (endsExpression(k) || k == ALangLexer.OR || k == ALangLexer.LBRACE)) {
+                return last;
+            }
+            last = t;
+        }
+        return last;
+    }
+
+    /** Tokens that an expression never contains at its own depth: what comes before or after one. */
+    private static boolean endsExpression(int k) {
+        return switch (k) {
+            case ALangLexer.IF, ALangLexer.WHILE, ALangLexer.RETURN, ALangLexer.ASSIGN, ALangLexer.PLUS_ASSIGN,
+                 ALangLexer.MINUS_ASSIGN, ALangLexer.STAR_ASSIGN, ALangLexer.SLASH_ASSIGN, ALangLexer.PERCENT_ASSIGN,
+                 ALangLexer.COMMA, ALangLexer.SEMI, ALangLexer.LBRACE, ALangLexer.RBRACE, ALangLexer.ASSERT,
+                 ALangLexer.FAT_ARROW, ALangLexer.THEN, ALangLexer.ELSE, ALangLexer.REQUIRES, ALangLexer.ENSURES,
+                 ALangLexer.LIMIT, ALangLexer.COLON, ALangLexer.IN, ALangLexer.STEP, ALangLexer.DOTDOT,
+                 ALangLexer.DOTDOTEQ -> true;
+            default -> false;
+        };
+    }
+
+    /** Whether {@code t} is the `elif` (or `elsif`, `elseif`) of another language, right after the `}` of an if. */
+    private static boolean elseIf(TokenStream ts, Token t) {
+        if (t == null || t.getType() != ALangLexer.IDENT) return false;
+        String w = t.getText();
+        Token before = previous(ts, t);
+        return (w.equals("elif") || w.equals("elsif") || w.equals("elseif")) && before != null
+            && before.getType() == ALangLexer.RBRACE;
+    }
+
+    /** An empty span just before a token: where an edit inserts text in front of it. */
+    private Span before(Token t) {
+        return new Span(t.getLine(), t.getCharPositionInLine() + 1, 0, file);
+    }
+
+    /** The span of a token, in columns. */
+    private Span span(Token t) {
+        return new Span(t.getLine(), t.getCharPositionInLine() + 1, Source.columns(t.getText()), file);
+    }
+
+    /** An empty span just after a token: where an edit inserts text after it. */
+    private Span after(Token t) {
+        return new Span(t.getLine(), t.getCharPositionInLine() + 1 + Source.columns(t.getText()), 0, file);
+    }
+
+    /**
+     * The span of {@code tok} with the blanks around it on its line: from the end of {@code before} if that is on the
+     * same line, to the start of {@code after} if that is (a null side keeps the token's own edge).
+     */
+    private Span between(Token before, Token tok, Token after) {
+        int start = tok.getCharPositionInLine() + 1;
+        if (before != null && before.getLine() == tok.getLine()) start = before.getCharPositionInLine() + 1 + Source.columns(before.getText());
+        int end = tok.getCharPositionInLine() + 1 + Source.columns(tok.getText());
+        if (after != null && after.getLine() == tok.getLine()) end = after.getCharPositionInLine() + 1;
+        return new Span(tok.getLine(), start, end - start, file);
+    }
+
+    /** {@code word}, with a space on each side where the token it replaces touches its neighbour: a&&b is a and b. */
+    private static String spaced(Token prev, Token tok, Token next, String word) {
+        return (prev != null && touches(prev, tok) ? " " : "") + word + (next != null && touches(tok, next) ? " " : "");
+    }
+
+    private static boolean touches(Token a, Token b) {
+        return a.getStopIndex() + 1 == b.getStartIndex();
+    }
+
+    private static boolean wordLike(int t) {
+        return isNameLike(t) || t == ALangLexer.INT_LIT || t == ALangLexer.FLOAT_LIT || t == ALangLexer.RPAREN
+            || t == ALangLexer.RBRACK;
+    }
+
+    /** Whether a token of this type can end a place: x, p.x, xs[i]. */
+    private static boolean endsPlace(int t) {
+        return isNameLike(t) || t == ALangLexer.RBRACK;
+    }
+
+    private static Token next(TokenStream ts, Token tok) {
+        for (int i = tok.getTokenIndex() + 1; i < ts.size(); i++) {
+            Token t = ts.get(i);
+            if (t.getType() == Token.EOF) return null;
+            if (t.getChannel() == Token.DEFAULT_CHANNEL) return t;
+        }
+        return null;
+    }
+
+    /** The `}` that closes the brace {@code open}, or null. */
+    private static Token closer(TokenStream ts, Token open) {
+        int depth = 0;
+        for (int i = open.getTokenIndex(); i < ts.size(); i++) {
+            Token t = ts.get(i);
+            if (t.getType() == Token.EOF) return null;
+            if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+            if (t.getType() == ALangLexer.LBRACE) depth++;
+            if (t.getType() == ALangLexer.RBRACE && --depth == 0) return t;
+        }
+        return null;
+    }
+
+    /**
+     * What a `let` expects, said plainly: a pattern could start or go on at its name, so the parser also expects the
+     * tokens of one, which would turn "expected ':'" into a list of operators and literals.
+     */
+    private static IntervalSet letExpected(TokenStream ts, Token tok, Token prev, IntervalSet expected) {
+        if (prev == null || expected == null) return expected;
+        if (prev.getType() == ALangLexer.LET || prev.getType() == ALangLexer.VAR) {
+            return IntervalSet.of(ALangLexer.IDENT).or(IntervalSet.of(ALangLexer.LPAREN));
+        }
+        if (tok.getType() == ALangLexer.ASSIGN) {
+            // `let x = ...` or `let (a, b) = ...`: the `=` of a let before its type.
+            int depth = 0;
+            for (int i = prev.getTokenIndex(); i >= 0; i--) {
+                Token t = ts.get(i);
+                if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+                int k = t.getType();
+                if (k == ALangLexer.RPAREN || k == ALangLexer.RBRACK) depth++;
+                else if ((k == ALangLexer.LPAREN || k == ALangLexer.LBRACK) && --depth < 0) return expected;
+                else if (depth == 0 && (k == ALangLexer.LET || k == ALangLexer.VAR)) return IntervalSet.of(ALangLexer.COLON);
+                else if (depth == 0 && (k == ALangLexer.SEMI || k == ALangLexer.LBRACE || k == ALangLexer.RBRACE
+                    || k == ALangLexer.COLON)) {
+                    return expected;
+                }
+            }
+        }
+        return expected;
     }
 
     /**
@@ -147,7 +412,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
             }
             if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT
                 || t == ALangParser.STEP || t == ALangParser.REV || t == ALangParser.THEN || t == ALangParser.MAP
-                || t == ALangParser.SET || t == ALangParser.AS) {
+                || t == ALangParser.SET || t == ALangParser.AS || t == ALangParser.TRAPS) {
                 if (expected.contains(ALangParser.IDENT)) continue;
             }
             String lit = ALangParser.VOCABULARY.getLiteralName(t);
@@ -183,6 +448,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
             default -> null;
         };
         if (foreign != null) return foreign;
+        if (elseIf(ts, prev)) return "use `else if`";
         if (t == ALangLexer.ERROR_CHAR) {
             String s = tok.getText();
             if (s.equals("#")) return "comments start with //";
@@ -220,7 +486,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
             return "for loops iterate a range or a collection: for i in 0..n { ... } or for x in xs { ... }";
         }
         if (expected != null && expected.contains(ALangLexer.COLON) && t == ALangLexer.ASSIGN) {
-            return "every variable needs an explicit type: let x: i32 = 0;";
+            return "every variable needs an explicit type: let x: i64 = 0;";
         }
         if (expected != null && expected.contains(ALangLexer.COLON)
             && (t == ALangLexer.COMMA || t == ALangLexer.RPAREN) && p == ALangLexer.IDENT) {
@@ -306,18 +572,13 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if ((t == ALangLexer.LT || t == ALangLexer.LBRACK && prev2 != null
                 && (prev2.getType() == ALangLexer.COLON || prev2.getType() == ALangLexer.ARROW))
             && p == ALangLexer.IDENT && !expectsOperator(expected)) {
-            return "a type takes its element types in brackets: list[i64; 16], map[str[8], i64; 16]; only a function has "
-                + "type parameters, fn first<T>(xs: list[T; _]) -> T, and an optional value is an enum: "
-                + "enum MaybeI64 { None, Some(i64) }";
+            return "a list, array or map takes its element types in brackets: list[i64; 16], map[str[8], i64; 16]; a struct "
+                + "or enum takes its type arguments in angle brackets, Option<i64>, Pair<i64, str[8]>";
         }
-        if (expected.contains(ALangLexer.FAT_ARROW)) {
-            // After a pattern, where `=>` should come.
-            if (t == ALangLexer.PIPE) {
-                return "a match arm has exactly one pattern; write one arm per value: 1 => { ... } 2 => { ... }";
-            }
-            if (t == ALangLexer.DOTDOT) {
-                return "there are no range patterns; use an if/else if chain instead: if 1 <= x and x < 5 { ... }";
-            }
+        if (t == ALangLexer.LBRACE && p == ALangLexer.FAT_ARROW) {
+            // `=>` then `{` where a value must come: an arm of a match expression.
+            return "the arms of a match expression are values, not blocks: let x: str[8] = match n { 1 => \"one\", _ => \"many\" }; "
+                + "for statements in an arm, use a match statement: match n { 1 => { ... } _ => { ... } }";
         }
         if (t == ALangLexer.LBRACE && expected.contains(ALangLexer.THEN)) {
             return "an if expression is written with `then` and no braces: let x: i64 = if c then 1 else 2;";
@@ -325,11 +586,6 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (t == ALangLexer.IF && expected.contains(ALangLexer.INT_LIT) && !expected.contains(ALangLexer.LET)) {
             // Where an operand must start: an if expression is a whole expression.
             return "an if expression is never an operand; put it in parentheses: 1 + (if c then 2 else 3)";
-        }
-        if (t == ALangLexer.MATCH && expected.contains(ALangLexer.INT_LIT) && !expected.contains(ALangLexer.LET)) {
-            return "`match` is a statement, not an expression; declare the variable first and assign it in every "
-                + "arm: var x: i64 = 0; match c { ... => { x = 1; } }; for a choice between two values, "
-                + "if c then a else b is an expression";
         }
         if (t == ALangLexer.FN) {
             if (expected.contains(ALangLexer.LET)) {
@@ -450,7 +706,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
     /** Tokens that can come right before the `(` of a call, constructor, pattern or declaration. */
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
-            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 
     private static boolean expectsOperator(IntervalSet expected) {

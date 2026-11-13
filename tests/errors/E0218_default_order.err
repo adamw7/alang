@@ -1,0 +1,7 @@
+error[E0218]: parameter `h` has no default value, but `w` before it has one
+ --> tests/errors/E0218_default_order.al:2:23
+  |
+2 | fn area(w: f64 = 1.0, h: f64) -> f64 {
+  |                       ^
+  = hint: a call leaves out arguments from the end only: move `h` before `w`, or give it a default too
+

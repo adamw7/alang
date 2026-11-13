@@ -1,10 +1,12 @@
 package alang.check;
 
+import alang.ast.Ast;
 import alang.ast.Ast.*;
 import alang.ast.Builtin;
 import alang.diag.Code;
 import alang.diag.Diagnostic;
 import alang.diag.Diagnostics;
+import alang.diag.Edit;
 import alang.diag.Hints;
 import alang.diag.Span;
 import alang.interp.Interpreter;
@@ -51,8 +53,10 @@ public final class Checker {
             return scope + ":" + name;
         }
 
+        /** The declaration a plain name names here: one of this scope, else a built-in one, seen from every scope. */
         T get(String name) {
-            return byKey.get(key(ctx.scope, name));
+            T t = byKey.get(key(ctx.scope, name));
+            return t != null ? t : byKey.get(key(BUILTIN_SCOPE, name));
         }
 
         T in(int scope, String name) {
@@ -75,11 +79,14 @@ public final class Checker {
         List<String> keySet() {
             List<String> out = new ArrayList<>();
             for (T t : byKey.values()) {
-                if (t.scope == ctx.scope) out.add(t.name);
+                if (t.scope == ctx.scope || t.scope == BUILTIN_SCOPE) out.add(t.name);
             }
             return out;
         }
     }
+
+    /** The scope of the built-in declarations, Option and Result, which every scope sees. */
+    private static final int BUILTIN_SCOPE = -1;
 
     private final Table<StructDecl> structs = new Table<>();
     private final Table<EnumDecl> enums = new Table<>();
@@ -110,6 +117,8 @@ public final class Checker {
         Call pieces;
         /** The argument of print or append, or the value of pad_left or pad_right, being checked: it is written out as text. */
         Expr text;
+        /** While the default value of a parameter is checked: its function, whose parameters it cannot use. */
+        FnDecl defaultOf;
     }
 
     private Ctx ctx = new Ctx();
@@ -138,7 +147,7 @@ public final class Checker {
 
     private CheckResult run() {
         for (Item item : program.items) {
-            item.scope = item.span.file() == null ? 0 : program.scopes.getOrDefault(item.span.file(), 0);
+            item.scope = item.builtin ? BUILTIN_SCOPE : item.span.file() == null ? 0 : program.scopes.getOrDefault(item.span.file(), 0);
         }
         collect();
         for (StructDecl s : structs.values()) ensureStruct(s);
@@ -155,6 +164,8 @@ public final class Checker {
             if (item instanceof FnDecl f && diags.errorCount() != before) failed.add(f);
         }
         checkInstances(failed);
+        // The default values of parameters are constants of the program: the C backend and the memory bound count them.
+        program.items.addAll(defaultValues);
         boolean recursion = checkRecursion();
         if (!recursion && !diags.hasErrors()) recursion = checkInstanceRecursion();
         MemoryReport memory = null;
@@ -185,16 +196,20 @@ public final class Checker {
             enterScope(item);
             switch (item) {
                 case StructDecl s -> {
+                    if (builtinType(s.name, s.span)) break;
                     if (typeExists(s.name)) duplicate(s.span, "type", s.name, typeSpan(s.name));
                     else structs.put(s);
+                    if (s.generics.generic()) s.generics.instantiate = args -> instantiate(s, args);
                     Set<String> seen = new HashSet<>();
                     for (Field f : s.fields) {
                         if (!seen.add(f.name)) duplicate(f.span, "field", f.name);
                     }
                 }
                 case EnumDecl e -> {
+                    if (builtinType(e.name, e.span)) break;
                     if (typeExists(e.name)) duplicate(e.span, "type", e.name, typeSpan(e.name));
                     else enums.put(e);
+                    if (e.generics.generic()) e.generics.instantiate = args -> instantiate(e, args);
                     Set<String> seen = new HashSet<>();
                     for (Variant v : e.variants) {
                         if (!seen.add(v.name)) duplicate(v.span, "variant", v.name);
@@ -242,6 +257,16 @@ public final class Checker {
                     "names are unique across functions, types and constants; rename one of them");
             }
         }
+    }
+
+    /** E0108 for a declaration of a program with the name of a built-in type; whether it is one. */
+    private boolean builtinType(String name, Span at) {
+        Item b = structs.get(name) != null ? structs.get(name) : enums.get(name);
+        if (b == null || !b.builtin || at.file() != null && b.span.file() == at.file()) return false;
+        diags.error(Code.E0108, at, "`" + name + "` is a built-in type and cannot be redefined",
+            "use it: Option<T> is Option.None or Option.Some(value), Result<T, E> is Result.Ok(value) or Result.Err(error); "
+                + "or choose another name");
+        return true;
     }
 
     /** Plain names in {@code item}'s code are those of its scope, qualified ones the aliases of its file. */
@@ -293,7 +318,9 @@ public final class Checker {
         if (s.state != State.NEW) return;
         s.state = State.IN_PROGRESS;
         Ctx saved = enterTopLevel(s);
+        ctx.typeParams = declTypeParams(s);
         for (Field f : s.fields) f.type = resolveType(f.typeRef);
+        unusedTypeParams(s, s.fields.stream().map(f -> f.type).toList(), "field");
         ctx = saved;
         s.state = State.DONE;
     }
@@ -302,12 +329,151 @@ public final class Checker {
         if (e.state != State.NEW) return;
         e.state = State.IN_PROGRESS;
         Ctx saved = enterTopLevel(e);
+        ctx.typeParams = declTypeParams(e);
+        List<Type> all = new ArrayList<>();
         for (Variant v : e.variants) {
             v.payload.clear();
             for (TypeRef r : v.payloadRefs) v.payload.add(resolveType(r));
+            all.addAll(v.payload);
         }
+        unusedTypeParams(e, all, "payload");
         ctx = saved;
         e.state = State.DONE;
+    }
+
+    /** The type parameters of a struct or enum as type variables, by name; their names are distinct, and no type's. */
+    private Map<String, Type> declTypeParams(Item d) {
+        Generics g = Ast.generics(d);
+        Map<String, Type> m = new HashMap<>();
+        for (int i = 0; i < g.params.size(); i++) {
+            String t = g.params.get(i);
+            Span at = g.paramSpans.get(i);
+            if (m.containsKey(t)) {
+                diags.error(Code.E0105, at, "duplicate type parameter `" + t + "`");
+            } else if (typeExists(t) || PrimKind.byName(t) != null) {
+                diags.error(Code.E0105, at, "type parameter `" + t + "` has the name of a type", "use a name of its own, such as T");
+            }
+            m.put(t, new Type.TypeVar(t, i, d));
+        }
+        return m;
+    }
+
+    /** E0216 for a type parameter that no field or payload has: a value could never say what it stands for. */
+    private void unusedTypeParams(Item d, List<Type> types, String what) {
+        Generics g = Ast.generics(d);
+        for (int i = 0; i < g.params.size(); i++) {
+            Type v = new Type.TypeVar(g.params.get(i), i, d);
+            if (types.stream().noneMatch(t -> mentionsType(t, v))) {
+                diags.error(Code.E0216, g.paramSpans.get(i), "type parameter `" + g.params.get(i) + "` is in no " + what + "'s type",
+                    "use it in one, as in struct Pair<A, B> { first: A, second: B }, or remove it");
+            }
+        }
+    }
+
+    /** The declarations that a type of their own was found to contain while their instances were made (E0403, once). */
+    private final Set<Item> selfContaining = new HashSet<>();
+
+    /**
+     * The instance of {@code d}, a struct or enum with type parameters, for the types {@code args}: made once, with
+     * those types in place of the parameters in its fields or payloads, and an ordinary declaration from then on.
+     * Null after reporting that d would contain itself: its fields name it while they are resolved.
+     */
+    private Item instantiate(Item d, List<Type> args) {
+        Generics g = Ast.generics(d);
+        List<Type> key = List.copyOf(args);
+        Item made = g.instances.get(key);
+        if (made != null) return made;
+        State st = d instanceof StructDecl sd ? sd.state : ((EnumDecl) d).state;
+        if (st == State.IN_PROGRESS) {
+            if (selfContaining.add(d)) {
+                diags.error(Code.E0403, d.span, (d instanceof StructDecl ? "struct" : "enum") + " `" + d.name
+                    + "` contains itself and would have infinite size",
+                    "store related items in a fixed-capacity list and refer to them by index");
+            }
+            return null;
+        }
+        if (d instanceof StructDecl sd) ensureStruct(sd);
+        else ensureEnum((EnumDecl) d);
+        Map<Integer, Type> types = new HashMap<>();
+        for (int i = 0; i < key.size(); i++) types.put(i, key.get(i));
+        Generics ig = new Generics(g.params, g.paramSpans);
+        ig.origin = d;
+        ig.args = key;
+        if (d instanceof StructDecl sd) {
+            List<Field> fields = new ArrayList<>();
+            for (Field f : sd.fields) {
+                Field c = new Field(f.span, f.name, f.typeRef);
+                c.doc = f.doc;
+                c.type = Type.substituteTypes(f.type, sd, types);
+                fields.add(c);
+            }
+            StructDecl inst = new StructDecl(sd.span, sd.name, fields, ig);
+            inst.state = State.DONE;
+            made = inst;
+        } else {
+            EnumDecl ed = (EnumDecl) d;
+            List<Variant> variants = new ArrayList<>();
+            for (Variant v : ed.variants) {
+                Variant c = new Variant(v.span, v.name, v.index, v.payloadRefs);
+                c.doc = v.doc;
+                for (Type p : v.payload) c.payload.add(Type.substituteTypes(p, ed, types));
+                variants.add(c);
+            }
+            EnumDecl inst = new EnumDecl(ed.span, ed.name, variants, ig);
+            inst.state = State.DONE;
+            made = inst;
+        }
+        made.scope = d.scope;
+        made.doc = d.doc;
+        made.builtin = d.builtin;
+        g.instances.put(key, made);
+        return made;
+    }
+
+    /** The type a struct or enum declaration is. */
+    private static Type typeOf(Item d) {
+        return d instanceof StructDecl s ? new Type.StructT(s) : new Type.EnumT((EnumDecl) d);
+    }
+
+    /**
+     * The type `Name` or `Name<A, B>` names: a struct or enum without type parameters, or the instance of one with
+     * them for the given type arguments, one per parameter.
+     */
+    private Type named(Item d, NamedRef n) {
+        Generics g = Ast.generics(d);
+        String kind = d instanceof StructDecl ? "struct" : "enum";
+        if (g.params.isEmpty()) {
+            if (!n.args().isEmpty()) {
+                diags.error(Code.E0103, n.span(), kind + " `" + d.name + "` has no type parameters", "write " + d.name);
+                return Type.ERROR;
+            }
+            return typeOf(d);
+        }
+        String example = d.name + "<" + String.join(", ", g.params) + ">";
+        if (n.args().size() != g.params.size()) {
+            for (TypeRef a : n.args()) resolveType(a);
+            diags.error(Code.E0103, n.span(), n.args().isEmpty()
+                    ? kind + " `" + d.name + "` needs its type arguments: " + example
+                    : kind + " `" + d.name + "` takes " + g.params.size() + " type argument(s) but " + n.args().size() + " were given",
+                "write a type for each parameter, as in " + d.name + "<" + String.join(", ", java.util.Collections.nCopies(g.params.size(), "i64"))
+                    + ">");
+            return Type.ERROR;
+        }
+        List<Type> args = new ArrayList<>();
+        boolean bad = false;
+        for (TypeRef a : n.args()) {
+            Type t = resolveType(a);
+            if (Type.hasAnyCapacity(t)) {
+                diags.error(Code.E0217, a.span(), "a type argument has constant capacities, not `_`",
+                    "write the most it holds, e.g. " + t.toString().replace("_", t instanceof Type.Str ? "64" : "16"));
+                bad = true;
+            }
+            bad |= Type.isError(t);
+            args.add(t);
+        }
+        if (bad) return Type.ERROR;
+        Item inst = instantiate(d, args);
+        return inst == null ? Type.ERROR : typeOf(inst);
     }
 
     private Ctx enterTopLevel(Item item) {
@@ -320,11 +486,12 @@ public final class Checker {
     private void ensureConst(ConstDecl c) {
         if (c.state == State.DONE) return;
         if (c.state == State.IN_PROGRESS) {
-            diags.error(Code.E0209, c.span, "constant `" + c.name + "` depends on itself");
+            diags.error(Code.E0209, c.span, constLabel(c) + " depends on itself");
             return;
         }
         c.state = State.IN_PROGRESS;
         Ctx saved = enterTopLevel(c);
+        ctx.defaultOf = c.defaultOf;
         // Count errors from the declared type too: a constant whose type is unknown must not get a
         // value, or constants computed from it would be evaluated with an error type.
         int before = diags.errorCount();
@@ -337,9 +504,12 @@ public final class Checker {
         // where it went wrong; skip evaluation without piling on another diagnostic.
         if (diags.errorCount() == before && !Type.isError(t)) {
             if (!isConst(c.init)) {
-                diags.error(Code.E0209, c.init.span, "the value of constant `" + c.name + "` is not a constant expression",
-                    "constants may use literals, other constants, operators, conversions and the builtins that only compute "
-                        + "(such as len, pow or split), but not other function calls");
+                diags.error(Code.E0209, c.init.span, (c.defaultOf == null ? "the value of " : "") + constLabel(c)
+                        + " is not a constant expression",
+                    (c.defaultOf == null ? "constants" : "a default value is a constant: it")
+                        + " may use literals, other constants, operators, conversions and the builtins that only compute "
+                        + "(such as len, pow or split), but not other function calls"
+                        + (c.defaultOf == null ? "" : " or parameters"));
             } else if (withinBudget(c)) {
                 c.value = evalConst(c.init);
             }
@@ -359,7 +529,7 @@ public final class Checker {
         long size = Layout.size(c.type);
         long need = Layout.add(staticBytes, Layout.add(size, Temporaries.expr(c.init)));
         if (maxStack > 0 && need > maxStack) {
-            diags.error(Code.E0405, c.span, "constant `" + c.name + "` needs up to " + need
+            diags.error(Code.E0405, c.span, constLabel(c) + " needs up to " + need
                     + " bytes, counting the constants before it and the values its initializer builds; the budget is "
                     + maxStack + " bytes",
                 "make the constant smaller, or build the data at run time in a function; --max-stack sets the budget");
@@ -440,16 +610,31 @@ public final class Checker {
             case NamedRef n when n.qualifier() != null -> {
                 Integer s = qualifierScope(n.qualifier(), n.span());
                 if (s == null) yield Type.ERROR;
-                if (structs.in(s, n.name()) != null) yield new Type.StructT(structs.in(s, n.name()));
-                if (enums.in(s, n.name()) != null) yield new Type.EnumT(enums.in(s, n.name()));
+                if (structs.in(s, n.name()) != null) yield named(structs.in(s, n.name()), n);
+                if (enums.in(s, n.name()) != null) yield named(enums.in(s, n.name()), n);
                 diags.error(Code.E0103, n.span(), "`" + n.qualifier() + "` has no type `" + n.name() + "`");
                 yield Type.ERROR;
             }
             case NamedRef n -> {
-                if (ctx.typeParams.containsKey(n.name())) yield ctx.typeParams.get(n.name());
-                if (structs.containsKey(n.name())) yield new Type.StructT(structs.get(n.name()));
-                if (enums.containsKey(n.name())) yield new Type.EnumT(enums.get(n.name()));
-                diags.error(Code.E0103, n.span(), "unknown type `" + n.name() + "`", typeHint(n.name()));
+                if (ctx.typeParams.containsKey(n.name())) {
+                    if (!n.args().isEmpty()) {
+                        diags.error(Code.E0103, n.span(), "type parameter `" + n.name() + "` takes no type arguments",
+                            "write " + n.name());
+                        yield Type.ERROR;
+                    }
+                    yield ctx.typeParams.get(n.name());
+                }
+                if (structs.containsKey(n.name())) yield named(structs.get(n.name()), n);
+                if (enums.containsKey(n.name())) yield named(enums.get(n.name()), n);
+                String to = switch (n.name()) {
+                    case "int", "long", "isize", "usize", "Int", "integer" -> "i64";
+                    case "float", "double", "Float" -> "f64";
+                    case "boolean", "Bool" -> "bool";
+                    case "char", "byte" -> "u8";
+                    default -> null;
+                };
+                diags.fixable(Code.E0103, n.span(), "unknown type `" + n.name() + "`", typeHint(n.name()),
+                    to == null ? List.of() : List.of(new Edit(n.span(), to)));
                 yield Type.ERROR;
             }
         };
@@ -505,8 +690,8 @@ public final class Checker {
             case "void", "unit", "None" -> "omit the return type for functions that return nothing";
             case "Vec", "List", "Array", "vector" -> "use list[T; N] (up to N items) or [T; N] (exactly N items)";
             case "HashMap", "Map", "dict", "Dict", "BTreeMap", "TreeMap", "HashSet", "Set", "BTreeSet", "TreeSet" -> Hints.COLLECTIONS;
-            case "Option", "Optional", "Result" -> "declare an enum, e.g. enum MaybeI32 { None, Some(i32) }; type parameters "
-                + "are for functions only: fn first<T>(xs: list[T; _]) -> T";
+            case "Optional", "Maybe", "Nullable" -> "an optional value is an Option<T>: Option.Some(x) or Option.None";
+            case "Either", "Expected" -> "a value or an error is a Result<T, E>: Result.Ok(x) or Result.Err(e)";
             default -> {
                 List<String> names = new ArrayList<>(structs.keySet());
                 names.addAll(enums.keySet());
@@ -604,8 +789,8 @@ public final class Checker {
         }
         if (key != null && !visiting.add(key)) return false;
         for (Type c : children) {
-            if (c instanceof Type.StructT s && s.decl() == target) return true;
-            if (c instanceof Type.EnumT e && e.decl() == target) return true;
+            if (c instanceof Type.StructT s && Ast.origin(s.decl()) == target) return true;
+            if (c instanceof Type.EnumT e && Ast.origin(e.decl()) == target) return true;
             if (contains(c, target, visiting)) return true;
         }
         return false;
@@ -671,6 +856,7 @@ public final class Checker {
             }
         }
         paramCapacities = savedCapacities;
+        defaults(f);
         if (f.origin == null && f.paramVars.stream().noneMatch(v -> Type.isError(v.type))) {
             // A call fixes each type parameter from the arguments, so each must appear in a parameter's type.
             for (int i = 0; i < f.typeParams.size(); i++) {
@@ -701,6 +887,77 @@ public final class Checker {
         ctx = saved;
     }
 
+    /** The constants that hold the default values of parameters, in the order they were made (see {@link #defaults}). */
+    private final List<ConstDecl> defaultValues = new ArrayList<>();
+
+    /**
+     * The default values of {@code f}'s parameters, each a constant of the parameter's type: allowed on read-only
+     * parameters of fixed types, and needed on every parameter after one with a default, since a call leaves out
+     * arguments from the end only. An instance has those of the function it copies.
+     */
+    private void defaults(FnDecl f) {
+        if (f.origin != null) {
+            f.defaults.addAll(f.origin.defaults);
+            return;
+        }
+        Param firstDefault = null;
+        boolean reported = false;
+        for (int i = 0; i < f.params.size(); i++) {
+            Param p = f.params.get(i);
+            LocalVar v = f.paramVars.get(i);
+            if (p.def() == null) {
+                f.defaults.add(null);
+                if (firstDefault != null && !reported) {
+                    reported = true;
+                    diags.error(Code.E0218, p.span(), "parameter `" + p.name() + "` has no default value, but `" + firstDefault.name()
+                            + "` before it has one",
+                        "a call leaves out arguments from the end only: move `" + p.name() + "` before `" + firstDefault.name()
+                            + "`, or give it a default too");
+                }
+                continue;
+            }
+            if (firstDefault == null) firstDefault = p;
+            String bad = null;
+            if (p.mut()) {
+                bad = "a `mut` parameter refers to the caller's variable, so it has no default value";
+            } else if (v.type instanceof Type.FnT) {
+                bad = "a parameter of a function type has no default value";
+            } else if (Type.hasTypeVar(v.type) || Type.hasAnyCapacity(v.type)) {
+                bad = "`" + p.name() + "` has a type that each call fixes (" + v.type + "), so it has no default value";
+            } else if (f.name.equals("main")) {
+                bad = "the parameter of `main` receives the standard input, so it has no default value";
+            }
+            if (bad != null) {
+                diags.error(Code.E0218, p.def().span, bad, "remove ` = " + exprText(p.def()) + "`");
+                f.defaults.add(null);
+                continue;
+            }
+            ConstDecl c = new ConstDecl(p.def().span, p.name(), p.typeRef(), p.def());
+            c.defaultOf = f;
+            c.scope = f.scope;
+            if (Type.isError(v.type)) {
+                // Its type was reported already; a call that leaves it out is no error of its own.
+                c.state = State.DONE;
+            } else {
+                int[] savedCapacities = paramCapacities;
+                boolean savedFnType = fnTypeAllowed;
+                paramCapacities = null;
+                fnTypeAllowed = false;
+                ensureConst(c);
+                paramCapacities = savedCapacities;
+                fnTypeAllowed = savedFnType;
+            }
+            f.defaults.add(c);
+            defaultValues.add(c);
+        }
+    }
+
+    /** How messages name a constant: `N`, or the default value of a parameter. */
+    private static String constLabel(ConstDecl c) {
+        return c.defaultOf == null ? "constant `" + c.name + "`"
+            : "the default value of parameter `" + c.name + "` of `" + c.defaultOf.name + "`";
+    }
+
     /** Whether the type variable {@code v} occurs in {@code t}. */
     private static boolean mentionsType(Type t, Type v) {
         if (t.equals(v)) return true;
@@ -711,6 +968,8 @@ public final class Checker {
             case Type.MapT m -> mentionsType(m.key(), v) || mentionsType(m.value(), v);
             case Type.SetT st -> mentionsType(st.elem(), v);
             case Type.FnT fn -> fn.params().stream().anyMatch(e -> mentionsType(e, v)) || mentionsType(fn.ret(), v);
+            case Type.StructT st -> Type.typeArgs(st).stream().anyMatch(e -> mentionsType(e, v));
+            case Type.EnumT et -> Type.typeArgs(et).stream().anyMatch(e -> mentionsType(e, v));
             default -> false;
         };
     }
@@ -1025,27 +1284,39 @@ public final class Checker {
         }
     }
 
-    /** `let (a, b): (T1, T2) = e;`: e is a tuple of that type, and each name a variable of its element's type. */
+    /**
+     * `let (a, b): (T1, T2) = e;`, `let Point(x: px, y: _): Point = p;`: e is a value of that type, and the pattern takes
+     * it apart into new variables; it must match every value of the type (E0306), as a let cannot fail.
+     */
     private void destructure(Destructure d) {
         Type t = resolveType(d.typeRef);
         ctx.mutCallAllowed = d.init;
         Type it = expr(d.init, t);
         ctx.mutCallAllowed = null;
         requireAssignable(d.init, it, t);
-        List<Type> elems = null;
-        if (t instanceof Type.TupleT tt && tt.elems().size() == d.names.size()) {
-            elems = tt.elems();
-        } else if (t instanceof Type.TupleT tt) {
-            diags.error(Code.E0201, d.typeRef.span(), d.names.size() + " names for a tuple of " + tt.elems().size() + " elements",
-                "give one name per element, and _ for one you do not need");
-        } else if (!Type.isError(t)) {
-            diags.error(Code.E0201, d.typeRef.span(), "let (...) takes a tuple apart, but " + t + " is not a tuple",
-                "declare one variable: let x: " + t + " = ...;");
+        if (d.pattern instanceof TuplePat tp && !Type.isError(t)) {
+            String problem = null;
+            String hint = null;
+            if (!(t instanceof Type.TupleT tt)) {
+                problem = "let (...) takes a tuple apart, but " + t + " is not a tuple";
+                hint = "declare one variable: let x: " + t + " = ...;";
+            } else if (tt.elems().size() != tp.elems.size()) {
+                problem = tp.elems.size() + " names for a tuple of " + tt.elems().size() + " elements";
+                hint = "give one name per element, and _ for one you do not need";
+            }
+            if (problem != null) {
+                diags.error(Code.E0201, d.typeRef.span(), problem, hint);
+                t = Type.ERROR;
+            }
         }
-        for (int i = 0; i < d.names.size(); i++) {
-            String name = d.names.get(i);
-            Type et = elems == null ? Type.ERROR : elems.get(i);
-            d.vars.add(name == null ? null : declare(name, d.nameSpans.get(i), et, d.mutable));
+        boolean ok = pattern(d.pattern, t, (b, bt) -> declare(b.name, b.span, bt, d.mutable));
+        if (ok && !Type.isError(t)) {
+            String missing = Coverage.missing(List.of(d.pattern), t);
+            if (missing != null) {
+                diags.error(Code.E0306, d.pattern.span, "the pattern of a let does not match every value of " + t + ": missing "
+                    + (missing.equals("_") ? "values other than the one it names" : missing),
+                    "a let cannot fail; use match, or if let " + exprTextOf(d.pattern.span) + " = ... { } else { }");
+            }
         }
     }
 
@@ -1290,7 +1561,9 @@ public final class Checker {
             Type t = expr(c, null);
             ctx.mutCallAllowed = null;
             if (c.builtin == Builtin.PANIC) return true;
-            if (!(t instanceof Type.Void) && !Type.isError(t) && c.builtin != Builtin.POP && c.builtin != Builtin.REMOVE) {
+            // In a test that expects a trap, a call is often there only to trap.
+            boolean trapTest = ctx.routine instanceof TestDecl td && td.expectedTrap != null;
+            if (!(t instanceof Type.Void) && !Type.isError(t) && c.builtin != Builtin.POP && c.builtin != Builtin.REMOVE && !trapTest) {
                 diags.warning(Code.W0302, c.span, "the result of `" + c.name + "` (" + t + ") is not used",
                     "store it: let value: " + t + " = " + c.name + "(...);");
             }
@@ -1302,7 +1575,8 @@ public final class Checker {
             Type t = expr(vc, null);
             ctx.mutCallAllowed = null;
             if (vc.asCall != null) {
-                if (!(t instanceof Type.Void) && !Type.isError(t)) {
+                boolean trapTest = ctx.routine instanceof TestDecl td && td.expectedTrap != null;
+                if (!(t instanceof Type.Void) && !Type.isError(t) && !trapTest) {
                     diags.warning(Code.W0302, vc.span, "the result of `" + exprText(vc) + "` (" + t + ") is not used",
                         "store it: let value: " + t + " = " + exprText(vc) + ";");
                 }
@@ -1326,129 +1600,381 @@ public final class Checker {
     // ------------------------------------------------------------------ match
 
     private boolean match(Match m) {
-        Type t = expr(m.subject, null);
-        if (t instanceof Type.Str) readInPlace(m.subject);
+        Type t = matchSubject(m.subject, m.arms.stream().map(Arm::pattern).toList());
         boolean allJump = true;
-        boolean wildcard = false;
-        Set<Object> seen = new HashSet<>();
-        boolean supported = Type.isError(t) || t instanceof Type.EnumT || Type.isInt(t) || Type.isBool(t)
-            || t instanceof Type.Str;
-        if (!supported) {
-            diags.error(Code.E0308, m.subject.span, "cannot match on a value of type " + t,
-                "match works on enums, integers, bool and str; use if/else for other types");
-        }
+        boolean ok = true;
         for (Arm arm : m.arms) {
-            Pattern p = arm.pattern();
-            if (wildcard) {
-                diags.error(Code.E0307, p.span, "unreachable arm: `_` above already matches everything",
-                    "move `_ => { }` to the end");
-            }
-            // A guarded arm may not match, so it covers nothing: it is checked against what the arms above
-            // cover (a pattern they all take is unreachable) without adding to it.
-            Set<Object> seenHere = arm.guard() == null ? seen : new HashSet<>(seen);
             ctx.scopes.push(new HashMap<>());
-            switch (p) {
-                case WildPat w -> {
-                    if (arm.guard() == null) wildcard = true;
-                }
-                case VariantPat v -> variantPattern(v, t, seenHere);
-                case IntPat i -> {
-                    if (supported && !Type.isError(t)) {
-                        if (!Type.isInt(t)) {
-                            diags.error(Code.E0308, p.span, "integer pattern cannot match a value of type " + t);
-                        } else if (!Type.kind(t).fits(i.value)) {
-                            diags.error(Code.E0202, p.span, "pattern " + i.value + " is out of range for " + t);
-                        } else if (!seenHere.add(i.value)) {
-                            diags.error(Code.E0307, p.span, "duplicate pattern " + i.value);
-                        }
-                    }
-                }
-                case StrPat sp -> {
-                    if (supported && !Type.isError(t)) {
-                        if (!(t instanceof Type.Str)) {
-                            diags.error(Code.E0308, p.span, "string pattern cannot match a value of type " + t);
-                        } else if (!seenHere.add(new String(sp.value, java.nio.charset.StandardCharsets.ISO_8859_1))) {
-                            diags.error(Code.E0307, p.span, "duplicate pattern");
-                        }
-                    }
-                }
-                case BoolPat b -> {
-                    if (supported && !Type.isError(t)) {
-                        if (!Type.isBool(t)) {
-                            diags.error(Code.E0308, p.span, "bool pattern cannot match a value of type " + t);
-                        } else if (!seenHere.add(b.value)) {
-                            diags.error(Code.E0307, p.span, "duplicate pattern " + b.value);
-                        }
-                    }
-                }
-            }
+            ok &= pattern(arm.pattern(), t, this::matchBinding);
             if (arm.guard() != null) condition(arm.guard(), "if");
             if (!block(arm.body())) allJump = false;
             ctx.scopes.pop();
         }
-        if (!wildcard && supported && !Type.isError(t)) {
-            String missing = null;
-            if (t instanceof Type.EnumT et) {
-                List<String> names = new ArrayList<>();
-                for (Variant v : et.decl().variants) {
-                    if (!seen.contains(v)) names.add(et.decl().name + "." + v.name);
-                }
-                if (!names.isEmpty()) missing = String.join(", ", names);
-            } else if (Type.isBool(t)) {
-                if (!seen.contains(true)) missing = "true";
-                else if (!seen.contains(false)) missing = "false";
-            } else {
-                missing = "values other than the listed ones";
-            }
-            if (missing != null) {
-                diags.error(Code.E0306, m.span, "match is not exhaustive: missing " + missing,
-                    "add arms for them, or add `_ => { }` as the last arm");
-            }
+        if (ok && !Type.isError(t)) {
+            coverage(m.arms.stream().map(Arm::pattern).toList(), m.arms.stream().map(a -> a.guard() != null).toList(), t,
+                m.span, m.ifLet);
         }
         return allJump && !m.arms.isEmpty();
     }
 
-    private void variantPattern(VariantPat v, Type t, Set<Object> seen) {
-        if (Type.isError(t)) return;
+    /** `match e { P => a, ... }` as an expression: the type of its arms' values, which share one, as an if expression's do. */
+    private Type matchExpr(MatchExpr m, Type expected) {
+        Type t = matchSubject(m.subject, m.arms.stream().map(ExprArm::pattern).toList());
+        Expr outer = ctx.stored;
+        boolean ok = true;
+        Type result = null;
+        List<Type> types = new ArrayList<>();
+        for (ExprArm arm : m.arms) {
+            ctx.scopes.push(new HashMap<>());
+            ok &= pattern(arm.pattern(), t, this::matchBinding);
+            if (arm.guard() != null) condition(arm.guard(), "if");
+            ctx.stored = outer == m && typedByTarget(arm.value()) ? arm.value() : null;
+            Type vt = expr(arm.value(), expected != null ? expected : result);
+            ctx.stored = outer;
+            ctx.scopes.pop();
+            if (vt instanceof Type.Void) {
+                diags.error(Code.E0201, arm.value().span, "an arm of a match expression returns nothing",
+                    "use a match statement: match e { P => { f(); } ... }");
+                return Type.ERROR;
+            }
+            if (Type.isError(vt)) ok = false;
+            types.add(vt);
+            if (!Type.isError(vt)) result = result == null ? vt : widen(result, vt);
+        }
+        if (ok && !Type.isError(t)) {
+            coverage(m.arms.stream().map(ExprArm::pattern).toList(), m.arms.stream().map(a -> a.guard() != null).toList(), t,
+                m.span, false);
+        }
+        if (!ok || result == null) return Type.ERROR;
+        for (int i = 0; i < types.size(); i++) {
+            if (!Type.assignable(types.get(i), result)) {
+                diags.error(Code.E0201, m.arms.get(i).value().span, "the arms of a match expression have different types: "
+                    + types.get(0) + " and " + types.get(i), Type.isNumeric(types.get(0)) && Type.isNumeric(types.get(i))
+                        ? "convert one: " + types.get(0) + "(" + exprText(m.arms.get(i).value()) + ")" : "give every arm the same type");
+                return Type.ERROR;
+            }
+        }
+        return result;
+    }
+
+    /** The subject of a match, checked: the type its patterns match, or ERROR after reporting one they cannot. */
+    private Type matchSubject(Expr subject, List<Pattern> patterns) {
+        Type t = expr(subject, null);
+        // A str is read where it is unless an arm binds it to a name, which takes a copy.
+        if (t instanceof Type.Str && patterns.stream().allMatch(p -> Ast.allBindings(p).isEmpty())) readInPlace(subject);
+        boolean supported = Type.isError(t) || t instanceof Type.EnumT || Type.isInt(t) || Type.isBool(t)
+            || t instanceof Type.Str || t instanceof Type.TupleT || t instanceof Type.StructT;
+        if (!supported) {
+            diags.error(Code.E0308, subject.span, "cannot match on a value of type " + t,
+                "match works on enums, integers, bool, str, tuples and structs; use if/else for other types");
+            return Type.ERROR;
+        }
+        return t;
+    }
+
+    /** A name in a match arm's pattern: a new, read-only variable. */
+    private LocalVar matchBinding(BindPat b, Type t) {
+        LocalVar v = declare(b.name, b.span, t, false);
+        matchBindings.add(v);
+        return v;
+    }
+
+    /** How the names of a pattern become variables, of the type of the value they take. */
+    private interface Binder {
+        LocalVar bind(BindPat b, Type t);
+    }
+
+    /**
+     * Checks a pattern against a value of type {@code t}, and declares its names with {@code binder}. Returns false
+     * after reporting an error (or when t already is one), so that coverage is not checked on top of it.
+     */
+    private boolean pattern(Pattern p, Type t, Binder binder) {
+        if (Type.isError(t)) {
+            for (BindPat b : Ast.bindings(p)) b.var = binder.bind(b, Type.ERROR);
+            return false;
+        }
+        switch (p) {
+            case WildPat w -> {
+                return true;
+            }
+            case BindPat b -> {
+                b.var = binder.bind(b, t);
+                return true;
+            }
+            case IntPat i -> {
+                if (!Type.isInt(t)) return mismatchedPattern(p, "integer pattern", t);
+                if (!Type.kind(t).fits(i.value)) {
+                    diags.error(Code.E0202, p.span, "pattern " + i.value + " is out of range for " + t);
+                    return false;
+                }
+                return true;
+            }
+            case RangePat r -> {
+                if (!Type.isInt(t)) return mismatchedPattern(p, "range pattern", t);
+                for (java.math.BigInteger bound : List.of(r.lo, r.inclusive ? r.hi : r.hi.add(java.math.BigInteger.ONE))) {
+                    if (!Type.kind(t).fits(bound) && !(!r.inclusive && bound.equals(Type.kind(t).max().add(java.math.BigInteger.ONE)))) {
+                        diags.error(Code.E0202, p.span, "bound " + bound + " of the range is out of range for " + t,
+                            t + " holds " + Type.kind(t).min() + ".." + Type.kind(t).max());
+                        return false;
+                    }
+                }
+                if (r.lo.compareTo(r.hi) > 0) {
+                    diags.error(Code.E0308, p.span, "range pattern " + exprTextOf(p.span) + " matches no value",
+                        "write the smaller bound first, and use ..= to include the second: 1..=5");
+                    return false;
+                }
+                r.kind = Type.kind(t);
+                return true;
+            }
+            case StrPat sp -> {
+                return t instanceof Type.Str || mismatchedPattern(p, "string pattern", t);
+            }
+            case BoolPat b -> {
+                return Type.isBool(t) || mismatchedPattern(p, "bool pattern", t);
+            }
+            case VariantPat v -> {
+                return variantPattern(v, t, binder);
+            }
+            case TuplePat tp -> {
+                if (!(t instanceof Type.TupleT tt)) return mismatchedPattern(p, "tuple pattern", t);
+                if (tt.elems().size() != tp.elems.size()) {
+                    diags.error(Code.E0308, p.span, "a pattern of " + tp.elems.size() + " elements cannot match a tuple of "
+                        + tt.elems().size(), "write one pattern per element, and _ for one you do not need");
+                    for (BindPat b : Ast.bindings(p)) b.var = binder.bind(b, Type.ERROR);
+                    return false;
+                }
+                boolean ok = true;
+                for (int i = 0; i < tp.elems.size(); i++) ok &= pattern(tp.elems.get(i), tt.elems().get(i), binder);
+                return ok;
+            }
+            case StructPat sp -> {
+                return structPattern(sp, t, binder);
+            }
+            case OrPat o -> {
+                return orPattern(o, t, binder);
+            }
+        }
+    }
+
+    /** E0308 for a pattern of the wrong kind; its names are declared all the same, so their uses are no errors. */
+    private boolean mismatchedPattern(Pattern p, String what, Type t) {
+        diags.error(Code.E0308, p.span, what + " cannot match a value of type " + t);
+        return false;
+    }
+
+    private String exprTextOf(Span s) {
+        return (s.file() == null ? diags.source() : s.file()).text(s);
+    }
+
+    private boolean variantPattern(VariantPat v, Type t, Binder binder) {
         if (!(t instanceof Type.EnumT et)) {
-            diags.error(Code.E0308, v.span, "enum pattern cannot match a value of type " + t);
-            return;
+            for (BindPat b : Ast.bindings(v)) b.var = binder.bind(b, Type.ERROR);
+            return mismatchedPattern(v, "enum pattern", t);
         }
         EnumDecl d = et.decl();
         EnumDecl named = v.qualifier == null ? enums.get(v.enumName)
             : aliasScope(v.qualifier) == null ? null : enums.in(aliasScope(v.qualifier), v.enumName);
-        if (!v.enumName.equals(d.name) || named != null && named != d) {
+        Variant variant = v.enumName.equals(d.name) && (named == null || named == Ast.origin(d)) ? d.variant(v.variantName) : null;
+        if (!v.enumName.equals(d.name) || named != null && named != Ast.origin(d)) {
             diags.error(Code.E0308, v.span, "pattern of enum `" + v.enumName + "` cannot match a value of type " + d.name,
                 "write " + d.name + "." + v.variantName);
-            return;
-        }
-        Variant variant = d.variant(v.variantName);
-        if (variant == null) {
+        } else if (variant == null) {
             diags.error(Code.E0107, v.span, "enum `" + d.name + "` has no variant `" + v.variantName + "`",
                 didYouMean(v.variantName, variantNames(d)));
-            return;
+        }
+        if (variant == null) {
+            for (BindPat b : Ast.bindings(v)) b.var = binder.bind(b, Type.ERROR);
+            return false;
         }
         v.variant = variant;
-        if (!seen.add(variant)) {
-            diags.error(Code.E0307, v.span, "duplicate pattern " + d.name + "." + variant.name);
-        }
         int n = variant.payload.size();
-        if (n == 0 && v.bindings != null) {
+        if (n == 0 && v.args != null) {
             diags.error(Code.E0308, v.span, d.name + "." + variant.name + " has no payload",
                 "write " + d.name + "." + variant.name + " without parentheses");
-            return;
+            for (BindPat b : Ast.bindings(v)) b.var = binder.bind(b, Type.ERROR);
+            return false;
         }
-        if (n > 0 && (v.bindings == null || v.bindings.size() != n)) {
-            diags.error(Code.E0308, v.span, d.name + "." + variant.name + " carries " + n + " value(s); bind each one",
+        if (n > 0 && (v.args == null || v.args.size() != n)) {
+            diags.error(Code.E0308, v.span, d.name + "." + variant.name + " carries " + n + " value(s); match each one",
                 "write " + d.name + "." + variant.name + "(" + "_, ".repeat(n - 1) + "_) or name them");
-            return;
+            for (BindPat b : Ast.bindings(v)) b.var = binder.bind(b, Type.ERROR);
+            return false;
         }
-        for (int i = 0; i < n; i++) {
-            String b = v.bindings.get(i);
-            LocalVar binding = b == null ? null : declare(b, v.bindingSpans.get(i), variant.payload.get(i), false);
-            if (binding != null) matchBindings.add(binding);
-            v.vars.add(binding);
+        boolean ok = true;
+        for (int i = 0; i < n; i++) ok &= pattern(v.args.get(i), variant.payload.get(i), binder);
+        return ok;
+    }
+
+    private boolean structPattern(StructPat sp, Type t, Binder binder) {
+        StructDecl named = sp.qualifier == null ? structs.get(sp.name)
+            : aliasScope(sp.qualifier) == null ? null : structs.in(aliasScope(sp.qualifier), sp.name);
+        if (!(t instanceof Type.StructT st) || named == null || named != Ast.origin(st.decl())) {
+            for (BindPat b : Ast.bindings(sp)) b.var = binder.bind(b, Type.ERROR);
+            if (named == null && sp.qualifier == null && !structs.containsKey(sp.name)) {
+                diags.error(Code.E0103, sp.span, "unknown struct `" + sp.name + "`", didYouMean(sp.name, new ArrayList<>(structs.keySet())));
+                return false;
+            }
+            return mismatchedPattern(sp, "pattern of struct `" + sp.name + "`", t);
         }
+        StructDecl d = st.decl();
+        sp.decl = d;
+        sp.fieldIndexes = new int[sp.fields.size()];
+        boolean ok = true;
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < sp.fields.size(); i++) {
+            String name = sp.fieldNames.get(i);
+            int idx = d.fieldIndex(name);
+            Pattern fp = sp.fields.get(i);
+            if (idx < 0 || !seen.add(name)) {
+                if (idx < 0) {
+                    diags.error(Code.E0106, sp.fieldSpans.get(i), "struct `" + d.name + "` has no field `" + name + "`",
+                        didYouMean(name, d.fieldNames()));
+                } else {
+                    diags.error(Code.E0213, sp.fieldSpans.get(i), "field `" + name + "` is given twice");
+                }
+                for (BindPat b : Ast.bindings(fp)) b.var = binder.bind(b, Type.ERROR);
+                ok = false;
+                continue;
+            }
+            sp.fieldIndexes[i] = idx;
+            ok &= pattern(fp, d.fields.get(idx).type, binder);
+        }
+        return ok;
+    }
+
+    /**
+     * `p1 | p2`: each alternative is checked against the same type, and binds the same names, of the same types, to the
+     * same variables, those the first alternative declares.
+     */
+    private boolean orPattern(OrPat o, Type t, Binder binder) {
+        boolean ok = pattern(o.alts.get(0), t, binder);
+        Map<String, LocalVar> first = new LinkedHashMap<>();
+        for (BindPat b : Ast.bindings(o.alts.get(0))) {
+            if (b.var != null) first.put(b.name, b.var);
+        }
+        for (int k = 1; k < o.alts.size(); k++) {
+            Pattern alt = o.alts.get(k);
+            Set<String> bound = new HashSet<>();
+            boolean[] bad = {false};
+            ok &= pattern(alt, t, (b, bt) -> {
+                LocalVar v = first.get(b.name);
+                bound.add(b.name);
+                if (v == null) {
+                    diags.error(Code.E0308, b.span, "`" + b.name + "` is bound in this alternative but not in the first",
+                        "every alternative of `|` binds the same names; use _ here, or an arm of its own");
+                    bad[0] = true;
+                    return null;
+                }
+                if (!Type.isError(bt) && !Type.isError(v.type) && !bt.equals(v.type)) {
+                    diags.error(Code.E0308, b.span, "`" + b.name + "` is " + bt + " here but " + v.type + " in the first alternative",
+                        "every alternative of `|` binds each name to a value of one type");
+                    bad[0] = true;
+                }
+                return v;
+            });
+            for (String name : first.keySet()) {
+                if (!bound.contains(name)) {
+                    diags.error(Code.E0308, alt.span, "this alternative does not bind `" + name + "`, which the first one does",
+                        "every alternative of `|` binds the same names; use an arm of its own for each");
+                    bad[0] = true;
+                }
+            }
+            ok &= !bad[0];
+        }
+        return ok;
+    }
+
+    /**
+     * What the arms of a match cover: none is unreachable (E0307), and together they take every value (E0306), unless
+     * one takes every value at the top. Guarded arms cover nothing. An `if let` (see {@link Match#ifLet}) has the
+     * pattern and a final `_`, which is unreachable only when the pattern always matches.
+     */
+    private void coverage(List<Pattern> patterns, List<Boolean> guarded, Type t, Span at, boolean ifLet) {
+        List<Pattern> rows = new ArrayList<>();
+        Pattern all = null;
+        for (int i = 0; i < patterns.size(); i++) {
+            Pattern p = patterns.get(i);
+            if (ifLet && i == 1) {
+                if (!Coverage.useful(rows, p, t)) {
+                    Pattern given = patterns.get(0);
+                    diags.error(Code.E0307, given.span, "this `if let` always matches: its pattern takes every value of " + t,
+                        "take the value apart with a let: let " + exprTextOf(given.span) + ": " + t + " = ...;");
+                }
+                break;
+            }
+            String dup = all == null ? duplicate(rows, p, t) : null;
+            if (all != null) {
+                diags.error(Code.E0307, p.span, "unreachable arm: `" + (all instanceof BindPat b ? b.name : "_")
+                    + "` above already matches everything", "move `" + (all instanceof BindPat b ? b.name : "_") + " => { }` to the end");
+            } else if (dup != null) {
+                diags.error(Code.E0307, p.span, "duplicate pattern" + (dup.isEmpty() ? "" : " " + dup));
+            } else if (!Coverage.useful(rows, p, t)) {
+                diags.error(Code.E0307, p.span, "unreachable arm: the arms above already match every value it does",
+                    "remove it, or move it above the arms that take its values");
+            }
+            if (!guarded.get(i)) {
+                rows.add(p);
+                if (all == null && Coverage.takesAll(p)) all = p;
+            }
+        }
+        if (ifLet || all != null) return;
+        String missing = missingVariants(rows, t);
+        if (missing == null) {
+            String w = Coverage.missing(rows, t);
+            if (w != null) missing = w.equals("_") ? "values other than the listed ones" : w;
+        }
+        if (missing != null) {
+            diags.error(Code.E0306, at, "match is not exhaustive: missing " + missing, "add arms for them, or add `_ => { }` as the last arm");
+        }
+    }
+
+    /**
+     * The variants of an enum that no arm names at its top, as the message lists them, or null when there are none: then
+     * the arms may still miss a value inside a variant, which {@link Coverage#missing} finds.
+     */
+    private static String missingVariants(List<Pattern> rows, Type t) {
+        if (!(t instanceof Type.EnumT et)) return null;
+        Set<Variant> named = new HashSet<>();
+        for (Pattern p : rows) {
+            for (Pattern alt : p instanceof OrPat o ? o.alts : List.of(p)) {
+                if (alt instanceof VariantPat v) named.add(v.variant);
+            }
+        }
+        List<String> names = new ArrayList<>();
+        for (Variant v : et.decl().variants) {
+            if (!named.contains(v)) names.add(et.decl().name + "." + v.name);
+        }
+        return names.isEmpty() ? null : String.join(", ", names);
+    }
+
+    /**
+     * For a pattern an earlier arm repeats exactly, a literal or a variant whose payload it takes whole: the text the
+     * message names it by ("" for a str), else null.
+     */
+    private static String duplicate(List<Pattern> rows, Pattern p, Type t) {
+        for (Pattern r : rows) {
+            switch (p) {
+                case IntPat i when r instanceof IntPat ri && ri.value.equals(i.value) -> {
+                    return i.value.toString();
+                }
+                case StrPat s when r instanceof StrPat rs && java.util.Arrays.equals(rs.value, s.value) -> {
+                    return "";
+                }
+                case BoolPat b when r instanceof BoolPat rb && rb.value == b.value -> {
+                    return String.valueOf(b.value);
+                }
+                case VariantPat v when r instanceof VariantPat rv && rv.variant == v.variant && takesPayload(v) && takesPayload(rv)
+                    && t instanceof Type.EnumT et -> {
+                    return et.decl().name + "." + v.variant.name;
+                }
+                default -> { }
+            }
+        }
+        return null;
+    }
+
+    private static boolean takesPayload(VariantPat v) {
+        return v.args == null || v.args.stream().allMatch(Coverage::takesAll);
     }
 
     private static List<String> variantNames(EnumDecl d) {
@@ -1478,11 +2004,11 @@ public final class Checker {
             case StrLit s -> new Type.Str(s.value.length);
             case BoolLit b -> Type.BOOL;
             case Name n -> name(n);
-            case FieldAccess f -> fieldAccess(f);
+            case FieldAccess f -> fieldAccess(f, expected);
             case Index ix -> index(ix);
             case Call c -> call(c, expected);
-            case VariantCall v -> variantCall(v);
-            case StructLit s -> structLit(s);
+            case VariantCall v -> variantCall(v, expected);
+            case StructLit s -> structLit(s, expected);
             case Convert c -> convert(c);
             case Resize r -> resize(r);
             case Unary u -> unary(u, expected);
@@ -1490,6 +2016,7 @@ public final class Checker {
             case ArrayLit a -> arrayLit(a, expected);
             case Repeat r -> repeat(r, expected);
             case IfExpr i -> ifExpr(i, expected);
+            case MatchExpr m -> matchExpr(m, expected);
             case TupleLit t -> tupleLit(t, expected);
             case SliceExpr s -> sliceExpr(s);
         };
@@ -1578,19 +2105,29 @@ public final class Checker {
             diags.error(Code.E0501, n.span, "`result` can only be used in `ensures` of a function that returns a value");
             return;
         }
+        if (ctx.defaultOf != null && ctx.defaultOf.params.stream().anyMatch(p -> p.name().equals(n.name))) {
+            diags.error(Code.E0101, n.span, "a default value cannot use the parameter `" + n.name + "`",
+                "a default is a constant, the same for every call; to start from `" + n.name + "`, leave out the default "
+                    + "and have callers pass it");
+            return;
+        }
         String hint = switch (n.name) {
             case "null", "nil", "None", "NULL", "undefined" ->
-                "ALang has no null; model absence with an enum, e.g. enum MaybeI32 { None, Some(i32) }";
+                "ALang has no null; a value that may be absent is an Option<T>: Option.None, or Option.Some(x)";
             case "self", "this" -> "there are no methods or `self`; pass the value as a parameter";
-            case "True", "False" -> "booleans are lowercase: true, false";
+            case "True", "False", "TRUE", "FALSE" -> "booleans are lowercase: true, false";
             default -> fns.containsKey(n.name) || Builtin.byName(n.name) != null
                 ? "`" + n.name + "` is a function; call it with parentheses: " + n.name + "(...)"
                 : didYouMean(n.name, visibleValueNames());
         };
-        diags.error(Code.E0101, n.span, "unknown name `" + n.name + "`", hint);
+        List<Edit> fix = switch (n.name) {
+            case "True", "False", "TRUE", "FALSE" -> List.of(new Edit(n.span, n.name.toLowerCase(java.util.Locale.ROOT)));
+            default -> List.of();
+        };
+        diags.fixable(Code.E0101, n.span, "unknown name `" + n.name + "`", hint, fix);
     }
 
-    private Type fieldAccess(FieldAccess f) {
+    private Type fieldAccess(FieldAccess f, Type expected) {
         // ns.NAME, a constant of the file imported as ns, and ns.Enum.Variant.
         if (f.target instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name) && !enums.containsKey(n.name)
             && aliasScope(n.name) != null) {
@@ -1621,8 +2158,7 @@ public final class Checker {
                 diags.error(Code.E0204, f.span, d.name + "." + v.name + " needs " + v.payload.size() + " value(s)",
                     "write " + n.name + "." + d.name + "." + v.name + "(" + joinTypes(v.payload) + ")");
             }
-            f.variant = v;
-            return new Type.EnumT(d);
+            return unitVariant(f, d, v, expected);
         }
         if (f.target instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name)) {
             EnumDecl d = enums.get(n.name);
@@ -1637,8 +2173,7 @@ public final class Checker {
                     diags.error(Code.E0204, f.span, d.name + "." + v.name + " needs " + v.payload.size() + " value(s)",
                         "write " + d.name + "." + v.name + "(" + joinTypes(v.payload) + ")");
                 }
-                f.variant = v;
-                return new Type.EnumT(d);
+                return unitVariant(f, d, v, expected);
             }
         }
         Type t = expr(f.target, null);
@@ -1665,14 +2200,21 @@ public final class Checker {
             return st.decl().fields.get(idx).type;
         }
         String hint = null;
-        if (Type.elementOf(t) != null) {
-            hint = switch (f.name) {
-                case "len", "length", "size", "count" -> "use the builtin len(x)";
-                case "cap", "capacity" -> "use the builtin cap(x)";
-                default -> "arrays, lists and strings have no fields; use builtins such as len(x)";
+        List<Edit> fix = List.of();
+        if (Type.elementOf(t) != null || t instanceof Type.MapT || t instanceof Type.SetT) {
+            String builtin = switch (f.name) {
+                case "len", "length", "size", "count" -> "len";
+                case "cap", "capacity" -> "cap";
+                default -> null;
             };
+            hint = builtin != null ? "use the builtin " + builtin + "(x)" : "arrays, lists and strings have no fields; use builtins such as len(x)";
+            String target = wholeText(f.target);
+            if (builtin != null && target != null && f.span.line() == f.nameSpan.line()) {
+                fix = List.of(new Edit(new Span(f.span.line(), f.span.col(), f.nameSpan.col() + f.nameSpan.length() - f.span.col(),
+                    f.span.file()), builtin + "(" + target + ")"));
+            }
         }
-        diags.error(Code.E0106, f.nameSpan, "a value of type " + t + " has no field `" + f.name + "`", hint);
+        diags.fixable(Code.E0106, f.nameSpan, "a value of type " + t + " has no field `" + f.name + "`", hint, fix);
         return Type.ERROR;
     }
 
@@ -1710,7 +2252,9 @@ public final class Checker {
                 diags.error(Code.E0102, c.nameSpan, "`" + c.name + "` is a " + fv.type + ", not a function",
                     "a parameter can hold a function: fn apply(f: fn(i64) -> i64, x: i64) -> i64 { return f(x); }");
             } else {
-                diags.error(Code.E0102, c.nameSpan, "unknown function `" + c.name + "`", functionHint(c.name));
+                String to = renamedBuiltin(c.name);
+                diags.fixable(Code.E0102, c.nameSpan, "unknown function `" + c.name + "`", functionHint(c.name),
+                    to == null ? List.of() : List.of(new Edit(c.nameSpan, to)));
             }
             return Type.ERROR;
         }
@@ -1753,9 +2297,15 @@ public final class Checker {
         c.fn = f;
         signature(f);
         checkMutCallPosition(c, f.ret);
-        if (c.args.size() != f.params.size()) {
+        // Checked again (an argument's type is worked out twice in some places): the defaults added last time go.
+        if (c.given >= 0) c.args.subList(c.given, c.args.size()).clear();
+        c.given = c.args.size();
+        int required = f.params.size();
+        while (required > 0 && f.defaults.get(required - 1) != null) required--;
+        if (c.args.size() < required || c.args.size() > f.params.size()) {
             if (ctx.routine != null) ctx.routine.callees.add(f);
-            diags.error(Code.E0204, c.span, "`" + f.name + "` takes " + f.params.size() + " argument(s) but "
+            String takes = required == f.params.size() ? String.valueOf(required) : required + " to " + f.params.size();
+            diags.error(Code.E0204, c.span, "`" + f.name + "` takes " + takes + " argument(s) but "
                 + c.args.size() + " were given", "signature: " + signatureText(f));
             for (Arg a : c.args) expr(a.expr(), null);
             return f.ret;
@@ -1765,7 +2315,7 @@ public final class Checker {
         // What each `_` of the parameters' types stands for in this call, each type parameter, and each function.
         Map<Integer, Integer> caps = new HashMap<>();
         Map<Integer, Type> types = new HashMap<>();
-        FnDecl[] fnArgs = new FnDecl[n];
+        FnDecl[] fnArgs = new FnDecl[f.params.size()];
         // The arguments with types of their own come first, so that a literal can take the type that a type
         // parameter gets from another argument: max_of(x, 1) with x: u8 makes the 1 a u8.
         boolean[] done = new boolean[n];
@@ -1773,7 +2323,7 @@ public final class Checker {
             for (int i = 0; i < n; i++) {
                 Arg a = c.args.get(i);
                 LocalVar p = f.paramVars.get(i);
-                if (done[i] || pass == 0 && Type.hasTypeVar(p.type) && literalArgument(a.expr())) continue;
+                if (done[i] || pass == 0 && Type.hasTypeVar(p.type) && contextTyped(a.expr())) continue;
                 done[i] = true;
                 if (p.type instanceof Type.FnT ft) {
                     fnArgs[i] = functionValue(a, ft, f, caps, types);
@@ -1783,7 +2333,7 @@ public final class Checker {
                 if (p.byRef) {
                     if (!a.mut()) {
                         expr(a.expr(), argExpected(want, a.expr()));
-                        diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is `mut`",
+                        missingMut(a, "parameter `" + p.name + "` of `" + f.name + "` is `mut`",
                             "pass a variable by reference: mut " + exprText(a.expr()));
                         continue;
                     }
@@ -1799,7 +2349,7 @@ public final class Checker {
                     }
                 } else {
                     if (a.mut()) {
-                        diags.error(Code.E0207, a.span(), "parameter `" + p.name + "` of `" + f.name + "` is not `mut`",
+                        extraMut(a, "parameter `" + p.name + "` of `" + f.name + "` is not `mut`",
                             "remove `mut`; the value is passed read-only");
                     }
                     if (Type.hasTypeVar(want)) {
@@ -1812,6 +2362,14 @@ public final class Checker {
             }
         }
         checkAliasing(c.args);
+        // The parameters the call leaves out get their default values: constants, which need no checking here.
+        for (int i = n; i < f.params.size(); i++) {
+            ConstDecl d = f.defaults.get(i);
+            Name value = new Name(c.span, d.name);
+            value.constant = d;
+            value.type = d.type;
+            c.args.add(new Arg(c.span, false, value));
+        }
         for (int i = 0; i < f.typeParams.size(); i++) {
             // One in no parameter's type was reported where it is declared.
             Type v = new Type.TypeVar(f.typeParams.get(i), i, f);
@@ -1837,20 +2395,23 @@ public final class Checker {
             for (int i = 0; i < f.typeParams.size(); i++) typeArgs.add(types.get(i));
             List<FnDecl> fns2 = java.util.Arrays.asList(fnArgs);
             boolean allFns = true;
-            for (int i = 0; i < n; i++) {
+            for (int i = 0; i < f.params.size(); i++) {
                 if (f.paramVars.get(i).type instanceof Type.FnT && fnArgs[i] == null) allFns = false;
             }
             if (known.size() == nc && !typeArgs.contains(null) && allFns) c.fn = instance(f, known, typeArgs, fns2);
         }
         if (ctx.routine != null) ctx.routine.callees.add(c.fn);
-        return Type.substituteTypes(f.ret, f, types);
+        Type result = Type.substituteTypes(f.ret, f, types);
+        // A type parameter the arguments did not fix was reported; its type variable must not reach the caller.
+        if (diags.errorCount() != before && !ownTypeVarsOnly(result)) return Type.ERROR;
+        return result;
     }
 
     /**
      * A literal argument for a parameter whose type has type parameters that no other argument fixed: what the
      * literal would be on its own decides them, as in first([1, 2, 3]), where T is i64.
      */
-    private void inferFromLiteral(Expr arg, Type want, FnDecl f, Map<Integer, Integer> caps, Map<Integer, Type> types) {
+    private void inferFromLiteral(Expr arg, Type want, Object f, Map<Integer, Integer> caps, Map<Integer, Type> types) {
         if (!literalArgument(arg) || arg instanceof ArrayLit al && al.elems.isEmpty()) return;
         Diagnostics saved = diags;
         diags = new Diagnostics(saved.source());
@@ -1893,7 +2454,7 @@ public final class Checker {
             }
             return null;
         }
-        if (a.mut()) diags.error(Code.E0207, a.span(), "a function is passed by its name, without `mut`");
+        if (a.mut()) extraMut(a, "a function is passed by its name, without `mut`", null);
         Type.FnT given;
         FnDecl fn = null;
         LocalVar lv = lookupLocal(n.name);
@@ -2129,11 +2690,12 @@ public final class Checker {
         };
     }
 
-    private static String signatureText(FnDecl f) {
+    private String signatureText(FnDecl f) {
         List<String> ps = new ArrayList<>();
         for (int i = 0; i < f.params.size(); i++) {
             LocalVar v = f.paramVars.get(i);
-            ps.add(v.name + ": " + (v.byRef ? "mut " : "") + v.type);
+            ConstDecl d = i < f.defaults.size() ? f.defaults.get(i) : null;
+            ps.add(v.name + ": " + (v.byRef ? "mut " : "") + v.type + (d == null ? "" : " = " + exprText(d.init)));
         }
         String ret = f.ret instanceof Type.Void ? "" : " -> " + f.ret;
         return "fn " + f.name + "(" + String.join(", ", ps) + ")" + ret;
@@ -2242,6 +2804,8 @@ public final class Checker {
             case ArrayLit a -> a.elems.stream().anyMatch(x -> mentions(x, v));
             case Repeat r -> mentions(r.value, v);
             case IfExpr i -> mentions(i.cond, v) || mentions(i.then, v) || mentions(i.otherwise, v);
+            case MatchExpr m -> mentions(m.subject, v) || m.arms.stream().anyMatch(a -> a.guard() != null && mentions(a.guard(), v)
+                || mentions(a.value(), v));
             case TupleLit t -> t.elems.stream().anyMatch(x -> mentions(x, v));
             case SliceExpr s -> mentions(s.target, v) || s.from != null && mentions(s.from, v) || s.to != null && mentions(s.to, v);
             default -> false;
@@ -2298,7 +2862,7 @@ public final class Checker {
                 Arg target = args.get(0);
                 if (!target.mut()) {
                     expr(target.expr(), null);
-                    diags.error(Code.E0207, target.span(), "append() modifies its first argument",
+                    missingMut(target, "append() modifies its first argument",
                         "write append(mut " + exprText(target.expr()) + ", ...)");
                 } else {
                     Type t = mutPlace(target.expr());
@@ -2580,7 +3144,7 @@ public final class Checker {
                 Arg target = args.get(0);
                 if (!target.mut()) {
                     expr(target.expr(), null);
-                    diags.error(Code.E0207, target.span(), "push_char() modifies its first argument",
+                    missingMut(target, "push_char() modifies its first argument",
                         "write push_char(mut " + exprText(target.expr()) + ", c)");
                 } else {
                     Type t = mutPlace(target.expr());
@@ -2611,7 +3175,7 @@ public final class Checker {
                 Type t;
                 if (!target.mut()) {
                     t = expr(target.expr(), null);
-                    diags.error(Code.E0207, target.span(), b.name + "() fills its first argument",
+                    missingMut(target, b.name + "() fills its first argument",
                         "write " + b.name + "(mut " + exprText(target.expr()) + ", ...)");
                 } else {
                     t = mutPlace(target.expr());
@@ -2807,8 +3371,24 @@ public final class Checker {
         return false;
     }
 
+    /** E0207 for a plain argument of a `mut` parameter; where it is a place, the fix writes `mut` before it. */
+    private void missingMut(Arg a, String message, String hint) {
+        Span at = a.span();
+        List<Edit> fix = a.expr().isPlace() ? List.of(new Edit(new Span(at.line(), at.col(), 0, at.file()), "mut ")) : List.of();
+        diags.fixable(Code.E0207, at, message, hint, fix);
+    }
+
+    /** E0207 for `mut` on a read-only argument; the fix deletes it. */
+    private void extraMut(Arg a, String message, String hint) {
+        Span at = a.span();
+        Span value = a.expr().span;
+        List<Edit> fix = value.line() == at.line() && value.col() > at.col()
+            ? List.of(new Edit(new Span(at.line(), at.col(), value.col() - at.col(), at.file()), "")) : List.of();
+        diags.fixable(Code.E0207, at, message, hint, fix);
+    }
+
     private void noMut(Arg a) {
-        if (a.mut()) diags.error(Code.E0207, a.span(), "this argument is not modified; remove `mut`");
+        if (a.mut()) extraMut(a, "this argument is not modified; remove `mut`", null);
     }
 
     /**
@@ -2949,7 +3529,7 @@ public final class Checker {
     private Type sequenceArg(Call c, Arg a) {
         if (!a.mut()) {
             Type t = expr(a.expr(), null);
-            diags.error(Code.E0207, a.span(), c.name + "() modifies its argument", "write " + c.name + "(mut " + exprText(a.expr()) + ")");
+            missingMut(a, c.name + "() modifies its argument", "write " + c.name + "(mut " + exprText(a.expr()) + ")");
             return t;
         }
         Type t = mutPlace(a.expr());
@@ -2972,7 +3552,7 @@ public final class Checker {
         diags = saved;
         if (!(t instanceof Type.MapT) && !(t instanceof Type.SetT)) return null;
         if (!a.mut()) {
-            diags.error(Code.E0207, a.span(), c.name + "() modifies its first argument",
+            missingMut(a, c.name + "() modifies its first argument",
                 "write " + c.name + "(mut " + exprText(a.expr()) + switch (c.builtin) {
                     case INSERT -> t instanceof Type.MapT ? ", key, value)" : ", x)";
                     case REMOVE -> ", key)";
@@ -2997,7 +3577,7 @@ public final class Checker {
     private Type collectionArg(Call c, Arg a) {
         if (!a.mut()) {
             Type t = expr(a.expr(), null);
-            diags.error(Code.E0207, a.span(), c.name + "() modifies its first argument",
+            missingMut(a, c.name + "() modifies its first argument",
                 "write " + c.name + "(mut " + exprText(a.expr()) + switch (c.builtin) {
                     case PUSH -> ", value)";
                     case INSERT -> ", i, value)";
@@ -3025,7 +3605,7 @@ public final class Checker {
         return f != null && !f.params.isEmpty() && f.params.get(0).mut();
     }
 
-    private Type variantCall(VariantCall v) {
+    private Type variantCall(VariantCall v, Type expected) {
         EnumDecl d;
         if (v.qualifier != null) {
             Integer s = qualifierScope(v.qualifier, v.span);
@@ -3057,8 +3637,8 @@ public final class Checker {
             if (lookupLocal(v.enumName) != null || consts.containsKey(v.enumName)) {
                 String args = v.args.isEmpty() ? "" : ", ...";
                 String mut = modifiesFirstArgument(v.variantName) ? "mut " : "";
-                diags.error(Code.E0102, v.span, "there are no methods: `" + v.enumName + "." + v.variantName + "(...)` is not valid",
-                    "pass the value as the first argument: " + v.variantName + "(" + mut + v.enumName + args + ")");
+                diags.fixable(Code.E0102, v.span, "there are no methods: `" + v.enumName + "." + v.variantName + "(...)` is not valid",
+                    "pass the value as the first argument: " + v.variantName + "(" + mut + v.enumName + args + ")", methodFix(v));
             } else {
                 diags.error(Code.E0103, v.span, "unknown enum `" + v.enumName + "`",
                     didYouMean(v.enumName, new ArrayList<>(enums.keySet())));
@@ -3080,19 +3660,149 @@ public final class Checker {
                 : "write " + d.name + "." + variant.name + "(" + joinTypes(variant.payload) + ")";
             diags.error(Code.E0204, v.span, d.name + "." + variant.name + " takes " + variant.payload.size()
                 + " value(s) but " + v.args.size() + " were given", hint);
-            return new Type.EnumT(d);
+            return d.generics.generic() ? Type.ERROR : new Type.EnumT(d);
+        }
+        for (Arg a : v.args) noMut(a);
+        boolean checked = false;
+        if (d.generics.generic()) {
+            // Option.Some(x): the instance the expected type names, else the one the payload's types make.
+            EnumDecl inst = expected instanceof Type.EnumT et && Ast.origin(et.decl()) == d && ownTypeVarsOnly(expected) ? et.decl() : null;
+            if (inst == null) {
+                List<Type> args = inferTypeArgs(d, v.args.stream().map(Arg::expr).toList(), variant.payload, v.span);
+                if (args == null) return Type.ERROR;
+                Item made = instantiate(d, args);
+                if (made == null) return Type.ERROR;
+                inst = (EnumDecl) made;
+                checked = true;
+            }
+            d = inst;
+            v.enumDecl = d;
+            variant = d.variant(v.variantName);
+            v.variant = variant;
         }
         for (int i = 0; i < v.args.size(); i++) {
             Arg a = v.args.get(i);
-            noMut(a);
             Type pt = variant.payload.get(i);
-            Type at = expr(a.expr(), pt);
+            Type at = checked ? a.expr().type : expr(a.expr(), pt);
             requireAssignable(a.expr(), at, pt);
         }
         return new Type.EnumT(d);
     }
 
-    private Type structLit(StructLit s) {
+    /**
+     * `Enum.Variant` without a payload, as a value: of an enum with type parameters, the instance the expected type
+     * names, as nothing else says what they stand for (E0216).
+     */
+    private Type unitVariant(FieldAccess f, EnumDecl d, Variant v, Type expected) {
+        if (d.generics.generic()) {
+            if (!(expected instanceof Type.EnumT et && Ast.origin(et.decl()) == d && ownTypeVarsOnly(expected))) {
+                String ps = String.join(", ", d.generics.params.stream().map(p -> "`" + p + "`").toList());
+                diags.error(Code.E0216, f.span, "cannot tell what type" + (d.generics.params.size() > 1 ? "s " : " ") + ps + " of `"
+                    + d.name + "` stand" + (d.generics.params.size() > 1 ? "" : "s") + " for here",
+                    "give the value a type: let x: " + d.name + "<" + String.join(", ", java.util.Collections.nCopies(d.generics.params.size(),
+                        "i64")) + "> = " + exprText(f) + ";, or compare it with a value that has one");
+                return Type.ERROR;
+            }
+            d = et.decl();
+            v = d.variant(v.name);
+        }
+        f.variant = v;
+        return new Type.EnumT(d);
+    }
+
+    /**
+     * Whether every type variable in {@code t} is a type parameter of the function being checked: a type the code here
+     * can build a value of. A parameter of a function being called is not: a call works it out from its arguments.
+     */
+    private boolean ownTypeVarsOnly(Type t) {
+        if (!Type.hasTypeVar(t)) return true;
+        Object own = ctx.fn == null ? null : ctx.fn.origin != null ? ctx.fn.origin : ctx.fn;
+        return typeVarsOwnedBy(t, own);
+    }
+
+    private static boolean typeVarsOwnedBy(Type t, Object owner) {
+        return switch (t) {
+            case Type.TypeVar v -> v.owner() == owner;
+            case Type.ListT l -> typeVarsOwnedBy(l.elem(), owner);
+            case Type.ArrayT a -> typeVarsOwnedBy(a.elem(), owner);
+            case Type.TupleT tt -> tt.elems().stream().allMatch(e -> typeVarsOwnedBy(e, owner));
+            case Type.MapT m -> typeVarsOwnedBy(m.key(), owner) && typeVarsOwnedBy(m.value(), owner);
+            case Type.SetT st -> typeVarsOwnedBy(st.elem(), owner);
+            case Type.FnT fn -> fn.params().stream().allMatch(e -> typeVarsOwnedBy(e, owner)) && typeVarsOwnedBy(fn.ret(), owner);
+            case Type.StructT st -> Type.typeArgs(st).stream().allMatch(e -> typeVarsOwnedBy(e, owner));
+            case Type.EnumT et -> Type.typeArgs(et).stream().allMatch(e -> typeVarsOwnedBy(e, owner));
+            default -> true;
+        };
+    }
+
+    /**
+     * What the type parameters of {@code d} stand for in a value built from {@code values}, the fields or payload whose
+     * types in d are {@code declared}: each value is checked, those with types of their own first, so that a literal
+     * takes the type another value gave a parameter, and the first value whose type gives a parameter fixes it. Null
+     * after reporting a value that does not fit, or a parameter no value says (E0216).
+     */
+    private List<Type> inferTypeArgs(Item d, List<Expr> values, List<Type> declared, Span at) {
+        Generics g = Ast.generics(d);
+        Map<Integer, Integer> caps = new HashMap<>();
+        Map<Integer, Type> types = new HashMap<>();
+        int before = diags.errorCount();
+        boolean[] done = new boolean[values.size()];
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < values.size(); i++) {
+                Expr e = values.get(i);
+                if (done[i] || pass == 0 && contextTyped(e)) continue;
+                done[i] = true;
+                Type want = Type.substituteTypes(declared.get(i), d, types);
+                if (Type.hasTypeVar(want) && !ownTypeVarsOnly(want)) {
+                    // A literal says what it would be on its own: [true] makes a list[T; 4]'s T a bool.
+                    inferFromLiteral(e, want, d, caps, types);
+                    want = Type.substituteTypes(want, d, types);
+                }
+                Type vt = expr(e, Type.hasTypeVar(want) && !ownTypeVarsOnly(want) ? null : want);
+                if (Type.isError(vt)) continue;
+                if (!Type.bind(declared.get(i), vt, false, caps, d, types)) mismatch(e, vt, Type.substituteTypes(declared.get(i), d, types));
+            }
+        }
+        if (diags.errorCount() != before) return null;
+        List<Type> args = new ArrayList<>();
+        for (int i = 0; i < g.params.size(); i++) {
+            Type t = types.get(i);
+            if (t == null) {
+                diags.error(Code.E0216, at, "cannot tell from the values what type `" + g.params.get(i) + "` of `" + d.name
+                    + "` stands for", "give the value a type: let x: " + d.name + "<" + String.join(", ",
+                        java.util.Collections.nCopies(g.params.size(), "i64")) + "> = ...;");
+                return null;
+            }
+            args.add(t);
+        }
+        return args;
+    }
+
+    /**
+     * Whether {@code e} takes its type from where it goes, so it is checked after the values that have types of their
+     * own: a number, an array literal, and a value of a struct or enum with type parameters, such as Option.None.
+     */
+    private boolean contextTyped(Expr e) {
+        if (isUntyped(e) || isArrayLiteral(e)) return true;
+        return switch (e) {
+            case VariantCall v -> v.asCall == null && genericNamed(v.qualifier, v.enumName, enums);
+            case FieldAccess f -> f.target instanceof Name n && lookupLocal(n.name) == null && genericNamed(null, n.name, enums)
+                || f.target instanceof FieldAccess q && q.target instanceof Name ns && lookupLocal(ns.name) == null
+                && aliasScope(ns.name) != null && genericNamed(ns.name, q.name, enums);
+            case StructLit st -> genericNamed(st.qualifier, st.name, structs);
+            default -> false;
+        };
+    }
+
+    /** Whether `Name` or `ns.Name` names a declaration with type parameters in {@code table}. */
+    private <T extends Item> boolean genericNamed(String qualifier, String name, Table<T> table) {
+        Integer s = qualifier == null ? null : aliasScope(qualifier);
+        if (qualifier != null && s == null) return false;
+        T d = qualifier == null ? table.get(name) : table.in(s, name);
+        return d != null && Ast.generics(d).generic();
+    }
+
+    private Type structLit(StructLit s, Type expected) {
         StructDecl d;
         if (s.qualifier != null) {
             Integer sc = qualifierScope(s.qualifier, s.span);
@@ -3116,6 +3826,34 @@ public final class Checker {
             }
             return Type.ERROR;
         }
+        boolean checked = false;
+        if (d.generics.generic()) {
+            // Pair(first: 1, second: x): the instance the expected type names, else the one the fields' types make.
+            StructDecl inst = expected instanceof Type.StructT et && Ast.origin(et.decl()) == d && ownTypeVarsOnly(expected) ? et.decl() : null;
+            if (inst == null) {
+                List<Expr> values = new ArrayList<>();
+                List<Type> declared = new ArrayList<>();
+                Set<Integer> given = new HashSet<>();
+                for (FieldInit fi : s.fields) {
+                    int idx = d.fieldIndex(fi.name());
+                    if (idx >= 0 && given.add(idx)) {
+                        values.add(fi.value());
+                        declared.add(d.fields.get(idx).type);
+                    }
+                }
+                List<Type> args = inferTypeArgs(d, values, declared, s.span);
+                Item made = args == null ? null : instantiate(d, args);
+                if (made == null) {
+                    for (FieldInit fi : s.fields) {
+                        if (!values.contains(fi.value())) expr(fi.value(), null);
+                    }
+                    return Type.ERROR;
+                }
+                inst = (StructDecl) made;
+                checked = true;
+            }
+            d = inst;
+        }
         s.decl = d;
         int[] order = new int[d.fields.size()];
         java.util.Arrays.fill(order, -1);
@@ -3130,10 +3868,12 @@ public final class Checker {
             }
             if (order[idx] >= 0) {
                 diags.error(Code.E0213, fi.span(), "field `" + fi.name() + "` is given twice");
+                if (checked) expr(fi.value(), d.fields.get(idx).type);
             }
+            boolean first = order[idx] < 0;
             order[idx] = i;
             Type ft = d.fields.get(idx).type;
-            Type vt = expr(fi.value(), ft);
+            Type vt = checked && first ? fi.value().type : expr(fi.value(), ft);
             requireAssignable(fi.value(), vt, ft);
         }
         List<String> missing = new ArrayList<>();
@@ -3285,7 +4025,9 @@ public final class Checker {
         Type rt;
         boolean rightFirst = isUntyped(l)
             && (!isUntyped(r) || hint == null && !hasFloatLiteral(l) && hasFloatLiteral(r))
-            || isArrayLiteral(l) && !isArrayLiteral(r) && !isUntyped(r);
+            || isArrayLiteral(l) && !isArrayLiteral(r) && !isUntyped(r)
+            // m == Option.None: the variant takes its type from m.
+            || hint == null && contextTyped(l) && !contextTyped(r);
         if (rightFirst) {
             rt = expr(r, hint);
             lt = expr(l, Type.isError(rt) ? hint : rt);
@@ -3685,7 +4427,93 @@ public final class Checker {
         } else if (from instanceof Type.ArrayT && to instanceof Type.ListT) {
             hint = "arrays and lists are different types; only array literals like [1, 2] can initialize a list";
         }
-        diags.error(Code.E0201, e.span, "type mismatch: expected " + to + ", found " + from, hint);
+        List<Edit> fix = List.of();
+        String text = Type.isNumeric(from) && Type.isNumeric(to) && lossless(Type.kind(from), Type.kind(to)) ? wholeText(e) : null;
+        if (text != null) fix = List.of(new Edit(e.span, to + "(" + text + ")"));
+        diags.fixable(Code.E0201, e.span, "type mismatch: expected " + to + ", found " + from, hint, fix);
+    }
+
+    /** Whether every value of {@code from} converts to {@code to} exactly: a wider integer, or a float with enough bits. */
+    private static boolean lossless(PrimKind from, PrimKind to) {
+        if (from.isInt() && to.isInt()) {
+            return to.min().compareTo(from.min()) <= 0 && to.max().compareTo(from.max()) >= 0;
+        }
+        if (from.isInt() && to.isFloat) return from.bits <= (to == PrimKind.F32 ? 16 : 32);
+        return from == PrimKind.F32 && to == PrimKind.F64;
+    }
+
+    /**
+     * The source text of {@code e} when its span is sure to cover all of it, so that a fix can wrap it: a name, a field
+     * or index of one, or a call, each on one line. Null for anything else.
+     */
+    private String wholeText(Expr e) {
+        String text = exprText(e);
+        return switch (e) {
+            case Name n -> text.equals(n.name) ? text : null;
+            case FieldAccess f -> {
+                String target = wholeText(f.target);
+                yield target != null && text.equals(target + "." + f.name) ? text : null;
+            }
+            case Index ix -> {
+                String target = wholeText(ix.target);
+                yield target != null && text.startsWith(target + "[") && text.endsWith("]") && balanced(text) ? text : null;
+            }
+            case Call c -> text.startsWith(c.name + "(") && text.endsWith(")") && balanced(text) ? text : null;
+            default -> null;
+        };
+    }
+
+    /** Whether the brackets of {@code text} pair up, outside string and character literals. */
+    private static boolean balanced(String text) {
+        int depth = 0;
+        char quote = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (quote != 0) {
+                if (ch == '\\') i++;
+                else if (ch == quote) quote = 0;
+                continue;
+            }
+            if (ch == '"' || ch == '\'') quote = ch;
+            else if (ch == '(' || ch == '[') depth++;
+            else if ((ch == ')' || ch == ']') && --depth < 0) return false;
+        }
+        return depth == 0 && quote == 0;
+    }
+
+    /** The builtin that a function of another language with the same arguments is, or null. */
+    private static String renamedBuiltin(String name) {
+        return switch (name) {
+            case "println", "printLn", "puts", "console_log", "echo" -> "print";
+            case "length", "size", "strlen" -> "len";
+            case "capacity" -> "cap";
+            default -> null;
+        };
+    }
+
+    /**
+     * `xs.push(1)`, which has no methods to call, as the call it means: push(mut xs, 1). The method's name stays, or
+     * becomes the builtin another language's name stands for (xs.length() is len(xs)); only a function that exists.
+     */
+    private List<Edit> methodFix(VariantCall v) {
+        String text = exprText(v);
+        if (!text.startsWith(v.enumName + ".") || !text.endsWith(")") || !balanced(text)) return List.of();
+        String name = v.variantName;
+        LocalVar target = lookupLocal(v.enumName);
+        boolean list = target != null && target.type instanceof Type.ListT;
+        if (v.args.isEmpty() && (name.equals("length") || name.equals("size"))) name = "len";
+        else if (v.args.isEmpty() && name.equals("capacity")) name = "cap";
+        else if (list && v.args.size() == 1 && (name.equals("append") || name.equals("push_back") || name.equals("add"))) name = "push";
+        if (Builtin.byName(name) == null && !fns.containsKey(name)) return List.of();
+        StringBuilder sb = new StringBuilder(name).append('(');
+        if (modifiesFirstArgument(name)) sb.append("mut ");
+        sb.append(v.enumName);
+        for (Arg a : v.args) {
+            String arg = exprText(a.expr());
+            if (a.span().line() != v.span.line()) return List.of();
+            sb.append(", ").append(a.mut() ? "mut " : "").append(arg);
+        }
+        return List.of(new Edit(v.span, sb.append(')').toString()));
     }
 
     private String exprText(Expr e) {
@@ -3713,6 +4541,8 @@ public final class Checker {
             case ArrayLit a -> a.elems.stream().allMatch(Checker::isConst);
             case Repeat r -> isConst(r.value);
             case IfExpr i -> isConst(i.cond) && isConst(i.then) && isConst(i.otherwise);
+            // Its arms bind names, which need a frame.
+            case MatchExpr m -> false;
             case TupleLit t -> t.elems.stream().allMatch(Checker::isConst);
             case SliceExpr s -> isConst(s.target) && (s.from == null || isConst(s.from)) && (s.to == null || isConst(s.to));
         };

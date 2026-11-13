@@ -23,7 +23,7 @@ syntax; this document describes semantics. Diagnostic codes are listed in [ERROR
 - Identifiers: `[a-zA-Z_][a-zA-Z0-9_]*`. `_` alone is the wildcard, not a name.
 - Reserved words: `fn let var const struct enum if else while for in match break continue return assert
   requires ensures mut and or not true false bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str list`.
-  `limit`, `step`, `rev`, `then`, `map`, `set`, `as`, `test`, `tool`, `import` and `result` are contextual
+  `limit`, `step`, `rev`, `then`, `map`, `set`, `as`, `test`, `traps`, `tool`, `import` and `result` are contextual
   and may be used as names.
 - The names of the builtin functions, the standard library included (§9), cannot be redefined (E0108),
   but may be variable names.
@@ -113,7 +113,28 @@ through a set, all in order (`rev` backwards). They print as `{"a": 1, "b": 2}` 
 by contents (capacities may differ), and finding a key takes a binary search.
 
 **Enum** variants are always qualified (`Shape.Empty`, `Shape.Circle(2.0)`), and payloads are read only
-with `match`. There is no `null`: model absence with an enum such as `enum MaybeI32 { None, Some(i32) }`.
+with `match` (or `if let`). There is no `null`: a value that may be absent is an `Option<T>` (below).
+
+**Type parameters.** A struct or enum can take types as parameters, `struct Pair<A, B> { first: A, second: B }`,
+`enum Tree<T> { Leaf(T), Empty }`, and is then a type only with a type for each, `Pair<i64, str[8]>`: an instance,
+a struct of its own with those types in place of A and B (E0103 for the wrong number of them). Two instances are
+different types, as two structs are. A value takes its type arguments from the type it is stored as, passed as or
+compared with, `let p: Pair<i64, bool> = Pair(first: 1, second: true);`, or else from its fields or payload,
+`Pair(first: 1, second: true)`; a value that says nothing about one, `Option.None` on its own, is E0216, as is a type
+parameter in no field's or payload's type. A type argument has constant capacities (E0217), and a declaration
+cannot contain an instance of itself (E0403). Inside a generic function, `Option<T>` takes the function's `T`.
+
+**Option and Result.** Every program has two enums of this kind, built in, which nothing may redeclare (E0108):
+
+```
+enum Option<T> { None, Some(T) }        // a value, or none
+enum Result<T, E> { Ok(T), Err(E) }     // a value, or the error that kept it from being made
+```
+
+Return `Option.Some(i)` or `Option.None` from a search, and `Result.Ok(n)` or `Result.Err(why)` from something that
+can fail; a caller takes them apart with `match` or `if let Option.Some(i) = find(xs, x) { }`. Like every enum they
+compare with `==`, sort (`None` before `Some`, `Ok` before `Err`), print as `Option.Some(3)`, and are JSON values in
+a tool's arguments and result (§10): `"None"`, `{"Some": [3]}`.
 
 **Equality and ordering.** `==` and `!=` work on every type (strings, and lists of the same element type,
 of different capacities may be compared; aggregates compare element-wise). `< <= > >=` work on numbers of
@@ -128,10 +149,13 @@ everything):
 import "path/to/file.al";
 const NAME: Type = constant-expression;
 struct Name { field: Type, ... }
+struct Name<T, U> { field: T, ... }
 enum Name { Variant, Variant(Type, ...), ... }
-fn name(param: Type, param: mut Type) -> ReturnType requires cond ensures cond { ... }
+enum Name<T> { Variant, Variant(T), ... }
+fn name(param: Type, param: mut Type, param: Type = constant) -> ReturnType requires cond ensures cond { ... }
 tool fn name(param: Type) -> ReturnType { ... }
 test "description" { ... }
+test "description" traps R0006 { ... }
 ```
 
 - **Constants** are evaluated at compile time from literals, other constants, operators, conversions,
@@ -144,7 +168,12 @@ test "description" { ... }
   an empty str. Any other signature is E0602. The program never reads a file itself: the host decides
   what the input is, and the same input gives the same output.
 - **`tool fn`** is callable with JSON arguments (§10) and cannot take `mut` parameters.
-- **`test "..."`** blocks are run by `alang test`, each from a fresh state.
+- **`test "..."`** blocks are run by `alang test`, each from a fresh state. A test passes when its body runs
+  to its end; one written `test "..." traps R0006 { ... }` passes only when its body stops with that trap,
+  and fails with R0005 when it runs to its end or stops with another trap (whose code and message the
+  failure gives). The code is one of R0001 to R0013 (§11); anything else is E0001. In such a test, a call
+  whose result is not used and a variable changed but never read are not warned about (W0302, W0305): they
+  are there to trap. Its calls do not become a tool's `input_examples` (§10).
 
 Names are unique: two items cannot share a name, and **locals cannot shadow** (E0105): a local may not
 reuse the name of a local still in scope, a parameter, a constant or a type. Sibling blocks may reuse
@@ -186,12 +215,12 @@ a file, before any declaration (E0001), and:
 
 | Statement | Form |
 |-----------|------|
-| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;` |
+| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;`, `let Point(x: px, y: _): Point = p;` (a pattern that always matches) |
 | assignment | `place = expr;` and `+= -= *= /= %=` |
-| condition | `if c { } else if c { } else { }` |
+| condition | `if c { } else if c { } else { }`; any condition may be `let Pattern = expr` (`if let Option.Some(v) = m { }`) |
 | loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`; `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
 | labels | `outer: for ... { }` or `outer: while ... { }`, then `break outer;` or `continue outer;` from a loop inside it |
-| match | `match e { Pattern => { } ... }` |
+| match | `match e { Pattern => { } ... }` (and as a value: `match e { Pattern => value, ... }`, §6) |
 | jumps | `break;` `continue;` `return;` `return expr;` |
 | assertion | `assert cond;` `assert cond, "message";` |
 | call | `f(args);` |
@@ -220,7 +249,7 @@ a file, before any declaration (E0001), and:
   without building a list: each piece is a `str` of the capacity of `s`, which no piece can outgrow, so the
   loop never traps on the size or number of the pieces. `s` and `sep` are evaluated once, before the first
   piece, like a collection. Narrow a piece with `str[N](p)` after checking `len(p)`.
-- Loop variables, match bindings and `let` bindings are immutable.
+- Loop variables, match bindings and `let` bindings are immutable; the names of a `var` pattern are mutable.
 - Only calls may be expression statements (E0305); ignoring a non-void result is warning W0302.
 - A program without errors is also checked for work that is lost: a local or match binding that is never
   used (W0304; write `_` for a binding), a variable that is changed but never read (W0305), often a copy
@@ -228,11 +257,29 @@ a file, before any declaration (E0001), and:
   checked file that nothing calls (W0306). Names that start with `_` are left alone.
 - A function with a return type must return on every path; loops never count as returning (E0301).
 
-**Match** patterns: `Enum.Variant`, `Enum.Variant(a, b)` (bindings; `_` ignores one), integer and
-character literals (`3`, `-1`, `'x'`), string literals, `true`, `false`, and `_` (anything; must be
-last). Each arm body is a block. Match works on enums, integers, `bool` and `str`, and must be
-exhaustive (E0306): all enum variants or both bools, or a final `_`, which integers and strings always
-need. Duplicate or unreachable arms are E0307.
+**Match** works on enums, integers, `bool`, `str`, tuples and structs. Each arm body is a block; the first arm
+whose pattern matches runs. Patterns nest:
+
+| Pattern | Matches |
+|---------|---------|
+| `_` | anything |
+| `name` | anything, and binds a copy of it to a new variable `name` |
+| `3`, `-1`, `'x'`, `"text"`, `true` | that value |
+| `1..=9`, `'a'..='z'`, `0..10` | an integer from the first bound to the second (`..` leaves the second out) |
+| `Enum.Variant`, `Enum.Variant(p1, p2)` | that variant, with each payload value matching its pattern |
+| `(p1, p2)` | a tuple whose elements match |
+| `Point(x: p1, y: p2)` | a struct whose named fields match; the fields left out match anything |
+| `p1 \| p2` | any of the alternatives, which bind the same names (of the same types) |
+
+A match must be exhaustive (E0306): together its arms take every value, which an enum, `bool`, tuple or struct can
+do arm by arm, while integers and strs always need a final `_` or name. An arm that takes no value the arms above it
+leave, such as `5` below `1..=10`, is unreachable (E0307), as is any arm below a `_`. The names of an or-pattern take
+their values from the first alternative that matches.
+
+`let Pattern: Type = value;` takes a value apart with a pattern that matches every value of the type (E0306
+otherwise): a tuple or struct of names, `_`s and such patterns. `if let Pattern = value { A } else { B }` runs A,
+with the pattern's names bound, when the value matches, and B otherwise; it is `match value { Pattern => { A } _ =>
+{ B } }`, so a pattern that always matches is E0307, and `else if` may chain more conditions of either kind.
 
 An arm may have a **guard**: `Shape.Circle(r) if r > 10.0 => { }` matches only when the pattern does and then the
 `bool` condition, which can use the arm's bindings, holds; otherwise matching goes on with the next arm. A guarded
@@ -296,8 +343,7 @@ says what `T` is. Each type parameter must appear in a parameter's type, and a c
 the first argument whose type gives it (arguments with types of their own before literals, so that
 `largest_of(x, 1)` with `x: u8` makes the `1` a `u8`), which the others must then match exactly. Like a `_`, each
 call with new types runs an instance made for them, checked again with the types filled in (`alang check
---memory` lists them). Structs and enums have no type parameters; tuples and the built-in collections cover most
-of what they would.
+--memory` lists them). Structs and enums take type parameters too (§2).
 
 **Function parameters.** A parameter of a function type, `keep: fn(T) -> bool`, takes a function by its name,
 `count_if(xs, is_even)`, and the body calls it, `keep(x)`. The function's parameter and result types must be the
@@ -318,6 +364,14 @@ fn count_if<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
     return n;
 }
 ```
+
+**Default values.** `fn area(w: f64, h: f64 = 1.0)` gives `h` a default: a constant expression of the parameter's
+type, evaluated once while checking, like a `const`, which a call that leaves the argument out passes in its place:
+`area(2.0)` is `area(2.0, 1.0)`. A call leaves out arguments from the end only, so every parameter after one with a
+default needs one too, and a call passes from the required ones up to all of them (E0204). A default cannot use the
+other parameters (E0101) or call functions (E0209), and only a read-only parameter of a fixed type has one: not a
+`mut` parameter, one whose type has a `_` or a type parameter, one of a function type, or the input of `main`
+(E0218). A tool's parameter with a default is optional in its JSON (§10).
 
 **Contracts.** `requires` clauses are checked on entry, in order; a failure is trap R0006, reported **at
 the call site** (the caller broke the contract). `ensures` clauses are checked on every return, with
@@ -388,6 +442,11 @@ gives: a str or list of the capacity of `xs`, or a list for an array. A left-out
 (a `for` loop over it whose body leaves its variable alone, `len`, `contains`, `index_of`, `count`, the text
 functions, a comparison or `print` of a str, a conversion `i64(s[2..5])`, a `match` on it), the C backend reads it
 where it is, through a pointer and a length, and the memory bound counts no copy of it.
+
+**Match expressions.** `match e { P => a, Q if c => b, _ => d }` is the value of the first arm whose pattern (and
+guard) matches; only that arm's value is evaluated. Its arms are values, separated by commas, and checked like a match
+statement's (E0306, E0307); their values have one type, as an if expression's branches do. Like an if expression it is
+a whole expression, never an operand, and a call with `mut` arguments cannot be an arm's value (E0215).
 
 **If expressions.** `if c then a else b` is `a` when the `bool` `c` holds and `b` otherwise; only that branch is
 evaluated, so `if len(xs) > 0 then xs[0] else 0` never indexes an empty list. The branches have one type, as
@@ -771,7 +830,9 @@ of a function it calls is not. The calls are the same on every run, at most 200 
 
 Arguments must be strict JSON (RFC 8259: ASCII digits, no leading zeros, escaped control characters,
 paired surrogates) and are validated against the parameter types before the call; unknown, missing or
-duplicate keys are errors. With no I/O, no heap and bounded loops, a tool written by an agent is safe to
+duplicate keys are errors. A parameter with a default value (§5) is optional: the schema leaves it out of
+`required` and shows the value as its `"default"` (unless JSON cannot write it, as for a NaN), a call that
+leaves it out gets the default, and an example from a test call that leaves it out leaves it out too. With no I/O, no heap and bounded loops, a tool written by an agent is safe to
 run: it cannot touch the host, cannot exhaust memory, and terminates.
 
 `alang serve file.al` serves the same tools over the Model Context Protocol's stdio transport: JSON-RPC

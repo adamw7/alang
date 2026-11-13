@@ -57,6 +57,7 @@ error[E0207]: sort() modifies its argument
 17 |     sort(xs);
    |          ^^
   = hint: write sort(mut xs)
+  = fix: insert `mut `
 
 error[E0212]: remove() needs an integer position, found f64
   --> tests/errors/stdlib_misuse.al:18:36

@@ -1,0 +1,7 @@
+error[E0108]: `Option` is a built-in type and cannot be redefined
+ --> tests/errors/E0108_builtin_type.al:2:6
+  |
+2 | enum Option {
+  |      ^^^^^^
+  = hint: use it: Option<T> is Option.None or Option.Some(value), Result<T, E> is Result.Ok(value) or Result.Err(error); or choose another name
+

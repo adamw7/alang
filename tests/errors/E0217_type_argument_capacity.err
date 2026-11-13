@@ -1,0 +1,7 @@
+error[E0217]: a type argument has constant capacities, not `_`
+ --> tests/errors/E0217_type_argument_capacity.al:2:22
+  |
+2 | fn size_of(m: Option<str[_]>) -> i64 {
+  |                      ^^^^^^
+  = hint: write the most it holds, e.g. str[64]
+

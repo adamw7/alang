@@ -25,4 +25,5 @@ error[E0207]: push_char() modifies its first argument
 8 |     push_char(s, 98);
   |               ^
   = hint: write push_char(mut s, c)
+  = fix: insert `mut `
 

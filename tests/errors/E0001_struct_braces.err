@@ -4,4 +4,5 @@ error[E0001]: unexpected '{', expected ';' or an operator
 7 |     let p: Point = Point { x: 1 };
   |                          ^
   = hint: struct values are built with named arguments: Point(field: value, ...)
+  = fix: replace ` { ` with `(`, then replace ` }` with `)`
 

@@ -1,0 +1,1 @@
+Pair(first: 1, second: true) Pair(left: 2, right: false) Option.Some(3) Option.None

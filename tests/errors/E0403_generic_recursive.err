@@ -1,0 +1,7 @@
+error[E0403]: enum `List` contains itself and would have infinite size
+ --> tests/errors/E0403_generic_recursive.al:2:6
+  |
+2 | enum List<T> {
+  |      ^^^^
+  = hint: store related items in a fixed-capacity list and refer to them by index
+

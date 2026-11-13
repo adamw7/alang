@@ -938,6 +938,50 @@ class CliTest {
     }
 
     @Test
+    void aTestThatExpectsATrapFailsWithoutItOrWithAnother() throws IOException {
+        Path p = write("t.al", """
+            fn half(x: i64) -> i64
+                requires x % 2 == 0
+            {
+                return x / 2;
+            }
+
+            test "odd" traps R0006 {
+                half(3);
+            }
+
+            test "even" traps R0006 {
+                half(4);
+            }
+
+            test "full" traps R0006 {
+                var xs: list[i64; 1] = [1];
+                push(mut xs, 2);
+            }
+            """);
+        Result r = run("test", p.toString());
+        assertEquals(1, r.code(), r.err());
+        assertEquals("test \"odd\" ... ok\ntest \"even\" ... FAILED\ntest \"full\" ... FAILED\n\n3 test(s): 1 passed, 2 failed\n", r.out());
+        // No warning that the result of half(3) is unused, or that xs is changed but never read: they are there to trap.
+        assertFalse(r.err().contains("warning"), r.err());
+        assertTrue(r.err().contains("  trap[R0005]: expected trap R0006 (precondition failed), but the test ran to its end "
+            + "without a trap\n    --> " + p + ":11:19\n"), r.err());
+        assertTrue(r.err().contains("  trap[R0005]: expected trap R0006 (precondition failed), but got R0004 (capacity "
+            + "exceeded): push to a full list (capacity 1)\n    --> " + p + ":17:5\n"), r.err());
+        r = run("test", p.toString(), "--json");
+        Map<?, ?> j = (Map<?, ?>) Json.parse(r.out());
+        List<?> tests = (List<?>) j.get("tests");
+        assertEquals(3, tests.size());
+        Map<?, ?> odd = (Map<?, ?>) tests.get(0);
+        assertEquals(true, odd.get("ok"));
+        assertEquals("R0006", odd.get("traps"));
+        assertEquals(null, odd.get("trap"));
+        Map<?, ?> even = (Map<?, ?>) ((Map<?, ?>) tests.get(1)).get("trap");
+        assertEquals("R0005", even.get("code"));
+        assertEquals(java.math.BigInteger.valueOf(11), even.get("line"));
+    }
+
+    @Test
     void failingTestOutputKeepsBlankLines() throws IOException {
         // Blank lines used to be dropped from the output shown for a failing test.
         Path p = write("t.al", "test \"prints\" {\n    print(\"a\\n\\nb\");\n    print(\"\\n\");\n    assert false;\n}\n");
@@ -1302,5 +1346,77 @@ class CliTest {
         assertEquals(1, failed.code());
         assertTrue(failed.err().contains("fmt failed: 1 syntax error(s); nothing was changed"), failed.err());
         assertEquals("fn main() {\n    let x: i64 = ;\n}\n", Files.readString(bad, StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void fixAppliesEveryMechanicalFixRoundByRound() throws IOException {
+        // The parser reports one syntax error at a time, so each round of checking finds the next to fix.
+        String broken = """
+            struct Point {
+                x: i64,
+                y: i64,
+            }
+
+            fn main() {
+                var xs: list[i64; 4] = []
+                let n = 2;
+                xs.push(n);
+                let p: Point = Point { x: 1, y: n };
+                if len(xs) > 0 && p.x == 1 || n > 5 {
+                    print(xs.length(), " ", True);
+                }
+            }
+            """;
+        String fixed = """
+            struct Point {
+                x: i64,
+                y: i64,
+            }
+
+            fn main() {
+                var xs: list[i64; 4] = [];
+                let n: i64 = 2;
+                push(mut xs, n);
+                let p: Point = Point(x: 1, y: n);
+                if (len(xs) > 0 and p.x == 1) or n > 5 {
+                    print(len(xs), " ", true);
+                }
+            }
+            """;
+        Path p = write("broken.al", broken);
+        Result checked = run("check", p.toString());
+        assertTrue(checked.err().contains("  = fix: insert `;`\n"), checked.err());
+        assertTrue(checked.err().endsWith("; `alang fix " + p + " --write` fixes the 1 marked `= fix:`\n"), checked.err());
+
+        Result printed = run("fix", p.toString());
+        assertEquals(0, printed.code(), printed.err());
+        assertEquals(fixed, printed.out());
+        assertEquals(broken, Files.readString(p, StandardCharsets.UTF_8), "printing changes nothing");
+        assertTrue(printed.err().startsWith("fixed[E0001] " + p + ":7:29: insert `;`\nfixed[E0001] " + p + ":8:11: insert `: i64`\n"),
+            printed.err());
+
+        Result json = run("fix", p.toString(), "--json");
+        Map<?, ?> j = (Map<?, ?>) Json.parse(json.out());
+        assertEquals(true, j.get("ok"));
+        assertEquals(fixed, j.get("source"));
+        assertEquals(false, j.get("written"));
+        List<?> done = (List<?>) j.get("fixed");
+        assertEquals(9, done.size(), json.out());
+        assertEquals("insert `;`", ((Map<?, ?>) done.get(0)).get("description"));
+        assertEquals(List.of(Json.obj("line", java.math.BigInteger.valueOf(7), "column", java.math.BigInteger.valueOf(30),
+            "length", java.math.BigInteger.ZERO, "replacement", ";")), ((Map<?, ?>) done.get(0)).get("fix"));
+
+        Result written = run("fix", p.toString(), "--write");
+        assertEquals(0, written.code(), written.err());
+        assertTrue(written.out().endsWith("wrote " + p + ": 9 fix(es)\n"), written.out());
+        assertEquals(fixed, Files.readString(p, StandardCharsets.UTF_8));
+        Result again = run("fix", p.toString(), "--write");
+        assertEquals(p + ": nothing to fix\n", again.out());
+
+        // What has no mechanical fix is reported, and fails.
+        Path rest = write("rest.al", "fn main() {\n    let x: i64 = 1 &&& 2;\n}\n");
+        Result left = run("fix", rest.toString(), "--write");
+        assertEquals(1, left.code());
+        assertTrue(left.err().contains("fix: 1 error(s) remain without a mechanical fix"), left.err());
     }
 }

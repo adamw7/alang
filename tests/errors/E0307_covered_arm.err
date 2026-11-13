@@ -1,0 +1,14 @@
+error[E0307]: unreachable arm: the arms above already match every value it does
+  --> tests/errors/E0307_covered_arm.al:11:9
+   |
+11 |         95 => { return 2; }
+   |         ^^
+  = hint: remove it, or move it above the arms that take its values
+
+error[E0307]: unreachable arm: the arms above already match every value it does
+  --> tests/errors/E0307_covered_arm.al:19:9
+   |
+19 |         Color.Green => false,
+   |         ^^^^^^^^^^^
+  = hint: remove it, or move it above the arms that take its values
+

@@ -94,6 +94,8 @@ public sealed interface Type {
             case MapT m -> hasTypeVar(m.key()) || hasTypeVar(m.value());
             case SetT s -> hasTypeVar(s.elem());
             case FnT f -> f.params().stream().anyMatch(Type::hasTypeVar) || hasTypeVar(f.ret());
+            case StructT st -> typeArgs(st).stream().anyMatch(Type::hasTypeVar);
+            case EnumT e -> typeArgs(e).stream().anyMatch(Type::hasTypeVar);
             default -> false;
         };
     }
@@ -109,6 +111,10 @@ public sealed interface Type {
             case SetT s -> new SetT(substituteTypes(s.elem(), owner, types), s.cap());
             case FnT f -> new FnT(f.params().stream().map(e -> substituteTypes(e, owner, types)).toList(),
                 substituteTypes(f.ret(), owner, types));
+            case StructT st when !typeArgs(st).isEmpty() ->
+                withTypeArgs(st, typeArgs(st).stream().map(e -> substituteTypes(e, owner, types)).toList());
+            case EnumT et when !typeArgs(et).isEmpty() ->
+                withTypeArgs(et, typeArgs(et).stream().map(e -> substituteTypes(e, owner, types)).toList());
             default -> t;
         };
     }
@@ -203,8 +209,19 @@ public sealed interface Type {
                 }
                 yield true;
             }
+            // Option<T> and Option<i64>: instances of one declaration, whose type arguments bind as a tuple's elements do.
+            case StructT p when arg instanceof StructT a && Ast.origin(p.decl()) == Ast.origin(a.decl()) -> bindAll(typeArgs(p), typeArgs(a), caps, owner, types);
+            case EnumT p when arg instanceof EnumT a && Ast.origin(p.decl()) == Ast.origin(a.decl()) -> bindAll(typeArgs(p), typeArgs(a), caps, owner, types);
             default -> false;
         };
+    }
+
+    private static boolean bindAll(List<Type> params, List<Type> args, Map<Integer, Integer> caps, Object owner, Map<Integer, Type> types) {
+        if (params.size() != args.size()) return false;
+        for (int i = 0; i < params.size(); i++) {
+            if (!bind(params.get(i), args.get(i), true, caps, owner, types)) return false;
+        }
+        return true;
     }
 
     private static boolean bindCap(int param, int arg, boolean exact, Map<Integer, Integer> caps) {
@@ -218,15 +235,39 @@ public sealed interface Type {
     record StructT(Ast.StructDecl decl) implements Type {
         @Override
         public String toString() {
-            return decl.name;
+            return decl.name + typeArgsText(decl.generics);
         }
     }
 
     record EnumT(Ast.EnumDecl decl) implements Type {
         @Override
         public String toString() {
-            return decl.name;
+            return decl.name + typeArgsText(decl.generics);
         }
+    }
+
+    /** The type arguments of an instance as written after its name, <i64, bool>; "" for a declaration without. */
+    private static String typeArgsText(Ast.Generics g) {
+        if (g.origin != null) return "<" + String.join(", ", g.args.stream().map(Type::toString).toList()) + ">";
+        return g.params.isEmpty() ? "" : "<" + String.join(", ", g.params) + ">";
+    }
+
+    /** The type arguments of an instance of a struct or enum with type parameters; empty for any other type. */
+    static List<Type> typeArgs(Type t) {
+        return switch (t) {
+            case StructT s -> s.decl().generics.args;
+            case EnumT e -> e.decl().generics.args;
+            default -> List.of();
+        };
+    }
+
+    /** The same struct or enum with other type arguments, or ERROR if it cannot have them (it would contain itself). */
+    private static Type withTypeArgs(Type t, List<Type> args) {
+        if (args.equals(typeArgs(t))) return t;
+        Ast.Generics g = t instanceof StructT s ? s.decl().generics : ((EnumT) t).decl().generics;
+        Ast.Item inst = Ast.generics(g.origin).instantiate.apply(args);
+        if (inst == null) return ERROR;
+        return inst instanceof Ast.StructDecl sd ? new StructT(sd) : new EnumT((Ast.EnumDecl) inst);
     }
 
     record Void() implements Type {

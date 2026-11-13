@@ -14,6 +14,7 @@ import alang.diag.Span;
 import alang.interp.Interpreter;
 import alang.interp.JsonValues;
 import alang.interp.Trap;
+import alang.interp.Values;
 import alang.types.Type;
 import alang.util.Json;
 import java.io.IOException;
@@ -66,21 +67,24 @@ public final class Main {
           fmt <file.al>                print the file laid out the one way (indentation, spaces, blank
                                        lines; its line breaks and comments are kept); --write rewrites it,
                                        --check fails if it is not laid out so
+          fix <file.al>                print the file with the fix of every diagnostic that has one (those
+                                       marked `= fix:`), checking it again after each round; --write
+                                       rewrites it
           explain <CODE>               explain a diagnostic or trap code, e.g. E0201 (or --all, markdown)
           grammar                      print the path of the ANTLR grammar, grammar/ALang.g4
           version                      print the version
 
         options (an option a command does not take is a usage error):
-          --json             machine-readable output (check, run, test, tools, fuzz; call always prints JSON)
+          --json             machine-readable output (check, run, test, tools, fuzz, fix; call always prints JSON)
           --max-steps N      interpreter statement budget (run, test, call, tools, fuzz, serve; default %d,
                              0 = unlimited)
           --max-stack BYTES  memory budget: the worst-case stack of each entry point, and the
-                             constants (check, run, test, tools, call, fuzz, serve, build; default %d = 8 MiB,
+                             constants (check, run, test, tools, call, fuzz, serve, build, fix; default %d = 8 MiB,
                              0 = unlimited)
           --filter TEXT      only run tests whose name contains TEXT (test)
           --memory           print the per-function memory table (check)
           -o FILE            output file (build)
-          --write            rewrite the file in place (fmt)
+          --write            rewrite the file in place (fmt, fix)
           --check            report a file that is not formatted, and change nothing (fmt)
 
         exit codes: 0 success, 1 errors / traps / failed tests, 2 usage error
@@ -100,6 +104,7 @@ public final class Main {
         Map.entry("serve", Set.of("--max-steps", "--max-stack")),
         Map.entry("build", Set.of("-o", "--max-stack")),
         Map.entry("fmt", Set.of("--write", "--check")),
+        Map.entry("fix", Set.of("--write", "--json", "--max-stack")),
         Map.entry("explain", Set.of()),
         Map.entry("grammar", Set.of()),
         Map.entry("version", Set.of()),
@@ -202,6 +207,7 @@ public final class Main {
                 case "serve" -> serve(file());
                 case "build" -> build(file());
                 case "fmt" -> fmt(file());
+                case "fix" -> fix(file());
                 case "explain" -> explain();
                 case "grammar" -> {
                     line(out, "grammar/ALang.g4 (ANTLR 4) in the ALang repository");
@@ -350,7 +356,9 @@ public final class Main {
             return r.ok() ? 0 : 1;
         }
         if (!r.ok()) {
-            line(err, "check failed: " + r.diags().errorCount() + " error(s), " + r.diags().warningCount() + " warning(s)");
+            int fixable = r.diags().fixableCount();
+            line(err, "check failed: " + r.diags().errorCount() + " error(s), " + r.diags().warningCount() + " warning(s)"
+                + (fixable == 0 ? "" : "; `alang fix " + src.path + " --write` fixes the " + fixable + " marked `= fix:`"));
             return 1;
         }
         Program p = r.program();
@@ -529,6 +537,7 @@ public final class Main {
             else failed++;
             if (json) {
                 Map<String, Object> one = Json.obj("name", t.name, "ok", trap == null, "line", t.span.line());
+                if (t.expectedTrap != null) one.put("traps", t.expectedTrap.name());
                 putStdout(one, captured);
                 one.put("trap", trap == null ? null : trapJson(src, trap));
                 results.add(one);
@@ -684,6 +693,10 @@ public final class Main {
             }
             for (int i = 0; i < args.length; i++) {
                 LocalVar p = f.paramVars.get(i);
+                if (!m.containsKey(p.name) && f.defaults.get(i) != null) {
+                    args[i] = Values.copy(f.defaults.get(i).value);
+                    continue;
+                }
                 if (!m.containsKey(p.name)) throw new JsonValues.DecodeException(p.name + ": missing argument");
                 args[i] = JsonValues.fromJson(m.get(p.name), p.type, p.name);
             }
@@ -870,6 +883,52 @@ public final class Main {
             return 1;
         }
         line(out, "formatted " + src.path);
+        return 0;
+    }
+
+    private int fix(Source src) {
+        Fixer.Outcome o = Fixer.run(src, this::compile);
+        Frontend.Result r = o.result();
+        boolean changed = !o.text().equals(src.text);
+        if (write && changed) {
+            try {
+                Files.writeString(Path.of(positional.get(0)), o.text(), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                line(err, "alang: cannot write " + src.path + ": " + e.getMessage());
+                return 1;
+            }
+        }
+        if (json) {
+            Map<String, Object> j = new LinkedHashMap<>();
+            j.put("ok", r.ok());
+            j.put("file", src.path);
+            List<Object> fixed = new ArrayList<>();
+            for (Fixer.Fixed f : o.fixed()) {
+                Map<String, Object> one = alang.diag.Diagnostics.toJson(src, f.diagnostic());
+                one.put("description", f.description());
+                fixed.add(one);
+            }
+            j.put("fixed", fixed);
+            j.put("written", write && changed);
+            j.put("diagnostics", r.diags().toJson());
+            if (!write) j.put("source", o.text());
+            line(out, Json.write(j));
+            return r.ok() ? 0 : 1;
+        }
+        if (!write) out.print(o.text());
+        PrintStream log = write ? out : err;
+        for (Fixer.Fixed f : o.fixed()) {
+            alang.diag.Diagnostic d = f.diagnostic();
+            line(log, "fixed[" + d.code().name() + "] " + src.path + ":" + d.span().line() + ":" + d.span().col() + ": "
+                + f.description());
+        }
+        if (write) line(out, changed ? "wrote " + src.path + ": " + o.fixed().size() + " fix(es)" : src.path + ": nothing to fix");
+        err.print(r.diags().renderText());
+        if (!r.ok()) {
+            line(err, "fix: " + r.diags().errorCount() + " error(s) remain" + (r.diags().fixableCount() > 0 ? "" : " without a mechanical fix")
+                + "; their hints say what to change");
+            return 1;
+        }
         return 0;
     }
 

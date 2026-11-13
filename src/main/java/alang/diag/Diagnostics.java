@@ -48,12 +48,26 @@ public final class Diagnostics {
         add(code, span, message, hint);
     }
 
+    /** An error or warning whose hint {@code fixes} carry out (see {@link Edit}). */
+    public void fixable(Code code, Span span, String message, String hint, List<Edit> fixes) {
+        add(code, span, message, hint, fixes);
+    }
+
     public void add(Code code, Span span, String message, String hint) {
+        add(code, span, message, hint, List.of());
+    }
+
+    public void add(Code code, Span span, String message, String hint, List<Edit> fixes) {
         // Suppress exact duplicates (same code at same place), which can come from error recovery.
         for (Diagnostic d : list) {
             if (d.code() == code && d.span().equals(span) && d.message().equals(message)) return;
         }
-        list.add(new Diagnostic(code, message, span, hint));
+        list.add(new Diagnostic(code, message, span, hint, List.copyOf(fixes)));
+    }
+
+    /** How many diagnostics have fixes that `alang fix` can apply. */
+    public int fixableCount() {
+        return (int) list.stream().filter(d -> !d.fixes().isEmpty()).count();
     }
 
     public List<Diagnostic> all() {
@@ -106,6 +120,11 @@ public final class Diagnostics {
         if (d.hint() != null) {
             sb.append("  = hint: ").append(d.hint()).append('\n');
         }
+        if (!d.fixes().isEmpty()) {
+            List<String> parts = new ArrayList<>();
+            for (Edit e : d.fixes()) parts.add(e.describe(source));
+            sb.append("  = fix: ").append(String.join(", then ", parts)).append('\n');
+        }
         sb.append('\n');
     }
 
@@ -134,6 +153,15 @@ public final class Diagnostics {
         j.put("length", d.span().length());
         j.put("source_line", file.line(d.span().line()));
         j.put("hint", d.hint());
+        if (!d.fixes().isEmpty()) {
+            // The edits that make the hint's change: `alang fix` applies them, and so can a caller, in order.
+            List<Object> edits = new ArrayList<>();
+            for (Edit e : d.fixes()) {
+                edits.add(Json.obj("line", e.span().line(), "column", e.span().col(), "length", e.span().length(),
+                    "replacement", e.replacement()));
+            }
+            j.put("fix", edits);
+        }
         return j;
     }
 }

@@ -84,11 +84,52 @@ public final class Ast {
         public String doc = "";
         /** The scope of its names: 0 for the main file and what it imports without `as` (see {@link Program#aliases}). */
         public int scope;
+        /** A declaration every program has, Option and Result: seen from every scope, and reserved. */
+        public boolean builtin;
 
         Item(Span span, String name) {
             this.span = span;
             this.name = name;
         }
+    }
+
+    /**
+     * The type parameters of a struct or enum, `struct Pair<A, B>`, and what makes it types. The declaration as written
+     * has fields (or payloads) of type parameters; each list of types its parameters stand for, Pair<i64, bool>, is an
+     * instance: a declaration of its own, made once, with those types in place, which every later phase sees as an
+     * ordinary struct or enum. An instance knows its origin and its type arguments.
+     */
+    public static final class Generics {
+        public final List<String> params;
+        public final List<Span> paramSpans;
+        /** For an instance: the declaration it is made from, and the types its parameters stand for. */
+        public Item origin;
+        public List<Type> args = List.of();
+        /** For a declaration with parameters: its instances, by their type arguments, in the order they were made. */
+        public final Map<List<Type>, Item> instances = new LinkedHashMap<>();
+        /** Set by the checker on a declaration with parameters: its instance for the given types, or null if it has none. */
+        public java.util.function.Function<List<Type>, Item> instantiate;
+
+        public Generics(List<String> params, List<Span> paramSpans) {
+            this.params = params;
+            this.paramSpans = paramSpans;
+        }
+
+        /** Whether the declaration as written has type parameters (an instance has none left). */
+        public boolean generic() {
+            return !params.isEmpty() && origin == null;
+        }
+    }
+
+    /** The generics of a struct or enum declaration. */
+    public static Generics generics(Item d) {
+        return d instanceof StructDecl s ? s.generics : ((EnumDecl) d).generics;
+    }
+
+    /** The declaration an instance is made from, or the declaration itself. */
+    public static Item origin(Item d) {
+        Generics g = generics(d);
+        return g.origin != null ? g.origin : d;
     }
 
     /** Resolution state used by the checker for lazily resolved items. */
@@ -101,6 +142,11 @@ public final class Ast {
         /** The compile-time value (interpreter representation), or null on error. */
         public Object value;
         public State state = State.NEW;
+        /**
+         * For the default value of a parameter, `fn f(n: i64 = 3)`: the function. The constant is then named after the
+         * parameter, cannot be named in code, and is what a call that leaves the argument out passes.
+         */
+        public FnDecl defaultOf;
 
         public ConstDecl(Span span, String name, TypeRef typeRef, Expr init) {
             super(span, name);
@@ -112,10 +158,17 @@ public final class Ast {
     public static final class StructDecl extends Item {
         public final List<Field> fields;
         public State state = State.NEW;
+        /** The type parameters of `struct Pair<A, B>`, how a struct and an enum with them become types. */
+        public final Generics generics;
 
         public StructDecl(Span span, String name, List<Field> fields) {
+            this(span, name, fields, new Generics(List.of(), List.of()));
+        }
+
+        public StructDecl(Span span, String name, List<Field> fields, Generics generics) {
             super(span, name);
             this.fields = fields;
+            this.generics = generics;
         }
 
         public int fieldIndex(String name) {
@@ -145,10 +198,17 @@ public final class Ast {
     public static final class EnumDecl extends Item {
         public final List<Variant> variants;
         public State state = State.NEW;
+        /** The type parameters of `enum Maybe<T>`: see {@link Generics}. */
+        public final Generics generics;
 
         public EnumDecl(Span span, String name, List<Variant> variants) {
+            this(span, name, variants, new Generics(List.of(), List.of()));
+        }
+
+        public EnumDecl(Span span, String name, List<Variant> variants, Generics generics) {
             super(span, name);
             this.variants = variants;
+            this.generics = generics;
         }
 
         public Variant variant(String name) {
@@ -208,6 +268,8 @@ public final class Ast {
         public final List<String> ensuresText;
         public Type ret = Type.VOID;
         public final List<LocalVar> paramVars = new ArrayList<>();
+        /** For each parameter, the constant holding its default value, or null for one without a default. */
+        public final List<ConstDecl> defaults = new ArrayList<>();
         public LocalVar resultVar;
         /**
          * For a function with a `_` capacity in a parameter's type, such as fn total(xs: list[i64; _]): builds a
@@ -252,13 +314,29 @@ public final class Ast {
     }
 
     public static final class TestDecl extends Routine {
+        /**
+         * `test "..." traps R0006 { }`: the trap the body must stop with for the test to pass, and where the code is
+         * written; null for a test that passes when the body runs to its end.
+         */
+        public final alang.diag.Code expectedTrap;
+        public final Span trapSpan;
+
         public TestDecl(Span span, String description, Block body) {
+            this(span, description, body, null, null);
+        }
+
+        public TestDecl(Span span, String description, Block body, alang.diag.Code expectedTrap, Span trapSpan) {
             super(span, description, body);
+            this.expectedTrap = expectedTrap;
+            this.trapSpan = trapSpan;
         }
     }
 
-    /** A parameter; {@code doc} is the text of the `///` doc comment directly above it, or "". */
-    public record Param(Span span, String name, boolean mut, TypeRef typeRef, String doc) {}
+    /**
+     * A parameter; {@code doc} is the text of the `///` doc comment directly above it, or "", and {@code def} the
+     * constant expression of `name: T = value`, or null.
+     */
+    public record Param(Span span, String name, boolean mut, TypeRef typeRef, String doc, Expr def) {}
 
     /** A local variable, parameter, loop variable, match binding, or `result`. */
     public static final class LocalVar {
@@ -297,8 +375,12 @@ public final class Ast {
     /** {@code len} is null for `_`: any length, in the type of a function parameter. */
     public record ArrayRef(Span span, TypeRef elem, Expr len) implements TypeRef {}
 
-    /** A struct or enum by name; {@code qualifier} is the alias of `ns.Name`, or null. */
-    public record NamedRef(Span span, String name, String qualifier) implements TypeRef {}
+    /** A struct or enum by name, with its type arguments, Pair<i64, bool>; {@code qualifier} is the alias of `ns.Name`, or null. */
+    public record NamedRef(Span span, String name, String qualifier, List<TypeRef> args) implements TypeRef {
+        public NamedRef(Span span, String name, String qualifier) {
+            this(span, name, qualifier, List.of());
+        }
+    }
 
     /** {@code cap} is null for `_`: any capacity, in the type of a function parameter. */
     public record MapRef(Span span, TypeRef key, TypeRef value, Expr cap) implements TypeRef {}
@@ -352,21 +434,20 @@ public final class Ast {
         }
     }
 
-    /** `let (a, b): (T1, T2) = e;`: one variable per element of a tuple; a null name is a `_`. */
+    /**
+     * `let (a, b): (T1, T2) = e;` or `let Point(x: px, y: _): Point = p;`: a value taken apart by a pattern that always
+     * matches, each name of it a new variable.
+     */
     public static final class Destructure extends Stmt {
         public final boolean mutable;
-        public final List<String> names;
-        public final List<Span> nameSpans;
+        public final Pattern pattern;
         public final TypeRef typeRef;
         public final Expr init;
-        /** One per element; null for a `_`. */
-        public final List<LocalVar> vars = new ArrayList<>();
 
-        public Destructure(Span span, boolean mutable, List<String> names, List<Span> nameSpans, TypeRef typeRef, Expr init) {
+        public Destructure(Span span, boolean mutable, Pattern pattern, TypeRef typeRef, Expr init) {
             super(span);
             this.mutable = mutable;
-            this.names = names;
-            this.nameSpans = nameSpans;
+            this.pattern = pattern;
             this.typeRef = typeRef;
             this.init = init;
         }
@@ -496,11 +577,21 @@ public final class Ast {
     public static final class Match extends Stmt {
         public final Expr subject;
         public final List<Arm> arms;
+        /**
+         * `if let P = e { A } else { B }`, which is this match: `match e { P => { A } _ => { B } }`; the `_` arm is the
+         * last, and never unreachable unless P always matches.
+         */
+        public final boolean ifLet;
 
         public Match(Span span, Expr subject, List<Arm> arms) {
+            this(span, subject, arms, false);
+        }
+
+        public Match(Span span, Expr subject, List<Arm> arms, boolean ifLet) {
             super(span);
             this.subject = subject;
             this.arms = arms;
+            this.ifLet = ifLet;
         }
     }
 
@@ -569,24 +660,89 @@ public final class Ast {
         }
     }
 
+    /** `Enum.Variant` or `Enum.Variant(p1, p2)`: a variant whose payload values match the patterns. */
     public static final class VariantPat extends Pattern {
         /** The alias of `ns.Enum.Variant`, or null. */
         public String qualifier;
         public final String enumName;
         public final String variantName;
-        /** Binding names (null entries for `_`), or null if the pattern has no parentheses. */
-        public final List<String> bindings;
-        public final List<Span> bindingSpans;
+        /** The patterns of the payload values, or null if the pattern has no parentheses. */
+        public final List<Pattern> args;
         public Variant variant;
-        /** Locals for the bindings (null entries for `_`). */
-        public final List<LocalVar> vars = new ArrayList<>();
 
-        public VariantPat(Span span, String enumName, String variantName, List<String> bindings, List<Span> bindingSpans) {
+        public VariantPat(Span span, String enumName, String variantName, List<Pattern> args) {
             super(span);
             this.enumName = enumName;
             this.variantName = variantName;
-            this.bindings = bindings;
-            this.bindingSpans = bindingSpans;
+            this.args = args;
+        }
+    }
+
+    /** A name: matches anything, and binds the value to a new variable. */
+    public static final class BindPat extends Pattern {
+        public final String name;
+        public LocalVar var;
+
+        public BindPat(Span span, String name) {
+            super(span);
+            this.name = name;
+        }
+    }
+
+    /** `(p1, p2, ...)`: a tuple whose elements match the patterns. */
+    public static final class TuplePat extends Pattern {
+        public final List<Pattern> elems;
+
+        public TuplePat(Span span, List<Pattern> elems) {
+            super(span);
+            this.elems = elems;
+        }
+    }
+
+    /** `Point(x: p1, y: p2)`: a struct whose named fields match the patterns; fields it leaves out match anything. */
+    public static final class StructPat extends Pattern {
+        /** The alias of `ns.Point(...)`, or null. */
+        public String qualifier;
+        public final String name;
+        public final List<String> fieldNames;
+        public final List<Span> fieldSpans;
+        public final List<Pattern> fields;
+        public StructDecl decl;
+        /** For each entry of {@link #fields}, the index of its field in the struct. */
+        public int[] fieldIndexes;
+
+        public StructPat(Span span, String name, List<String> fieldNames, List<Span> fieldSpans, List<Pattern> fields) {
+            super(span);
+            this.name = name;
+            this.fieldNames = fieldNames;
+            this.fieldSpans = fieldSpans;
+            this.fields = fields;
+        }
+    }
+
+    /** `lo..=hi` or `lo..hi`: an integer from lo to hi, which {@link #hi} holds inclusive either way. */
+    public static final class RangePat extends Pattern {
+        public final BigInteger lo;
+        public final BigInteger hi;
+        public final boolean inclusive;
+        /** The integer type it matches, set by the checker. */
+        public PrimKind kind;
+
+        public RangePat(Span span, BigInteger lo, BigInteger hi, boolean inclusive) {
+            super(span);
+            this.lo = lo;
+            this.hi = inclusive ? hi : hi.subtract(BigInteger.ONE);
+            this.inclusive = inclusive;
+        }
+    }
+
+    /** `p1 | p2 | ...`: any of the alternatives; each binds the same names, to the same variables. */
+    public static final class OrPat extends Pattern {
+        public final List<Pattern> alts;
+
+        public OrPat(Span span, List<Pattern> alts) {
+            super(span);
+            this.alts = alts;
         }
     }
 
@@ -620,6 +776,40 @@ public final class Ast {
     public static final class WildPat extends Pattern {
         public WildPat(Span span) {
             super(span);
+        }
+    }
+
+    /** The names a pattern binds, in order; each of an or-pattern's alternatives binds the same ones, once listed. */
+    public static List<BindPat> bindings(Pattern p) {
+        List<BindPat> out = new ArrayList<>();
+        bindings(p, out, false);
+        return out;
+    }
+
+    /** Every name of a pattern, those of each alternative of an or-pattern included: where each is written. */
+    public static List<BindPat> allBindings(Pattern p) {
+        List<BindPat> out = new ArrayList<>();
+        bindings(p, out, true);
+        return out;
+    }
+
+    private static void bindings(Pattern p, List<BindPat> out, boolean everyAlternative) {
+        switch (p) {
+            case BindPat b -> out.add(b);
+            case VariantPat v -> {
+                if (v.args != null) for (Pattern a : v.args) bindings(a, out, everyAlternative);
+            }
+            case TuplePat t -> {
+                for (Pattern e : t.elems) bindings(e, out, everyAlternative);
+            }
+            case StructPat s -> {
+                for (Pattern f : s.fields) bindings(f, out, everyAlternative);
+            }
+            case OrPat o -> {
+                if (everyAlternative) for (Pattern a : o.alts) bindings(a, out, true);
+                else bindings(o.alts.get(0), out, false);
+            }
+            default -> { }
         }
     }
 
@@ -818,6 +1008,11 @@ public final class Ast {
          * pad_right pads: it builds no str, and its type is a nominal str[0].
          */
         public boolean asText;
+        /**
+         * How many arguments the call writes, once the checker has added the default values of the parameters it leaves
+         * out to {@link #args}; -1 before.
+         */
+        public int given = -1;
 
         public Call(Span span, String name, Span nameSpan, List<Arg> args) {
             super(span);
@@ -928,6 +1123,21 @@ public final class Ast {
         public TupleLit(Span span, List<Expr> elems) {
             super(span);
             this.elems = elems;
+        }
+    }
+
+    /** An arm of a match expression: `Pattern if guard => value`. */
+    public record ExprArm(Pattern pattern, Expr guard, Expr value) {}
+
+    /** `match e { P => a, Q => b }`: the value of the first arm whose pattern (and guard) matches; only it is evaluated. */
+    public static final class MatchExpr extends Expr {
+        public final Expr subject;
+        public final List<ExprArm> arms;
+
+        public MatchExpr(Span span, Expr subject, List<ExprArm> arms) {
+            super(span);
+            this.subject = subject;
+            this.arms = arms;
         }
     }
 

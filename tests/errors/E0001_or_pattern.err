@@ -1,7 +1,0 @@
-error[E0001]: unexpected '|', expected 'if' or '=>'
- --> tests/errors/E0001_or_pattern.al:4:11
-  |
-4 |         6 | 7 => { return true; }
-  |           ^
-  = hint: a match arm has exactly one pattern; write one arm per value: 1 => { ... } 2 => { ... }
-

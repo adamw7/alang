@@ -59,8 +59,9 @@ constDecl
     ;
 
 // struct Point { x: i32, y: i32 }
+// struct Pair<A, B> { first: A, second: B }: a type parameter stands for any type; Pair<i64, bool> fixes them.
 structDecl
-    : STRUCT identifier LBRACE fieldDecl (COMMA fieldDecl)* COMMA? RBRACE
+    : STRUCT identifier typeParams? LBRACE fieldDecl (COMMA fieldDecl)* COMMA? RBRACE
     ;
 
 fieldDecl
@@ -68,8 +69,9 @@ fieldDecl
     ;
 
 // enum Shape { Circle(f64), Rect(f64, f64), Empty }
+// enum Maybe<T> { None, Some(T) }
 enumDecl
-    : ENUM identifier LBRACE variantDecl (COMMA variantDecl)* COMMA? RBRACE
+    : ENUM identifier typeParams? LBRACE variantDecl (COMMA variantDecl)* COMMA? RBRACE
     ;
 
 variantDecl
@@ -91,8 +93,9 @@ paramList
     ;
 
 // `mut` parameters are passed by reference; all others are read-only values.
+// `limit: i64 = 10` has a default: a constant that a call leaving the argument out passes instead.
 param
-    : identifier COLON MUT? type
+    : identifier COLON MUT? type (ASSIGN expression)?
     ;
 
 contract
@@ -100,8 +103,9 @@ contract
     ;
 
 // test "sum of empty list is zero" { assert sum([]) == 0; }
+// test "zero is refused" traps R0006 { let _q: i64 = div(1, 0); }  passes only if the body stops with that trap
 testDecl
-    : TEST STRING_LIT block
+    : TEST STRING_LIT (TRAPS identifier)? block
     ;
 
 // =====================================================================
@@ -117,7 +121,14 @@ type
     | MAP LBRACK type COMMA type SEMI capacity RBRACK  # mapTypeRef  // map[str[16], i64; 64]: up to 64 entries, in key order
     | SET LBRACK type SEMI capacity RBRACK       # setTypeRef      // set[i64; 32]: up to 32 distinct values, in order
     | FN LPAREN (type (COMMA type)*)? RPAREN (ARROW type)?  # fnTypeRef  // fn(i64) -> bool: a function, as a parameter
-    | (qual=identifier DOT)? identifier          # namedTypeRef    // struct or enum name, or ns.Name from an import ... as ns
+    | (qual=identifier DOT)? identifier (LT type (COMMA type)* GT)?   # namedTypeRef  // struct or enum, or ns.Name; Pair<i64, bool>
+    // Option<Option<i64>>: the lexer reads `>>` as one token, which closes the last type argument's list and this one.
+    | (qual=identifier DOT)? identifier LT (type COMMA)* innerType SHR   # nestedTypeRef
+    ;
+
+// The last type argument of a nestedTypeRef, whose `>` is the first half of the `>>`.
+innerType
+    : (qual=identifier DOT)? identifier LT type (COMMA type)*
     ;
 
 // A constant capacity or length. In the type of a function parameter, `_` accepts any:
@@ -158,9 +169,10 @@ statement
     ;
 
 // `let` is immutable, `var` is mutable. Both must be initialized.
-// let (q, r): (i64, i64) = divmod(a, b);  takes a tuple apart, one variable per element (`_` skips one)
+// let (q, r): (i64, i64) = divmod(a, b);  takes a value apart with a pattern that always matches (`_` skips a part):
+// let Point(x: px, y: _): Point = p;
 letStmt
-    : kind=(LET | VAR) (identifier | LPAREN binding (COMMA binding)+ COMMA? RPAREN) COLON type ASSIGN expression SEMI
+    : kind=(LET | VAR) (identifier | pattern) COLON type ASSIGN expression SEMI
     ;
 
 assignStmt
@@ -179,8 +191,14 @@ placeSuffix
     | LBRACK expression RBRACK
     ;
 
+// if let Maybe.Some(x) = m { ... } else { ... }: the block runs when the pattern matches, with its names bound.
 ifStmt
-    : IF expression block (ELSE IF expression block)* (ELSE block)?
+    : IF condition block (ELSE IF condition block)* (ELSE block)?
+    ;
+
+condition
+    : LET pattern ASSIGN expression
+    | expression
     ;
 
 // The limit is evaluated once; exceeding it is a runtime trap.
@@ -202,7 +220,7 @@ labeledStmt
     : identifier COLON (whileStmt | forStmt)
     ;
 
-// Arms are checked for exhaustiveness. `_` matches anything and must be last.
+// Arms are checked for exhaustiveness: together they cover every value, and none is covered by those above it.
 matchStmt
     : MATCH expression LBRACE matchArm+ RBRACE
     ;
@@ -212,18 +230,34 @@ matchArm
     : pattern (IF expression)? FAT_ARROW block
     ;
 
+// `1 | 2`: any of the alternatives, which bind the same names.
 pattern
-    : (qual=identifier DOT)? identifier DOT identifier (LPAREN binding (COMMA binding)* COMMA? RPAREN)?   # variantPattern
+    : singlePattern (PIPE singlePattern)*
+    ;
+
+singlePattern
+    : (qual=identifier DOT)? identifier DOT identifier (LPAREN pattern (COMMA pattern)* COMMA? RPAREN)?   # variantPattern
+    | (qual=identifier DOT)? identifier LPAREN fieldPattern (COMMA fieldPattern)* COMMA? RPAREN          # structPattern
+    | LPAREN pattern (COMMA pattern)+ COMMA? RPAREN                                                     # tuplePattern
+    | LPAREN pattern RPAREN                                                                             # parenPattern
+    | rangeBound op=(DOTDOT | DOTDOTEQ) rangeBound                                                      # rangePattern
     | MINUS? INT_LIT                                                              # intPattern
     | CHAR_LIT                                                                    # charPattern
     | STRING_LIT                                                                  # stringPattern
     | (TRUE | FALSE)                                                              # boolPattern
     | UNDERSCORE                                                                  # wildcardPattern
+    | identifier                                                                  # bindingPattern
     ;
 
-binding
-    : identifier
-    | UNDERSCORE
+// Point(x: 0, y: py): the fields it names match their patterns; the others match anything.
+fieldPattern
+    : identifier COLON pattern
+    ;
+
+// 1..=9, 'a'..='z', -5..0: the integers from the first to the second (`..` leaves it out).
+rangeBound
+    : MINUS? INT_LIT
+    | CHAR_LIT
     ;
 
 breakStmt
@@ -252,13 +286,19 @@ exprStmt
 // =====================================================================
 
 // `if c then a else b` is a whole expression, never an operand: (if c then a else b) + 1.
+// So is `match e { P => a, Q => b }`, the value of the first arm that matches.
 expression
     : IF expression THEN expression ELSE expression   # ifExpr
+    | MATCH expression LBRACE matchExprArm (COMMA matchExprArm)* COMMA? RBRACE   # matchExpr
     | unary (AMP unary)+                 # bitAndExpr
     | unary (PIPE unary)+                # bitOrExpr
     | unary (CARET unary)+               # bitXorExpr
     | unary op=(SHL | SHR) unary         # shiftExpr
     | logic                              # logicExpr
+    ;
+
+matchExprArm
+    : pattern (IF expression)? FAT_ARROW expression
     ;
 
 logic
@@ -341,7 +381,7 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set` and `as` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set`, `as` and `traps` are contextual keywords and remain usable as names.
 identifier
     : IDENT
     | LIMIT
@@ -354,6 +394,7 @@ identifier
     | MAP
     | SET
     | AS
+    | TRAPS
     ;
 
 // =====================================================================
@@ -389,6 +430,7 @@ ASSERT    : 'assert' ;
 REQUIRES  : 'requires' ;
 ENSURES   : 'ensures' ;
 TEST      : 'test' ;
+TRAPS     : 'traps' ;
 MUT       : 'mut' ;
 AND       : 'and' ;
 OR        : 'or' ;

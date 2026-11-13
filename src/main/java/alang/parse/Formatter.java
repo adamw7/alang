@@ -57,7 +57,7 @@ public final class Formatter {
     private static boolean contextual(int t) {
         return t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL || t == ALangLexer.IMPORT
             || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP
-            || t == ALangLexer.SET || t == ALangLexer.AS;
+            || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS;
     }
 
     private static boolean nameLike(int t) {
@@ -123,23 +123,69 @@ public final class Formatter {
         return true;
     }
 
-    /** The positions of the `<` and `>` around the type parameters of `fn name<T, U>`. */
+    /**
+     * The positions of the `<` and `>` (or `>>`, which closes two) around type parameters, `fn name<T, U>`,
+     * `struct Pair<A, B>`, and type arguments, `Pair<i64, Option<str[8]>>`: they touch what is next to them.
+     */
     private static java.util.Set<Integer> typeParamBrackets(List<Token> tokens) {
         java.util.Set<Integer> out = new java.util.HashSet<>();
-        for (int i = 2; i < tokens.size(); i++) {
-            if (tokens.get(i).getType() != ALangLexer.LT || !nameLike(tokens.get(i - 1).getType())
-                || tokens.get(i - 2).getType() != ALangLexer.FN) {
-                continue;
-            }
-            for (int j = i + 1; j < tokens.size(); j++) {
-                if (tokens.get(j).getType() == ALangLexer.GT) {
-                    out.add(i);
-                    out.add(j);
-                    break;
-                }
+        for (int i = 1; i < tokens.size(); i++) {
+            if (tokens.get(i).getType() != ALangLexer.LT || !nameLike(tokens.get(i - 1).getType())) continue;
+            int before = i >= 2 ? tokens.get(i - 2).getType() : -1;
+            boolean declaration = before == ALangLexer.FN || before == ALangLexer.STRUCT || before == ALangLexer.ENUM;
+            int close = typeArgsClose(tokens, i);
+            if (close < 0) continue;
+            int after = close + 1 < tokens.size() ? tokens.get(close + 1).getType() : -1;
+            // A comparison, a < b, c > d, has a value after its `>`; a type has punctuation or a `{` after it.
+            if (declaration || typeFollower(after)) {
+                out.add(i);
+                out.add(close);
             }
         }
         return out;
+    }
+
+    /**
+     * The position of the `>` or `>>` that closes the `<` at {@code open}, if only the tokens of types come between:
+     * names, type keywords, punctuation, and anything inside square brackets (a capacity). -1 otherwise.
+     */
+    private static int typeArgsClose(List<Token> tokens, int open) {
+        int depth = 1;
+        int square = 0;
+        for (int j = open + 1; j < tokens.size(); j++) {
+            int k = tokens.get(j).getType();
+            if (square > 0) {
+                if (k == ALangLexer.LBRACK) square++;
+                else if (k == ALangLexer.RBRACK) square--;
+                continue;
+            }
+            switch (k) {
+                case ALangLexer.LBRACK -> square++;
+                case ALangLexer.LT -> depth++;
+                case ALangLexer.GT -> {
+                    if (--depth == 0) return j;
+                }
+                case ALangLexer.SHR -> {
+                    depth -= 2;
+                    if (depth <= 0) return depth >= -1 ? j : -1;
+                }
+                case ALangLexer.COMMA, ALangLexer.DOT, ALangLexer.LPAREN, ALangLexer.RPAREN, ALangLexer.ARROW, ALangLexer.FN,
+                     ALangLexer.STR, ALangLexer.LIST, ALangLexer.UNDERSCORE -> { }
+                default -> {
+                    if (!nameLike(k) && !primitiveType(k)) return -1;
+                }
+            }
+        }
+        return -1;
+    }
+
+    /** Tokens that can come right after a type: punctuation, `=`, a `{`, another `>` or a contract. */
+    private static boolean typeFollower(int k) {
+        return switch (k) {
+            case ALangLexer.COMMA, ALangLexer.RPAREN, ALangLexer.RBRACK, ALangLexer.SEMI, ALangLexer.LBRACE, ALangLexer.ASSIGN,
+                 ALangLexer.GT, ALangLexer.SHR, ALangLexer.REQUIRES, ALangLexer.ENSURES, ALangLexer.RBRACE, -1 -> true;
+            default -> false;
+        };
     }
 
     private static String layout(List<Token> tokens) {

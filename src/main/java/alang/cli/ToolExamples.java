@@ -13,6 +13,7 @@ import alang.ast.Ast.Continue;
 import alang.ast.Ast.Destructure;
 import alang.ast.Ast.Convert;
 import alang.ast.Ast.Expr;
+import alang.ast.Ast.ExprArm;
 import alang.ast.Ast.ExprStmt;
 import alang.ast.Ast.FieldAccess;
 import alang.ast.Ast.FieldInit;
@@ -26,6 +27,7 @@ import alang.ast.Ast.IntLit;
 import alang.ast.Ast.Let;
 import alang.ast.Ast.LocalVar;
 import alang.ast.Ast.Match;
+import alang.ast.Ast.MatchExpr;
 import alang.ast.Ast.Name;
 import alang.ast.Ast.Program;
 import alang.ast.Ast.Repeat;
@@ -72,6 +74,8 @@ final class ToolExamples {
         List<Object> examples = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (TestDecl t : program.itemsOf(TestDecl.class)) {
+            // A test that expects a trap shows how to call a tool wrongly.
+            if (t.expectedTrap != null) continue;
             for (Call c : callsIn(t.body)) {
                 if (examples.size() == MAX) return examples;
                 if (c.fn != tool || !c.args.stream().allMatch(a -> ToolDefinitions.isConstant(a.expr()))) continue;
@@ -90,7 +94,8 @@ final class ToolExamples {
             for (int i = 0; i < args.length; i++) {
                 LocalVar p = tool.paramVars.get(i);
                 args[i] = Values.coerce(Interpreter.evalConst(c.args.get(i).expr()), p.type);
-                json.put(p.name, JsonValues.toJson(args[i], p.type));
+                // An argument the call leaves out to its default, the example leaves out too.
+                if (c.given < 0 || i < c.given) json.put(p.name, JsonValues.toJson(args[i], p.type));
             }
             Interpreter in = new Interpreter(src, OutputStream.nullOutputStream(), maxSteps);
             Object result = in.call(tool, args, c.span);
@@ -177,6 +182,13 @@ final class ToolExamples {
                 calls(i.cond, out);
                 calls(i.then, out);
                 calls(i.otherwise, out);
+            }
+            case MatchExpr m -> {
+                calls(m.subject, out);
+                for (ExprArm arm : m.arms) {
+                    if (arm.guard() != null) calls(arm.guard(), out);
+                    calls(arm.value(), out);
+                }
             }
             case TupleLit t -> t.elems.forEach(x -> calls(x, out));
             case SliceExpr s -> {

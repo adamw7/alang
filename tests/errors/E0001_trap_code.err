@@ -1,0 +1,14 @@
+error[E0001]: `r0006` is not a trap code
+ --> tests/errors/E0001_trap_code.al:2:22
+  |
+2 | test "refused" traps r0006 {
+  |                      ^^^^^
+  = hint: write R0006 (precondition failed)
+
+error[E0001]: `R0099` is not a trap code
+ --> tests/errors/E0001_trap_code.al:6:22
+  |
+6 | test "unknown" traps R0099 {
+  |                      ^^^^^
+  = hint: the trap codes are R0001 to R0013; `alang explain --all` lists them
+

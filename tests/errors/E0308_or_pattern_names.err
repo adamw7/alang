@@ -1,0 +1,21 @@
+error[E0308]: this alternative does not bind `r`, which the first one does
+  --> tests/errors/E0308_or_pattern_names.al:10:27
+   |
+10 |         Shape.Circle(r) | Shape.Point => { return r; }
+   |                           ^^^^^^^^^^^
+  = hint: every alternative of `|` binds the same names; use an arm of its own for each
+
+error[E0308]: this alternative does not bind `w`, which the first one does
+  --> tests/errors/E0308_or_pattern_names.al:11:27
+   |
+11 |         Shape.Square(w) | Shape.Circle(r) => { return w; }
+   |                           ^^^^^^^^^^^^^^^
+  = hint: every alternative of `|` binds the same names; use an arm of its own for each
+
+error[E0308]: `r` is bound in this alternative but not in the first
+  --> tests/errors/E0308_or_pattern_names.al:11:40
+   |
+11 |         Shape.Square(w) | Shape.Circle(r) => { return w; }
+   |                                        ^
+  = hint: every alternative of `|` binds the same names; use _ here, or an arm of its own
+

@@ -3,5 +3,6 @@ error[E0001]: unexpected '=', expected ':'
   |
 3 |     let x = 5;
   |           ^
-  = hint: every variable needs an explicit type: let x: i32 = 0;
+  = hint: every variable needs an explicit type: let x: i64 = 0;
+  = fix: insert `: i64`
 

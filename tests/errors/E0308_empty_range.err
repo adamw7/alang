@@ -1,0 +1,14 @@
+error[E0308]: range pattern 10..=1 matches no value
+ --> tests/errors/E0308_empty_range.al:4:9
+  |
+4 |         10..=1 => { return 0; }
+  |         ^^^^^^
+  = hint: write the smaller bound first, and use ..= to include the second: 1..=5
+
+error[E0202]: bound 300 of the range is out of range for u8
+ --> tests/errors/E0308_empty_range.al:5:9
+  |
+5 |         0..=300 => { return 1; }
+  |         ^^^^^^^
+  = hint: u8 holds 0..255
+

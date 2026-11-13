@@ -4,4 +4,5 @@ error[E0001]: unexpected '&&', expected ';' or an operator
 3 |     let x: i64 = 1 && 2;
   |                    ^^
   = hint: use the keyword `and` instead of `&&`
+  = fix: replace `&&` with `and`
 

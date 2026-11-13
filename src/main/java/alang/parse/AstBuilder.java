@@ -4,6 +4,7 @@ import alang.ast.Ast;
 import alang.ast.Ast.*;
 import alang.diag.Code;
 import alang.diag.Diagnostics;
+import alang.diag.Edit;
 import alang.diag.Source;
 import alang.diag.Span;
 import alang.parser.ALangLexer;
@@ -111,7 +112,7 @@ final class AstBuilder {
                 field.doc = docComment(f.getStart());
                 fields.add(field);
             }
-            return new StructDecl(span(s.identifier()), s.identifier().getText(), fields);
+            return new StructDecl(span(s.identifier()), s.identifier().getText(), fields, generics(s.typeParams()));
         }
         if (ctx.enumDecl() != null) {
             EnumDeclContext e = ctx.enumDecl();
@@ -123,14 +124,51 @@ final class AstBuilder {
                 variant.doc = docComment(v.getStart());
                 variants.add(variant);
             }
-            return new EnumDecl(span(e.identifier()), e.identifier().getText(), variants);
+            return new EnumDecl(span(e.identifier()), e.identifier().getText(), variants, generics(e.typeParams()));
         }
         if (ctx.functionDecl() != null) {
             return function(ctx.functionDecl());
         }
         TestDeclContext t = ctx.testDecl();
         String name = new String(unescape(t.STRING_LIT().getSymbol()), StandardCharsets.UTF_8);
-        return new TestDecl(span(t.STRING_LIT().getSymbol()), name, block(t.block()));
+        Code expected = null;
+        Span trapSpan = null;
+        if (t.TRAPS() != null) {
+            trapSpan = span(t.identifier());
+            expected = trapCode(t.identifier().getText(), trapSpan);
+        }
+        return new TestDecl(span(t.STRING_LIT().getSymbol()), name, block(t.block()), expected, trapSpan);
+    }
+
+    /** The trap code of `test "..." traps R0006`, or null after reporting that the text names none. */
+    private Code trapCode(String text, Span at) {
+        for (Code c : Code.values()) {
+            if (c.isRuntime() && c.name().equals(text)) return c;
+        }
+        String upper = text.toUpperCase(java.util.Locale.ROOT);
+        Code last = Code.R0001;
+        for (Code c : Code.values()) {
+            if (c.isRuntime()) last = c;
+        }
+        String hint = "the trap codes are R0001 to " + last.name() + "; `alang explain --all` lists them";
+        for (Code c : Code.values()) {
+            if (c.isRuntime() && c.name().equals(upper)) hint = "write " + c.name() + " (" + c.title + ")";
+        }
+        diags.error(Code.E0001, at, "`" + text + "` is not a trap code", hint);
+        return null;
+    }
+
+    /** The type parameters of `struct Pair<A, B>` or `enum Maybe<T>`. */
+    private Generics generics(TypeParamsContext ctx) {
+        List<String> names = new ArrayList<>();
+        List<Span> spans = new ArrayList<>();
+        if (ctx != null) {
+            for (IdentifierContext t : ctx.identifier()) {
+                names.add(t.getText());
+                spans.add(span(t));
+            }
+        }
+        return new Generics(names, spans);
     }
 
     private FnDecl function(FunctionDeclContext f) {
@@ -138,7 +176,7 @@ final class AstBuilder {
         if (f.paramList() != null) {
             for (ParamContext p : f.paramList().param()) {
                 params.add(new Param(span(p.identifier()), p.identifier().getText(), p.MUT() != null, type(p.type()),
-                    docComment(p.getStart())));
+                    docComment(p.getStart()), p.expression() == null ? null : expr(p.expression())));
             }
         }
         List<Expr> requires = new ArrayList<>();
@@ -222,8 +260,21 @@ final class AstBuilder {
             for (TypeContext e : t.type()) elems.add(type(e));
             return new TupleRef(sp, elems);
         }
+        if (ctx instanceof NestedTypeRefContext n) {
+            // Name<A, Inner<B>>: the `>>` closes Inner's arguments and Name's.
+            List<TypeRef> args = new ArrayList<>();
+            for (TypeContext t : n.type()) args.add(type(t));
+            InnerTypeContext in = n.innerType();
+            List<TypeRef> innerArgs = new ArrayList<>();
+            for (TypeContext t : in.type()) innerArgs.add(type(t));
+            args.add(new NamedRef(span(in.getStart(), n.SHR().getSymbol()), in.identifier(in.identifier().size() - 1).getText(),
+                in.qual == null ? null : in.qual.getText(), innerArgs));
+            return new NamedRef(sp, n.identifier(n.identifier().size() - 1).getText(), n.qual == null ? null : n.qual.getText(), args);
+        }
         NamedTypeRefContext n = (NamedTypeRefContext) ctx;
-        return new NamedRef(sp, n.identifier(n.identifier().size() - 1).getText(), n.qual == null ? null : n.qual.getText());
+        List<TypeRef> args = new ArrayList<>();
+        for (TypeContext t : n.type()) args.add(type(t));
+        return new NamedRef(sp, n.identifier(n.identifier().size() - 1).getText(), n.qual == null ? null : n.qual.getText(), args);
     }
 
     /** A capacity or length: its expression, or null for `_` (any capacity, in a parameter's type). */
@@ -258,13 +309,7 @@ final class AstBuilder {
             LetStmtContext l = ctx.letStmt();
             boolean mutable = l.kind.getType() == ALangLexer.VAR;
             if (l.identifier() == null) {
-                List<String> names = new ArrayList<>();
-                List<Span> spans = new ArrayList<>();
-                for (BindingContext b : l.binding()) {
-                    names.add(b.UNDERSCORE() != null ? null : b.identifier().getText());
-                    spans.add(span(b));
-                }
-                return new Destructure(sp, mutable, names, spans, type(l.type()), expr(l.expression()));
+                return new Destructure(sp, mutable, pattern(l.pattern()), type(l.type()), expr(l.expression()));
             }
             return new Let(sp, mutable, l.identifier().getText(), span(l.identifier()), type(l.type()), expr(l.expression()));
         }
@@ -282,13 +327,10 @@ final class AstBuilder {
         }
         if (ctx.ifStmt() != null) {
             IfStmtContext i = ctx.ifStmt();
-            List<Expr> conds = new ArrayList<>();
-            List<Block> blocks = new ArrayList<>();
-            for (ExpressionContext e : i.expression()) conds.add(expr(e));
+            List<ConditionContext> cs = i.condition();
             List<BlockContext> bs = i.block();
-            for (int k = 0; k < conds.size(); k++) blocks.add(block(bs.get(k)));
-            Block elseBlock = bs.size() > conds.size() ? block(bs.get(bs.size() - 1)) : null;
-            return new If(sp, conds, blocks, elseBlock);
+            Block elseBlock = bs.size() > cs.size() ? block(bs.get(bs.size() - 1)) : null;
+            return ifChain(sp, cs, bs, 0, elseBlock);
         }
         if (ctx.whileStmt() != null) return whileLoop(sp, ctx.whileStmt());
         if (ctx.forStmt() != null) return forLoop(sp, ctx.forStmt());
@@ -327,6 +369,32 @@ final class AstBuilder {
         return new ExprStmt(sp, expr(ctx.exprStmt().expression()));
     }
 
+    /**
+     * The conditions from {@code from} on of an if statement, and its else block: plain conditions make an if
+     * statement, and `if let P = e { A } else { B }` is `match e { P => { A } _ => { B } }`, where B holds the rest of
+     * the chain.
+     */
+    private Stmt ifChain(Span sp, List<ConditionContext> cs, List<BlockContext> bs, int from, Block elseBlock) {
+        List<Expr> conds = new ArrayList<>();
+        List<Block> blocks = new ArrayList<>();
+        int k = from;
+        for (; k < cs.size() && cs.get(k).LET() == null; k++) {
+            conds.add(expr(cs.get(k).expression()));
+            blocks.add(block(bs.get(k)));
+        }
+        if (k == cs.size()) return new If(sp, conds, blocks, elseBlock);
+        ConditionContext c = cs.get(k);
+        Span at = span(c);
+        Block then = block(bs.get(k));
+        Block rest = k + 1 < cs.size()
+            ? new Block(span(cs.get(k + 1)), List.of(ifChain(span(cs.get(k + 1)), cs, bs, k + 1, elseBlock)))
+            : elseBlock != null ? elseBlock : new Block(at, List.of());
+        Match m = new Match(conds.isEmpty() ? sp : at, expr(c.expression()),
+            List.of(new Arm(pattern(c.pattern()), null, then), new Arm(new WildPat(at), null, rest)), true);
+        if (conds.isEmpty()) return m;
+        return new If(sp, conds, blocks, new Block(at, List.of(m)));
+    }
+
     private While whileLoop(Span sp, WhileStmtContext w) {
         return new While(sp, expr(w.expression(0)), expr(w.expression(1)), block(w.block()));
     }
@@ -361,22 +429,50 @@ final class AstBuilder {
     }
 
     private Pattern pattern(PatternContext ctx) {
+        List<SinglePatternContext> alts = ctx.singlePattern();
+        if (alts.size() == 1) return pattern(alts.get(0));
+        List<Pattern> ps = new ArrayList<>();
+        for (SinglePatternContext a : alts) ps.add(pattern(a));
+        return new OrPat(span(ctx), ps);
+    }
+
+    private Pattern pattern(SinglePatternContext ctx) {
         Span sp = span(ctx);
         if (ctx instanceof VariantPatternContext v) {
-            List<String> names = null;
-            List<Span> spans = new ArrayList<>();
+            List<Pattern> args = null;
             if (v.LPAREN() != null) {
-                names = new ArrayList<>();
-                for (BindingContext b : v.binding()) {
-                    names.add(b.UNDERSCORE() != null ? null : b.identifier().getText());
-                    spans.add(span(b));
-                }
+                args = new ArrayList<>();
+                for (PatternContext p : v.pattern()) args.add(pattern(p));
             }
             int k = v.qual == null ? 0 : 1;
-            VariantPat vp = new VariantPat(sp, v.identifier(k).getText(), v.identifier(k + 1).getText(), names, spans);
+            VariantPat vp = new VariantPat(sp, v.identifier(k).getText(), v.identifier(k + 1).getText(), args);
             if (v.qual != null) vp.qualifier = v.qual.getText();
             return vp;
         }
+        if (ctx instanceof StructPatternContext st) {
+            List<String> names = new ArrayList<>();
+            List<Span> spans = new ArrayList<>();
+            List<Pattern> fields = new ArrayList<>();
+            for (FieldPatternContext f : st.fieldPattern()) {
+                names.add(f.identifier().getText());
+                spans.add(span(f.identifier()));
+                fields.add(pattern(f.pattern()));
+            }
+            int k = st.qual == null ? 0 : 1;
+            StructPat p = new StructPat(sp, st.identifier(k).getText(), names, spans, fields);
+            if (st.qual != null) p.qualifier = st.qual.getText();
+            return p;
+        }
+        if (ctx instanceof TuplePatternContext t) {
+            List<Pattern> elems = new ArrayList<>();
+            for (PatternContext p : t.pattern()) elems.add(pattern(p));
+            return new TuplePat(sp, elems);
+        }
+        if (ctx instanceof ParenPatternContext p) return pattern(p.pattern());
+        if (ctx instanceof RangePatternContext r) {
+            return new RangePat(sp, rangeBound(r.rangeBound(0)), rangeBound(r.rangeBound(1)), r.op.getType() == ALangLexer.DOTDOTEQ);
+        }
+        if (ctx instanceof BindingPatternContext b) return new BindPat(sp, b.identifier().getText());
         if (ctx instanceof IntPatternContext i) {
             BigInteger val = parseInt(i.INT_LIT().getText());
             return new IntPat(sp, i.MINUS() != null ? val.negate() : val);
@@ -393,10 +489,25 @@ final class AstBuilder {
         return new WildPat(sp);
     }
 
+    private BigInteger rangeBound(RangeBoundContext ctx) {
+        if (ctx.CHAR_LIT() != null) return BigInteger.valueOf(charValue(ctx.CHAR_LIT().getSymbol()));
+        BigInteger val = parseInt(ctx.INT_LIT().getText());
+        return ctx.MINUS() != null ? val.negate() : val;
+    }
+
     // ------------------------------------------------------------------ expressions
 
     Expr expr(ExpressionContext ctx) {
         Span sp = span(ctx);
+        if (ctx instanceof MatchExprContext m) {
+            List<ExprArm> arms = new ArrayList<>();
+            for (MatchExprArmContext a : m.matchExprArm()) {
+                List<ExpressionContext> es = a.expression();
+                Expr guard = es.size() > 1 ? expr(es.get(0)) : null;
+                arms.add(new ExprArm(pattern(a.pattern()), guard, expr(es.get(es.size() - 1))));
+            }
+            return new MatchExpr(sp, expr(m.expression()), arms);
+        }
         if (ctx instanceof BitAndExprContext b) return chain(sp, BinOp.BAND, b.unary());
         if (ctx instanceof BitOrExprContext b) return chain(sp, BinOp.BOR, b.unary());
         if (ctx instanceof BitXorExprContext b) return chain(sp, BinOp.BXOR, b.unary());
@@ -667,8 +778,11 @@ final class AstBuilder {
     private int charValue(Token t) {
         byte[] b = unescape(t);
         if (b.length != 1) {
-            diags.error(Code.E0202, span(t), "character literal " + t.getText() + " is not a single byte",
-                "character literals hold one ASCII byte; use a string \"...\" for other text");
+            // 'abc' is the text "abc", in the quotes text takes; one with a `"` in it would need escapes.
+            String body = t.getText().substring(1, t.getText().length() - 1);
+            List<Edit> fix = body.contains("\"") ? List.of() : List.of(new Edit(span(t), "\"" + body + "\""));
+            diags.fixable(Code.E0202, span(t), "character literal " + t.getText() + " is not a single byte",
+                "character literals hold one ASCII byte; use a string \"...\" for other text", fix);
             return 0;
         }
         return b[0] & 0xFF;

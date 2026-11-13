@@ -1,0 +1,7 @@
+error[E0218]: a `mut` parameter refers to the caller's variable, so it has no default value
+ --> tests/errors/E0218_default_mut.al:2:32
+  |
+2 | fn grow(xs: mut list[i64; 4] = [], n: i64 = 1) {
+  |                                ^^
+  = hint: remove ` = []`
+
