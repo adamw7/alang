@@ -23,7 +23,7 @@ syntax; this document describes semantics. Diagnostic codes are listed in [ERROR
 - Identifiers: `[a-zA-Z_][a-zA-Z0-9_]*`. `_` alone is the wildcard, not a name.
 - Reserved words: `fn let var const struct enum if else while for in match break continue return assert
   requires ensures mut and or not true false bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 str list`.
-  `limit`, `step`, `rev`, `then`, `map`, `set`, `as`, `test`, `tool`, `import` and `result` are contextual
+  `limit`, `step`, `rev`, `then`, `map`, `set`, `as`, `test`, `traps`, `tool`, `import` and `result` are contextual
   and may be used as names.
 - The names of the builtin functions, the standard library included (§9), cannot be redefined (E0108),
   but may be variable names.
@@ -132,6 +132,7 @@ enum Name { Variant, Variant(Type, ...), ... }
 fn name(param: Type, param: mut Type) -> ReturnType requires cond ensures cond { ... }
 tool fn name(param: Type) -> ReturnType { ... }
 test "description" { ... }
+test "description" traps R0006 { ... }
 ```
 
 - **Constants** are evaluated at compile time from literals, other constants, operators, conversions,
@@ -144,7 +145,12 @@ test "description" { ... }
   an empty str. Any other signature is E0602. The program never reads a file itself: the host decides
   what the input is, and the same input gives the same output.
 - **`tool fn`** is callable with JSON arguments (§10) and cannot take `mut` parameters.
-- **`test "..."`** blocks are run by `alang test`, each from a fresh state.
+- **`test "..."`** blocks are run by `alang test`, each from a fresh state. A test passes when its body runs
+  to its end; one written `test "..." traps R0006 { ... }` passes only when its body stops with that trap,
+  and fails with R0005 when it runs to its end or stops with another trap (whose code and message the
+  failure gives). The code is one of R0001 to R0013 (§11); anything else is E0001. In such a test, a call
+  whose result is not used and a variable changed but never read are not warned about (W0302, W0305): they
+  are there to trap. Its calls do not become a tool's `input_examples` (§10).
 
 Names are unique: two items cannot share a name, and **locals cannot shadow** (E0105): a local may not
 reuse the name of a local still in scope, a parameter, a constant or a type. Sibling blocks may reuse

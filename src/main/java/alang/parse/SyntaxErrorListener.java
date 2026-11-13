@@ -147,7 +147,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
             }
             if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT
                 || t == ALangParser.STEP || t == ALangParser.REV || t == ALangParser.THEN || t == ALangParser.MAP
-                || t == ALangParser.SET || t == ALangParser.AS) {
+                || t == ALangParser.SET || t == ALangParser.AS || t == ALangParser.TRAPS) {
                 if (expected.contains(ALangParser.IDENT)) continue;
             }
             String lit = ALangParser.VOCABULARY.getLiteralName(t);
@@ -450,7 +450,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
     /** Tokens that can come right before the `(` of a call, constructor, pattern or declaration. */
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
-            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 
     private static boolean expectsOperator(IntervalSet expected) {

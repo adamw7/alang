@@ -252,8 +252,21 @@ public final class Ast {
     }
 
     public static final class TestDecl extends Routine {
+        /**
+         * `test "..." traps R0006 { }`: the trap the body must stop with for the test to pass, and where the code is
+         * written; null for a test that passes when the body runs to its end.
+         */
+        public final alang.diag.Code expectedTrap;
+        public final Span trapSpan;
+
         public TestDecl(Span span, String description, Block body) {
+            this(span, description, body, null, null);
+        }
+
+        public TestDecl(Span span, String description, Block body, alang.diag.Code expectedTrap, Span trapSpan) {
             super(span, description, body);
+            this.expectedTrap = expectedTrap;
+            this.trapSpan = trapSpan;
         }
     }
 

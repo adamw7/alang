@@ -938,6 +938,50 @@ class CliTest {
     }
 
     @Test
+    void aTestThatExpectsATrapFailsWithoutItOrWithAnother() throws IOException {
+        Path p = write("t.al", """
+            fn half(x: i64) -> i64
+                requires x % 2 == 0
+            {
+                return x / 2;
+            }
+
+            test "odd" traps R0006 {
+                half(3);
+            }
+
+            test "even" traps R0006 {
+                half(4);
+            }
+
+            test "full" traps R0006 {
+                var xs: list[i64; 1] = [1];
+                push(mut xs, 2);
+            }
+            """);
+        Result r = run("test", p.toString());
+        assertEquals(1, r.code(), r.err());
+        assertEquals("test \"odd\" ... ok\ntest \"even\" ... FAILED\ntest \"full\" ... FAILED\n\n3 test(s): 1 passed, 2 failed\n", r.out());
+        // No warning that the result of half(3) is unused, or that xs is changed but never read: they are there to trap.
+        assertFalse(r.err().contains("warning"), r.err());
+        assertTrue(r.err().contains("  trap[R0005]: expected trap R0006 (precondition failed), but the test ran to its end "
+            + "without a trap\n    --> " + p + ":11:19\n"), r.err());
+        assertTrue(r.err().contains("  trap[R0005]: expected trap R0006 (precondition failed), but got R0004 (capacity "
+            + "exceeded): push to a full list (capacity 1)\n    --> " + p + ":17:5\n"), r.err());
+        r = run("test", p.toString(), "--json");
+        Map<?, ?> j = (Map<?, ?>) Json.parse(r.out());
+        List<?> tests = (List<?>) j.get("tests");
+        assertEquals(3, tests.size());
+        Map<?, ?> odd = (Map<?, ?>) tests.get(0);
+        assertEquals(true, odd.get("ok"));
+        assertEquals("R0006", odd.get("traps"));
+        assertEquals(null, odd.get("trap"));
+        Map<?, ?> even = (Map<?, ?>) ((Map<?, ?>) tests.get(1)).get("trap");
+        assertEquals("R0005", even.get("code"));
+        assertEquals(java.math.BigInteger.valueOf(11), even.get("line"));
+    }
+
+    @Test
     void failingTestOutputKeepsBlankLines() throws IOException {
         // Blank lines used to be dropped from the output shown for a failing test.
         Path p = write("t.al", "test \"prints\" {\n    print(\"a\\n\\nb\");\n    print(\"\\n\");\n    assert false;\n}\n");

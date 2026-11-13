@@ -107,7 +107,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 |---------|---------|
 | `alang check FILE [--json] [--memory] [--max-stack B]` | Type-check; print diagnostics and the static memory bound (budget 8 MiB unless `--max-stack` sets another) |
 | `alang run FILE [--json] [--max-steps N] [--max-stack B]` | Run `fn main()`; a `fn main(input: str[N])` gets all of stdin (`alang run prog.al < data.txt`) |
-| `alang test FILE [--json] [--filter TEXT] [--max-steps N] [--max-stack B]` | Run all `test "..." { }` blocks; a filter that matches no test fails |
+| `alang test FILE [--json] [--filter TEXT] [--max-steps N] [--max-stack B]` | Run all `test "..." { }` blocks (one written `test "..." traps R0006 { }` passes only if it stops with that trap); a filter that matches no test fails |
 | `alang tools FILE [--json] [--max-steps N] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema, and input_examples from the tests' calls) |
 | `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B]` | Call a tool with JSON arguments; `-` reads them from stdin, none means `{}` |
 | `alang fuzz FILE [--json] [--max-steps N] [--max-stack B]` | Call every `tool fn`, and a `fn main(input: str[N])`, with arguments at their limits (empty and full strs of many shapes, full lists, the smallest and largest numbers); report each trap with the arguments that hit it |

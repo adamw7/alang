@@ -9,7 +9,7 @@ with a concrete fix. This page covers everything you need; the full rules are in
 
 ```sh
 bin/alang check prog.al --json    # 1. diagnostics: code, line, column, message, hint
-bin/alang test  prog.al --json    # 2. run every `test "..." { }` block
+bin/alang test  prog.al --json    # 2. run every `test "..." { }` block (`test "..." traps R0006 { }` must trap)
 bin/alang fuzz  prog.al           # 3. call each tool fn, and a main that reads input, at its limits
 bin/alang run   prog.al           # 4. run fn main()
 bin/alang run   prog.al < in.txt  #    a fn main(input: str[N]) gets all of stdin
@@ -427,7 +427,13 @@ fn average(xs: list[f64; 32]) -> f64
 fn main() {
     print(average([1.0, -2.0, 3.0]));
 }
+
+test "an empty list breaks the contract" traps R0006 {
+    average([]);
+}
 ```
+
+A test written `traps CODE` passes only if its body stops with that trap: test that bad input is refused.
 
 ## Writing tools for agents
 

@@ -551,10 +551,11 @@ append(mut s, "de");  // trap
 
 ## R0005
 
-**assertion failed**: An `assert` condition evaluated to false.
+**assertion failed**: An `assert` condition evaluated to false, or a test written `test "..." traps CODE { }` did not stop with that trap: it ran to its end, or stopped with another one, whose code and message follow.
 
 ```
 assert 1 + 1 == 3;  // trap
+test "refuses zero" traps R0006 { half(0); }  // R0005 if half(0) does not trap
 ```
 
 ## R0006

@@ -64,9 +64,12 @@ final class Uses {
                         "call it, test it from a test block, or remove it");
                 }
             }
+            // A test that expects a trap changes a variable to make it trap, and need not read it afterwards.
+            boolean trapTest = r instanceof TestDecl t && t.expectedTrap != null;
             for (Let l : s.lets) {
                 LocalVar v = l.var;
                 if (v == null || v.name.startsWith("_") || s.read.contains(v)) continue;
+                if (trapTest && s.changed.contains(v)) continue;
                 if (!s.changed.contains(v)) {
                     diags.warning(Code.W0304, l.nameSpan, "`" + v.name + "` is never used",
                         "remove it; a call it holds that is needed for what it does can be a statement of its own");

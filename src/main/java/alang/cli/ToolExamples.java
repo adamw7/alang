@@ -72,6 +72,8 @@ final class ToolExamples {
         List<Object> examples = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (TestDecl t : program.itemsOf(TestDecl.class)) {
+            // A test that expects a trap shows how to call a tool wrongly.
+            if (t.expectedTrap != null) continue;
             for (Call c : callsIn(t.body)) {
                 if (examples.size() == MAX) return examples;
                 if (c.fn != tool || !c.args.stream().allMatch(a -> ToolDefinitions.isConstant(a.expr()))) continue;

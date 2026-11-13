@@ -130,7 +130,31 @@ final class AstBuilder {
         }
         TestDeclContext t = ctx.testDecl();
         String name = new String(unescape(t.STRING_LIT().getSymbol()), StandardCharsets.UTF_8);
-        return new TestDecl(span(t.STRING_LIT().getSymbol()), name, block(t.block()));
+        Code expected = null;
+        Span trapSpan = null;
+        if (t.TRAPS() != null) {
+            trapSpan = span(t.identifier());
+            expected = trapCode(t.identifier().getText(), trapSpan);
+        }
+        return new TestDecl(span(t.STRING_LIT().getSymbol()), name, block(t.block()), expected, trapSpan);
+    }
+
+    /** The trap code of `test "..." traps R0006`, or null after reporting that the text names none. */
+    private Code trapCode(String text, Span at) {
+        for (Code c : Code.values()) {
+            if (c.isRuntime() && c.name().equals(text)) return c;
+        }
+        String upper = text.toUpperCase(java.util.Locale.ROOT);
+        Code last = Code.R0001;
+        for (Code c : Code.values()) {
+            if (c.isRuntime()) last = c;
+        }
+        String hint = "the trap codes are R0001 to " + last.name() + "; `alang explain --all` lists them";
+        for (Code c : Code.values()) {
+            if (c.isRuntime() && c.name().equals(upper)) hint = "write " + c.name() + " (" + c.title + ")";
+        }
+        diags.error(Code.E0001, at, "`" + text + "` is not a trap code", hint);
+        return null;
     }
 
     private FnDecl function(FunctionDeclContext f) {

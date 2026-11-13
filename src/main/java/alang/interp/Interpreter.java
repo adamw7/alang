@@ -160,17 +160,42 @@ public final class Interpreter {
         call(main, args, main.nameSpan);
     }
 
+    /**
+     * Runs a test; a failure is a trap. A test written `traps R0006` passes only if its body stops with that
+     * trap: a body that runs to its end, or stops with another trap, fails with R0005, as a failed assert does.
+     */
     public void runTest(TestDecl t) {
+        String entry = "test \"" + t.name + "\"";
+        Trap got = null;
         try {
             Object[] slots = new Object[t.locals.size()];
-            callStack.push(new CallSite("test \"" + t.name + "\"", t.span));
+            callStack.push(new CallSite(entry, t.span));
             execBlock(t.body, slots);
             callStack.pop();
         } catch (Trap trap) {
             fillTrace(trap);
-            throw trap;
+            got = trap;
         } finally {
             flush();
+        }
+        Code want = t.expectedTrap;
+        if (want == null) {
+            if (got != null) throw got;
+            return;
+        }
+        String expected = "expected trap " + want.name() + " (" + want.title + ")";
+        if (got == null) {
+            Trap missing = new Trap(Code.R0005, t.trapSpan, expected + ", but the test ran to its end without a trap");
+            missing.trace.add(entry + " (entry point, line " + t.span.line() + ")");
+            throw missing;
+        }
+        if (got.code != want) {
+            java.io.ByteArrayOutputStream msg = new java.io.ByteArrayOutputStream();
+            msg.writeBytes((expected + ", but got " + got.code.name() + " (" + got.code.title + "): ").getBytes(StandardCharsets.UTF_8));
+            msg.writeBytes(got.messageBytes());
+            Trap wrong = new Trap(Code.R0005, got.span, msg.toByteArray());
+            wrong.trace.addAll(got.trace);
+            throw wrong;
         }
     }
 

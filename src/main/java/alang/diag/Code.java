@@ -210,8 +210,9 @@ public enum Code {
             + "Capacities are part of the type: list[T; N], str[N].",
         "var s: str[4] = \"abc\";\nappend(mut s, \"de\");  // trap"),
     R0005("assertion failed",
-        "An `assert` condition evaluated to false.",
-        "assert 1 + 1 == 3;  // trap"),
+        "An `assert` condition evaluated to false, or a test written `test \"...\" traps CODE { }` did not stop with "
+            + "that trap: it ran to its end, or stopped with another one, whose code and message follow.",
+        "assert 1 + 1 == 3;  // trap\ntest \"refuses zero\" traps R0006 { half(0); }  // R0005 if half(0) does not trap"),
     R0006("precondition failed",
         "A `requires` clause was false when the function was called. The caller is at fault.",
         "fn sqrt_int(x: i64) -> i64 requires x >= 0 { ... }"),

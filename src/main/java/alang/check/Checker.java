@@ -1290,7 +1290,9 @@ public final class Checker {
             Type t = expr(c, null);
             ctx.mutCallAllowed = null;
             if (c.builtin == Builtin.PANIC) return true;
-            if (!(t instanceof Type.Void) && !Type.isError(t) && c.builtin != Builtin.POP && c.builtin != Builtin.REMOVE) {
+            // In a test that expects a trap, a call is often there only to trap.
+            boolean trapTest = ctx.routine instanceof TestDecl td && td.expectedTrap != null;
+            if (!(t instanceof Type.Void) && !Type.isError(t) && c.builtin != Builtin.POP && c.builtin != Builtin.REMOVE && !trapTest) {
                 diags.warning(Code.W0302, c.span, "the result of `" + c.name + "` (" + t + ") is not used",
                     "store it: let value: " + t + " = " + c.name + "(...);");
             }
@@ -1302,7 +1304,8 @@ public final class Checker {
             Type t = expr(vc, null);
             ctx.mutCallAllowed = null;
             if (vc.asCall != null) {
-                if (!(t instanceof Type.Void) && !Type.isError(t)) {
+                boolean trapTest = ctx.routine instanceof TestDecl td && td.expectedTrap != null;
+                if (!(t instanceof Type.Void) && !Type.isError(t) && !trapTest) {
                     diags.warning(Code.W0302, vc.span, "the result of `" + exprText(vc) + "` (" + t + ") is not used",
                         "store it: let value: " + t + " = " + exprText(vc) + ";");
                 }

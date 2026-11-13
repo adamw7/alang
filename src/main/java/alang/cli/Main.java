@@ -529,6 +529,7 @@ public final class Main {
             else failed++;
             if (json) {
                 Map<String, Object> one = Json.obj("name", t.name, "ok", trap == null, "line", t.span.line());
+                if (t.expectedTrap != null) one.put("traps", t.expectedTrap.name());
                 putStdout(one, captured);
                 one.put("trap", trap == null ? null : trapJson(src, trap));
                 results.add(one);

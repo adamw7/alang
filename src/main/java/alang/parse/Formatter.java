@@ -57,7 +57,7 @@ public final class Formatter {
     private static boolean contextual(int t) {
         return t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL || t == ALangLexer.IMPORT
             || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP
-            || t == ALangLexer.SET || t == ALangLexer.AS;
+            || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS;
     }
 
     private static boolean nameLike(int t) {

@@ -100,8 +100,9 @@ contract
     ;
 
 // test "sum of empty list is zero" { assert sum([]) == 0; }
+// test "zero is refused" traps R0006 { let _q: i64 = div(1, 0); }  passes only if the body stops with that trap
 testDecl
-    : TEST STRING_LIT block
+    : TEST STRING_LIT (TRAPS identifier)? block
     ;
 
 // =====================================================================
@@ -341,7 +342,7 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set` and `as` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set`, `as` and `traps` are contextual keywords and remain usable as names.
 identifier
     : IDENT
     | LIMIT
@@ -354,6 +355,7 @@ identifier
     | MAP
     | SET
     | AS
+    | TRAPS
     ;
 
 // =====================================================================
@@ -389,6 +391,7 @@ ASSERT    : 'assert' ;
 REQUIRES  : 'requires' ;
 ENSURES   : 'ensures' ;
 TEST      : 'test' ;
+TRAPS     : 'traps' ;
 MUT       : 'mut' ;
 AND       : 'and' ;
 OR        : 'or' ;
