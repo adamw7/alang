@@ -1,6 +1,6 @@
 name: Release
 
-# Pushing a tag vX.Y.Z, where X.Y.Z is the <version> in pom.xml, publishes that version once the whole CI
+# Pushing a tag vX.Y.Z publishes the version X.Y.Z (it is not compared with pom.xml) once the whole CI
 # passes on the tagged commit:
 # - a GitHub release with the runnable jar, the archives (jar, launcher, AGENTS.md, docs, examples),
 #   AGENTS.md on its own and SHA256SUMS;
@@ -14,31 +14,15 @@ permissions:
 
 jobs:
   version:
-    name: Tag matches the version
+    name: Version from the tag
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-
-      - name: Compare the tag with `alang version`
-        # CliTest checks that `alang version` is the <version> in pom.xml, which names the published files.
+      - name: Take the version from the tag
         id: version
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          actual="$(bin/alang version)"
-          if [ "$actual" != "alang $version" ]; then
-            echo "::error::the tag is $GITHUB_REF_NAME, but this commit is $actual: change <version> in pom.xml and Main.VERSION, then tag again"
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
   ci:
     name: CI
