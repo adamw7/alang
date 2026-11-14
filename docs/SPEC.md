@@ -106,7 +106,8 @@ them so; tuple types are equal only when every element type is (no widening, exc
 **Maps and sets** have a capacity, like lists, and keep their keys (a set its values) in the order of `sort`
 (§9.5), whatever order they were added in, so iterating, printing and comparing them never depends on
 history. `[]` is an empty one; `[("a", 1), ("b", 2)]` builds a map (a key given twice keeps its last value) and
-`[3, 1, 3]` a set (`{1, 3}`). `m[k]` reads the value of `k` and traps (R0003) if there is none; `m[k] = v` sets it,
+`[3, 1, 3]` a set (`{1, 3}`); only the different keys count against the capacity: more than it holds is E0201 when
+they are constants, and otherwise traps (R0004) as the literal is built. `m[k]` reads the value of `k` and traps (R0003) if there is none; `m[k] = v` sets it,
 adding `k` if it is new, which traps (R0004) when the map is full; `m[k] += 1` and `m[k].field = x` need `k` to be
 there. `for k in m` goes through the keys, `for k, v in m` through the keys with their values, `for x in s`
 through a set, all in order (`rev` backwards). They print as `{"a": 1, "b": 2}` and `{1, 3}`, compare with `==`
@@ -341,7 +342,8 @@ of its own, which values can be copied, stored, compared with `==` and `!=`, ord
 of `sort`; `<` is only for numbers and strs) and printed; anything else, such as `a + b`, is an error until a call
 says what `T` is. Each type parameter must appear in a parameter's type, and a call fixes it from the arguments:
 the first argument whose type gives it (arguments with types of their own before literals, so that
-`largest_of(x, 1)` with `x: u8` makes the `1` a `u8`), which the others must then match exactly. Like a `_`, each
+`largest_of(x, 1)` with `x: u8` makes the `1` a `u8`, and literals before `[]` and `Option.None`, which give none,
+so that `first_or([], 5)` makes `T` an `i64`), which the others must then match exactly. Like a `_`, each
 call with new types runs an instance made for them, checked again with the types filled in (`alang check
 --memory` lists them). Structs and enums take type parameters too (§2).
 
@@ -821,7 +823,8 @@ the limits of the schema: the plainest arguments (those of the first `input_exam
 parameter at a time over values of its type within its bounds: the smallest and largest numbers, `0`, `1`
 and `-1`; empty and full strs of many shapes (one long word, words that all differ separated by spaces,
 commas, semicolons, tabs or lines, "name number" and "key: value" lines, rows of 1 to 6 fields, numbers,
-separators alone); empty, one-element and full lists and arrays; every enum variant; each struct field in
+separators alone); empty, one-element and full lists and arrays, sets and maps, full ones also of the largest
+and of the smallest numbers; every enum variant; each struct field in
 turn. It reports each distinct trap, by code and place, with the first arguments that hit it, and exits
 with 1 if there is one. A failed `requires` of the tool itself is the caller's fault and is left out; one
 of a function it calls is not. The calls are the same on every run, at most 200 per tool, each within

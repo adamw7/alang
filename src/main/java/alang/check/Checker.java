@@ -11,8 +11,10 @@ import alang.diag.Hints;
 import alang.diag.Span;
 import alang.interp.Interpreter;
 import alang.interp.Trap;
+import alang.interp.Values;
 import alang.types.PrimKind;
 import alang.types.Type;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -2317,13 +2319,18 @@ public final class Checker {
         Map<Integer, Type> types = new HashMap<>();
         FnDecl[] fnArgs = new FnDecl[f.params.size()];
         // The arguments with types of their own come first, so that a literal can take the type that a type
-        // parameter gets from another argument: max_of(x, 1) with x: u8 makes the 1 a u8.
+        // parameter gets from another argument: max_of(x, 1) with x: u8 makes the 1 a u8. Then the literals, which
+        // give a type of their own when nothing else does, and last the values that give none, `[]` and `Option.None`,
+        // whatever their place: first_or([], 5) is first_or(5, []) is an i64.
         boolean[] done = new boolean[n];
-        for (int pass = 0; pass < 2; pass++) {
+        for (int pass = 0; pass < 3; pass++) {
             for (int i = 0; i < n; i++) {
                 Arg a = c.args.get(i);
                 LocalVar p = f.paramVars.get(i);
-                if (done[i] || pass == 0 && Type.hasTypeVar(p.type) && contextTyped(a.expr())) continue;
+                boolean typeVar = Type.hasTypeVar(p.type);
+                if (done[i] || pass == 0 && typeVar && contextTyped(a.expr()) || pass == 1 && typeVar && givesNoType(a.expr())) {
+                    continue;
+                }
                 done[i] = true;
                 if (p.type instanceof Type.FnT ft) {
                     fnArgs[i] = functionValue(a, ft, f, caps, types);
@@ -3794,6 +3801,14 @@ public final class Checker {
         };
     }
 
+    /**
+     * Whether an argument says nothing about the type parameters of the parameter it is passed for: the empty list
+     * `[]`, or a variant without a payload of an enum with type parameters, such as `Option.None`.
+     */
+    private boolean givesNoType(Expr e) {
+        return e instanceof ArrayLit a && a.elems.isEmpty() || e instanceof FieldAccess && contextTyped(e);
+    }
+
     /** Whether `Name` or `ns.Name` names a declaration with type parameters in {@code table}. */
     private <T extends Item> boolean genericNamed(String qualifier, String name, Table<T> table) {
         Integer s = qualifier == null ? null : aliasScope(qualifier);
@@ -4163,26 +4178,31 @@ public final class Checker {
         }
         if (expected instanceof Type.MapT mt) {
             // [(key, value), ...]: a key given twice keeps its last value.
-            if (mt.cap() >= 0 && a.elems.size() > mt.cap()) {
-                diags.error(Code.E0201, a.span, "map literal has " + a.elems.size() + " entries but the capacity of " + mt
-                    + " is " + mt.cap());
-            }
             Type entry = new Type.TupleT(List.of(mt.key(), mt.value()));
+            List<Expr> keys = new ArrayList<>();
             for (Expr e : a.elems) {
                 Type et = expr(e, entry);
                 if (!Type.assignable(et, entry) && !Type.isError(et)) {
                     diags.error(Code.E0201, e.span, "an entry of " + mt + " is a (key, value) pair " + entry + ", found " + et,
                         "write each entry as a pair: [(\"a\", 1), (\"b\", 2)]");
                 }
+                keys.add(e instanceof TupleLit t && t.elems.size() == 2 ? t.elems.get(0) : null);
+            }
+            int different = mt.cap() >= 0 && a.elems.size() > mt.cap() ? differentConstants(keys) : 0;
+            if (different > mt.cap()) {
+                diags.error(Code.E0201, a.span, "map literal has " + different + " different keys but the capacity of " + mt
+                    + " is " + mt.cap(), "a key given twice is kept once; make the capacity at least " + different);
             }
             return mt;
         }
         if (expected instanceof Type.SetT st) {
-            if (st.cap() >= 0 && a.elems.size() > st.cap()) {
-                diags.error(Code.E0201, a.span, "set literal has " + a.elems.size() + " values but the capacity of " + st
-                    + " is " + st.cap());
-            }
             for (Expr e : a.elems) requireAssignable(e, expr(e, st.elem()), st.elem());
+            // A value given twice is kept once.
+            int different = st.cap() >= 0 && a.elems.size() > st.cap() ? differentConstants(a.elems) : 0;
+            if (different > st.cap()) {
+                diags.error(Code.E0201, a.span, "set literal has " + different + " different values but the capacity of " + st
+                    + " is " + st.cap(), "a value given twice is kept once; make the capacity at least " + different);
+            }
             return st;
         }
         if (a.elems.isEmpty()) {
@@ -4546,6 +4566,35 @@ public final class Checker {
             case TupleLit t -> t.elems.stream().allMatch(Checker::isConst);
             case SliceExpr s -> isConst(s.target) && (s.from == null || isConst(s.from)) && (s.to == null || isConst(s.to));
         };
+    }
+
+    /**
+     * How many different values the constant numbers, bools and strs among {@code keys} have, any other key (or null)
+     * counting for none: the fewest keys a set or map literal of them holds, since the others may repeat these. Values
+     * differ as a set orders them: -0.0 and 0.0 differ, two NaNs do not, and a str is its bytes.
+     */
+    private int differentConstants(List<Expr> keys) {
+        Set<Object> seen = new HashSet<>();
+        // Evaluated now, in this process, like a constant, so what they build fits the memory budget together: a literal
+        // of many large strs must not exhaust the memory of the checker. Past the budget the rest count for none.
+        long built = 0;
+        for (Expr k : keys) {
+            if (k == null || Type.isError(k.type) || !(k.type instanceof Type.Prim || k.type instanceof Type.Str) || !isConst(k)) {
+                continue;
+            }
+            built = Layout.add(built, Layout.add(Layout.size(k.type), Temporaries.expr(k)));
+            if (maxStack > 0 && built > maxStack) break;
+            Object v;
+            try {
+                v = Interpreter.evalConst(k);
+            } catch (Trap t) {
+                // The program stops there when it runs, before the literal is full.
+                continue;
+            }
+            // A Double equals another as sort compares them, which Double.equals does.
+            seen.add(v instanceof Values.StrV s ? new String(s.b, 0, s.len, StandardCharsets.ISO_8859_1) : v);
+        }
+        return seen.size();
     }
 
     static String didYouMean(String name, Collection<String> candidates) {

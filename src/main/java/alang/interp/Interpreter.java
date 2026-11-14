@@ -713,7 +713,15 @@ public final class Interpreter {
     /** Evaluates an expression to a value that the caller may store (aggregates are copied). */
     private Object owned(Expr e, Object[] slots) {
         Object v = eval(e, slots);
-        return e.isPlace() && Type.isAggregate(e.type) ? Values.copy(v, meter) : v;
+        return stored(e) && Type.isAggregate(e.type) ? Values.copy(v, meter) : v;
+    }
+
+    /**
+     * Whether {@code e} evaluates to storage that something else keeps, so that a value taken from it must be copied:
+     * a place, or a constant of a file imported under a name (`ns.C`), which is no place, as nothing can assign to it.
+     */
+    private static boolean stored(Expr e) {
+        return e.isPlace() || e instanceof FieldAccess f && f.constant != null;
     }
 
     private Object eval(Expr e, Object[] slots) {
@@ -1336,7 +1344,11 @@ public final class Interpreter {
                 Object k = eval(args.get(1).expr(), slots);
                 Object d = eval(args.get(2).expr(), slots);
                 int i = Stdlib.find(m.keys, m.len, k, mt.key(), meter);
-                return Values.coerce(i >= 0 ? m.vals[i] : d, mt.value(), meter);
+                // The value found is the map's own, and a default in a variable or constant is that one's: the result is
+                // a copy of either, as the C backend makes, so that storing it and changing it changes neither.
+                Object v = i >= 0 ? m.vals[i] : d;
+                if (i >= 0 || stored(args.get(2).expr())) v = Values.copy(v, meter);
+                return Values.coerce(v, mt.value(), meter);
             }
             case PANIC -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);
