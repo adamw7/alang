@@ -16,6 +16,9 @@ bin/alang run   prog.al < in.txt  #    a fn main(input: str[N]) gets all of stdi
 bin/alang explain E0215           #    explain any code
 bin/alang fix   prog.al --write   #    apply every `= fix:` (`"fix"` in JSON): &&, x++, xs.len(), a missing ; or mut
 bin/alang fmt   prog.al --write   #    lay the file out the one way
+bin/alang test  prog.al --filter X #    run only the tests whose name contains X
+bin/alang check prog.al --memory   #    per-function worst-case stack table
+bin/alang build prog.al -o prog.c  #    compile to heap-free C99 (needs a C compiler to run it)
 ```
 
 Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. A diagnostic
