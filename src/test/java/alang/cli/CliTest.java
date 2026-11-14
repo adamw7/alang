@@ -1169,8 +1169,19 @@ class CliTest {
         assertTrue(counted.endsWith("\"steps\": 22}\n"), counted);
         assertEquals(counted, run("run", count.toString(), "--json", "--max-steps", "0").out());
 
-        // Without --max-steps the documented default applies.
-        Path forever = write("forever.al", "fn main() {\n    while true limit 1000000000 {\n    }\n}\n");
+        // Without --max-steps the documented default applies. Each iteration moves 99 999 elements, about 780
+        // steps, so the 100 million take a second, however the JVM compiles the interpreter: an empty loop
+        // takes as long only with its optimizing compiler, and ten times longer under mutation testing.
+        Path forever = write("forever.al", """
+            fn main() {
+                var xs: list[i64; 100000] = [0; 99999];
+                while true limit 1000000000 {
+                    insert(mut xs, 0, 1);
+                    let last: i64 = pop(mut xs);
+                    xs[0] = last;
+                }
+            }
+            """);
         r = run("run", forever.toString());
         assertEquals(1, r.code(), r.err());
         assertTrue(r.err().startsWith("trap[R0011]: step budget of 100000000 steps exhausted\n"), r.err());

@@ -45,12 +45,15 @@
     <pitest.junit5.version>1.2.3</pitest.junit5.version>
     <!-- Parallel mutation-testing JVMs; override with -Dpitest.threads=N. -->
     <pitest.threads>4</pitest.threads>
-    <!-- Limit in seconds for the whole test run (it takes about 20 s). Surefire then kills the test
+    <!-- Limit in seconds for the whole test run. It takes 1.5 to 2.5 minutes, most of it CBackendTest
+         compiling every program with three C compilers, and a Windows runner can be half as slow
+         again as the next one, so the limit leaves room for that; it stays under the 5 minutes of the
+         CI step, so that Surefire, not the step, stops a run that hangs. Surefire then kills the test
          JVM and fails the build with "There was a timeout in the fork", leaving a thread dump in
          target/surefire-reports. Each test also fails after 10 s on its own
          (src/test/resources/junit-platform.properties). Override with -Dsurefire.timeout=N; 0 turns
          the limit off. -->
-    <surefire.timeout>180</surefire.timeout>
+    <surefire.timeout>240</surefire.timeout>
   </properties>
 
   <!-- One JUnit Platform version for Jupiter and the ArchUnit engine. -->
