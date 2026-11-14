@@ -179,8 +179,14 @@ final class Temporaries {
                 if (!p.byRef && Type.isAggregate(p.type) && !given.equals(p.type)) t = Layout.add(t, Layout.size(p.type));
             }
         } else if (c.builtin == Builtin.PUSH || c.builtin == Builtin.INSERT) {
+            // What is stored is copied in: an element of a list or str, a value of a set, a key and value of a map.
+            Type into = c.args.get(0).expr().type;
             Expr v = c.args.get(c.args.size() - 1).expr();
-            t = Layout.add(t, stored(v, Type.elementOf(c.args.get(0).expr().type)));
+            if (into instanceof Type.MapT mt) {
+                t = Layout.add(t, Layout.add(stored(c.args.get(1).expr(), mt.key()), stored(v, mt.value())));
+            } else {
+                t = Layout.add(t, stored(v, into instanceof Type.SetT st ? st.elem() : Type.elementOf(into)));
+            }
         }
         return t;
     }

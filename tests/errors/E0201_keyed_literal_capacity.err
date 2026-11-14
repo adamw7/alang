@@ -1,0 +1,14 @@
+error[E0201]: set literal has 3 different values but the capacity of set[i64; 2] is 2
+ --> tests/errors/E0201_keyed_literal_capacity.al:4:26
+  |
+4 |     let s: set[i64; 2] = [3, 1, 2, 3];
+  |                          ^^^^^^^^^^^^
+  = hint: a value given twice is kept once; make the capacity at least 3
+
+error[E0201]: map literal has 2 different keys but the capacity of map[str[1], i64; 1] is 1
+ --> tests/errors/E0201_keyed_literal_capacity.al:5:34
+  |
+5 |     let m: map[str[1], i64; 1] = [("a", 1), ("b", 2), ("a", 3)];
+  |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = hint: a key given twice is kept once; make the capacity at least 2
+

@@ -421,11 +421,12 @@ public final class Main {
             }
             return 1;
         }
-        // A main that takes a str gets the standard input, all of it, as bytes.
+        // A main that takes a str gets the standard input, all of it, as bytes. One byte past its capacity is enough
+        // to know the input does not fit, which traps; reading on would hold an input of any size in memory first.
         byte[] input = new byte[0];
         if (!main.paramVars.isEmpty()) {
             try {
-                input = in.readAllBytes();
+                input = in.readNBytes(((Type.Str) main.paramVars.get(0).type).cap() + 1);
             } catch (IOException e) {
                 throw new UsageException("cannot read stdin: " + e.getMessage());
             }

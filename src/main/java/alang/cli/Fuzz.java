@@ -211,25 +211,20 @@ final class Fuzz {
                 }
             }
             case Type.SetT st -> {
-                // Empty, then as many distinct values as fit, up to the capacity.
-                List<Object> vs = values(st.elem(), JsonValues.schema(st.elem()));
+                // Empty, then as many distinct values as fit, up to the capacity; then the largest numbers, and the
+                // smallest.
+                Map<String, Object> es = JsonValues.schema(st.elem());
+                List<Object> vs = values(st.elem(), es);
                 for (int n : new int[] {0, 1, Math.min(st.cap(), vs.size())}) out.add(new ArrayList<>(vs.subList(0, Math.min(n, vs.size()))));
+                out.addAll(extremeRuns(st.elem(), es, Math.min(st.cap(), MAX_VALUES)));
             }
             case Type.MapT mt -> {
                 List<Object> ks = values(mt.key(), JsonValues.schema(mt.key()));
                 List<Object> vs = values(mt.value(), JsonValues.schema(mt.value()));
-                for (int n : new int[] {0, 1, Math.min(mt.cap(), ks.size())}) {
-                    n = Math.min(n, ks.size());
-                    if (mt.key() instanceof Type.Str) {
-                        Map<String, Object> m = new LinkedHashMap<>();
-                        for (int i = 0; i < n; i++) m.put((String) ks.get(i), vs.get(i % vs.size()));
-                        out.add(m);
-                    } else {
-                        List<Object> pairs = new ArrayList<>();
-                        for (int i = 0; i < n; i++) pairs.add(List.of(ks.get(i), vs.get(i % vs.size())));
-                        out.add(pairs);
-                    }
-                }
+                int full = Math.min(mt.cap(), ks.size());
+                for (int n : new int[] {0, 1, full}) out.add(entries(mt, ks, Math.min(n, ks.size()), i -> vs.get(i % vs.size())));
+                // Full, every value the largest number, or the smallest: where a sum of the values overflows.
+                for (Object e : extremes(mt.value(), JsonValues.schema(mt.value()))) out.add(entries(mt, ks, full, i -> e));
             }
             case Type.TupleT tt -> {
                 // As a struct: the plainest of each element, then each element in turn through its values.
@@ -280,14 +275,57 @@ final class Fuzz {
         out.add(repeat(vs.get(0), Math.max(min, 0)));
         if (min <= 1 && max >= 1) out.add(repeat(vs.get(0), 1));
         if (max > 0) {
-            // As many as fit: each element the same, each different, and each of the largest kind.
+            // As many as fit: each element the same, each different, each the last of the values tried, and each the
+            // largest number or the smallest, whose sums and products overflow.
             out.add(repeat(vs.get(0), max));
             List<Object> distinct = new ArrayList<>();
             for (int i = 0; i < max; i++) distinct.add(distinct(elem, items, vs, i));
             out.add(distinct);
             out.add(repeat(vs.get(vs.size() - 1), max));
             if (vs.size() > 1) out.add(repeat(vs.get(1), max));
+            for (Object e : extremes(elem, items == null ? JsonValues.schema(elem) : items)) out.add(repeat(e, max));
         }
+    }
+
+    /**
+     * The largest and the smallest value of an integer type within its schema's bounds, to fill a collection with:
+     * the values whose sums and products overflow. None for a type of another kind.
+     */
+    private static List<Object> extremes(Type t, Map<String, Object> schema) {
+        if (!(t instanceof Type.Prim p) || !p.kind().isInt()) return List.of();
+        BigInteger lo = integer(schema.get("minimum"), p.kind().min());
+        BigInteger hi = integer(schema.get("maximum"), p.kind().max());
+        return hi.equals(lo) ? List.of(hi) : List.of(hi, lo);
+    }
+
+    /**
+     * For an integer type: up to {@code n} different values counting down from the largest within its schema's bounds,
+     * and as many counting up from the smallest, each run in order. None for a type of another kind.
+     */
+    private static List<List<Object>> extremeRuns(Type t, Map<String, Object> schema, int n) {
+        if (!(t instanceof Type.Prim p) || !p.kind().isInt()) return List.of();
+        BigInteger lo = integer(schema.get("minimum"), p.kind().min());
+        BigInteger hi = integer(schema.get("maximum"), p.kind().max());
+        BigInteger count = BigInteger.valueOf(n).min(hi.subtract(lo).add(BigInteger.ONE));
+        List<Object> top = new ArrayList<>();
+        List<Object> bottom = new ArrayList<>();
+        for (BigInteger i = BigInteger.ZERO; i.compareTo(count) < 0; i = i.add(BigInteger.ONE)) {
+            top.add(hi.subtract(count).add(BigInteger.ONE).add(i));
+            bottom.add(lo.add(i));
+        }
+        return List.of(top, bottom);
+    }
+
+    /** A map of type {@code mt}, as JSON, of the first {@code n} keys of {@code ks}, the i-th with {@code value(i)}. */
+    private static Object entries(Type.MapT mt, List<Object> ks, int n, IntFunction<Object> value) {
+        if (mt.key() instanceof Type.Str) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            for (int i = 0; i < n; i++) m.put((String) ks.get(i), value.apply(i));
+            return m;
+        }
+        List<Object> pairs = new ArrayList<>();
+        for (int i = 0; i < n; i++) pairs.add(List.of(ks.get(i), value.apply(i)));
+        return pairs;
     }
 
     /** The {@code i}-th of a run of different values of type {@code elem}, where the type has that many. */

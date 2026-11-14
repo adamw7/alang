@@ -408,6 +408,35 @@ class CliTest {
     }
 
     /**
+     * One byte past the capacity of main's str is enough to know that the input does not fit: an input that never
+     * ends traps as a long one does, instead of being held in memory first.
+     */
+    @Test
+    void mainReadsNoMoreInputThanItsCapacityAndOneByte() throws IOException {
+        Path p = write("first.al", "fn main(input: str[8]) {\n    print(len(input));\n}\n");
+        long[] served = {0};
+        InputStream endless = new InputStream() {
+            @Override
+            public int read() {
+                served[0]++;
+                return 'x';
+            }
+
+            @Override
+            public int read(byte[] b, int off, int len) {
+                Arrays.fill(b, off, off + len, (byte) 'x');
+                served[0] += len;
+                return len;
+            }
+        };
+        Result r = runWithStdin(endless, "run", p.toString(), "--json");
+        assertEquals(1, r.code(), r.err());
+        Map<?, ?> trap = (Map<?, ?>) ((Map<?, ?>) Json.parse(r.out())).get("trap");
+        assertEquals("standard input exceeds str capacity 8 of `input`", trap.get("message"), r.out());
+        assertEquals(9, served[0]);
+    }
+
+    /**
      * A diagnostic or trap in an imported file names that file, also in JSON, where the report names the
      * main file once; a call there names it in the trace. The imported file's main, tests and tools are
      * its own: the program has the main, tests and tools of the file given on the command line.
@@ -1570,6 +1599,57 @@ class CliTest {
         Result n = run("fuzz", none.toString());
         assertEquals(0, n.code());
         assertEquals("fuzz: " + none + " has no `tool fn` and no fn main(input: str[N]) to call\n", n.out());
+    }
+
+    /** Full arrays, lists, sets and maps of the largest numbers, and of the smallest: where sums and products overflow. */
+    @Test
+    void fuzzFillsCollectionsWithTheLargestAndSmallestNumbers() throws IOException {
+        Path p = write("sums.al", """
+            /// Adds the numbers.
+            tool fn total(xs: [u64; 2]) -> u64 {
+                var t: u64 = 0;
+                for x in xs {
+                    t += x;
+                }
+                return t;
+            }
+
+            /// Multiplies the numbers.
+            tool fn product(xs: list[i8; 2]) -> i8 {
+                var t: i8 = 1;
+                for x in xs {
+                    t *= x;
+                }
+                return t;
+            }
+
+            /// Adds the different numbers.
+            tool fn different(s: set[u32; 2]) -> u32 {
+                var t: u32 = 0;
+                for x in s {
+                    t += x;
+                }
+                return t;
+            }
+
+            /// Adds the counts.
+            tool fn counts(m: map[str[4], i64; 3]) -> i64 {
+                var t: i64 = 0;
+                for k, v in m {
+                    t -= v;
+                }
+                return t;
+            }
+            """);
+        Result r = run("fuzz", p.toString(), "--json");
+        assertEquals(1, r.code(), r.out() + r.err());
+        List<?> entries = (List<?>) ((Map<?, ?>) Json.parse(r.out())).get("entries");
+        assertEquals(4, entries.size(), r.out());
+        for (Object e : entries) {
+            List<?> traps = (List<?>) ((Map<?, ?>) e).get("traps");
+            assertEquals(1, traps.size(), r.out());
+            assertEquals("R0001", ((Map<?, ?>) traps.get(0)).get("code"), r.out());
+        }
     }
 
     @Test
