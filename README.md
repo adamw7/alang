@@ -284,8 +284,8 @@ ANTLR runtime's notice ([THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)). To release,
 `pom.xml` and `Main.VERSION` (`CliTest` checks that they agree), merge to `main`, then tag that commit:
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 [`.github/workflows/release.yml`](.github/workflows/release.yml) checks that the tag is the version, runs
