@@ -1,7 +1,7 @@
 name: CI
 
 on:
-  # Branches only: a v* tag runs this workflow from release.yml, before publishing.
+  # Branches only: a version tag runs this workflow from release.yml, before publishing.
   push:
     branches: ['**']
   workflow_call:
