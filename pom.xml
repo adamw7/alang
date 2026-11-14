@@ -6,7 +6,7 @@
 
   <groupId>io.github.adamw7</groupId>
   <artifactId>alang</artifactId>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
   <packaging>jar</packaging>
   <name>ALang</name>
   <description>An agent-first, heap-free programming language.</description>
