@@ -44,7 +44,7 @@ import java.util.Set;
 
 /** The `alang` command line tool. */
 public final class Main {
-    public static final String VERSION = "0.2.0";
+    public static final String VERSION = "0.3.0";
 
     /** How much of a program's output `call`, `run --json` and `test` keep: 1 MiB. */
     static final int MAX_CAPTURED_OUTPUT = 1 << 20;
