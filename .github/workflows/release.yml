@@ -1,13 +1,13 @@
 name: Release
 
-# Pushing a tag vX.Y.Z publishes the version X.Y.Z (it is not compared with pom.xml) once the whole CI
+# Pushing a tag vX.Y.Z or X.Y.Z publishes the version X.Y.Z (it is not compared with pom.xml) once the whole CI
 # passes on the tagged commit:
 # - a GitHub release with the runnable jar, the archives (jar, launcher, AGENTS.md, docs, examples),
 #   AGENTS.md on its own and SHA256SUMS;
 # - the Maven artifacts (io.github.adamw7:alang: the jar, its pom and the archives) in GitHub Packages.
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', '[0-9]*']
 
 permissions:
   contents: read
