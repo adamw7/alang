@@ -168,7 +168,7 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | the same on input that may not fit | `var parts: list[str[16]; 8] = []; let ok: bool = try_split(mut parts, s, ",");` |
 | `s.count(",")`, `xs.count(x)` | `count(s, ',')`, `count(xs, x)` |
 | `int(s)`, `s.parse::<i64>()` | `i64(trim(s))`, after checking `is_int(trim(s))`: bad text traps |
-| `float(s)`, `s.parse::<f64>()` | `f64(trim(s))`, after checking `is_float(trim(s))`: digits and one `.`, no exponent |
+| `float(s)`, `s.parse::<f64>()` | `f64(trim(s))`, after checking `is_float(trim(s))`: an optional sign, digits and at most one `.` (`3.`, `.25` count), no exponent |
 | `f"{x:.2f}"`, `format!("{:.2}", x)`, `x.toFixed(2)` | `fixed(x, 2)`, in `print`/`append` or stored in a typed str |
 | `f"{n:03}"`, `s.rjust(8)`, `s.ljust(8)`, `padStart` | `pad_left(n, 3, '0')`, `pad_left(s, 8, ' ')`, `pad_right(s, 8, ' ')` |
 | `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
@@ -217,7 +217,7 @@ the order its keys were added in), [examples/helpers.al](examples/helpers.al) ha
   Use this for anything read from input.
 - A separator or search pattern is a str or a character: `split(line, ',')`, `contains(s, "ab")`.
 - `i64(s)` and `f64(s)` parse decimal text and trap on anything else; `trim` it and check `is_int` or
-  `is_float` first. `f64` takes digits with at most one `.` and no exponent (`19.99`, `-0.5`, `3`), and
+  `is_float` first. `f64` takes an optional sign and digits with at most one `.` (`19.99`, `-0.5`, `3`, `.25`), no exponent, and
   converts up to 15 significant digits exactly.
 - `fixed(x, 2)`, `pad_left(v, width, fill)` and `pad_right(...)` make text for `print` and `append`, or for
   a typed str: `append(mut s, "$", cents / 100, ".", pad_left(cents % 100, 2, '0'));`,
