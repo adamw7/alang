@@ -63,23 +63,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # The files are named by the <version> in pom.xml, which need not be the tag's.
+          tarball=(target/alang-*.tar.gz)
+          FILES="${tarball[0]#target/alang-}"
+          FILES="${FILES%.tar.gz}"
           assets="$RUNNER_TEMP/assets"
           mkdir -p "$assets"
-          cp target/alang.jar "$assets/alang-$VERSION.jar"
-          cp "target/alang-$VERSION.tar.gz" "target/alang-$VERSION.zip" AGENTS.md "$assets/"
+          cp target/alang.jar "$assets/alang-$FILES.jar"
+          cp "target/alang-$FILES.tar.gz" "target/alang-$FILES.zip" AGENTS.md "$assets/"
           (cd "$assets" && sha256sum -- * > SHA256SUMS)
 
           cat > "$RUNNER_TEMP/notes.md" <<EOF
-          Needs Java 21 or newer. Unpack \`alang-$VERSION.tar.gz\` (or the \`.zip\`) and run \`alang-$VERSION/bin/alang\`, or run the jar directly: \`java -jar alang-$VERSION.jar\`. Agents start with [AGENTS.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/AGENTS.md).
+          Needs Java 21 or newer. Unpack \`alang-$FILES.tar.gz\` (or the \`.zip\`) and run \`alang-$FILES/bin/alang\`, or run the jar directly: \`java -jar alang-$FILES.jar\`. Agents start with [AGENTS.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/AGENTS.md).
 
           | File | Contents |
           |------|----------|
-          | \`alang-$VERSION.tar.gz\`, \`alang-$VERSION.zip\` | \`bin/alang\`, \`lib/alang.jar\`, AGENTS.md, README.md, the spec, the error catalog and the other docs, the grammar, the examples, \`harness/toon.py\`, the licenses |
-          | \`alang-$VERSION.jar\` | The toolchain as one runnable jar, with AGENTS.md inside (\`/alang/AGENTS.md\` on the classpath) |
+          | \`alang-$FILES.tar.gz\`, \`alang-$FILES.zip\` | \`bin/alang\`, \`lib/alang.jar\`, AGENTS.md, README.md, the spec, the error catalog and the other docs, the grammar, the examples, \`harness/toon.py\`, the licenses |
+          | \`alang-$FILES.jar\` | The toolchain as one runnable jar, with AGENTS.md inside (\`/alang/AGENTS.md\` on the classpath) |
           | \`AGENTS.md\` | The guide for agents writing ALang |
           | \`SHA256SUMS\` | Checksums of the files above |
 
-          The jar is also in GitHub Packages as \`io.github.adamw7:alang:$VERSION\`.
+          The jar is also in GitHub Packages as \`io.github.adamw7:alang:$FILES\`.
           EOF
 
           gh release create "$GITHUB_REF_NAME" "$assets"/* \
