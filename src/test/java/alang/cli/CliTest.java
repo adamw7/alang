@@ -556,13 +556,13 @@ class CliTest {
         Path p = write("t.al", "/// Negates.\ntool fn neg(d: f64) -> f64 { print(d); return -d; }\n"
             + "/// Negates.\ntool fn neg32(d: f32) -> f32 { return -d; }\n"
             + "/// Identity.\ntool fn id(x: i64) -> i64 { return x; }\n");
-        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": 0}").out());
-        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": -0.0}").out());
-        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": -0e5}").out());
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 3}\n", run("call", p.toString(), "neg", "{\"d\": 0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 3}\n", run("call", p.toString(), "neg", "{\"d\": -0.0}").out());
+        assertEquals("{\"ok\": true, \"result\": 0.0, \"stdout\": \"-0.0\\n\", \"steps\": 3}\n", run("call", p.toString(), "neg", "{\"d\": -0e5}").out());
         assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "neg32", "{\"d\": 0.0}").out());
         // Written as an integer, -0 is the integer 0 (as jsonIsReadStrictly expects), and an integer
         // parameter takes -0.0 as 0.
-        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 2}\n", run("call", p.toString(), "neg", "{\"d\": -0}").out());
+        assertEquals("{\"ok\": true, \"result\": -0.0, \"stdout\": \"0.0\\n\", \"steps\": 3}\n", run("call", p.toString(), "neg", "{\"d\": -0}").out());
         assertEquals("{\"ok\": true, \"result\": 0, \"stdout\": \"\", \"steps\": 1}\n", run("call", p.toString(), "id", "{\"x\": -0.0}").out());
     }
 
@@ -611,6 +611,248 @@ class CliTest {
         assertEquals(BigInteger.valueOf(10), trap.get("steps"), trap.toString());
         assertEquals("{\"ok\": false, \"error\": {\"code\": \"bad_arguments\", \"message\": \"n: expected an integer\"}}\n",
             run("call", p.toString(), "sum", "{\"n\": \"2\"}").out());
+    }
+
+    /**
+     * A step is a statement, or the time one takes spent on data: a builtin that goes through a str costs a
+     * step for every 128 bytes (Meter.UNITS_PER_STEP), so the budget bounds the time a call takes.
+     */
+    @Test
+    void stepsCountTheDataABuiltinGoesThrough() throws IOException {
+        Path p = write("t.al", """
+            tool fn find_b(s: str[65536]) -> i64 {
+                return index_of(s, "b");
+            }
+
+            tool fn occurrences(s: str[65536], pattern: str[512]) -> i64 {
+                return count(s, pattern);
+            }
+            """);
+        // The return, then 1 + 1 bytes for "b" and its copy, 16 for the search, and a byte for each of the
+        // positions it looks at: 1 + (60018 / 128) and 1 + (30018 / 128) steps.
+        String a60k = "a".repeat(60000);
+        assertEquals("{\"ok\": true, \"result\": -1, \"stdout\": \"\", \"steps\": 469}\n",
+            run("call", p.toString(), "find_b", "{\"s\": \"" + a60k + "\"}").out());
+        assertEquals("{\"ok\": true, \"result\": -1, \"stdout\": \"\", \"steps\": 235}\n",
+            run("call", p.toString(), "find_b", "{\"s\": \"" + "a".repeat(30000) + "\"}").out());
+        // A pattern that almost matches everywhere costs its length at every position: one statement, yet
+        // past a budget of 100 000 steps, which once let it run for as long as it took.
+        Result r = run("call", p.toString(), "occurrences",
+            "{\"s\": \"" + a60k + "\", \"pattern\": \"" + "a".repeat(300) + "b\"}", "--max-steps", "100000");
+        assertEquals(1, r.code(), r.out());
+        assertTrue(r.out().contains("\"code\": \"R0011\""), r.out());
+        assertEquals(r, run("call", p.toString(), "occurrences",
+            "{\"s\": \"" + a60k + "\", \"pattern\": \"" + "a".repeat(300) + "b\"}", "--max-steps", "100000"),
+            "the same budget stops at the same point");
+    }
+
+    /** print writes its line whole: a budget that runs out while it is written stops the run after the line. */
+    @Test
+    void aPrintThatUsesUpTheBudgetWritesItsLineWhole() throws IOException {
+        Path p = write("p.al", """
+            fn main() {
+                var xs: list[i64; 1000] = [];
+                for i in 0..1000 {
+                    push(mut xs, i);
+                }
+                print(xs);
+                print("after");
+            }
+            """);
+        // Filling the list takes about 2000 steps, and writing its 1000 numbers about 1100 more.
+        Result r = run("run", p.toString(), "--max-steps", "2500");
+        assertEquals(1, r.code(), r.err());
+        assertTrue(r.out().startsWith("[0, 1, 2, ") && r.out().endsWith(", 998, 999]\n"), r.out());
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 2500 steps exhausted\n --> " + p + ":6:5\n"), r.err());
+    }
+
+    /**
+     * What each operation on data costs is part of what a run reports, as its output is: this program does
+     * every one 128 times, so that a unit more or less for any of them changes its steps.
+     */
+    @Test
+    void everyOperationOnDataCostsWhatItDid() throws IOException {
+        Path p = write("costs.al", """
+            // Every operation the meter charges for, 128 times over, so that each unit a charge adds shows in the steps.
+            const TEXT: str[64] = "alpha,beta,gamma delta";
+
+            struct Rec {
+                key: i64,
+                name: str[8],
+            }
+
+            enum Shape {
+                Dot,
+                Box(i64, str[8]),
+            }
+
+            fn same(s: str[16]) -> str[16] {
+                return s;
+            }
+
+            fn main() {
+                let digits: str[32] = "12345678901234567890123";
+                let wide: str[64] = "hello world";
+                let recs: list[Rec; 4] = [Rec(key: 2, name: "b"), Rec(key: 1, name: "a"), Rec(key: 2, name: "a")];
+                let shapes: list[Shape; 4] = [Shape.Box(1, "x"), Shape.Dot, Shape.Box(1, "w")];
+                let pairs: list[(i64, str[8]); 4] = [(2, "b"), (1, "z"), (2, "a")];
+                let grid: [i64; 4] = [4, 3, 2, 1];
+                var out: str[2048] = "";
+                var total: i64 = 0;
+                for i in 0..128 {
+                    // Copies, widening, conversions and literals.
+                    let a: str[64] = wide;
+                    let b: list[Rec; 4] = recs;
+                    let c: [i64; 4] = grid;
+                    let w: list[Rec; 8] = recs;
+                    let n: str[16] = str[16](a);
+                    let m2: list[Rec; 3] = list[Rec; 3](b);
+                    let z: [i64; 3] = [0; 3];
+                    var m: map[i64, i64; 8] = [(5, 1), (1, 2), (3, 3)];
+                    var s: set[i64; 8] = [4, 2, 6];
+                    let mc: map[i64, i64; 8] = m;
+                    m[2] = 9;
+                    insert(mut s, 3);
+                    let gone_m: bool = remove(mut m, 1);
+                    let gone_s: bool = remove(mut s, 2);
+                    if gone_m and gone_s {
+                        total += 1;
+                    }
+                    total += get_or(m, 3, 0) + len(mc) + len(n) + len(m2) + z[0] + c[0] + len(w);
+                    if contains(s, 6) and contains(m, 5) {
+                        total += 1;
+                    }
+                    clear(mut m);
+                    // Text.
+                    total += index_of(TEXT, "gamma") + count(TEXT, 'a') + count(recs, Rec(key: 1, name: "a")) + index_of(grid, 2);
+                    if starts_with(TEXT, "alp") and ends_with(TEXT, "ta") and contains(TEXT, "beta") {
+                        total += 1;
+                    }
+                    let t: str[64] = trim(TEXT);
+                    let up: str[64] = to_upper(t);
+                    let sl: str[64] = TEXT[1..9];
+                    let ls: list[Rec; 4] = slice(recs, 0, 2);
+                    let sc: str[64] = slice_chars(TEXT, 2, 6);
+                    let cs: list[u32; 64] = chars(sl);
+                    total += char_count(up) + len(sc) + len(cs) + len(ls);
+                    if is_utf8(sl) and not is_int(digits) and is_float(digits) {
+                        total += 1;
+                    }
+                    let parts: list[str[16]; 8] = split(TEXT, ',');
+                    let ws: list[str[16]; 8] = words(TEXT);
+                    var tw: list[str[16]; 8] = [];
+                    let fit: bool = try_words(mut tw, wide);
+                    if fit {
+                        total += len(tw);
+                    }
+                    let joined: str[64] = join(parts, "+");
+                    let rep: str[128] = replace(TEXT, "a", "AA");
+                    for p in split(TEXT, ',') {
+                        total += len(p);
+                    }
+                    for q in words(TEXT) {
+                        total += len(q);
+                    }
+                    total += len(ws) + len(joined) + len(rep);
+                    // Ordering and sorting.
+                    var rs: list[Rec; 4] = recs;
+                    sort(mut rs);
+                    reverse(mut rs);
+                    var letters: str[64] = TEXT;
+                    sort(mut letters);
+                    reverse(mut letters);
+                    var g: [i64; 4] = grid;
+                    sort(mut g);
+                    reverse(mut g);
+                    var xs: list[i64; 8] = [5, 3, 9];
+                    insert(mut xs, 0, 7);
+                    let x0: i64 = remove(mut xs, 1);
+                    total += i64(letters[0]) + g[0] + x0 + compare(recs[0], recs[2]) + compare(shapes[0], shapes[2]) + compare(pairs[0], pairs[2]);
+                    total += compare(recs, rs) + compare(a, wide) + compare(TEXT, wide);
+                    if recs == rs or a == wide or shapes[0] == shapes[2] {
+                        total += 1;
+                    }
+                    match a {
+                        "hello world" => { total += 1; }
+                        _ => { }
+                    }
+                    // The text of values.
+                    append(mut out, wide, recs, shapes, pairs, s, mc, grid, fixed(1.5, 2), pad_left(i, 6, '0'));
+                    append(mut out, sqrt(2.0), atan2(1.0, 2.0), pow(2.0, 0.5), 3.25);
+                    let padded: str[16] = pad_left(i, 8, ' ');
+                    let fx: str[32] = fixed(2.5, 3);
+                    total += len(out) + len(padded) + len(fx) + len(same("abc"));
+                    clear(mut out);
+                }
+                print(total);
+            }
+            """);
+        Result r = run("run", p.toString(), "--json");
+        assertEquals(0, r.code(), r.out());
+        assertEquals("{\"ok\": true, \"file\": " + Json.write(p.toString()) + ", \"diagnostics\": [], \"stdout\": \"72192\\n\", "
+            + "\"trap\": null, \"steps\": 37019}\n", r.out());
+    }
+
+    /** A budget used up by work on data traps at the statement that did the work, even before the first. */
+    @Test
+    void aBudgetUsedUpByDataTrapsWhereTheWorkIs() throws IOException {
+        // The str that small() returns is widened by main's let, after the call has returned.
+        Path p = write("widen.al", """
+            fn small() -> str[16] {
+                return "abc";
+            }
+
+            fn main() {
+                let big: str[100000] = small();
+                print(len(big));
+            }
+            """);
+        Result r = run("run", p.toString(), "--max-steps", "100");
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 100 steps exhausted\n --> " + p + ":6:5\n"), r.err());
+        // A precondition runs before any statement: its work is the call's.
+        Path q = write("first.al", """
+            /// Needs some text.
+            tool fn first(s: str[65536]) -> i64
+                requires len(trim(s)) > 0
+            {
+                return 1;
+            }
+            """);
+        Map<?, ?> error = (Map<?, ?>) ((Map<?, ?>) Json.parse(run("call", q.toString(), "first", "{\"s\": \"x\"}", "--max-steps", "100").out()))
+            .get("error");
+        assertEquals("R0011", error.get("code"), error.toString());
+        assertEquals(BigInteger.valueOf(2), error.get("line"), error.toString());
+    }
+
+    /** --timeout stops a call that runs too long, as a backstop to the step budget; it is not a trap. */
+    @Test
+    void aCallPastItsTimeLimitIsStopped() throws IOException {
+        Path p = write("t.al", """
+            tool fn spin(n: i64) -> i64 {
+                var s: i64 = 0;
+                for i in 0..n {
+                    s = wrapping_add(s, i);
+                }
+                return s;
+            }
+            """);
+        Result r = run("call", p.toString(), "spin", "{\"n\": 1000000000000000}", "--max-steps", "0", "--timeout", "0.2");
+        assertEquals(1, r.code(), r.out());
+        Map<?, ?> report = (Map<?, ?>) Json.parse(r.out());
+        assertEquals(Json.obj("code", "timeout", "message", "the call ran longer than its time limit of 0.2 s (--timeout)"),
+            report.get("error"), r.out());
+        assertTrue(((BigInteger) report.get("steps")).signum() > 0, r.out());
+        // A call that ends in time is not affected.
+        assertEquals("{\"ok\": true, \"result\": 3, \"stdout\": \"\", \"steps\": 9}\n",
+            run("call", p.toString(), "spin", "{\"n\": 3}", "--timeout", "0.2").out());
+
+        assertEquals(2, run("call", p.toString(), "spin", "{\"n\": 3}", "--timeout", "-1").code());
+        assertTrue(run("call", p.toString(), "spin", "{\"n\": 3}", "--timeout", "-1").out()
+            .contains("--timeout must be 0 (no limit) or more seconds, found -1"));
+        assertTrue(run("call", p.toString(), "spin", "{\"n\": 3}", "--timeout", "soon").out().contains("expected a number"));
+        Result run = run("run", p.toString(), "--timeout", "1");
+        assertEquals(2, run.code(), run.err());
+        assertTrue(run.err().contains("--timeout does not apply to `alang run`"), run.err());
     }
 
     @Test
@@ -1030,7 +1272,7 @@ class CliTest {
     }
 
     @Test
-    void theStepBudgetStopsAProgramAfterExactlyThatManyStatements() throws IOException {
+    void theStepBudgetStopsAProgramAfterExactlyThatManySteps() throws IOException {
         // Only the interpreter counts steps, so R0011 cannot be a tests/run case, which the C backend runs too.
         Path p = write("spin.al", """
             /// Counts up until the step budget stops it.
@@ -1052,27 +1294,28 @@ class CliTest {
                 assert spin() > 0;
             }
             """);
-        // A while costs one step, and one more per iteration. Steps: main's let (1), spin's var (2) and while
-        // (3), then iteration, print, += (4-6, 7-9) and the third iteration (10): its print is step 11.
+        // A while costs one step, and one more per iteration; writing a number as text costs a step too. Steps:
+        // main's let (1), spin's var (2) and while (3), then iteration, print, its number, += (4-7, 8-11): the
+        // second += is step 11.
         Result r = run("run", p.toString(), "--max-steps", "10");
         assertEquals(1, r.code(), r.err());
         assertEquals("0\n1\n", r.out());
-        assertTrue(r.err().startsWith("trap[R0011]: step budget of 10 statements exhausted\n --> " + p + ":5:9\n"), r.err());
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 10 steps exhausted\n --> " + p + ":6:9\n"), r.err());
         assertEquals(r, run("run", p.toString(), "--max-steps", "10"), "the same budget stops at the same statement");
 
         r = run("test", p.toString(), "--max-steps", "10");
         assertEquals(1, r.code(), r.out());
-        assertTrue(r.err().contains("  trap[R0011]: step budget of 10 statements exhausted\n"), r.err());
+        assertTrue(r.err().contains("  trap[R0011]: step budget of 10 steps exhausted\n"), r.err());
 
-        // A tool call has no main, so its count is one step ahead: the third print is step 10, its += step 11.
+        // A tool call has no main, so its count is one step ahead: the second += is step 10, the third iteration 11.
         r = run("call", p.toString(), "spin", "--max-steps", "10");
         assertEquals(1, r.code(), r.out());
         @SuppressWarnings("unchecked")
         Map<String, Object> error = (Map<String, Object>) ((Map<String, Object>) Json.parse(r.out())).get("error");
         assertEquals("R0011", error.get("code"));
-        assertEquals("step budget of 10 statements exhausted", error.get("message"));
-        assertEquals(BigInteger.valueOf(6), error.get("line"));
-        assertTrue(r.out().endsWith("\"stdout\": \"0\\n1\\n2\\n\", \"steps\": 11}\n"), r.out());
+        assertEquals("step budget of 10 steps exhausted", error.get("message"));
+        assertEquals(BigInteger.valueOf(4), error.get("line"));
+        assertTrue(r.out().endsWith("\"stdout\": \"0\\n1\\n\", \"steps\": 11}\n"), r.out());
 
         // 0 turns the budget off, so the loop runs into its own limit instead.
         r = run("run", p.toString(), "--max-steps", "0");
@@ -1084,11 +1327,22 @@ class CliTest {
         assertTrue(counted.endsWith("\"steps\": 22}\n"), counted);
         assertEquals(counted, run("run", count.toString(), "--json", "--max-steps", "0").out());
 
-        // Without --max-steps the documented default applies.
-        Path forever = write("forever.al", "fn main() {\n    while true limit 1000000000 {\n    }\n}\n");
+        // Without --max-steps the documented default applies. Each iteration moves 99 999 elements, about 780
+        // steps, so the 100 million take a second, however the JVM compiles the interpreter: an empty loop
+        // takes as long only with its optimizing compiler, and ten times longer under mutation testing.
+        Path forever = write("forever.al", """
+            fn main() {
+                var xs: list[i64; 100000] = [0; 99999];
+                while true limit 1000000000 {
+                    insert(mut xs, 0, 1);
+                    let last: i64 = pop(mut xs);
+                    xs[0] = last;
+                }
+            }
+            """);
         r = run("run", forever.toString());
         assertEquals(1, r.code(), r.err());
-        assertTrue(r.err().startsWith("trap[R0011]: step budget of 100000000 statements exhausted\n"), r.err());
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 100000000 steps exhausted\n"), r.err());
     }
 
     @Test

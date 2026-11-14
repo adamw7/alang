@@ -10,6 +10,7 @@ import alang.diag.Source;
 import alang.diag.Span;
 import alang.interp.Interpreter;
 import alang.interp.JsonValues;
+import alang.interp.Meter;
 import alang.interp.Trap;
 import alang.interp.Values;
 import alang.types.PrimKind;
@@ -124,7 +125,7 @@ final class Fuzz {
         try {
             for (int i = 0; i < values.length; i++) {
                 String name = f.paramVars.get(i).name;
-                values[i] = !args.containsKey(name) && f.defaults.get(i) != null ? Values.copy(f.defaults.get(i).value)
+                values[i] = !args.containsKey(name) && f.defaults.get(i) != null ? Values.copy(f.defaults.get(i).value, new Meter(0))
                     : JsonValues.fromJson(args.get(name), f.paramVars.get(i).type, name);
             }
         } catch (JsonValues.DecodeException e) {

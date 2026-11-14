@@ -13,6 +13,8 @@ import alang.diag.Source;
 import alang.diag.Span;
 import alang.interp.Interpreter;
 import alang.interp.JsonValues;
+import alang.interp.Meter;
+import alang.interp.Stopped;
 import alang.interp.Trap;
 import alang.interp.Values;
 import alang.types.Type;
@@ -21,6 +23,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -76,8 +80,10 @@ public final class Main {
 
         options (an option a command does not take is a usage error):
           --json             machine-readable output (check, run, test, tools, fuzz, fix; call always prints JSON)
-          --max-steps N      interpreter statement budget (run, test, call, tools, fuzz, serve; default %d,
-                             0 = unlimited)
+          --max-steps N      interpreter step budget: statements, and the data they go through (run, test,
+                             call, tools, fuzz, serve; default %d, 0 = unlimited)
+          --timeout SECONDS  stop a tool call that runs longer, a backstop to the step budget (call, serve;
+                             default %d, 0 = unlimited)
           --max-stack BYTES  memory budget: the worst-case stack of each entry point, and the
                              constants (check, run, test, tools, call, fuzz, serve, build, fix; default %d = 8 MiB,
                              0 = unlimited)
@@ -99,9 +105,9 @@ public final class Main {
         Map.entry("run", Set.of("--json", "--max-steps", "--max-stack")),
         Map.entry("test", Set.of("--json", "--filter", "--max-steps", "--max-stack")),
         Map.entry("tools", Set.of("--json", "--max-steps", "--max-stack")),
-        Map.entry("call", Set.of("--json", "--max-steps", "--max-stack")),
+        Map.entry("call", Set.of("--json", "--max-steps", "--max-stack", "--timeout")),
         Map.entry("fuzz", Set.of("--json", "--max-steps", "--max-stack")),
-        Map.entry("serve", Set.of("--max-steps", "--max-stack")),
+        Map.entry("serve", Set.of("--max-steps", "--max-stack", "--timeout")),
         Map.entry("build", Set.of("-o", "--max-stack")),
         Map.entry("fmt", Set.of("--write", "--check")),
         Map.entry("fix", Set.of("--write", "--json", "--max-stack")),
@@ -111,10 +117,10 @@ public final class Main {
         Map.entry("--version", Set.of()));
 
     /** The options that take a value, the next argument. */
-    private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--filter", "-o");
+    private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--timeout", "--filter", "-o");
 
-    private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--filter", "-o",
-        "--write", "--check");
+    private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--timeout",
+        "--filter", "-o", "--write", "--check");
 
     private final PrintStream out;
     private final PrintStream err;
@@ -126,6 +132,7 @@ public final class Main {
     private boolean checkOnly;
     private long maxSteps = Interpreter.DEFAULT_MAX_STEPS;
     private long maxStack = Checker.DEFAULT_MAX_STACK;
+    private long timeoutMillis = Watchdog.DEFAULT_MILLIS;
     private String filter;
     private String output;
     private final List<String> positional = new ArrayList<>();
@@ -150,7 +157,8 @@ public final class Main {
 
     int run(String[] args) {
         if (args.length == 0 || args[0].equals("help") || args[0].equals("--help") || args[0].equals("-h")) {
-            out.print(String.format(Locale.ROOT, USAGE, VERSION, Interpreter.DEFAULT_MAX_STEPS, Checker.DEFAULT_MAX_STACK));
+            out.print(String.format(Locale.ROOT, USAGE, VERSION, Interpreter.DEFAULT_MAX_STEPS, Watchdog.DEFAULT_MILLIS / 1000,
+                Checker.DEFAULT_MAX_STACK));
             return args.length == 0 ? 2 : 0;
         }
         String cmd = args[0];
@@ -177,6 +185,7 @@ public final class Main {
                         case "--check" -> checkOnly = true;
                         case "--max-steps" -> maxSteps = nonNegative(next(args, ++i, a), a);
                         case "--max-stack" -> maxStack = nonNegative(next(args, ++i, a), a);
+                        case "--timeout" -> timeoutMillis = millis(next(args, ++i, a), a);
                         case "--filter" -> filter = next(args, ++i, a);
                         case "-o" -> output = next(args, ++i, a);
                         default -> throw new IllegalStateException(a);
@@ -292,6 +301,17 @@ public final class Main {
         long n = Long.parseLong(value);
         if (n < 0) throw new UsageException(opt + " must be 0 (no limit) or more, found " + value);
         return n;
+    }
+
+    /** Seconds, such as 60 or 0.5, as whole milliseconds (rounded up, so that a limit is never 0 by accident). */
+    private static long millis(String value, String opt) {
+        BigDecimal seconds = new BigDecimal(value);
+        if (seconds.signum() < 0) throw new UsageException(opt + " must be 0 (no limit) or more seconds, found " + value);
+        try {
+            return seconds.movePointRight(3).setScale(0, RoundingMode.CEILING).longValueExact();
+        } catch (ArithmeticException e) {
+            throw new UsageException(opt + " is too large: " + value + " seconds");
+        }
     }
 
     private static String next(String[] args, int i, String opt) {
@@ -668,7 +688,13 @@ public final class Main {
         } catch (Json.ParseException e) {
             return callError(j, "bad_json", "arguments are not valid JSON: " + e.getMessage());
         }
-        Map<String, Object> report = callTool(src, f, parsed, maxSteps);
+        Meter meter = new Meter(maxSteps);
+        Map<String, Object> report;
+        try (Watchdog watchdog = new Watchdog(timeoutMillis)) {
+            Watchdog.Alarm alarm = watchdog.watch(meter);
+            report = callTool(src, f, parsed, meter);
+            alarm.off();
+        }
         line(out, Json.write(report));
         return report.get("ok") == Boolean.TRUE ? 0 : 1;
     }
@@ -676,9 +702,11 @@ public final class Main {
     /**
      * Calls tool {@code f} with {@code arguments}, parsed JSON that should be an object holding each
      * parameter, and returns the report `alang call` prints: "ok", then "result" or "error", "stdout" and
-     * "steps"; arguments that do not fit the parameters give a bad_arguments error, and no call.
+     * "steps"; arguments that do not fit the parameters give a bad_arguments error, and no call. The call is
+     * charged to {@code meter}, which holds its budget, and stops with a "timeout" or "cancelled" error when
+     * another thread stops the meter.
      */
-    static Map<String, Object> callTool(Source src, FnDecl f, Object arguments, long maxSteps) {
+    static Map<String, Object> callTool(Source src, FnDecl f, Object arguments, Meter meter) {
         Map<String, Object> j = new LinkedHashMap<>();
         j.put("ok", false);  // set again below, where it keeps its place as the first key
         if (!(arguments instanceof Map<?, ?> m)) {
@@ -694,7 +722,7 @@ public final class Main {
             for (int i = 0; i < args.length; i++) {
                 LocalVar p = f.paramVars.get(i);
                 if (!m.containsKey(p.name) && f.defaults.get(i) != null) {
-                    args[i] = Values.copy(f.defaults.get(i).value);
+                    args[i] = Values.copy(f.defaults.get(i).value, new Meter(0));
                     continue;
                 }
                 if (!m.containsKey(p.name)) throw new JsonValues.DecodeException(p.name + ": missing argument");
@@ -705,18 +733,21 @@ public final class Main {
             return j;
         }
         CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
-        Interpreter in = new Interpreter(src, captured, maxSteps);
+        Interpreter in = new Interpreter(src, captured, meter);
         try {
             Object result = in.call(f, args, f.nameSpan);
             j.put("result", f.ret instanceof Type.Void ? null : JsonValues.toJson(result, f.ret));
         } catch (Trap t) {
             j.put("error", trapJson(src, t));
+        } catch (Stopped s) {
+            j.put("error", Json.obj("code", s.code, "message", s.getMessage()));
         } catch (JsonValues.EncodeException e) {
             j.put("error", Json.obj("code", "bad_result", "message", e.messageAt("result")));
         }
         j.put("ok", !j.containsKey("error"));
         putStdout(j, captured);
-        // The statements the call executed: a deterministic measure of its cost, as `run --json` reports.
+        // The call's cost: the statements it ran and the data they went through, the same on every run (unless
+        // it was stopped by the clock), as `run --json` reports.
         j.put("steps", in.steps());
         return j;
     }
@@ -801,8 +832,8 @@ public final class Main {
             line(err, "check failed: " + r.diags().errorCount() + " error(s)");
             return 1;
         }
-        try {
-            new McpServer(src, r.program(), maxSteps).serve(in, out);
+        try (Watchdog watchdog = new Watchdog(timeoutMillis)) {
+            new McpServer(src, r.program(), maxSteps, watchdog, McpServer.WORKERS).serve(in, out);
         } catch (IOException e) {
             line(err, "alang: cannot read stdin: " + e.getMessage());
             return 1;

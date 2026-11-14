@@ -4,6 +4,7 @@ import alang.ast.Ast.FnDecl;
 import alang.ast.Ast.Program;
 import alang.diag.Source;
 import alang.interp.JsonValues;
+import alang.interp.Meter;
 import alang.types.Type;
 import alang.util.Json;
 import java.io.ByteArrayOutputStream;
@@ -20,11 +21,22 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * `alang serve`: a program's tools over the Model Context Protocol's stdio transport. Each line of stdin
  * is one JSON-RPC 2.0 message, and each answer is one line of stdout; nothing else is written there. The
  * program is checked once, at start, so every call in a session runs the same code.
+ *
+ * <p>Each tools/call runs on a worker thread of its own, up to {@link #WORKERS} at a time, so a long call
+ * holds up neither other calls nor the answers to other messages (ping, tools/list, a cancellation); its
+ * answer is written when it ends, so answers can come in another order than the requests, as JSON-RPC
+ * allows. A call ends within its step budget and its time limit ({@link Watchdog}), and
+ * notifications/cancelled stops one early. With {@link Watchdog}, this is the only code that uses threads
+ * (see ArchitectureTest): each call is still one deterministic run on one thread.
  */
 final class McpServer {
     /** The protocol revisions this server speaks, newest first. A client asking for another gets the newest. */
@@ -32,22 +44,40 @@ final class McpServer {
 
     static final String INSTRUCTIONS = "Each tool is an ALang function: the same arguments always give the same "
         + "result, and a call cannot read or change anything outside itself. A result's text is the JSON "
-        + "`alang call` prints: ok, then result or error, then stdout and steps (the statements it ran).";
+        + "`alang call` prints: ok, then result or error, then stdout and steps (its cost: the statements it ran "
+        + "and the data they went through).";
 
     /** JSON-RPC error codes. */
     static final int PARSE_ERROR = -32700;
     static final int INVALID_REQUEST = -32600;
     static final int METHOD_NOT_FOUND = -32601;
     static final int INVALID_PARAMS = -32602;
+    static final int INTERNAL_ERROR = -32603;
+
+    /**
+     * The calls that run at once; more wait their turn. A fixed number, not one per processor: the toolchain
+     * reads nothing about the machine it runs on (see ArchitectureTest).
+     */
+    static final int WORKERS = 4;
 
     private final Source src;
     private final Program program;
     private final long maxSteps;
+    private final Watchdog watchdog;
+    private final int workers;
+    /** The meter of each call that is waiting or running, by request id, so that a cancellation can stop it. */
+    private final Map<Object, Meter> calls = new ConcurrentHashMap<>();
 
-    McpServer(Source src, Program program, long maxSteps) {
+    /**
+     * A server whose calls each get {@code maxSteps} steps and the time limit of {@code watchdog}, with
+     * {@code workers} of them running at once.
+     */
+    McpServer(Source src, Program program, long maxSteps, Watchdog watchdog, int workers) {
         this.src = src;
         this.program = program;
         this.maxSteps = maxSteps;
+        this.watchdog = watchdog;
+        this.workers = workers;
     }
 
     /** A request this server cannot answer with a result: a JSON-RPC error. */
@@ -61,16 +91,48 @@ final class McpServer {
         }
     }
 
-    /** Answers the messages read from {@code in} until it ends, flushing each answer. */
+    /**
+     * Answers the messages read from {@code in} until it ends, flushing each answer; then waits for the calls
+     * still running, whose answers are written too, and returns.
+     */
     void serve(InputStream in, PrintStream out) throws IOException {
-        for (byte[] line = readLine(in); line != null; line = readLine(in)) {
-            Map<String, Object> answer = handle(line);
-            if (answer != null) {
-                out.print(Json.write(answer));
-                out.print('\n');
-                out.flush();
+        ExecutorService pool = Executors.newFixedThreadPool(workers, r -> {
+            Thread t = new Thread(r, "alang-call");
+            t.setDaemon(true);
+            return t;
+        });
+        try {
+            for (byte[] line = readLine(in); line != null; line = readLine(in)) {
+                Map<String, Object> answer = handle(line, pool, out);
+                if (answer != null) send(out, answer);
+            }
+        } finally {
+            pool.shutdown();
+            awaitCalls(pool);
+        }
+    }
+
+    /** Writes one answer as one line. Calls end on their own threads, so one answer is written at a time. */
+    private static void send(PrintStream out, Map<String, Object> answer) {
+        String line = Json.write(answer) + "\n";
+        synchronized (out) {
+            out.print(line);
+            out.flush();
+        }
+    }
+
+    /** Waits for the calls still queued or running; if this thread is interrupted, stops them first. */
+    private void awaitCalls(ExecutorService pool) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                if (pool.awaitTermination(1, TimeUnit.HOURS)) break;
+            } catch (InterruptedException e) {
+                interrupted = true;
+                for (Meter m : calls.values()) m.stop("cancelled", "the server is shutting down");
             }
         }
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     /** The next line without its "\n" or "\r\n", or null at the end of the input. */
@@ -90,9 +152,10 @@ final class McpServer {
 
     /**
      * The answer to one line: a result or an error for a request, null for a notification, a response
-     * from the client (this server sends no requests), or a blank line.
+     * from the client (this server sends no requests), or a blank line. A tools/call request is checked here
+     * and then runs on {@code pool}, which writes its answer to {@code out} when it ends: null here too.
      */
-    Map<String, Object> handle(byte[] line) {
+    private Map<String, Object> handle(byte[] line, ExecutorService pool, PrintStream out) {
         String text;
         try {
             text = StandardCharsets.UTF_8.newDecoder()
@@ -121,11 +184,17 @@ final class McpServer {
         boolean notification = !m.containsKey("id");
         Object result;
         try {
+            if (method.equals("tools/call")) {
+                FnDecl f = tool(m.get("params"));
+                // A notification wants no answer, and a call changes nothing, so there is nothing to do.
+                if (!notification) start(id, f, m.get("params"), pool, out);
+                return null;
+            }
             result = switch (method) {
                 case "initialize" -> initialize(m.get("params"));
                 case "ping" -> Json.obj();
                 case "tools/list" -> Json.obj("tools", tools());
-                case "tools/call" -> call(m.get("params"));
+                case "notifications/cancelled" -> cancel(m.get("params"));
                 default -> throw new RpcException(METHOD_NOT_FOUND, "method not found: " + method);
             };
         } catch (RpcException e) {
@@ -169,24 +238,68 @@ final class McpServer {
         return tools;
     }
 
-    /**
-     * Runs a tool as `alang call` does. Its report is the result's text; a successful call of a tool that
-     * returns a value also gives {"result": value} as structured content, matching the output schema. A
-     * call that failed, from bad arguments to a trap, is a result with "isError": true, so the model sees
-     * the error and can fix its call; only an unknown tool is a protocol error.
-     */
-    private Map<String, Object> call(Object params) {
+    /** The tool a tools/call names; an unknown one is a protocol error. */
+    private FnDecl tool(Object params) {
         if (!(params instanceof Map<?, ?> p) || !(p.get("name") instanceof String name)) {
             throw new RpcException(INVALID_PARAMS, "tools/call needs params with a \"name\" string");
         }
         FnDecl f = program.function(name);
         if (f == null || !f.tool) throw new RpcException(INVALID_PARAMS, "unknown tool: " + name);
+        return f;
+    }
+
+    /**
+     * Runs a tool as `alang call` does, on {@code pool}, and writes the answer to request {@code id} when it
+     * ends. Its report is the result's text; a successful call of a tool that returns a value also gives
+     * {"result": value} as structured content, matching the output schema. A call that failed, from bad
+     * arguments to a trap or its time limit, is a result with "isError": true, so the model sees the error and
+     * can fix its call; a cancelled call gets no answer, as MCP asks.
+     */
+    private void start(Object id, FnDecl f, Object params, ExecutorService pool, PrintStream out) {
+        Map<?, ?> p = (Map<?, ?>) params;
         Object arguments = p.containsKey("arguments") ? p.get("arguments") : Json.obj();
-        Map<String, Object> report = Main.callTool(src, f, arguments, maxSteps);
+        Meter meter = new Meter(maxSteps);
+        calls.put(id, meter);
+        pool.execute(() -> {
+            // What the client hears if the call fails inside the server, from a bug to a full heap, instead of
+            // waiting for an answer that never comes; such an error still ends the worker thread.
+            Map<String, Object> answer = error(id, INTERNAL_ERROR, "the server failed to run the call");
+            try {
+                Watchdog.Alarm alarm = watchdog.watch(meter);
+                Map<String, Object> report;
+                try {
+                    report = Main.callTool(src, f, arguments, meter);
+                } finally {
+                    alarm.off();
+                }
+                boolean cancelled = report.get("error") instanceof Map<?, ?> e && "cancelled".equals(e.get("code"));
+                answer = cancelled ? null : Json.obj("jsonrpc", "2.0", "id", id, "result", result(f, report));
+            } catch (RuntimeException e) {
+                answer = error(id, INTERNAL_ERROR, "the server failed to run the call: " + e);
+            } finally {
+                calls.remove(id, meter);
+                if (answer != null) send(out, answer);
+            }
+        });
+    }
+
+    private static Map<String, Object> result(FnDecl f, Map<String, Object> report) {
         boolean ok = report.get("ok") == Boolean.TRUE;
         Map<String, Object> result = Json.obj("content", List.of(Json.obj("type", "text", "text", Json.write(report))));
         if (ok && !(f.ret instanceof Type.Void)) result.put("structuredContent", Json.obj("result", report.get("result")));
         result.put("isError", !ok);
         return result;
+    }
+
+    /**
+     * notifications/cancelled: stops the call with that requestId, if it is still waiting or running, and
+     * leaves it unanswered. One that has ended, or that this server never had, is ignored, as MCP asks.
+     */
+    private Map<String, Object> cancel(Object params) {
+        if (params instanceof Map<?, ?> p && p.get("requestId") instanceof Object requestId) {
+            Meter meter = calls.get(requestId);
+            if (meter != null) meter.stop("cancelled", "the client cancelled the call");
+        }
+        return Json.obj();
     }
 }

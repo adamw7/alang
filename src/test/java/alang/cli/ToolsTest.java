@@ -445,8 +445,9 @@ class ToolsTest {
         assertEquals("[{\"meters\": 2.0}, {\"meters\": 2.0, \"unit\": \"Imperial\", \"decimals\": 0}]",
             Json.write(tool.get("input_examples")));
         Path p = dir.resolve("tools.al");
+        // Four statements, and the float fixed() writes, which costs about as long as 22 more.
         Result r = run("call", p.toString(), "distance", "{\"meters\": 1.5}");
-        assertEquals("{\"ok\": true, \"result\": \"1.5 m\", \"stdout\": \"\", \"steps\": 5}\n", r.out());
+        assertEquals("{\"ok\": true, \"result\": \"1.5 m\", \"stdout\": \"\", \"steps\": 27}\n", r.out());
         r = run("call", p.toString(), "distance", "{\"meters\": 1.5, \"decimals\": 2}");
         assertEquals(0, r.code(), r.out());
         assertTrue(r.out().contains("\"result\": \"1.50 m\""), r.out());

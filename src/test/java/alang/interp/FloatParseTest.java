@@ -58,13 +58,13 @@ class FloatParseTest {
             String s = text(x);
             if (s.equals(".") || s.equals("-.") || s.equals("+.")) continue;
             Values.StrV v = str(s);
-            if (Stdlib.isFloat(v)) {
+            if (Stdlib.isFloat(v, new Meter(0))) {
                 accepted++;
                 long want = Double.doubleToRawLongBits(Double.parseDouble(s));
-                assertEquals(want, Double.doubleToRawLongBits(Stdlib.parseFloat(v, null)), s);
+                assertEquals(want, Double.doubleToRawLongBits(Stdlib.parseFloat(v, null, new Meter(0))), s);
             } else {
                 rejected++;
-                Trap t = assertThrows(Trap.class, () -> Stdlib.parseFloat(v, null), s);
+                Trap t = assertThrows(Trap.class, () -> Stdlib.parseFloat(v, null, new Meter(0)), s);
                 assertEquals(Code.R0009, t.code, s);
             }
         }
@@ -77,8 +77,8 @@ class FloatParseTest {
             "1e0".replace("e0", ""), "0.0000000000000000000001", "1" + "0".repeat(22), "123456789012345" + "0".repeat(22),
             "9007199254740992", "3.", ".5", "-0", "0.000", "+19.99"}) {
             Values.StrV v = str(s);
-            assertTrue(Stdlib.isFloat(v), s);
-            assertEquals(Double.doubleToRawLongBits(Double.parseDouble(s)), Double.doubleToRawLongBits(Stdlib.parseFloat(v, null)), s);
+            assertTrue(Stdlib.isFloat(v, new Meter(0)), s);
+            assertEquals(Double.doubleToRawLongBits(Double.parseDouble(s)), Double.doubleToRawLongBits(Stdlib.parseFloat(v, null, new Meter(0))), s);
         }
     }
 
@@ -86,7 +86,7 @@ class FloatParseTest {
     void otherTextIsRejected() {
         for (String s : new String[] {"", ".", "-", "+", "1e5", "1E5", "1.2.3", " 1", "1 ", "0x10", "inf", "nan", "1_000",
             "9007199254740993", "12345678901234567", "0.00000000000000000000001", "1" + "0".repeat(39), "--1", "1-"}) {
-            assertFalse(Stdlib.isFloat(str(s)), s);
+            assertFalse(Stdlib.isFloat(str(s), new Meter(0)), s);
         }
     }
 }

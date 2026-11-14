@@ -385,10 +385,12 @@ public final class JsonValues {
                 if (!(j instanceof List<?> l)) throw fail(path, "expected an array");
                 if (l.size() > st.cap()) throw fail(path, "at most " + st.cap() + " items allowed, found " + l.size());
                 ListV s = new ListV(new Object[st.cap()], 0);
+                // Arguments are read before the call, and cost it nothing.
+                Meter free = new Meter(0);
                 for (int i = 0; i < l.size(); i++) {
                     Object x = fromJson(l.get(i), st.elem(), path + "[" + i + "]");
-                    if (Stdlib.find(s.items, s.len, x, st.elem()) >= 0) throw fail(path + "[" + i + "]", "duplicate item");
-                    Stdlib.setInsert(s, x, st.elem(), null);
+                    if (Stdlib.find(s.items, s.len, x, st.elem(), free) >= 0) throw fail(path + "[" + i + "]", "duplicate item");
+                    Stdlib.setInsert(s, x, st.elem(), null, free);
                 }
                 return s;
             }
@@ -406,10 +408,11 @@ public final class JsonValues {
                     }
                 }
                 if (entries.size() > mt.cap()) throw fail(path, "at most " + mt.cap() + " entries allowed, found " + entries.size());
+                Meter free = new Meter(0);
                 for (Object[] e : entries) {
                     Object k = fromJson(e[0], mt.key(), path + e[2] + "(key)");
-                    if (Stdlib.find(m.keys, m.len, k, mt.key()) >= 0) throw fail(path + e[2], "duplicate key");
-                    Stdlib.mapPut(m, k, fromJson(e[1], mt.value(), path + e[2]), mt.key(), null);
+                    if (Stdlib.find(m.keys, m.len, k, mt.key(), free) >= 0) throw fail(path + e[2], "duplicate key");
+                    Stdlib.mapPut(m, k, fromJson(e[1], mt.value(), path + e[2]), mt.key(), null, free);
                 }
                 return m;
             }

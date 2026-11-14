@@ -65,7 +65,7 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 | **No heap** | Every type has a compile-time size (`str[N]`, `list[T; N]`, `[T; N]`, structs, enums); no pointers, `null` or allocator. `alang check` bounds the worst-case memory of every entry point and rejects a program over its budget (8 MiB by default). |
 | **Deterministic** | No clock, randomness, environment, threads or I/O except `print`; input arrives whole, as a tool's JSON arguments or the stdin of `fn main`. No undefined behavior: overflow, bad indexes and bad conversions trap with fixed codes. Fixed evaluation order, floats from correctly rounded operations only (`sin`, `exp` and `pow` included, which ALang computes itself), exact formatting. The tests run every program repeatedly and under several locales, and compare the C backend byte for byte with the interpreter under gcc and clang at `-O0` to `-O3`. |
 | **Always terminates** | Recursion is a compile error; every `while` loop states an iteration `limit`. |
-| **Safe to run agent code** | Tool functions take JSON in and return JSON out with no access to the host; a deterministic step budget bounds runtime. |
+| **Safe to run agent code** | Tool functions take JSON in and return JSON out with no access to the host. A deterministic step budget bounds runtime: it counts the data each statement goes through, not only the statements, so a step takes about as long whatever a tool does. `--timeout` backs it with a wall-clock limit. |
 | **Runs anywhere** | A reference interpreter (JVM) and a C99 backend that emits heap-free, stdio-free C with byte-identical behavior. |
 
 [docs/COMPARISON.md](docs/COMPARISON.md) sets these guarantees beside Python, JavaScript, Go, Rust, C
@@ -109,9 +109,9 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `alang run FILE [--json] [--max-steps N] [--max-stack B]` | Run `fn main()`; a `fn main(input: str[N])` gets all of stdin (`alang run prog.al < data.txt`) |
 | `alang test FILE [--json] [--filter TEXT] [--max-steps N] [--max-stack B]` | Run all `test "..." { }` blocks (one written `test "..." traps R0006 { }` passes only if it stops with that trap); a filter that matches no test fails |
 | `alang tools FILE [--json] [--max-steps N] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema, and input_examples from the tests' calls) |
-| `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B]` | Call a tool with JSON arguments; `-` reads them from stdin, none means `{}` |
+| `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B] [--timeout S]` | Call a tool with JSON arguments; `-` reads them from stdin, none means `{}`; a call that runs longer than `--timeout` seconds (60, 0 for none) stops with the error `timeout` |
 | `alang fuzz FILE [--json] [--max-steps N] [--max-stack B]` | Call every `tool fn`, and a `fn main(input: str[N])`, with arguments at their limits (empty and full strs of many shapes, full lists, the smallest and largest numbers); report each trap with the arguments that hit it |
-| `alang serve FILE [--max-steps N] [--max-stack B]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout) |
+| `alang serve FILE [--max-steps N] [--max-stack B] [--timeout S]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout), up to four calls at a time, each within the step budget and `--timeout` |
 | `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
 | `alang fix FILE [--write] [--json] [--max-stack B]` | Apply the fix of every diagnostic that has one (marked `= fix:`, `"fix"` in JSON), checking again after each round, since a fixed syntax error lets the parser reach the next; print the result, or `--write` it; fails while errors without a fix remain |
 | `alang fmt FILE [--write \| --check]` | Print the file laid out the one way (indentation, spaces between tokens, blank lines; the lines you broke stay broken); `--write` rewrites it, `--check` fails if it is not formatted |
@@ -120,7 +120,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 Exit codes: `0` success, `1` errors, traps (also those `fuzz` finds) or failing tests, `2` usage errors (including an option the
 command does not take, or an extra argument). With `--json`, and always for `call`, errors are JSON on
 stdout too; `call`'s error codes are `usage_error`, `compile_error`, `bad_tool`, `bad_json`,
-`bad_arguments`, `bad_result` and the trap codes (`R....`).
+`bad_arguments`, `bad_result`, `timeout` and the trap codes (`R....`).
 
 ## Standard library
 
@@ -202,6 +202,11 @@ closed-world. A call's text is the JSON `alang call` prints, and a call that fai
 a trap, comes back as an error result the model can read and fix. The program is checked once, at start:
 restart the server after editing it.
 
+Up to four calls run at once, so a slow one holds up neither the others nor `ping` and `tools/list`. Each
+stops at its step budget, or after `--timeout` seconds (60 by default), with an error result, and the
+host can stop one early with `notifications/cancelled`. When stdin ends, the server finishes the calls it
+has started and exits.
+
 ## Tool results in a prompt
 
 `alang call` prints JSON, and a harness should keep reading `ok`, `result` and `error.code` from it. For
@@ -211,7 +216,7 @@ quoting, and a list of structs as a table that names the fields once.
 
 ```
 $ bin/alang call words.al word_counts '{"text": "the cat saw the dog"}'
-{"ok": true, "result": [{"word": "the", "count": 2}, {"word": "cat", "count": 1}, {"word": "saw", "count": 1}, {"word": "dog", "count": 1}], "stdout": "", "steps": 105}
+{"ok": true, "result": [{"word": "the", "count": 2}, {"word": "cat", "count": 1}, {"word": "saw", "count": 1}, {"word": "dog", "count": 1}], "stdout": "", "steps": 113}
 $ bin/alang call words.al word_counts '{"text": "the cat saw the dog"}' | python3 harness/toon.py
 ok: true
 result[4]{word,count}:
@@ -220,7 +225,7 @@ result[4]{word,count}:
   saw,1
   dog,1
 stdout: ""
-steps: 105
+steps: 113
 ```
 
 It saves the most on long lists of structs. On a small or nested result, compact JSON costs about the

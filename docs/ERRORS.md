@@ -616,7 +616,7 @@ panic("unreachable state");
 
 ## R0011
 
-**step budget exhausted**: The interpreter executed more statements than allowed by --max-steps. Raise the budget or reduce the work.
+**step budget exhausted**: The run cost more steps than --max-steps allows. A step is a statement or a loop iteration, or about as much time spent on data: copying, comparing, searching, sorting, splitting or writing strs and collections. Raise the budget or reduce the work.
 
 ```
 alang run long.al --max-steps 1000000000
