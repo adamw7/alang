@@ -666,6 +666,164 @@ class CliTest {
         assertTrue(r.err().startsWith("trap[R0011]: step budget of 2500 steps exhausted\n --> " + p + ":6:5\n"), r.err());
     }
 
+    /**
+     * What each operation on data costs is part of what a run reports, as its output is: this program does
+     * every one 128 times, so that a unit more or less for any of them changes its steps.
+     */
+    @Test
+    void everyOperationOnDataCostsWhatItDid() throws IOException {
+        Path p = write("costs.al", """
+            // Every operation the meter charges for, 128 times over, so that each unit a charge adds shows in the steps.
+            const TEXT: str[64] = "alpha,beta,gamma delta";
+
+            struct Rec {
+                key: i64,
+                name: str[8],
+            }
+
+            enum Shape {
+                Dot,
+                Box(i64, str[8]),
+            }
+
+            fn same(s: str[16]) -> str[16] {
+                return s;
+            }
+
+            fn main() {
+                let digits: str[32] = "12345678901234567890123";
+                let wide: str[64] = "hello world";
+                let recs: list[Rec; 4] = [Rec(key: 2, name: "b"), Rec(key: 1, name: "a"), Rec(key: 2, name: "a")];
+                let shapes: list[Shape; 4] = [Shape.Box(1, "x"), Shape.Dot, Shape.Box(1, "w")];
+                let pairs: list[(i64, str[8]); 4] = [(2, "b"), (1, "z"), (2, "a")];
+                let grid: [i64; 4] = [4, 3, 2, 1];
+                var out: str[2048] = "";
+                var total: i64 = 0;
+                for i in 0..128 {
+                    // Copies, widening, conversions and literals.
+                    let a: str[64] = wide;
+                    let b: list[Rec; 4] = recs;
+                    let c: [i64; 4] = grid;
+                    let w: list[Rec; 8] = recs;
+                    let n: str[16] = str[16](a);
+                    let m2: list[Rec; 3] = list[Rec; 3](b);
+                    let z: [i64; 3] = [0; 3];
+                    var m: map[i64, i64; 8] = [(5, 1), (1, 2), (3, 3)];
+                    var s: set[i64; 8] = [4, 2, 6];
+                    let mc: map[i64, i64; 8] = m;
+                    m[2] = 9;
+                    insert(mut s, 3);
+                    let gone_m: bool = remove(mut m, 1);
+                    let gone_s: bool = remove(mut s, 2);
+                    if gone_m and gone_s {
+                        total += 1;
+                    }
+                    total += get_or(m, 3, 0) + len(mc) + len(n) + len(m2) + z[0] + c[0] + len(w);
+                    if contains(s, 6) and contains(m, 5) {
+                        total += 1;
+                    }
+                    clear(mut m);
+                    // Text.
+                    total += index_of(TEXT, "gamma") + count(TEXT, 'a') + count(recs, Rec(key: 1, name: "a")) + index_of(grid, 2);
+                    if starts_with(TEXT, "alp") and ends_with(TEXT, "ta") and contains(TEXT, "beta") {
+                        total += 1;
+                    }
+                    let t: str[64] = trim(TEXT);
+                    let up: str[64] = to_upper(t);
+                    let sl: str[64] = TEXT[1..9];
+                    let ls: list[Rec; 4] = slice(recs, 0, 2);
+                    let sc: str[64] = slice_chars(TEXT, 2, 6);
+                    let cs: list[u32; 64] = chars(sl);
+                    total += char_count(up) + len(sc) + len(cs) + len(ls);
+                    if is_utf8(sl) and not is_int(digits) and is_float(digits) {
+                        total += 1;
+                    }
+                    let parts: list[str[16]; 8] = split(TEXT, ',');
+                    let ws: list[str[16]; 8] = words(TEXT);
+                    var tw: list[str[16]; 8] = [];
+                    let fit: bool = try_words(mut tw, wide);
+                    if fit {
+                        total += len(tw);
+                    }
+                    let joined: str[64] = join(parts, "+");
+                    let rep: str[128] = replace(TEXT, "a", "AA");
+                    for p in split(TEXT, ',') {
+                        total += len(p);
+                    }
+                    for q in words(TEXT) {
+                        total += len(q);
+                    }
+                    total += len(ws) + len(joined) + len(rep);
+                    // Ordering and sorting.
+                    var rs: list[Rec; 4] = recs;
+                    sort(mut rs);
+                    reverse(mut rs);
+                    var letters: str[64] = TEXT;
+                    sort(mut letters);
+                    reverse(mut letters);
+                    var g: [i64; 4] = grid;
+                    sort(mut g);
+                    reverse(mut g);
+                    var xs: list[i64; 8] = [5, 3, 9];
+                    insert(mut xs, 0, 7);
+                    let x0: i64 = remove(mut xs, 1);
+                    total += i64(letters[0]) + g[0] + x0 + compare(recs[0], recs[2]) + compare(shapes[0], shapes[2]) + compare(pairs[0], pairs[2]);
+                    total += compare(recs, rs) + compare(a, wide) + compare(TEXT, wide);
+                    if recs == rs or a == wide or shapes[0] == shapes[2] {
+                        total += 1;
+                    }
+                    match a {
+                        "hello world" => { total += 1; }
+                        _ => { }
+                    }
+                    // The text of values.
+                    append(mut out, wide, recs, shapes, pairs, s, mc, grid, fixed(1.5, 2), pad_left(i, 6, '0'));
+                    append(mut out, sqrt(2.0), atan2(1.0, 2.0), pow(2.0, 0.5), 3.25);
+                    let padded: str[16] = pad_left(i, 8, ' ');
+                    let fx: str[32] = fixed(2.5, 3);
+                    total += len(out) + len(padded) + len(fx) + len(same("abc"));
+                    clear(mut out);
+                }
+                print(total);
+            }
+            """);
+        Result r = run("run", p.toString(), "--json");
+        assertEquals(0, r.code(), r.out());
+        assertEquals("{\"ok\": true, \"file\": " + Json.write(p.toString()) + ", \"diagnostics\": [], \"stdout\": \"72192\\n\", "
+            + "\"trap\": null, \"steps\": 37019}\n", r.out());
+    }
+
+    /** A budget used up by work on data traps at the statement that did the work, even before the first. */
+    @Test
+    void aBudgetUsedUpByDataTrapsWhereTheWorkIs() throws IOException {
+        // The str that small() returns is widened by main's let, after the call has returned.
+        Path p = write("widen.al", """
+            fn small() -> str[16] {
+                return "abc";
+            }
+
+            fn main() {
+                let big: str[100000] = small();
+                print(len(big));
+            }
+            """);
+        Result r = run("run", p.toString(), "--max-steps", "100");
+        assertTrue(r.err().startsWith("trap[R0011]: step budget of 100 steps exhausted\n --> " + p + ":6:5\n"), r.err());
+        // A precondition runs before any statement: its work is the call's.
+        Path q = write("first.al", """
+            /// Needs some text.
+            tool fn first(s: str[65536]) -> i64
+                requires len(trim(s)) > 0
+            {
+                return 1;
+            }
+            """);
+        Map<?, ?> error = (Map<?, ?>) ((Map<?, ?>) Json.parse(run("call", q.toString(), "first", "{\"s\": \"x\"}", "--max-steps", "100").out()))
+            .get("error");
+        assertEquals("R0011", error.get("code"), error.toString());
+        assertEquals(BigInteger.valueOf(2), error.get("line"), error.toString());
+    }
+
     /** --timeout stops a call that runs too long, as a backstop to the step budget; it is not a trap. */
     @Test
     void aCallPastItsTimeLimitIsStopped() throws IOException {

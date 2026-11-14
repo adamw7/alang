@@ -174,7 +174,6 @@ public final class Interpreter {
     public void runTest(TestDecl t) {
         String entry = "test \"" + t.name + "\"";
         Trap got = null;
-        meter.at(t.span);
         try {
             Object[] slots = new Object[t.locals.size()];
             callStack.push(new CallSite(entry, t.span));
