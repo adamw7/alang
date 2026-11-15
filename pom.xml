@@ -96,6 +96,18 @@
     <resources>
       <resource>
         <directory>src/main/resources</directory>
+        <excludes>
+          <exclude>alang/version.txt</exclude>
+        </excludes>
+      </resource>
+      <!-- `alang version` and the MCP server report the <version> above: the build writes it into
+           alang/version.txt, which Main.VERSION reads, so a release changes only this file. -->
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+        <includes>
+          <include>alang/version.txt</include>
+        </includes>
       </resource>
       <!-- The guide for agents travels with the jar: a JVM host can read it with
            getResourceAsStream("/alang/AGENTS.md") and hand it to its model. -->

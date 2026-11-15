@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.ByteBuffer;
@@ -44,7 +45,19 @@ import java.util.Set;
 
 /** The `alang` command line tool. */
 public final class Main {
-    public static final String VERSION = "0.4.0";
+    /**
+     * The {@code <version>} in pom.xml, the one place to change it: the build copies it into
+     * {@code alang/version.txt} (a filtered resource), so it is always the version being built.
+     */
+    public static final String VERSION = readVersion();
+
+    private static String readVersion() {
+        try (InputStream in = Main.class.getResourceAsStream("/alang/version.txt")) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8).strip();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
 
     /** How much of a program's output `call`, `run --json` and `test` keep: 1 MiB. */
     static final int MAX_CAPTURED_OUTPUT = 1 << 20;

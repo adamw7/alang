@@ -281,7 +281,7 @@ mutation testing is not part of that, so a PIT update is first exercised by the 
 `.zip` with the jar, launchers for sh and Windows that need only Java, AGENTS.md, the docs, the grammar and the examples
 ([`src/dist/assembly.xml`](src/dist/assembly.xml)). The jar carries AGENTS.md, the license and the
 ANTLR runtime's notice ([THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)). To release, set the new version in
-`pom.xml` and `Main.VERSION`, merge to `main`, then tag that commit:
+`pom.xml` (the build hands it to `Main.VERSION`), merge to `main`, then tag that commit:
 
 ```sh
 git tag v0.3.0
