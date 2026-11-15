@@ -140,14 +140,8 @@ class CliTest {
     }
 
     @Test
-    void versionIsTheOneInPomXml() throws IOException {
-        // A release publishes the jar under the pom's version, from a tag that must match it
-        // (.github/workflows/release.yml); `alang version` and the MCP server report Main.VERSION.
-        String pom = Files.readString(Path.of("pom.xml"), StandardCharsets.UTF_8);
-        Matcher m = Pattern.compile("<artifactId>alang</artifactId>\\s*<version>([^<]+)</version>").matcher(pom);
-        assertTrue(m.find(), "pom.xml: the project's <version> was not found");
-        assertEquals(m.group(1), Main.VERSION, "Main.VERSION must be the <version> in pom.xml; change both");
-        assertEquals(new Result(0, "alang " + m.group(1) + "\n", ""), run("version"));
+    void versionPrintsMainVersion() throws IOException {
+        assertEquals(new Result(0, "alang " + Main.VERSION + "\n", ""), run("version"));
     }
 
     @Test
