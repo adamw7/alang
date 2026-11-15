@@ -64,7 +64,23 @@ class McpServerTest {
             }
             return s;
         }
+
+        /// The answer.
+        tool fn answer() -> i64 {
+            return 42;
+        }
         """;
+
+    /** A tools/call request. */
+    private static String call(String id, String tool, String arguments) {
+        return "{\"jsonrpc\": \"2.0\", \"id\": " + id + ", \"method\": \"tools/call\", \"params\": {\"name\": \"" + tool
+            + "\", \"arguments\": " + arguments + "}}";
+    }
+
+    /** A call of spin that runs until it is stopped. */
+    private static String longCall(String id) {
+        return call(id, "spin", "{\"n\": 1000000000000000}");
+    }
 
     /** The lines the server writes for {@code input}, each checked to be one JSON message. */
     private static List<String> serve(String input) throws IOException {
@@ -284,6 +300,49 @@ class McpServerTest {
             assertTrue(s.next().contains("\"id\": \"c\""));
             s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \"params\": {\"requestId\": \"c\"}}");
             s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \"params\": {}}");
+            assertEquals(List.of(), s.end());
+        }
+    }
+
+    /**
+     * Arguments that do not fit are answered at once, not after the calls ahead of them; null arguments are
+     * none; and a cancellation finds a call by the value of its id, whatever way the number is written.
+     */
+    @Test
+    void badArgumentsDoNotWaitForAWorker() throws Exception {
+        try (Session s = new Session(server(SPIN_PROGRAM, 0, 0, 1))) {
+            s.send(longCall("1"));
+            s.send(call("2", "split_bill", "{\"total_cents\": 10, \"people\": \"x\"}"));
+            String answer = s.next();
+            assertTrue(answer.contains("\"id\": 2"), answer);
+            assertEquals("bad_arguments", errorCode(answer), answer);
+            s.send(call("3", "split_bill", "null"));
+            answer = s.next();
+            assertEquals("bad_arguments", errorCode(answer), answer);
+            assertTrue(answer.contains("total_cents: missing argument"), answer);
+            // A call whose arguments fit waits for the worker, which the long call holds until it is cancelled.
+            s.send(call("4", "answer", "null"));
+            s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \"params\": {\"requestId\": 1.0}}");
+            answer = s.next();
+            assertTrue(answer.contains("\"id\": 4") && answer.contains("\"structuredContent\": {\"result\": 42}"), answer);
+            assertEquals(List.of(), s.end());
+        }
+    }
+
+    /** An id still in use by a call is refused, so that a cancellation cannot stop the wrong call. */
+    @Test
+    void anIdInUseIsRefused() throws Exception {
+        try (Session s = new Session(server(SPIN_PROGRAM, 0, 0, 2))) {
+            s.send(longCall("7"));
+            s.send(call("7", "answer", "{}"));
+            String inUse = msg("{\"jsonrpc\": \"2.0\", \"id\": 7, \"error\": {\"code\": -32600, "
+                + "\"message\": \"id 7 is in use by a call that has not been answered\"}}");
+            assertEquals(inUse, s.next());
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 7, \"method\": \"ping\"}");
+            assertEquals(inUse, s.next());
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": \"7\", \"method\": \"ping\"}");
+            assertEquals(msg("{\"jsonrpc\": \"2.0\", \"id\": \"7\", \"result\": {}}"), s.next());
+            s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \"params\": {\"requestId\": 70e-1}}");
             assertEquals(List.of(), s.end());
         }
     }

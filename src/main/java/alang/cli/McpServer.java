@@ -65,7 +65,10 @@ final class McpServer {
     private final long maxSteps;
     private final Watchdog watchdog;
     private final int workers;
-    /** The meter of each call that is waiting or running, by request id, so that a cancellation can stop it. */
+    /**
+     * The meter of each call that is waiting or running, by the {@link #key} of its request id, so that a
+     * cancellation can stop it.
+     */
     private final Map<Object, Meter> calls = new ConcurrentHashMap<>();
 
     /**
@@ -152,8 +155,9 @@ final class McpServer {
 
     /**
      * The answer to one line: a result or an error for a request, null for a notification, a response
-     * from the client (this server sends no requests), or a blank line. A tools/call request is checked here
-     * and then runs on {@code pool}, which writes its answer to {@code out} when it ends: null here too.
+     * from the client (this server sends no requests), or a blank line. A tools/call request is checked here,
+     * its arguments too, and then runs on {@code pool}, which writes its answer to {@code out} when it ends:
+     * null here too.
      */
     private Map<String, Object> handle(byte[] line, ExecutorService pool, PrintStream out) {
         String text;
@@ -184,11 +188,15 @@ final class McpServer {
         boolean notification = !m.containsKey("id");
         Object result;
         try {
+            // MCP forbids reusing an id in a session; one still in use would also leave a cancellation unsure
+            // which call it stops.
+            if (!notification && calls.containsKey(key(id))) {
+                throw new RpcException(INVALID_REQUEST, "id " + Json.write(id) + " is in use by a call that has not been answered");
+            }
             if (method.equals("tools/call")) {
                 FnDecl f = tool(m.get("params"));
                 // A notification wants no answer, and a call changes nothing, so there is nothing to do.
-                if (!notification) start(id, f, m.get("params"), pool, out);
-                return null;
+                return notification ? null : start(id, f, m.get("params"), pool, out);
             }
             result = switch (method) {
                 case "initialize" -> initialize(m.get("params"));
@@ -254,12 +262,23 @@ final class McpServer {
      * {"result": value} as structured content, matching the output schema. A call that failed, from bad
      * arguments to a trap or its time limit, is a result with "isError": true, so the model sees the error and
      * can fix its call; a cancelled call gets no answer, as MCP asks.
+     *
+     * <p>The arguments are decoded here, before the call waits for a worker: arguments that do not fit are
+     * answered at once, the return value, and not after the calls ahead of them. Null when the call was started.
      */
-    private void start(Object id, FnDecl f, Object params, ExecutorService pool, PrintStream out) {
+    private Map<String, Object> start(Object id, FnDecl f, Object params, ExecutorService pool, PrintStream out) {
         Map<?, ?> p = (Map<?, ?>) params;
-        Object arguments = p.containsKey("arguments") ? p.get("arguments") : Json.obj();
+        // "arguments" is optional, and some clients send null for a tool without parameters.
+        Object arguments = p.get("arguments") == null ? Json.obj() : p.get("arguments");
+        Object[] args;
+        try {
+            args = Main.toolArguments(f, arguments);
+        } catch (JsonValues.DecodeException e) {
+            return Json.obj("jsonrpc", "2.0", "id", id, "result", result(f, Main.badArguments(e.getMessage())));
+        }
         Meter meter = new Meter(maxSteps);
-        calls.put(id, meter);
+        Object key = key(id);
+        calls.put(key, meter);
         pool.execute(() -> {
             // What the client hears if the call fails inside the server, from a bug to a full heap, instead of
             // waiting for an answer that never comes; such an error still ends the worker thread.
@@ -268,7 +287,7 @@ final class McpServer {
                 Watchdog.Alarm alarm = watchdog.watch(meter);
                 Map<String, Object> report;
                 try {
-                    report = Main.callTool(src, f, arguments, meter);
+                    report = Main.runTool(src, f, args, meter);
                 } finally {
                     alarm.off();
                 }
@@ -277,10 +296,23 @@ final class McpServer {
             } catch (RuntimeException e) {
                 answer = error(id, INTERNAL_ERROR, "the server failed to run the call: " + e);
             } finally {
-                calls.remove(id, meter);
+                // Before the answer, so that the client can use the id again as soon as it has the answer.
+                calls.remove(key, meter);
                 if (answer != null) send(out, answer);
             }
         });
+        return null;
+    }
+
+    /**
+     * What identifies request {@code id} in {@link #calls}: the id itself, but numbers by value, so that a
+     * cancellation of 7.0 or 7e0 finds call 7. Without converting to BigInteger, which an id such as 1e999999999
+     * would make huge.
+     */
+    private static Object key(Object id) {
+        if (id instanceof BigInteger i) return new BigDecimal(i);
+        if (id instanceof BigDecimal d) return d.stripTrailingZeros();
+        return id;
     }
 
     private static Map<String, Object> result(FnDecl f, Map<String, Object> report) {
@@ -297,7 +329,7 @@ final class McpServer {
      */
     private Map<String, Object> cancel(Object params) {
         if (params instanceof Map<?, ?> p && p.get("requestId") instanceof Object requestId) {
-            Meter meter = calls.get(requestId);
+            Meter meter = calls.get(key(requestId));
             if (meter != null) meter.stop("cancelled", "the client cancelled the call");
         }
         return Json.obj();

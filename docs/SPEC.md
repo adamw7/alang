@@ -861,16 +861,19 @@ description are those of `alang tools`; a tool that returns a value also has an 
 `{"result": <schema of the return type>}`, and every tool is annotated read-only, not destructive,
 idempotent and closed-world. The text of a call's result is the JSON `alang call` prints; a successful
 call of a tool that returns a value also gives `{"result": value}` as `structuredContent`; and a call that
-fails, from `bad_arguments` to a trap or `timeout`, is a result with `"isError": true`. Only a name that is not a
-`tool fn` is a JSON-RPC error (-32602). The program is checked once, at start: one with errors starts no
+fails, from `bad_arguments` to a trap or `timeout`, is a result with `"isError": true`; `"arguments"` may be
+left out or `null` for none. Only a name that is not a `tool fn` is a JSON-RPC error (-32602), and so is a
+request whose id is that of a call not yet answered (-32600), as MCP forbids reusing an id. The program is checked once, at start: one with errors starts no
 server, and its diagnostics, like any warning, go to stderr, which is the only other output.
 
 Calls run at the same time, up to four, each on a thread of its own and each still one deterministic run;
 more wait their turn. So a long call holds up neither the others nor the answers to `ping`, `tools/list`
-and the rest, which come at once; a call's answer is written when it ends, so answers can come in another
-order than the requests, as JSON-RPC allows. Each call gets `--max-steps` and `--timeout` (60 s by
-default). `notifications/cancelled` stops a call that is running or waiting, which then gets no answer, as
-MCP asks; one for a call that has ended is ignored. When stdin ends, the server finishes the calls it has
+and the rest, which come at once; a call's arguments are checked before it waits, so `bad_arguments` comes
+at once too. A call's answer is written when it ends, so answers can come in another order than the
+requests, as JSON-RPC allows. Each call gets `--max-steps` and `--timeout` (60 s by default).
+`notifications/cancelled` stops a call that is running or waiting, which then gets no answer, as MCP asks;
+a numeric `requestId` names the call with the same value (`7.0` is `7`), and one for a call that has ended
+is ignored. When stdin ends, the server finishes the calls it has
 started, writes their answers, and exits.
 
 ## 11. Runtime errors (traps)
