@@ -281,17 +281,14 @@ mutation testing is not part of that, so a PIT update is first exercised by the 
 `.zip` with the jar, launchers for sh and Windows that need only Java, AGENTS.md, the docs, the grammar and the examples
 ([`src/dist/assembly.xml`](src/dist/assembly.xml)). The jar carries AGENTS.md, the license and the
 ANTLR runtime's notice ([THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES)). To release, set the new version in
-`pom.xml` (the build hands it to `Main.VERSION`), merge to `main`, then tag that commit:
+`pom.xml` (the build hands it to `Main.VERSION`), merge to `main`, then draft a release on GitHub with a
+new tag such as `0.3.0` on that commit, and publish it.
 
-```sh
-git tag v0.3.0
-git push origin v0.3.0
-```
-
-[`.github/workflows/release.yml`](.github/workflows/release.yml) checks that the tag is the version, runs
-the whole CI on it, and only then publishes: a GitHub release with `alang-VERSION.jar`, both archives,
-AGENTS.md and `SHA256SUMS`, and the jar, its pom and the archives in GitHub Packages. A version is
-published once; to redo one, delete its release and package first.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) then runs the whole CI on the tagged
+commit, and only then publishes: it attaches `alang-VERSION.jar`, both archives, AGENTS.md and
+`SHA256SUMS` to the release, puts a table of them above its notes, and puts the jar, its pom and the
+archives in GitHub Packages. It creates no tag and no release. A version is published once; to redo
+one, delete its package, then re-run its Release run from the Actions tab.
 
 ## Status
 
