@@ -5,10 +5,18 @@ name: Release
 # - the runnable jar, the archives (jar, launcher, AGENTS.md, docs, examples), AGENTS.md on its own and
 #   SHA256SUMS, attached to that release, whose notes gain a table of these files;
 # - the Maven artifacts (io.github.adamw7:alang: the jar, its pom and the archives) in GitHub Packages.
-# The workflow creates no tag and no release: both exist before it starts.
+# The workflow creates no tag and no release: both exist before it starts. Run by hand from the Actions tab
+# with a release's tag, it publishes that release again: for one whose tag predates this workflow, or one
+# whose run failed. A version already in GitHub Packages stays as it is (it can be published only once).
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag of the published release to attach the files to, such as 0.5.0
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -19,18 +27,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Take the version from the tag
         id: version
         env:
-          TAG: ${{ github.event.release.tag_name }}
-        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Fails here, before CI, when no published release has this tag.
+          gh release view "$TAG" --json tagName --jq .tagName > /dev/null
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
   ci:
     name: CI
     needs: version
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: refs/tags/${{ needs.version.outputs.tag }}
 
   publish:
     name: Publish
@@ -42,9 +59,11 @@ jobs:
       packages: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      TAG: ${{ github.event.release.tag_name }}
+      TAG: ${{ needs.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
 
       - uses: actions/setup-java@v6
         with:
@@ -57,8 +76,19 @@ jobs:
 
       - name: Publish to GitHub Packages
         # Builds the jar and the archives from the tagged commit; the ci job has run every test on it.
+        # GitHub Packages refuses a version it already has (409 Conflict), so a re-run only builds.
         timeout-minutes: 5
-        run: mvn -B -ntp -DskipTests deploy
+        run: |
+          POM_VERSION="$(mvn -B -ntp -q help:evaluate -Dexpression=project.version -DforceStdout)"
+          pom="https://maven.pkg.github.com/$GITHUB_REPOSITORY/io/github/adamw7/alang/$POM_VERSION/alang-$POM_VERSION.pom"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' -u "$GITHUB_ACTOR:$GITHUB_TOKEN" "$pom" || true)"
+          echo "GitHub Packages answers $status for alang-$POM_VERSION.pom"
+          if [[ "$status" == 2* || "$status" == 3* ]]; then
+            echo "::notice::io.github.adamw7:alang:$POM_VERSION is already in GitHub Packages; it is not deployed again."
+            mvn -B -ntp -DskipTests package
+          else
+            mvn -B -ntp -DskipTests deploy
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

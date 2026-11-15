@@ -287,8 +287,10 @@ new tag such as `0.3.0` on that commit, and publish it.
 [`.github/workflows/release.yml`](.github/workflows/release.yml) then runs the whole CI on the tagged
 commit, and only then publishes: it attaches `alang-VERSION.jar`, both archives, AGENTS.md and
 `SHA256SUMS` to the release, puts a table of them above its notes, and puts the jar, its pom and the
-archives in GitHub Packages. It creates no tag and no release. A version is published once; to redo
-one, delete its package, then re-run its Release run from the Actions tab.
+archives in GitHub Packages. It creates no tag and no release. A failed run can be re-run: GitHub
+Packages takes a version only once, so a version already there is left as it is, and the files are
+attached again. For a release whose tag predates this workflow, run the Release workflow from the
+Actions tab with its tag.
 
 ## Status
 

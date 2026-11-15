@@ -5,6 +5,11 @@ on:
   push:
     branches: ['**']
   workflow_call:
+    inputs:
+      ref:
+        description: The ref to test, such as refs/tags/0.5.0; empty tests the commit that triggered the run.
+        type: string
+        default: ''
   workflow_dispatch:
 
 permissions:
@@ -35,6 +40,8 @@ jobs:
       PYTHON: ${{ matrix.os == 'windows-latest' && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: actions/setup-java@v6
         with:
@@ -218,6 +225,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: actions/setup-java@v6
         with:
