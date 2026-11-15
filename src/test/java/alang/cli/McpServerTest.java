@@ -16,6 +16,9 @@ import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -24,6 +27,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /** `alang serve`: the program's tools over MCP, one JSON-RPC message per line. */
 class McpServerTest {
@@ -418,5 +422,134 @@ class McpServerTest {
         byte[] bad = {'{', '"', 'a', '"', ':', '"', (byte) 0xFF, '"', '}', '\n'};
         assertEquals(List.of(msg("{\"jsonrpc\": \"2.0\", \"id\": null, \"error\": {\"code\": -32700, "
             + "\"message\": \"the message is not valid UTF-8\"}}")), serve(bad, 1000));
+    }
+
+    // ------------------------------------------------------------------ serve --watch
+
+    private static final String LIST_CHANGED = msg("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/tools/list_changed\"}");
+
+    /** Replaces a file's text at once, as an editor saving it whole does, so a poll never sees it half written. */
+    private static void save(Path file, String text) throws IOException {
+        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+        Files.writeString(tmp, text, StandardCharsets.UTF_8);
+        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    /** What a server logs, one line at a time, for a test to wait on. */
+    private static final class Log extends OutputStream {
+        private final ByteArrayOutputStream line = new ByteArrayOutputStream();
+        private final BlockingQueue<String> lines = new LinkedBlockingQueue<>();
+
+        @Override
+        public synchronized void write(int b) {
+            if (b != '\n') {
+                line.write(b);
+                return;
+            }
+            lines.add(line.toString(StandardCharsets.UTF_8));
+            line.reset();
+        }
+
+        /** Waits up to 5 seconds for a line that contains {@code text}, passing over the lines before it. */
+        void await(String text) throws InterruptedException {
+            List<String> passed = new ArrayList<>();
+            while (true) {
+                String next = lines.poll(5, TimeUnit.SECONDS);
+                assertNotNull(next, () -> "no line containing \"" + text + "\" within 5 seconds; passed over " + passed);
+                if (next.contains(text)) return;
+                passed.add(next);
+            }
+        }
+    }
+
+    /** A server for the program in {@code main} that polls its files every 20 ms, logging to {@code log}. */
+    private static McpServer watching(Path main, Log log) throws IOException {
+        Frontend.Result r = Frontend.compile(new Source(main.toString(), Files.readString(main)), Checker.DEFAULT_MAX_STACK);
+        assertTrue(r.ok(), () -> r.diags().renderText());
+        McpServer server = new McpServer(r.program().source, r.program(), 0, new Watchdog(0), 2);
+        server.watch(new Reloader(r.program(), Checker.DEFAULT_MAX_STACK), 20, new PrintStream(log, true, StandardCharsets.UTF_8));
+        return server;
+    }
+
+    private static String tool(String name, int value) {
+        return "/// A number.\ntool fn " + name + "() -> i64 {\n    return " + value + ";\n}\n";
+    }
+
+    /**
+     * Each version of the files that compiles is served; the client hears when the tools change, not when
+     * only a body does; a version with errors is logged and the one before it kept; and an import that does
+     * not exist yet is watched too.
+     */
+    @Test
+    void watchServesEachVersionThatCompiles(@TempDir Path dir) throws Exception {
+        Path main = dir.resolve("main.al");
+        save(main, tool("one", 1));
+        Log log = new Log();
+        try (Session s = new Session(watching(main, log))) {
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"initialize\", \"params\": {}}");
+            assertTrue(s.next().contains("\"listChanged\": true"));
+            s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/initialized\"}");
+
+            save(main, tool("one", 1) + tool("two", 2));
+            assertEquals(LIST_CHANGED, s.next());
+            log.await("reloaded");
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"tools/list\"}");
+            assertTrue(s.next().contains("\"name\": \"two\""));
+
+            // A new body only: served, but the tools the client knows have not changed.
+            save(main, tool("one", 1) + tool("two", 3));
+            log.await("reloaded");
+            s.send(call("3", "two", "{}"));
+            assertTrue(s.next().contains("\"structuredContent\": {\"result\": 3}"));
+
+            // Errors: logged, and the version before stays served.
+            save(main, tool("one", 1) + "fn broken() -> i64 {\n    return true;\n}\n");
+            log.await("main.al has 1 error(s); still serving the program loaded before");
+            s.send(call("4", "two", "{}"));
+            assertTrue(s.next().contains("\"structuredContent\": {\"result\": 3}"));
+
+            // An import that does not exist yet fails, and is served once it is written. (Its own tools would
+            // stay its own; the importer's tool uses its function.)
+            String fromLib = "/// Calls the library.\ntool fn from_lib() -> i64 {\n    return three();\n}\n";
+            save(main, "import \"lib.al\";\n\n" + tool("one", 1) + fromLib);
+            log.await("still serving the program loaded before");
+            save(dir.resolve("lib.al"), "fn three() -> i64 {\n    return 3;\n}\n");
+            assertEquals(LIST_CHANGED, s.next());
+            log.await("reloaded");
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 5, \"method\": \"tools/list\"}");
+            String tools = s.next();
+            assertTrue(tools.contains("\"name\": \"from_lib\"") && !tools.contains("\"name\": \"two\""), tools);
+
+            // An imported file is watched like the main one.
+            save(dir.resolve("lib.al"), "fn three() -> i64 {\n    return 4;\n}\n");
+            log.await("reloaded");
+            s.send(call("6", "from_lib", "{}"));
+            assertTrue(s.next().contains("\"structuredContent\": {\"result\": 4}"));
+            assertEquals(List.of(), s.end());
+        }
+    }
+
+    /** Without --watch the tools never change, and the server says so. */
+    @Test
+    void withoutWatchTheToolsDoNotChange() throws IOException {
+        String reply = serve("{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"initialize\", \"params\": {}}\n").get(0);
+        assertTrue(reply.contains("\"listChanged\": false"), reply);
+    }
+
+    /** The client hears of changed tools only once it has said it is initialized, as MCP asks. */
+    @Test
+    void listChangedWaitsForInitialized(@TempDir Path dir) throws Exception {
+        Path main = dir.resolve("main.al");
+        save(main, tool("one", 1));
+        Log log = new Log();
+        try (Session s = new Session(watching(main, log))) {
+            save(main, tool("two", 2));
+            log.await("reloaded");
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"ping\"}");
+            assertEquals(msg("{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {}}"), s.next());
+            s.send(call("2", "two", "{}"));
+            assertTrue(s.next().contains("\"structuredContent\": {\"result\": 2}"));
+            assertEquals(List.of(), s.end());
+        }
     }
 }

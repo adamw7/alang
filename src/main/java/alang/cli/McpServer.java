@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -37,6 +38,11 @@ import java.util.concurrent.TimeUnit;
  * allows. A call ends within its step budget and its time limit ({@link Watchdog}), and
  * notifications/cancelled stops one early. With {@link Watchdog}, this is the only code that uses threads
  * (see ArchitectureTest): each call is still one deterministic run on one thread.
+ *
+ * <p>With {@link #watch} (`serve --watch`) a timer polls the program's files and serves the program they hold
+ * once it compiles, telling the client with notifications/tools/list_changed when its tools changed. Each
+ * message is handled with the program current when it is read, so a call still runs one program from start
+ * to end.
  */
 final class McpServer {
     /** The protocol revisions this server speaks, newest first. A client asking for another gets the newest. */
@@ -60,11 +66,17 @@ final class McpServer {
      */
     static final int WORKERS = 4;
 
-    private final Source src;
-    private final Program program;
     private final long maxSteps;
     private final Watchdog watchdog;
     private final int workers;
+    /** The program served, which a reload replaces, and its main file. */
+    private volatile Loaded current;
+    /** Whether the client has sent notifications/initialized: notifications/tools/list_changed waits for it. */
+    private volatile boolean initialized;
+    /** For `serve --watch`, set by {@link #watch}: the program's files, how often to poll them, and the log; else null. */
+    private Reloader reloader;
+    private long pollMillis;
+    private PrintStream log;
     /**
      * The meter of each call that is waiting or running, by the {@link #key} of its request id, so that a
      * cancellation can stop it.
@@ -76,11 +88,23 @@ final class McpServer {
      * {@code workers} of them running at once.
      */
     McpServer(Source src, Program program, long maxSteps, Watchdog watchdog, int workers) {
-        this.src = src;
-        this.program = program;
+        this.current = new Loaded(src, program);
         this.maxSteps = maxSteps;
         this.watchdog = watchdog;
         this.workers = workers;
+    }
+
+    /** A program and its main file, whose Source runs its calls. */
+    private record Loaded(Source src, Program program) {}
+
+    /**
+     * Makes {@link #serve} poll the program's files with {@code reloader} every {@code pollMillis} ms, and serve
+     * the program it compiles when they change; {@code log} gets what each reload found. Call it before serve.
+     */
+    void watch(Reloader reloader, long pollMillis, PrintStream log) {
+        this.reloader = reloader;
+        this.pollMillis = pollMillis;
+        this.log = log;
     }
 
     /** A request this server cannot answer with a result: a JSON-RPC error. */
@@ -104,14 +128,46 @@ final class McpServer {
             t.setDaemon(true);
             return t;
         });
+        ScheduledExecutorService ticker = null;
+        if (reloader != null) {
+            ticker = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "alang-watch");
+                t.setDaemon(true);
+                return t;
+            });
+            ticker.scheduleWithFixedDelay(() -> reload(out), pollMillis, pollMillis, TimeUnit.MILLISECONDS);
+        }
         try {
             for (byte[] line = readLine(in); line != null; line = readLine(in)) {
                 Map<String, Object> answer = handle(line, pool, out);
                 if (answer != null) send(out, answer);
             }
         } finally {
+            if (ticker != null) ticker.shutdown();  // no more polls; one under way may finish
             pool.shutdown();
             awaitCalls(pool);
+        }
+    }
+
+    /**
+     * One poll of the program's files: serves the program they now hold, if they changed and it compiled, and
+     * tells an initialized client when that changed its tools. A change to a tool's body alone does not.
+     */
+    private void reload(PrintStream out) {
+        try {
+            Program p = reloader.poll(log);
+            if (p == null) return;
+            List<Object> before = tools(current.program());
+            current = new Loaded(p.source, p);
+            List<Object> after = tools(p);
+            if (initialized && !before.equals(after)) {
+                send(out, Json.obj("jsonrpc", "2.0", "method", "notifications/tools/list_changed"));
+            }
+            // Last, so that whoever reads it can count on the new program and its notification.
+            log.print("alang: reloaded " + p.source.path + ": " + after.size() + " tool(s)\n");
+        } catch (RuntimeException e) {
+            // Caught, as one that escaped would end the polling for the rest of the session.
+            log.print("alang: reloading failed: " + e + "\n");
         }
     }
 
@@ -186,6 +242,7 @@ final class McpServer {
         }
         if (!"2.0".equals(m.get("jsonrpc"))) return error(id, INVALID_REQUEST, "\"jsonrpc\" must be \"2.0\"");
         boolean notification = !m.containsKey("id");
+        Loaded now = current;
         Object result;
         try {
             // MCP forbids reusing an id in a session; one still in use would also leave a cancellation unsure
@@ -194,14 +251,18 @@ final class McpServer {
                 throw new RpcException(INVALID_REQUEST, "id " + Json.write(id) + " is in use by a call that has not been answered");
             }
             if (method.equals("tools/call")) {
-                FnDecl f = tool(m.get("params"));
+                FnDecl f = tool(now.program(), m.get("params"));
                 // A notification wants no answer, and a call changes nothing, so there is nothing to do.
-                return notification ? null : start(id, f, m.get("params"), pool, out);
+                return notification ? null : start(id, now.src(), f, m.get("params"), pool, out);
             }
             result = switch (method) {
                 case "initialize" -> initialize(m.get("params"));
+                case "notifications/initialized" -> {
+                    initialized = true;
+                    yield Json.obj();
+                }
                 case "ping" -> Json.obj();
-                case "tools/list" -> Json.obj("tools", tools());
+                case "tools/list" -> Json.obj("tools", tools(now.program()));
                 case "notifications/cancelled" -> cancel(m.get("params"));
                 default -> throw new RpcException(METHOD_NOT_FOUND, "method not found: " + method);
             };
@@ -215,11 +276,11 @@ final class McpServer {
         return Json.obj("jsonrpc", "2.0", "id", id, "error", Json.obj("code", code, "message", message));
     }
 
-    private static Map<String, Object> initialize(Object params) {
+    private Map<String, Object> initialize(Object params) {
         Object asked = params instanceof Map<?, ?> p ? p.get("protocolVersion") : null;
         String version = asked instanceof String s && PROTOCOL_VERSIONS.contains(s) ? s : PROTOCOL_VERSIONS.get(0);
         return Json.obj("protocolVersion", version,
-            "capabilities", Json.obj("tools", Json.obj("listChanged", false)),
+            "capabilities", Json.obj("tools", Json.obj("listChanged", reloader != null)),
             "serverInfo", Json.obj("name", "alang", "version", Main.VERSION),
             "instructions", INSTRUCTIONS);
     }
@@ -229,7 +290,7 @@ final class McpServer {
      * and annotations that are true of every ALang tool: it changes nothing, so it is read-only, not
      * destructive and idempotent, and it reaches nothing outside itself.
      */
-    private List<Object> tools() {
+    private static List<Object> tools(Program program) {
         List<Object> tools = new ArrayList<>();
         for (FnDecl f : program.itemsOf(FnDecl.class)) {
             if (!f.tool) continue;
@@ -246,8 +307,8 @@ final class McpServer {
         return tools;
     }
 
-    /** The tool a tools/call names; an unknown one is a protocol error. */
-    private FnDecl tool(Object params) {
+    /** The tool of {@code program} a tools/call names; an unknown one is a protocol error. */
+    private static FnDecl tool(Program program, Object params) {
         if (!(params instanceof Map<?, ?> p) || !(p.get("name") instanceof String name)) {
             throw new RpcException(INVALID_PARAMS, "tools/call needs params with a \"name\" string");
         }
@@ -266,7 +327,7 @@ final class McpServer {
      * <p>The arguments are decoded here, before the call waits for a worker: arguments that do not fit are
      * answered at once, the return value, and not after the calls ahead of them. Null when the call was started.
      */
-    private Map<String, Object> start(Object id, FnDecl f, Object params, ExecutorService pool, PrintStream out) {
+    private Map<String, Object> start(Object id, Source src, FnDecl f, Object params, ExecutorService pool, PrintStream out) {
         Map<?, ?> p = (Map<?, ?>) params;
         // "arguments" is optional, and some clients send null for a tool without parameters.
         Object arguments = p.get("arguments") == null ? Json.obj() : p.get("arguments");

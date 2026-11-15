@@ -511,7 +511,8 @@ bytes as a `list[u8; N]`. Pass `-` instead of the JSON to read the arguments fro
 
 To hand the tools to an agent host, run `bin/alang serve prog.al`: an MCP server on stdin and stdout with
 every `tool fn`, its result schema, and the same JSON per call, up to four calls at a time. Restart it
-after editing the program.
+after editing the program, or serve it with `--watch`: each version that compiles is served a moment after
+it is saved, and the host is told when the tools change; one with errors leaves the last good one served.
 
 Tools are safe to run minutes after you wrote them: no file, network, clock or random access, no heap,
 bounded loops, no recursion, and a deterministic step budget. `steps` in a report is a call's cost: one

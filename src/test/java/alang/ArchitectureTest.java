@@ -234,9 +234,10 @@ class ArchitectureTest {
             .and().doNotHaveFullyQualifiedName("alang.cli.Watchdog")
             .should().dependOnClassesThat(resideInAnyPackage("java.util.concurrent..").or(assignableTo(Thread.class)))
             .because("evaluation order is part of the determinism guarantee; keep the toolchain single-threaded. "
-                    + "Only the host-facing server runs several tool calls at once, and only its watchdog "
-                    + "stops one that runs past its time limit: each call is still one run on one thread, "
-                    + "and another thread can only stop it, through its Meter");
+                    + "Only the host-facing server runs several tool calls at once (and, with --watch, polls "
+                    + "the program's files on a timer), and only its watchdog stops one that runs past its time "
+                    + "limit: each call is still one run on one thread, and another thread can only stop it, "
+                    + "through its Meter");
 
     @ArchTest
     static final ArchRule locale_independent_text = noClasses()

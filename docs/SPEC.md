@@ -863,8 +863,17 @@ idempotent and closed-world. The text of a call's result is the JSON `alang call
 call of a tool that returns a value also gives `{"result": value}` as `structuredContent`; and a call that
 fails, from `bad_arguments` to a trap or `timeout`, is a result with `"isError": true`; `"arguments"` may be
 left out or `null` for none. Only a name that is not a `tool fn` is a JSON-RPC error (-32602), and so is a
-request whose id is that of a call not yet answered (-32600), as MCP forbids reusing an id. The program is checked once, at start: one with errors starts no
-server, and its diagnostics, like any warning, go to stderr, which is the only other output.
+request whose id is that of a call not yet answered (-32600), as MCP forbids reusing an id. The program is
+checked once, at start: one with errors starts no server, and its diagnostics, like any warning, go to
+stderr, which is the only other output.
+
+`alang serve file.al --watch` also polls the program's files, the main one and each it imports (an
+import that does not exist yet included), and serves the version they hold once two polls 0.3 s apart
+find the same text and it compiles; each request is handled with the program current when it is read, so
+a call runs one version from start to end. `initialize` then reports `"listChanged": true`, and when a
+new version changes the tool definitions (not when only a body changes) the server sends
+`notifications/tools/list_changed`, once the client has sent `notifications/initialized`. A version with
+errors is reported on stderr, and the one before it stays served. Each reload is logged there too.
 
 Calls run at the same time, up to four, each on a thread of its own and each still one deterministic run;
 more wait their turn. So a long call holds up neither the others nor the answers to `ping`, `tools/list`
