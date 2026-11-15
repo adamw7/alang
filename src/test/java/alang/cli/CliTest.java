@@ -140,8 +140,13 @@ class CliTest {
     }
 
     @Test
-    void versionPrintsMainVersion() throws IOException {
-        assertEquals(new Result(0, "alang " + Main.VERSION + "\n", ""), run("version"));
+    void versionIsTheOneInPomXml() throws IOException {
+        // The build writes the pom's <version> into alang/version.txt for Main.VERSION; the release
+        // archives are named by it, and CI finds them by what `alang version` prints.
+        String pom = Files.readString(Path.of("pom.xml"), StandardCharsets.UTF_8);
+        Matcher m = Pattern.compile("<artifactId>alang</artifactId>\\s*<version>([^<]+)</version>").matcher(pom);
+        assertTrue(m.find(), "pom.xml: the project's <version> was not found");
+        assertEquals(new Result(0, "alang " + m.group(1) + "\n", ""), run("version"));
     }
 
     @Test
