@@ -922,8 +922,10 @@ public final class CGen {
         Type t = a.target.type;
         String v = lower(a.value);
         if (a.op == null && a.target instanceof Index ix && ix.target.type instanceof Type.MapT mt) {
-            // m[k] = v adds k when it is new; the value is computed first, then the place.
-            String vt = Type.isAggregate(t) ? coerce(v, a.value.type, t) : tmp(t, v);
+            // m[k] = v adds k when it is new; the value is computed first, then the place. A value read through a map
+            // points into its entries, which adding k can move, so it is copied first.
+            String vt = !Type.isAggregate(t) || readsMap(a.value) && !needsCoerce(a.value.type, t) ? tmp(t, v)
+                : coerce(v, a.value.type, t);
             String base = lower(ix.target);
             String key = keyLvalue(ix.index, mt.key());
             emit("*al_put_" + keyedFns(mt) + "(&(" + base + "), &" + key + ", " + loc(ix.span) + ") = " + vt + ";");
@@ -1596,14 +1598,28 @@ public final class CGen {
         return Type.isAggregate(to) ? coerce(lower(e), e.type, to) : tmp(to, lower(e));
     }
 
+    /** Whether {@code e} is a place read through a map's entries: `m[k]`, `m[k].field`, `m[k][i]`. */
+    private static boolean readsMap(Expr e) {
+        return switch (e) {
+            case Index ix -> ix.target.type instanceof Type.MapT || readsMap(ix.target);
+            case FieldAccess f -> f.constant == null && f.variant == null && readsMap(f.target);
+            default -> false;
+        };
+    }
+
     private String index(Index ix) {
         if (ix.target.type instanceof Type.MapT mt) {
             // Read through a pointer: a const one, cast for the places that are written (the checker allows that only
-            // on a variable or a `mut` parameter).
+            // on a variable or a `mut` parameter). The key is looked up here, as the interpreter evaluates it, so a missing
+            // one traps before what comes after it: left in the expression, the lookup ran wherever the C compiler put it
+            // among a call's arguments, whose order C leaves open, and after operands that were lowered later.
             String base = lower(ix.target);
             String key = keyLvalue(ix.index, mt.key());
             String m = keyedFns(mt);
-            return "(*(" + ct(mt.value()) + " *)al_get_" + m + "(&(" + base + "), &" + key + ", " + loc(ix.span) + "))";
+            String vt = ct(mt.value());
+            String p = "t" + ++tmpCount;
+            emit(vt + " *" + p + " = (" + vt + " *)al_get_" + m + "(&(" + base + "), &" + key + ", " + loc(ix.span) + ");");
+            return "(*" + p + ")";
         }
         String base = lower(ix.target);
         String idx = lower(ix.index);
@@ -1879,7 +1895,9 @@ public final class CGen {
             }
             case CAP -> {
                 Type t = args.get(0).expr().type;
-                lower(args.get(0).expr());
+                // The argument is evaluated, for its traps (cap(xs[9]), cap(m[k])), and then not needed: used once, so
+                // that the index or pointer computed for it is not an unused variable.
+                emit("(void)(" + lower(args.get(0).expr()) + ");");
                 int cap = switch (t) {
                     case Type.Str s -> s.cap();
                     case Type.MapT m -> m.cap();
