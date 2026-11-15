@@ -25,7 +25,7 @@
   </scm>
 
   <!-- `mvn deploy` publishes the jar, its pom and the release archives to GitHub Packages; the
-       release workflow (.github/workflows/release.yml) runs it for a v* tag. The credentials come
+       release workflow (.github/workflows/release.yml) runs it for a published release. The credentials come
        from the `github` server in settings.xml, which actions/setup-java writes. -->
   <distributionManagement>
     <repository>

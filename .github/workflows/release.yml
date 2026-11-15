@@ -1,13 +1,14 @@
 name: Release
 
-# Pushing a tag vX.Y.Z or X.Y.Z publishes the version X.Y.Z (it is not compared with pom.xml) once the whole CI
-# passes on the tagged commit:
-# - a GitHub release with the runnable jar, the archives (jar, launcher, AGENTS.md, docs, examples),
-#   AGENTS.md on its own and SHA256SUMS;
+# Publishing a GitHub release (drafted in the GitHub UI, which creates its tag vX.Y.Z or X.Y.Z) publishes the
+# version X.Y.Z (it is not compared with pom.xml) once the whole CI passes on the tagged commit:
+# - the runnable jar, the archives (jar, launcher, AGENTS.md, docs, examples), AGENTS.md on its own and
+#   SHA256SUMS, attached to that release, whose notes gain a table of these files;
 # - the Maven artifacts (io.github.adamw7:alang: the jar, its pom and the archives) in GitHub Packages.
+# The workflow creates no tag and no release: both exist before it starts.
 on:
-  push:
-    tags: ['v*', '[0-9]*']
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -22,7 +23,9 @@ jobs:
     steps:
       - name: Take the version from the tag
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
   ci:
     name: CI
@@ -39,6 +42,7 @@ jobs:
       packages: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v7
 
@@ -58,7 +62,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create the GitHub release
+      - name: Attach the files to the GitHub release
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -73,8 +77,11 @@ jobs:
           cp "target/alang-$FILES.tar.gz" "target/alang-$FILES.zip" AGENTS.md "$assets/"
           (cd "$assets" && sha256sum -- * > SHA256SUMS)
 
-          cat > "$RUNNER_TEMP/notes.md" <<EOF
-          Needs Java 21 or newer. Unpack \`alang-$FILES.tar.gz\` (or the \`.zip\`) and run \`alang-$FILES/bin/alang\`, or run the jar directly: \`java -jar alang-$FILES.jar\`. Agents start with [AGENTS.md](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/AGENTS.md).
+          # The release and its tag already exist; --clobber lets a re-run replace the files.
+          gh release upload "$TAG" "$assets"/* --clobber
+
+          cat > "$RUNNER_TEMP/files.md" <<EOF
+          Needs Java 21 or newer. Unpack \`alang-$FILES.tar.gz\` (or the \`.zip\`) and run \`alang-$FILES/bin/alang\`, or run the jar directly: \`java -jar alang-$FILES.jar\`. Agents start with [AGENTS.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/AGENTS.md).
 
           | File | Contents |
           |------|----------|
@@ -86,8 +93,9 @@ jobs:
           The jar is also in GitHub Packages as \`io.github.adamw7:alang:$FILES\`.
           EOF
 
-          gh release create "$GITHUB_REF_NAME" "$assets"/* \
-            --verify-tag \
-            --title "ALang $VERSION" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
-            --generate-notes
+          # Puts the table above the notes written when the release was drafted, once: a re-run leaves them.
+          gh release view "$TAG" --json body --jq .body > "$RUNNER_TEMP/drafted.md"
+          if ! grep -q '^| File | Contents |' "$RUNNER_TEMP/drafted.md"; then
+            { cat "$RUNNER_TEMP/files.md"; echo; cat "$RUNNER_TEMP/drafted.md"; } > "$RUNNER_TEMP/notes.md"
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
