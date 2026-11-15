@@ -1557,6 +1557,35 @@ class CliTest {
     }
 
     @Test
+    void fuzzCallsAToolWhoseBoundsNoValueMeets() throws IOException {
+        // Bounds that contradict each other, or lie outside the type, left no value to try, and fuzz crashed.
+        Path p = write("never.al", """
+            struct Window {
+                lo: i64,
+                hi: i64,
+            }
+
+            /// Never callable: no u8 is above 255.
+            tool fn above(x: u8) -> u8
+                requires x > 255
+            {
+                return x;
+            }
+
+            /// Never callable either, through a field.
+            tool fn span(w: Window, n: i64) -> i64
+                requires w.lo >= 10 and w.lo <= 5 and n >= 0
+            {
+                return w.hi - w.lo + n;
+            }
+            """);
+        Result r = run("fuzz", p.toString());
+        assertEquals(0, r.code(), r.out() + r.err());
+        assertTrue(r.out().matches("tool above: \\d+ call\\(s\\), no traps\ntool span: \\d+ call\\(s\\), no traps\n"
+            + "fuzz: no traps in \\d+ call\\(s\\)\n"), r.out());
+    }
+
+    @Test
     void fuzzFeedsInputToMainAndPassesARobustProgram() throws IOException {
         Path naive = write("naive.al", """
             fn main(input: str[512]) {

@@ -332,6 +332,13 @@ public final class Interpreter {
         Type t = a.target.type;
         if (a.op == null) {
             Object v = Values.coerce(owned(a.value, slots), t, meter);
+            if (a.target instanceof Index ix && ix.target.type instanceof Type.MapT mt) {
+                // m[k] = v adds k when it is new: the one place where k need not be in the map yet.
+                MapV m = (MapV) ref(ix.target, slots).get();
+                Object key = Values.coerce(owned(ix.index, slots), mt.key(), meter);
+                Stdlib.mapPut(m, key, v, mt.key(), ix.span, meter);
+                return;
+            }
             ref(a.target, slots).set(v);
             return;
         }
@@ -641,17 +648,6 @@ public final class Interpreter {
         }
     }
 
-    /** m[k] as a place: reading it needs the key (R0003), storing to it adds the key if it is new (R0004 when full). */
-    private record MapRef(MapV m, Object key, Type keyType, Span at, Meter cost) implements Ref {
-        public Object get() {
-            return Stdlib.mapGet(m, key, keyType, at, cost);
-        }
-
-        public void set(Object v) {
-            Stdlib.mapPut(m, key, v, keyType, at, cost);
-        }
-    }
-
     private record ByteRef(StrV s, int i) implements Ref {
         public Object get() {
             return (long) (s.b[i] & 0xFF);
@@ -675,8 +671,11 @@ public final class Interpreter {
             case Index ix -> {
                 Object container = ref(ix.target, slots).get();
                 if (ix.target.type instanceof Type.MapT mt) {
-                    Object key = Values.coerce(owned(ix.index, slots), mt.key(), meter);
-                    return new MapRef((MapV) container, key, mt.key(), ix.span, meter);
+                    // m[k] as a place is the value k has, so k must be there (R0003), as when it is read; it is looked up
+                    // now, where the place is evaluated. Only `m[k] = v` adds a key (see assign). Nothing can add or remove
+                    // a key while the place is in use: a `mut` argument's map is in no other argument (E0208).
+                    MapV m = (MapV) container;
+                    return new SlotRef(m.vals, Stdlib.mapIndex(m, eval(ix.index, slots), mt.key(), ix.span, meter));
                 }
                 long i = (Long) eval(ix.index, slots);
                 return elementRef(container, i, Type.kind(ix.index.type), ix.span);
@@ -1020,6 +1019,9 @@ public final class Interpreter {
                 return (long) length(eval(args.get(0).expr(), slots));
             }
             case CAP -> {
+                // The capacity is the type's, but the argument is evaluated all the same, as every argument is: cap(xs[9])
+                // traps on a bad index, and cap(m[k]) on a missing key, in both backends.
+                eval(args.get(0).expr(), slots);
                 Type t = args.get(0).expr().type;
                 return (long) switch (t) {
                     case Type.Str s -> s.cap();

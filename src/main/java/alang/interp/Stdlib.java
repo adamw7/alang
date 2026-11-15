@@ -911,6 +911,11 @@ final class Stdlib {
 
     /** m[k]: R0003 if the map has no key k. */
     static Object mapGet(MapV m, Object k, Type kt, Span at, Meter cost) {
+        return m.vals[mapIndex(m, k, kt, at, cost)];
+    }
+
+    /** The position of key k in the map, where m[k] is: R0003 if the map has no key k. */
+    static int mapIndex(MapV m, Object k, Type kt, Span at, Meter cost) {
         int i = find(m.keys, m.len, k, kt, cost);
         if (i < 0) {
             ByteArrayOutputStream msg = new ByteArrayOutputStream();
@@ -919,7 +924,7 @@ final class Stdlib {
             msg.writeBytes(" is not in the map".getBytes(StandardCharsets.UTF_8));
             throw new Trap(Code.R0003, at, msg.toByteArray());
         }
-        return m.vals[i];
+        return i;
     }
 
     /** m[k] = v, or insert(mut m, k, v): replaces the value of k, or adds k in its place; R0004 if that does not fit. */

@@ -183,6 +183,9 @@ final class Fuzz {
                     lo.add(BigInteger.ONE), hi.subtract(BigInteger.ONE), BigInteger.valueOf(100), BigInteger.valueOf(1000)}) {
                     if (v.compareTo(lo) >= 0 && v.compareTo(hi) <= 0) out.add(v);
                 }
+                // Contradictory bounds (`requires x > 5 and x < 3`, or `x > 255` for a u8) leave no value; every call then
+                // breaks the contract, which the fuzzer leaves out, but each parameter still needs one value of its type.
+                if (out.isEmpty()) out.add(lo.max(p.kind().min()).min(p.kind().max()));
             }
             case Type.Str s -> {
                 int max = Math.min(s.cap(), intOf(schema.get("maxLength"), s.cap()));

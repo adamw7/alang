@@ -108,10 +108,11 @@ them so; tuple types are equal only when every element type is (no widening, exc
 history. `[]` is an empty one; `[("a", 1), ("b", 2)]` builds a map (a key given twice keeps its last value) and
 `[3, 1, 3]` a set (`{1, 3}`); only the different keys count against the capacity: more than it holds is E0201 when
 they are constants, and otherwise traps (R0004) as the literal is built. `m[k]` reads the value of `k` and traps (R0003) if there is none; `m[k] = v` sets it,
-adding `k` if it is new, which traps (R0004) when the map is full; `m[k] += 1` and `m[k].field = x` need `k` to be
-there. `for k in m` goes through the keys, `for k, v in m` through the keys with their values, `for x in s`
-through a set, all in order (`rev` backwards). They print as `{"a": 1, "b": 2}` and `{1, 3}`, compare with `==`
-by contents (capacities may differ), and finding a key takes a binary search.
+adding `k` if it is new, which traps (R0004) when the map is full; `m[k] += 1`, `m[k].field = x` and an argument
+`mut m[k]` need `k` to be there, and trap (R0003) where `m[k]` is evaluated if it is not. `for k in m` goes through
+the keys, `for k, v in m` through the keys with their values, `for x in s` through a set, all in order (`rev`
+backwards). They print as `{"a": 1, "b": 2}` and `{1, 3}`, compare with `==` by contents (capacities may differ),
+and finding a key takes a binary search.
 
 **Enum** variants are always qualified (`Shape.Empty`, `Shape.Circle(2.0)`), and payloads are read only
 with `match` (or `if let`). There is no `null`: a value that may be absent is an `Option<T>` (below).
