@@ -380,11 +380,17 @@ common ones with the ALang spelling:
 | `Color::Red` | E0001: enum variants are accessed with a dot: `Color.Red` |
 | `Point { x: 1, y: 2 }` | E0001: struct values are built with named arguments: `Point(field: value, ...)` |
 | `x > 0 ? 1 : 2` | E0001: there is no `?:` operator; use if/else or match |
+| `1 if x > 0 else -1` | E0001: there is no `a if c else b`; write `if c then a else b` |
+| `loop { }` | E0001: there is no `loop`; use `while true limit N { ... break; }` |
+| `print(f"x = {x}")` | E0001: there are no format strings; pass the parts in order, `print("x = ", x)` |
+| `class Point { }`, `pub fn` | E0001: there are no classes or methods; a `struct` and functions that take it (and no `pub`: remove it) |
+| `const` inside a function | E0001: a const is declared at the top level; inside a function, use `let` |
 | `a and b or c` | E0001: `and` and `or` cannot be mixed without parentheses: `(a and b) or c` |
 | `xs.len()` | E0102: there are no methods; pass the value as the first argument: `len(xs)` |
 | `let x: i64 = null;` | E0101: ALang has no null; a value that may be absent is an `Option<T>` |
 | `if count { }` | E0211: there is no truthiness; compare explicitly, e.g. `x != 0` |
 | `10.0 / n` with `n: i64` | E0201: convert one side explicitly, e.g. `f64(n)` |
+| `let sep: u8 = ",";` | E0201: a character is written in single quotes, `','` (with a fix) |
 | a `match` that forgets a variant | E0306: match is not exhaustive: missing `Color.Blue` |
 | a function that can fall off the end | E0301: add `return <i64>;` at the end of the function |
 | an inner `let x` that reuses a name | E0105: ALang has no shadowing; choose a new name |
