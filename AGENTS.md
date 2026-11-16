@@ -163,6 +163,8 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `'outer: for ...` / `break 'outer` (Rust), `break outer` (Go, Java) | `outer: for ... { }` and `break outer;`, `continue outer;` |
 | `loop { }` | `while true limit 1000 { ... break; }` |
 | `s.push_str("a")`, `format!("{} {}", a, b)` | `append(mut s, "a")`, `var s: str[64] = ""; append(mut s, a, " ", b);` |
+| `f"x = {x}"`, `` `x = ${x}` `` | `print("x = ", x);`, `append(mut s, "x = ", x);`: no format or template strings |
+| `let sep: u8 = ",";` | `let sep: u8 = ',';`: a character is one byte in single quotes; a str takes double quotes |
 | `for line in text.splitlines()`, `for w in s.split()` | `for line in split(text, '\n') { }`, `for w in words(s) { }` |
 | `s.split(",")`, `s.split()`, `", ".join(xs)` | `let parts: list[str[16]; 8] = split(s, ",");`, `words(s)`, `let line: str[64] = join(xs, ", ");` |
 | the same on input that may not fit | `var parts: list[str[16]; 8] = []; let ok: bool = try_split(mut parts, s, ",");` |
@@ -182,6 +184,9 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
 | `println!("{}", x)` | `print(x);` |
 | `throw` / `raise` | return an enum, or `panic("message")` |
+| `class`, `impl`, `trait`, `interface` | `struct Shape { ... }` and functions that take it: `fn area(s: Shape) -> f64` |
+| `pub fn`, `export function`, `public` | `fn`: every top-level declaration is visible to the files that import it |
+| `const N = 10;` inside a function | `let n: i64 = 10;`; `const` is for the top level of the file |
 | `c ? a : b`, `a if c else b`, `if c { a } else { b }` as a value | `if c then a else b` |
 | `case x if x > 0 =>`, `Some(v) if v > 0 =>` | `_ if x > 0 => { }`, `Option.Some(v) if v > 0 => { }` (guards) |
 | `1 \| 2 =>`, `case 1, 2:`, `1..=5 =>`, `'a'..='z'` | `1 \| 2 => { }`, `1..=5 => { }`, `'a'..='z' => { }` |
