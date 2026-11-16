@@ -84,6 +84,34 @@ fn store(entries: mut list[Entry; _], key: str[_], value: i64) {
     push(mut entries, Entry(key: str[TEXT](key), value: value));
 }
 
+// ------------------------------------------------------------------ sorting by your own order
+
+/// Sorts `xs` in place into the order `before` gives: before(a, b) is true when a must come before b.
+/// Stable: items neither comes before keep their order, so sorting by one key and then by another sorts by
+/// both. Sort by a field, in reverse, or ignoring case with a two-line function; sort(mut xs) is the
+/// natural order. A binary insertion sort: n log n calls of `before`, and items moved in place, no buffer.
+fn sort_by<T>(xs: mut list[T; _], before: fn(T, T) -> bool) {
+    for i in 1..len(xs) {
+        let x: T = xs[i];
+        // The first place in the sorted xs[0..i] whose item x comes before; after every equal item.
+        var lo: i64 = 0;
+        var hi: i64 = i;
+        // The range halves every pass, so 64 passes cover any list.
+        while lo < hi limit 64 {
+            let mid: i64 = lo + (hi - lo) / 2;
+            if before(x, xs[mid]) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        if lo < i {
+            let moved: T = remove(mut xs, i);
+            insert(mut xs, lo, moved);
+        }
+    }
+}
+
 fn main() {
     print(parse_i64("-9223372036854775808"), " ", parse_i64("12x"));
     print(parse_f64("19.99"), " ", parse_f64("1e5"));
@@ -94,6 +122,8 @@ fn main() {
     store(mut stock, "apples", 7);
     print(stock);
     print(lookup(stock, "apples"), " ", lookup(stock, "kiwis"));
+    sort_by(mut stock, shorter_key);
+    print(stock);
 }
 
 test "parse_i64 accepts exactly the i64 range" {
@@ -141,4 +171,56 @@ test "a list of entries works as a map, at any capacity" {
     let long_key: str[200] = "a key in a long buffer";
     store(mut big, long_key, 9);
     assert lookup(big, "a key in a long buffer") == MaybeI64.Some(9);
+}
+
+fn larger_value(a: Entry, b: Entry) -> bool {
+    return a.value > b.value;
+}
+
+fn shorter_key(a: Entry, b: Entry) -> bool {
+    return len(a.key) < len(b.key);
+}
+
+fn descending(a: i64, b: i64) -> bool {
+    return a > b;
+}
+
+test "sort_by sorts in the order given" {
+    var xs: list[i64; 8] = [3, 1, 4, 1, 5, 9, 2, 6];
+    sort_by(mut xs, descending);
+    assert xs == [9, 6, 5, 4, 3, 2, 1, 1];
+    var none: list[i64; 4] = [];
+    sort_by(mut none, descending);
+    assert len(none) == 0;
+    var one: list[i64; 1] = [7];
+    sort_by(mut one, descending);
+    assert one == [7];
+}
+
+test "sort_by keeps equal items in their order" {
+    var es: list[Entry; 8] = [];
+    store(mut es, "pear", 1);
+    store(mut es, "fig", 2);
+    store(mut es, "kiwi", 3);
+    store(mut es, "yam", 4);
+    store(mut es, "plum", 5);
+    sort_by(mut es, shorter_key);
+    assert es[0].key == "fig" and es[1].key == "yam";
+    assert es[2].key == "pear" and es[3].key == "kiwi" and es[4].key == "plum";
+    sort_by(mut es, larger_value);
+    assert es[0].key == "plum" and es[4].key == "pear";
+}
+
+test "sort_by agrees with sort on a full list" {
+    var xs: list[i64; 64] = [];
+    var seed: i64 = 7;
+    for k in 0..64 {
+        seed = next_random(seed);
+        push(mut xs, (seed + k) % 100);
+    }
+    var ys: list[i64; 64] = xs;
+    sort_by(mut xs, descending);
+    sort(mut ys);
+    reverse(mut ys);
+    assert xs == ys;
 }

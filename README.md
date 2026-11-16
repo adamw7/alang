@@ -247,7 +247,7 @@ same, so measure before switching a harness over. `--delimiter tab` saves a litt
 - [harness/toon.py](harness/toon.py): tool results as TOON for a model's prompt
 - [examples/](examples): complete programs, each with tests
 - [examples/helpers.al](examples/helpers.al): tested helpers the standard library leaves out (parsing
-  into an enum, pseudo-random numbers, a map in insertion order), for lists and strs of any capacity, to import
+  into an enum, pseudo-random numbers, a map in insertion order, a stable sort by an order of your own), for lists and strs of any capacity, to import
   (`import "helpers.al";`, as [examples/tally.al](examples/tally.al) does) or copy into a program
 
 `src/main/java/alang/` holds the toolchain, one package per component (see the architecture);
