@@ -1,0 +1,8 @@
+error[E0201]: type mismatch: expected u8, found str[1]
+ --> tests/errors/E0201_char_in_double_quotes.al:3:19
+  |
+3 |     let sep: u8 = ",";
+  |                   ^^^
+  = hint: a character is written in single quotes, ',', and is a u8
+  = fix: replace `","` with `','`
+

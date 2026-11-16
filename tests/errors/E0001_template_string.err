@@ -1,0 +1,7 @@
+error[E0001]: unexpected character ```, expected a statement or expression
+ --> tests/errors/E0001_template_string.al:4:11
+  |
+4 |     print(`x = ${x}`);
+  |           ^
+  = hint: there are no format or template strings; pass the parts in order, print("x = ", x), or build a str with append(mut s, "x = ", x); for decimals, fixed(x, 2)
+

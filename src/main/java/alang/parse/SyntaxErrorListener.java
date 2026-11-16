@@ -441,7 +441,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
             case ALangLexer.QUESTION -> "there is no `?:` or `?` operator; use if/else or match";
             case ALangLexer.IDENT -> switch (tok.getText()) {
                 case "elif", "elsif", "elseif" -> "use `else if`";
-                case "loop" -> "use `while true limit N { ... }` or `for i in 0..n { ... }`";
+                case "loop" -> LOOP;
                 case "def", "func", "function" -> "functions are declared with `fn name(x: i32) -> i32 { ... }`";
                 default -> null;
             };
@@ -449,9 +449,12 @@ final class SyntaxErrorListener extends BaseErrorListener {
         };
         if (foreign != null) return foreign;
         if (elseIf(ts, prev)) return "use `else if`";
+        // `loop { }` reads `loop` as a name, so the error is at the `{` after it.
+        if (t == ALangLexer.LBRACE && p == ALangLexer.IDENT && prev.getText().equals("loop")) return LOOP;
         if (t == ALangLexer.ERROR_CHAR) {
             String s = tok.getText();
             if (s.equals("#")) return "comments start with //";
+            if (s.equals("`")) return FORMAT_STRINGS;
             if (s.equals("\"")) return "unterminated string literal; strings must close on the same line (use \\n for newlines)";
             if (s.equals("'")) return "strings use double quotes \"...\"; single quotes are for one-byte character literals like 'a'";
             if (s.equals("﻿") && tok.getStartIndex() == 0) {
@@ -485,6 +488,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (p == ALangLexer.FOR && t == ALangLexer.LPAREN) {
             return "for loops iterate a range or a collection: for i in 0..n { ... } or for x in xs { ... }";
         }
+        if (expected != null && expected.contains(ALangLexer.COLON) && t == ALangLexer.ASSIGN && p == ALangLexer.RPAREN) {
+            return TUPLES; // `let (a, b) = pair;`
+        }
         if (expected != null && expected.contains(ALangLexer.COLON) && t == ALangLexer.ASSIGN) {
             return "every variable needs an explicit type: let x: i64 = 0;";
         }
@@ -517,7 +523,12 @@ final class SyntaxErrorListener extends BaseErrorListener {
     private static final String NO_STR_CONVERSION = "there is no str() conversion; build text with append(mut s, value) "
         + "into a str[N] variable, and change the capacity of a str with str[N](s)";
 
-    private static final String TUPLES = "a tuple is built as (a, b), read as t.0 and t.1, and taken apart with a typed "
+    private static final String LOOP = "there is no `loop`; use `while true limit N { ... break; }` or `for i in 0..n { ... }`";
+
+    private static final String FORMAT_STRINGS = "there are no format or template strings; pass the parts in order, "
+        + "print(\"x = \", x), or build a str with append(mut s, \"x = \", x); for decimals, fixed(x, 2)";
+
+    private static final String TUPLES ="a tuple is built as (a, b), read as t.0 and t.1, and taken apart with a typed "
         + "let: let (a, b): (i64, i64) = pair;";
 
     /** Constructs common in other languages that ALang leaves out, each with the ALang way to write it. */
@@ -547,11 +558,36 @@ final class SyntaxErrorListener extends BaseErrorListener {
             return "`{ }` is a block, not a value: an empty list is [], a struct value is Name(field: value, ...), "
                 + "and there are no map or set literals";
         }
+        if (t == ALangLexer.STRING_LIT && p == ALangLexer.IDENT && prev.getStopIndex() + 1 == tok.getStartIndex()
+            && switch (prev.getText()) {
+                case "f", "F", "r", "b", "s" -> true;
+                default -> false;
+            }) {
+            return FORMAT_STRINGS; // f"{x}", r"...", b"...", s"..."
+        }
+        if (t == ALangLexer.CONST && expected.contains(ALangLexer.LET)) {
+            return "a const is declared at the top level of the file; inside a function, use let NAME: T = value;";
+        }
+        if (t == ALangLexer.IF && endsOperand(p) && prev.getLine() == tok.getLine() && elseOnLine(ts, tok)) {
+            return "there is no `a if c else b`; write if c then a else b: let x: i64 = if c then 1 else 2;";
+        }
         if (expected.contains(ALangLexer.STRUCT)) {
             // Where a top-level declaration may start.
             if (t == ALangLexer.LET || t == ALangLexer.VAR || t == ALangLexer.IDENT && word.equals("static")) {
                 return "there are no global variables; use `const NAME: T = value;` for a fixed value, "
                     + "and pass changing state to functions as a `mut` parameter";
+            }
+            if (t == ALangLexer.IDENT && switch (word) {
+                case "pub", "export", "public", "private" -> true;
+                default -> false;
+            }) {
+                return "there is no `" + word + "`: every top-level declaration can be used by the files that import "
+                    + "this one; remove it";
+            }
+            if (t == ALangLexer.IDENT && (word.equals("class") || word.equals("impl") || word.equals("trait")
+                || word.equals("interface"))) {
+                return "there are no classes or methods; declare the data with `struct Name { field: T, }` and the "
+                    + "behavior with functions that take it as a parameter: fn area(s: Shape) -> f64";
             }
             if (t == ALangLexer.IMPORT) {
                 return "imports come first: move this import above every other declaration of the file";
@@ -704,6 +740,25 @@ final class SyntaxErrorListener extends BaseErrorListener {
     }
 
     /** Tokens that can come right before the `(` of a call, constructor, pattern or declaration. */
+    /** Whether a token of type {@code t} can end an operand: `3`, `x`, `f(x)`, `xs[i]`. */
+    private static boolean endsOperand(int t) {
+        return t == ALangLexer.IDENT || t == ALangLexer.INT_LIT || t == ALangLexer.FLOAT_LIT || t == ALangLexer.STRING_LIT
+            || t == ALangLexer.CHAR_LIT || t == ALangLexer.TRUE || t == ALangLexer.FALSE || t == ALangLexer.RPAREN
+            || t == ALangLexer.RBRACK;
+    }
+
+    /** Whether an `else` follows {@code tok} on its line before any `{` or `;`: `a if c else b`, not an if statement. */
+    private static boolean elseOnLine(TokenStream ts, Token tok) {
+        for (int i = tok.getTokenIndex() + 1; i < ts.size(); i++) {
+            Token u = ts.get(i);
+            if (u.getChannel() != Token.DEFAULT_CHANNEL) continue;
+            if (u.getType() == Token.EOF || u.getLine() != tok.getLine()) return false;
+            if (u.getType() == ALangLexer.LBRACE || u.getType() == ALangLexer.SEMI) return false;
+            if (u.getType() == ALangLexer.ELSE) return true;
+        }
+        return false;
+    }
+
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
             || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;

@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'if', expected ';'
+ --> tests/errors/E0001_python_ternary.al:4:23
+  |
+4 |     let sign: i64 = 1 if x > 0 else -1;
+  |                       ^^
+  = hint: there is no `a if c else b`; write if c then a else b: let x: i64 = if c then 1 else 2;
+

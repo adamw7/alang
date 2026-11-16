@@ -4418,7 +4418,16 @@ public final class Checker {
 
     private void mismatch(Expr e, Type from, Type to) {
         String hint = null;
-        if (Type.isInt(from) && Type.isFloat(to) && e instanceof Binary b && b.op == BinOp.DIV) {
+        String charFix = null;
+        if (e instanceof StrLit s && s.value.length == 1 && Type.isInt(to)) {
+            // `let c: u8 = "a";`: a one-byte string where a character is wanted.
+            int b = s.value[0] & 0xFF;
+            String ch = b >= 0x20 && b < 0x7F && b != '\'' && b != '\\' ? "'" + (char) b + "'" : null;
+            String lit = ch != null ? ch : "'a'";
+            hint = "a character is written in single quotes, " + lit + ", and is a u8"
+                + (to.equals(Type.U8) ? "" : "; convert it: " + to + "(" + lit + ")");
+            if (ch != null) charFix = to.equals(Type.U8) ? ch : to + "(" + ch + ")";
+        } else if (Type.isInt(from) && Type.isFloat(to) && e instanceof Binary b && b.op == BinOp.DIV) {
             hint = "convert the operands to divide as floats: " + convertOperands(b, to) + "; "
                 + to + "(" + exprText(e) + ") would divide integers first and drop the fraction";
         } else if (Type.isNumeric(from) && Type.isNumeric(to)) {
@@ -4450,6 +4459,7 @@ public final class Checker {
         List<Edit> fix = List.of();
         String text = Type.isNumeric(from) && Type.isNumeric(to) && lossless(Type.kind(from), Type.kind(to)) ? wholeText(e) : null;
         if (text != null) fix = List.of(new Edit(e.span, to + "(" + text + ")"));
+        if (charFix != null) fix = List.of(new Edit(e.span, charFix));
         diags.fixable(Code.E0201, e.span, "type mismatch: expected " + to + ", found " + from, hint, fix);
     }
 

@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'const', expected a statement or expression
+ --> tests/errors/E0001_local_const.al:3:5
+  |
+3 |     const LIMIT: i64 = 10;
+  |     ^^^^^
+  = hint: a const is declared at the top level of the file; inside a function, use let NAME: T = value;
+
