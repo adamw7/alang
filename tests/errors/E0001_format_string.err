@@ -1,0 +1,7 @@
+error[E0001]: unexpected '"x = {x}"', expected a statement or expression
+ --> tests/errors/E0001_format_string.al:4:12
+  |
+4 |     print(f"x = {x}");
+  |            ^^^^^^^^^
+  = hint: there are no format or template strings; pass the parts in order, print("x = ", x), or build a str with append(mut s, "x = ", x); for decimals, fixed(x, 2)
+

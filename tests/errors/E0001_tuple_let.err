@@ -3,5 +3,5 @@ error[E0001]: unexpected '=', expected ':'
   |
 3 |     let (a, b) = (1, 2);
   |                ^
-  = hint: every variable needs an explicit type: let x: i64 = 0;
+  = hint: a tuple is built as (a, b), read as t.0 and t.1, and taken apart with a typed let: let (a, b): (i64, i64) = pair;
 

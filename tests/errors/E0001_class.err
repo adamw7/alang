@@ -1,0 +1,7 @@
+error[E0001]: unexpected 'class', expected one of end of file, 'import', 'fn', 'tool', 'const', 'struct', 'enum', 'test'
+ --> tests/errors/E0001_class.al:2:1
+  |
+2 | class Point {
+  | ^^^^^
+  = hint: there are no classes or methods; declare the data with `struct Name { field: T, }` and the behavior with functions that take it as a parameter: fn area(s: Shape) -> f64
+
