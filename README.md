@@ -297,13 +297,19 @@ Actions tab with its tag.
 
 ## Status
 
-Version 0.2. A program can span several files with `import "file.al";`, or keep each file's names
+Version 0.6. A program can span several files with `import "file.al";`, or keep each file's names
 apart with `import "file.al" as name;` ([SPEC.md §3.1](docs/SPEC.md#31-imports)). Functions, structs and enums
 take type parameters, every program has `Option<T>` and `Result<T, E>`, functions take function values (no
 closures), and the language has tuples, maps and sets, slices,
 labelled loops, nested patterns (or-patterns, ranges, tuples, structs) with guards, `if let`, `match` and
 `if ... then ... else` expressions, default parameter values, tests that expect a trap, UTF-8 text functions,
 wrapping and saturating arithmetic, and the elementary float functions, bit-identical on every backend.
+
+The toolchain checks, tests, formats (`alang fmt`) and fixes (`alang fix`) programs, fuzzes every tool at
+its limits (`alang fuzz`), compiles to heap-free C99 (`alang build`), and serves tools over MCP
+(`alang serve`, with `--watch` to pick up each version that compiles). Every call runs within a
+deterministic step budget that bounds its time. [examples/helpers.al](examples/helpers.al) adds tested
+helpers the standard library leaves out, such as `sort_by`, a stable sort by an order of your own.
 
 ## License
 
