@@ -129,7 +129,7 @@ guide, because no model knows ALang otherwise.
   memory limit, but as you, with access to your files: run the benchmark in a container or VM. ALang
   calls need no sandbox: they cannot reach the host, and stop deterministically after 10 million
   steps, a second or two of work.
-- **ALang is version 0.2.** The guide and diagnostics will change; the results file records the revision
+- **ALang is version 0.6.** The guide and diagnostics will change; the results file records the revision
   as `alang_revision`.
 
 ## Files
