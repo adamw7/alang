@@ -176,11 +176,12 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
 | `def f(x, y=2)`, `function f(x, y = 2)` | `fn f(x: i64, y: i64 = 2)`: a constant default, after the parameters without one |
 | `fn first<T>(xs: &[T]) -> T`, `def first(xs)` | `fn first<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
-| `xs.filter(f)`, `map(f, xs)`, `sort(key=f)`, a callback | a parameter `f: fn(T) -> bool`, passed by name: `count_if(xs, is_even)`; no closures or lambdas |
+| `xs.filter(f)`, `map(f, xs)`, a callback | a parameter `f: fn(T) -> bool`, passed by name: `count_if(xs, is_even)`; no closures or lambdas |
 | `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
 | a `str[256]` passed where `str[16]` is wanted | `str[16](s)` after checking `len(s) <= 16` |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
 | `xs.sort()`, `sorted(xs, reverse=True)` | `sort(mut xs);` then `reverse(mut xs);` |
+| `xs.sort(key=f)`, `xs.sort_by(cmp)`, `Collections.sort(xs, cmp)` | `sort_by(mut xs, before)` from [examples/helpers.al](examples/helpers.al), with `fn before(a: T, b: T) -> bool` |
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
 | `println!("{}", x)` | `print(x);` |
 | `throw` / `raise` | return an enum, or `panic("message")` |
@@ -202,7 +203,7 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 
 Builtins that work on any type and capacity. Their names are reserved: call `gcd`, do not define it. For
 what it leaves out (parsing into an enum instead of trapping, pseudo-random numbers, a map that keeps
-the order its keys were added in), [examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
+the order its keys were added in, sorting by an order of your own), [examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
 
 | Area | Functions |
 |------|-----------|
@@ -229,7 +230,9 @@ the order its keys were added in), [examples/helpers.al](examples/helpers.al) ha
   `let cell: str[8] = pad_left(n, 6, ' ');`. Widths count bytes; longer text is kept whole.
 - `index_of` returns -1 when nothing is found.
 - `sort` orders every type: numbers, then strs by bytes (as `<` does), structs field by field, enums by variant. To
-  sort records by a key, make the key the first field; for descending order, `reverse` afterwards.
+  sort records by a key, make the key the first field; for descending order, `reverse` afterwards. For any
+  other order, `sort_by(mut xs, before)` in [examples/helpers.al](examples/helpers.al) sorts by a function of
+  your own, stably.
 
 ```alang
 struct Score {
