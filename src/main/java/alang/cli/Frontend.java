@@ -49,8 +49,17 @@ public final class Frontend {
     }
 
     public static Result compile(Source source, long maxStack) {
+        return compile(source, maxStack, null);
+    }
+
+    /**
+     * As {@link #compile(Source, long)}, and {@code imported}, unless null, gets the path of each file the
+     * program imports that was looked for, with its text, or null for one that could not be read as text:
+     * what `serve --watch` watches.
+     */
+    static Result compile(Source source, long maxStack, Map<String, String> imported) {
         Diagnostics diags = new Diagnostics(source);
-        Program program = load(source, diags);
+        Program program = load(source, diags, imported);
         if (program == null) return new Result(diags, null, null);
         program.items.addAll(0, Parser.prelude());
         CheckResult check = Checker.check(program, diags, maxStack);
@@ -71,7 +80,7 @@ public final class Frontend {
     }
 
     /** Parses {@code root} and the files it imports; returns the joined program, or null on errors. */
-    private static Program load(Source root, Diagnostics diags) {
+    private static Program load(Source root, Diagnostics diags, Map<String, String> imported) {
         Parser.Parsed first = Parser.parse(root, diags, false);
         if (first == null) return null;
         List<Parser.Parsed> parsed = new ArrayList<>(List.of(first));
@@ -146,7 +155,7 @@ public final class Frontend {
                     "join small files into larger ones");
                 return null;
             }
-            Source src = readFile(file, from, imp, diags);
+            Source src = readFile(file, from, imp, diags, imported);
             if (src == null) {
                 failed = true;
                 continue;
@@ -238,8 +247,12 @@ public final class Frontend {
         return sb.toString();
     }
 
-    /** Reads an imported file as UTF-8, or reports why it cannot and returns null. */
-    private static Source readFile(String file, Source from, Import imp, Diagnostics diags) {
+    /**
+     * Reads an imported file as UTF-8, or reports why it cannot and returns null. {@code imported}, unless null,
+     * gets its text, or null when it cannot be read as text.
+     */
+    private static Source readFile(String file, Source from, Import imp, Diagnostics diags, Map<String, String> imported) {
+        if (imported != null) imported.put(file, null);
         byte[] bytes;
         try {
             bytes = Files.readAllBytes(Path.of(file));
@@ -261,6 +274,7 @@ public final class Frontend {
             diags.error(Code.E0701, imp.span(), "`" + file + "` is not UTF-8 text", "save it as UTF-8");
             return null;
         }
+        if (imported != null) imported.put(file, text);
         Source src = new Source(file, text);
         if (src.lineCount() >= MAX_LINES) {
             diags.error(Code.E0702, imp.span(), "`" + file + "` has " + src.lineCount() + " lines; an imported file has at most "

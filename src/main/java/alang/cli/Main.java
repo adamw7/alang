@@ -79,7 +79,8 @@ public final class Main {
                                        at their limits (empty and full strs and lists of many shapes, the
                                        smallest and largest numbers); report each trap and what hit it
           serve <file.al>              serve the `tool fn` functions to an agent host over MCP: JSON-RPC
-                                       messages, one per line, on stdin and stdout
+                                       messages, one per line, on stdin and stdout; --watch serves each
+                                       new version of the program's files once it compiles
           build <file.al> [-o out.c]   compile to heap-free C99 (no malloc; stack and static data only)
           fmt <file.al>                print the file laid out the one way (indentation, spaces, blank
                                        lines; its line breaks and comments are kept); --write rewrites it,
@@ -105,6 +106,8 @@ public final class Main {
           -o FILE            output file (build)
           --write            rewrite the file in place (fmt, fix)
           --check            report a file that is not formatted, and change nothing (fmt)
+          --watch            poll the program's files and serve each version that compiles, telling the
+                             host when the tools change (serve)
 
         exit codes: 0 success, 1 errors / traps / failed tests, 2 usage error
         """;
@@ -120,7 +123,7 @@ public final class Main {
         Map.entry("tools", Set.of("--json", "--max-steps", "--max-stack")),
         Map.entry("call", Set.of("--json", "--max-steps", "--max-stack", "--timeout")),
         Map.entry("fuzz", Set.of("--json", "--max-steps", "--max-stack")),
-        Map.entry("serve", Set.of("--max-steps", "--max-stack", "--timeout")),
+        Map.entry("serve", Set.of("--max-steps", "--max-stack", "--timeout", "--watch")),
         Map.entry("build", Set.of("-o", "--max-stack")),
         Map.entry("fmt", Set.of("--write", "--check")),
         Map.entry("fix", Set.of("--write", "--json", "--max-stack")),
@@ -133,7 +136,7 @@ public final class Main {
     private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--timeout", "--filter", "-o");
 
     private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--timeout",
-        "--filter", "-o", "--write", "--check");
+        "--filter", "-o", "--write", "--check", "--watch");
 
     private final PrintStream out;
     private final PrintStream err;
@@ -143,6 +146,7 @@ public final class Main {
     private boolean memoryTable;
     private boolean write;
     private boolean checkOnly;
+    private boolean watch;
     private long maxSteps = Interpreter.DEFAULT_MAX_STEPS;
     private long maxStack = Checker.DEFAULT_MAX_STACK;
     private long timeoutMillis = Watchdog.DEFAULT_MILLIS;
@@ -196,6 +200,7 @@ public final class Main {
                         case "--memory" -> memoryTable = true;
                         case "--write" -> write = true;
                         case "--check" -> checkOnly = true;
+                        case "--watch" -> watch = true;
                         case "--max-steps" -> maxSteps = nonNegative(next(args, ++i, a), a);
                         case "--max-stack" -> maxStack = nonNegative(next(args, ++i, a), a);
                         case "--timeout" -> timeoutMillis = millis(next(args, ++i, a), a);
@@ -721,31 +726,51 @@ public final class Main {
      * another thread stops the meter.
      */
     static Map<String, Object> callTool(Source src, FnDecl f, Object arguments, Meter meter) {
-        Map<String, Object> j = new LinkedHashMap<>();
-        j.put("ok", false);  // set again below, where it keeps its place as the first key
-        if (!(arguments instanceof Map<?, ?> m)) {
-            j.put("error", Json.obj("code", "bad_arguments", "message", "arguments must be a JSON object"));
-            return j;
+        Object[] args;
+        try {
+            args = toolArguments(f, arguments);
+        } catch (JsonValues.DecodeException e) {
+            return badArguments(e.getMessage());
+        }
+        return runTool(src, f, args, meter);
+    }
+
+    /**
+     * The values tool {@code f} is called with, decoded from {@code arguments}: parsed JSON that should be an
+     * object holding each parameter, or leaving out one with a default value. Throws a DecodeException that
+     * says what does not fit.
+     */
+    static Object[] toolArguments(FnDecl f, Object arguments) {
+        if (!(arguments instanceof Map<?, ?> m)) throw new JsonValues.DecodeException("arguments must be a JSON object");
+        for (Object key : m.keySet()) {
+            boolean known = f.paramVars.stream().anyMatch(p -> p.name.equals(key));
+            if (!known) throw new JsonValues.DecodeException(key + ": unknown argument");
         }
         Object[] args = new Object[f.params.size()];
-        try {
-            for (Object key : m.keySet()) {
-                boolean known = f.paramVars.stream().anyMatch(p -> p.name.equals(key));
-                if (!known) throw new JsonValues.DecodeException(key + ": unknown argument");
+        for (int i = 0; i < args.length; i++) {
+            LocalVar p = f.paramVars.get(i);
+            if (!m.containsKey(p.name) && f.defaults.get(i) != null) {
+                args[i] = Values.copy(f.defaults.get(i).value, new Meter(0));
+                continue;
             }
-            for (int i = 0; i < args.length; i++) {
-                LocalVar p = f.paramVars.get(i);
-                if (!m.containsKey(p.name) && f.defaults.get(i) != null) {
-                    args[i] = Values.copy(f.defaults.get(i).value, new Meter(0));
-                    continue;
-                }
-                if (!m.containsKey(p.name)) throw new JsonValues.DecodeException(p.name + ": missing argument");
-                args[i] = JsonValues.fromJson(m.get(p.name), p.type, p.name);
-            }
-        } catch (JsonValues.DecodeException e) {
-            j.put("error", Json.obj("code", "bad_arguments", "message", e.getMessage()));
-            return j;
+            if (!m.containsKey(p.name)) throw new JsonValues.DecodeException(p.name + ": missing argument");
+            args[i] = JsonValues.fromJson(m.get(p.name), p.type, p.name);
         }
+        return args;
+    }
+
+    /** The report of a call whose arguments do not fit its tool, which is therefore not made. */
+    static Map<String, Object> badArguments(String message) {
+        return Json.obj("ok", false, "error", Json.obj("code", "bad_arguments", "message", message));
+    }
+
+    /**
+     * Calls tool {@code f} with {@code args}, from {@link #toolArguments}, and returns the report `alang call`
+     * prints, as {@link #callTool} does.
+     */
+    static Map<String, Object> runTool(Source src, FnDecl f, Object[] args, Meter meter) {
+        Map<String, Object> j = new LinkedHashMap<>();
+        j.put("ok", false);  // set again below, where it keeps its place as the first key
         CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
         Interpreter in = new Interpreter(src, captured, meter);
         try {
@@ -835,9 +860,13 @@ public final class Main {
         return v;
     }
 
+    /** How often `serve --watch` looks at the program's files. A change is served once two looks agree. */
+    static final long WATCH_MILLIS = 300;
+
     /**
      * Serves the tools over MCP until stdin ends. Stdout carries only protocol messages, so diagnostics,
-     * warnings included, go to stderr, and a program with errors does not start a server at all.
+     * warnings included, go to stderr, and a program with errors does not start a server at all. With
+     * --watch, a later version with errors is reported there too, and the one before it stays served.
      */
     private int serve(Source src) {
         Frontend.Result r = compile(src);
@@ -847,7 +876,9 @@ public final class Main {
             return 1;
         }
         try (Watchdog watchdog = new Watchdog(timeoutMillis)) {
-            new McpServer(src, r.program(), maxSteps, watchdog, McpServer.WORKERS).serve(in, out);
+            McpServer server = new McpServer(src, r.program(), maxSteps, watchdog, McpServer.WORKERS);
+            if (watch) server.watch(new Reloader(r.program(), maxStack), WATCH_MILLIS, err);
+            server.serve(in, out);
         } catch (IOException e) {
             line(err, "alang: cannot read stdin: " + e.getMessage());
             return 1;

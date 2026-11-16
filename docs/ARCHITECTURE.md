@@ -144,8 +144,9 @@ and any may use JSON. The rules behind the arrows, from
 - **I/O at the edge**: only the CLI touches files, stdin or `System.exit`. No component reads a clock,
   randomness or the environment, starts threads, reflects or logs, and no text depends on the host
   locale or charset. The one exception is at the edge too: `alang serve` runs tool calls on threads of
-  their own, and a watchdog thread stops one that runs past `--timeout`. Each call is still one run on one
-  thread, which another thread can only stop, through its `Meter`.
+  their own, a watchdog thread stops one that runs past `--timeout`, and with `--watch` a timer thread polls
+  the program's files and swaps in each version that compiles. Each call is still one run of one version on
+  one thread, which another thread can only stop, through its `Meter`.
 
 ## Dynamic view: a tool call
 

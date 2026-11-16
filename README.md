@@ -111,7 +111,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `alang tools FILE [--json] [--max-steps N] [--max-stack B]` | JSON tool definitions for every `tool fn` (name, description, input_schema, and input_examples from the tests' calls) |
 | `alang call FILE TOOL [JSON \| -] [--max-steps N] [--max-stack B] [--timeout S]` | Call a tool with JSON arguments; `-` reads them from stdin, none means `{}`; a call that runs longer than `--timeout` seconds (60, 0 for none) stops with the error `timeout` |
 | `alang fuzz FILE [--json] [--max-steps N] [--max-stack B]` | Call every `tool fn`, and a `fn main(input: str[N])`, with arguments at their limits (empty and full strs of many shapes, full lists, the smallest and largest numbers); report each trap with the arguments that hit it |
-| `alang serve FILE [--max-steps N] [--max-stack B] [--timeout S]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout), up to four calls at a time, each within the step budget and `--timeout` |
+| `alang serve FILE [--max-steps N] [--max-stack B] [--timeout S] [--watch]` | Serve every `tool fn` to an agent host over MCP (JSON-RPC on stdin and stdout), up to four calls at a time, each within the step budget and `--timeout`; `--watch` serves each new version of the files that compiles |
 | `alang build FILE [-o out.c] [--max-stack B]` | Compile to heap-free C99 |
 | `alang fix FILE [--write] [--json] [--max-stack B]` | Apply the fix of every diagnostic that has one (marked `= fix:`, `"fix"` in JSON), checking again after each round, since a fixed syntax error lets the parser reach the next; print the result, or `--write` it; fails while errors without a fix remain |
 | `alang fmt FILE [--write \| --check]` | Print the file laid out the one way (indentation, spaces between tokens, blank lines; the lines you broke stay broken); `--write` rewrites it, `--check` fails if it is not formatted |
@@ -200,7 +200,10 @@ The host sees each `tool fn` with the description and input schema `alang tools`
 for its result, and annotations that hold for every ALang tool: read-only, not destructive, idempotent,
 closed-world. A call's text is the JSON `alang call` prints, and a call that fails, from bad arguments to
 a trap, comes back as an error result the model can read and fix. The program is checked once, at start:
-restart the server after editing it.
+restart the server after editing it, or start it with `--watch`. Then it serves each version of the program's
+files that compiles, a moment after it is saved, and tells the host when the tools change
+(`notifications/tools/list_changed`); a version with errors is reported on stderr, and the one before it
+stays served.
 
 Up to four calls run at once, so a slow one holds up neither the others nor `ping` and `tools/list`. Each
 stops at its step budget, or after `--timeout` seconds (60 by default), with an error result, and the
