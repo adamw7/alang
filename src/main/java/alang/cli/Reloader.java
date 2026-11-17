@@ -2,11 +2,9 @@ package alang.cli;
 
 import alang.ast.Ast.Program;
 import alang.diag.Source;
+import alang.util.Utf8;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.nio.ByteBuffer;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -78,13 +76,9 @@ final class Reloader {
     /** The text of a file, as {@link Frontend} reads it: null when it is missing, unreadable or not UTF-8. */
     private static String read(String path) {
         try {
-            byte[] bytes = Files.readAllBytes(Path.of(path));
-            return StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes)).toString();
+            return Utf8.decode(Files.readAllBytes(Path.of(path)));
         } catch (IOException | InvalidPathException | SecurityException e) {
-            return null;  // a CharacterCodingException, for text that is not UTF-8, is an IOException
+            return null;
         }
     }
 }

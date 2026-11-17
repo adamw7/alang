@@ -371,4 +371,14 @@ public sealed interface Type {
         if (t instanceof Str) return U8;
         return null;
     }
+
+    /** The capacity of a str, list, map or set type. */
+    static int capacity(Type t) {
+        return switch (t) {
+            case Str s -> s.cap();
+            case MapT m -> m.cap();
+            case SetT s -> s.cap();
+            default -> ((ListT) t).cap();
+        };
+    }
 }

@@ -7,16 +7,13 @@ import alang.interp.JsonValues;
 import alang.interp.Meter;
 import alang.types.Type;
 import alang.util.Json;
+import alang.util.Utf8;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -216,15 +213,8 @@ final class McpServer {
      * null here too.
      */
     private Map<String, Object> handle(byte[] line, ExecutorService pool, PrintStream out) {
-        String text;
-        try {
-            text = StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(line)).toString();
-        } catch (CharacterCodingException e) {
-            return error(null, PARSE_ERROR, "the message is not valid UTF-8");
-        }
+        String text = Utf8.decode(line);
+        if (text == null) return error(null, PARSE_ERROR, "the message is not valid UTF-8");
         if (text.isBlank()) return null;
         Object message;
         try {

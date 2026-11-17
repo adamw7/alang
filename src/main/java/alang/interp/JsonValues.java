@@ -12,13 +12,9 @@ import alang.interp.Values.StructV;
 import alang.types.PrimKind;
 import alang.types.Type;
 import alang.util.Json;
+import alang.util.Utf8;
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
-import java.nio.charset.CharsetDecoder;
-import java.nio.charset.CoderResult;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -269,20 +265,14 @@ public final class JsonValues {
      * turned each byte that is not UTF-8 into U+FFFD, so different results came back as the same string.
      */
     private static String utf8Text(StrV sv) {
-        CharsetDecoder dec = StandardCharsets.UTF_8.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT);
-        ByteBuffer in = ByteBuffer.wrap(sv.b, 0, sv.len);
-        CharBuffer out = CharBuffer.allocate(sv.len);
-        CoderResult r = dec.decode(in, out, true);
-        if (!r.isError()) r = dec.flush(out);
-        if (r.isError()) {
-            int at = in.position();
+        String text = Utf8.decode(sv.b, sv.len);
+        if (text == null) {
+            int at = Utf8.firstBad(sv.b, sv.len);
             throw new EncodeException("", "the str value is not UTF-8 text (byte 0x"
                 + String.format(java.util.Locale.ROOT, "%02x", sv.b[at] & 0xFF) + " at offset " + at
                 + "), so it has no JSON string; return its bytes as a list[u8; N] instead");
         }
-        return out.flip().toString();
+        return text;
     }
 
     /** An element of an array or list; its path is built only for an error. */

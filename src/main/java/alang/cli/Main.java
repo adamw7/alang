@@ -19,6 +19,7 @@ import alang.interp.Trap;
 import alang.interp.Values;
 import alang.types.Type;
 import alang.util.Json;
+import alang.util.Utf8;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -26,12 +27,6 @@ import java.io.PrintStream;
 import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.nio.ByteBuffer;
-import java.nio.CharBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CharsetDecoder;
-import java.nio.charset.CoderResult;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
@@ -349,18 +344,13 @@ public final class Main {
             throw new UsageException("cannot read " + p + ": " + e.getMessage());
         }
         // Files.readString reported a byte that is not UTF-8 only as "Input length = 1".
-        CharsetDecoder dec = StandardCharsets.UTF_8.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT);
-        ByteBuffer in = ByteBuffer.wrap(bytes);
-        CharBuffer text = CharBuffer.allocate(bytes.length);
-        CoderResult r = dec.decode(in, text, true);
-        if (!r.isError()) r = dec.flush(text);
-        if (r.isError()) {
-            throw new UsageException(p + " is not UTF-8 text (byte 0x" + String.format(Locale.ROOT, "%02x", bytes[in.position()] & 0xFF)
-                + " at offset " + in.position() + "); save it as UTF-8");
+        String text = Utf8.decode(bytes);
+        if (text == null) {
+            int at = Utf8.firstBad(bytes, bytes.length);
+            throw new UsageException(p + " is not UTF-8 text (byte 0x" + String.format(Locale.ROOT, "%02x", bytes[at] & 0xFF)
+                + " at offset " + at + "); save it as UTF-8");
         }
-        return new Source(p.toString(), text.flip().toString());
+        return new Source(p.toString(), text);
     }
 
     // =================================================================== check
@@ -381,11 +371,8 @@ public final class Main {
 
     private int check(Source src) {
         Frontend.Result r = compile(src);
-        Map<String, Object> j = new LinkedHashMap<>();
-        j.put("ok", r.ok());
-        j.put("file", src.path);
-        j.put("errors", r.diags().errorCount());
-        j.put("warnings", r.diags().warningCount());
+        Map<String, Object> j = Json.obj("ok", r.ok(), "file", src.path, "errors", r.diags().errorCount(), "warnings",
+            r.diags().warningCount());
         report(r, j);
         MemoryReport mem = r.ok() ? r.check().memory() : null;
         if (json) {
@@ -421,9 +408,7 @@ public final class Main {
 
     private int runMain(Source src) {
         Frontend.Result r = compile(src);
-        Map<String, Object> j = new LinkedHashMap<>();
-        j.put("ok", false);
-        j.put("file", src.path);
+        Map<String, Object> j = Json.obj("ok", false, "file", src.path);
         if (!report(r, j)) {
             return failCompile(r, j);
         }
@@ -534,9 +519,7 @@ public final class Main {
 
     private int test(Source src) {
         Frontend.Result r = compile(src);
-        Map<String, Object> j = new LinkedHashMap<>();
-        j.put("ok", false);
-        j.put("file", src.path);
+        Map<String, Object> j = Json.obj("ok", false, "file", src.path);
         if (!report(r, j)) return failCompile(r, j);
         List<TestDecl> selected = new ArrayList<>();
         List<String> names = new ArrayList<>();
@@ -633,9 +616,7 @@ public final class Main {
 
     private int tools(Source src) {
         Frontend.Result r = compile(src);
-        Map<String, Object> j = new LinkedHashMap<>();
-        j.put("ok", false);
-        j.put("file", src.path);
+        Map<String, Object> j = Json.obj("ok", false, "file", src.path);
         if (!report(r, j)) return failCompile(r, j);
         List<Object> list = new ArrayList<>();
         for (FnDecl f : r.program().itemsOf(FnDecl.class)) {
@@ -677,10 +658,8 @@ public final class Main {
         Frontend.Result r = compile(src);
         Map<String, Object> j = new LinkedHashMap<>();
         if (!r.ok()) {
-            j.put("ok", false);
-            j.put("error", Json.obj("code", "compile_error", "message", "the program has compile errors"));
-            j.put("diagnostics", r.diags().toJson());
-            line(out, Json.write(j));
+            line(out, Json.write(Json.obj("ok", false, "error", Json.obj("code", "compile_error", "message",
+                "the program has compile errors"), "diagnostics", r.diags().toJson())));
             return 1;
         }
         FnDecl f = r.program().function(name);
@@ -769,8 +748,7 @@ public final class Main {
      * prints, as {@link #callTool} does.
      */
     static Map<String, Object> runTool(Source src, FnDecl f, Object[] args, Meter meter) {
-        Map<String, Object> j = new LinkedHashMap<>();
-        j.put("ok", false);  // set again below, where it keeps its place as the first key
+        Map<String, Object> j = Json.obj("ok", false);  // set again below, where it keeps its place as the first key
         CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
         Interpreter in = new Interpreter(src, captured, meter);
         try {
@@ -797,9 +775,7 @@ public final class Main {
      */
     private int fuzz(Source src) {
         Frontend.Result r = compile(src);
-        Map<String, Object> j = new LinkedHashMap<>();
-        j.put("ok", false);
-        j.put("file", src.path);
+        Map<String, Object> j = Json.obj("ok", false, "file", src.path);
         if (!report(r, j)) return failCompile(r, j);
         List<Fuzz.Entry> entries = Fuzz.run(r.program(), src, maxSteps);
         int calls = 0;
@@ -911,15 +887,7 @@ public final class Main {
         } catch (IOException e) {
             throw new UsageException("cannot read stdin: " + e.getMessage());
         }
-        try {
-            return StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes))
-                .toString();
-        } catch (CharacterCodingException e) {
-            return null;
-        }
+        return Utf8.decode(bytes);
     }
 
     private int callError(Map<String, Object> j, String code, String message) {
@@ -975,9 +943,7 @@ public final class Main {
             }
         }
         if (json) {
-            Map<String, Object> j = new LinkedHashMap<>();
-            j.put("ok", r.ok());
-            j.put("file", src.path);
+            Map<String, Object> j = Json.obj("ok", r.ok(), "file", src.path);
             List<Object> fixed = new ArrayList<>();
             for (Fixer.Fixed f : o.fixed()) {
                 Map<String, Object> one = alang.diag.Diagnostics.toJson(src, f.diagnostic());

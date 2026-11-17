@@ -9,12 +9,9 @@ import alang.diag.Code;
 import alang.diag.Diagnostics;
 import alang.diag.Source;
 import alang.parse.Parser;
+import alang.util.Utf8;
 import java.io.File;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.NoSuchFileException;
@@ -264,13 +261,8 @@ public final class Frontend {
             diags.error(Code.E0701, imp.span(), "cannot read `" + file + "`: " + e.getMessage(), null);
             return null;
         }
-        String text;
-        try {
-            text = StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes)).toString();
-        } catch (CharacterCodingException e) {
+        String text = Utf8.decode(bytes);
+        if (text == null) {
             diags.error(Code.E0701, imp.span(), "`" + file + "` is not UTF-8 text", "save it as UTF-8");
             return null;
         }
