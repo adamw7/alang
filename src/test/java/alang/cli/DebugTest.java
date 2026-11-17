@@ -235,8 +235,8 @@ class DebugTest {
         assertTrue(o.contains("error: no file `q.al` in the program"), o);
         assertTrue(o.contains("error: the program has not started, so `print` has nothing to show"), o);
         assertTrue(o.contains("error: unknown command `fly`\n  = hint: `help` lists the commands"), o);
-        assertTrue(o.contains("error: index 5 is out of range: `entries` has 1 element(s)"), o);
-        assertTrue(o.contains("error: `zz` is not a variable in scope here; these are: entries, i"), o);
+        assertTrue(o.contains("error: trap[R0003]: index 5 is out of bounds for length 1"), o);
+        assertTrue(o.contains("error: unknown name `zz` (column 1)\n  = hint: `locals` lists the variables in scope here"), o);
         assertTrue(o.contains("error: no frame 9: the stack has 2 frame(s), 0 to 1"), o);
     }
 
@@ -273,6 +273,85 @@ class DebugTest {
         Result r = debug("break 3\nrun\nprint input\nprint n\nc\n", p.toString(), "--input", in.toString());
         assertTrue(r.out().contains("input: str[16] = \"hello\"\n"), r.out());
         assertTrue(r.out().contains("n: i64 = 5\n"), r.out());
+    }
+
+    @Test
+    void printEvaluatesExpressionsWithoutChangingTheProgram() throws IOException {
+        Path p = write("e.al", """
+            const LIMIT: i64 = 10;
+
+            fn total(xs: list[i64; _]) -> i64 {
+                var sum: i64 = 0;
+                for x in xs {
+                    sum += x;
+                }
+                return sum;
+            }
+
+            fn main() {
+                var xs: list[i64; 8] = [5, 6, 7];
+                var m: map[str[8], i64; 4] = [];
+                m["k"] = 2;
+                print(total(xs) + m["k"]);
+            }
+            """);
+        Result r = debug("break 15\nrun\nprint xs[1] * 2 + LIMIT\nprint total(xs)\nprint total([1, 2])\n"
+            + "print match len(xs) { 3 => \"three\", _ => \"other\" }\nprint m[\"k\"]\nprint m[\"zz\"]\n"
+            + "print push(mut xs, 1)\nprint xs[\nprint xs\nc\n", p.toString());
+        String o = r.out();
+        assertTrue(o.contains("xs[1] * 2 + LIMIT: i64 = 22\n"), o);
+        assertTrue(o.contains("total(xs): i64 = 18\n"), o);
+        // An instance of a generic function the program never made is checked and made for the expression.
+        assertTrue(o.contains("total([1, 2]): i64 = 3\n"), o);
+        assertTrue(o.contains(": str[5] = \"three\"\n"), o);
+        assertTrue(o.contains("m[\"k\"]: i64 = 2\n"), o);
+        assertTrue(o.contains("error: trap[R0003]: key \"zz\" is not in the map"), o);
+        assertTrue(o.contains("error: a call with `mut` arguments must be its own statement"), o);
+        assertTrue(o.contains("error: unexpected ';'"), o);
+        // Nothing an expression did reached the program: same list, same output, same steps as `alang run`.
+        assertTrue(o.contains("xs: list[i64; 8] = [5, 6, 7]\n"), o);
+        assertTrue(o.endsWith("20\nprogram exited normally after 14 step(s)\n"), o);
+    }
+
+    @Test
+    void aConditionalBreakpointStopsWhereItsConditionHolds() throws IOException {
+        Path p = write("c.al", """
+            fn main() {
+                var sum: i64 = 0;
+                for i in 0..5 {
+                    sum += i;
+                }
+                print(sum);
+            }
+            """);
+        Result r = debug("", p.toString(), "--break", "4 if i == 3", "--break", "4 if sum", "--json");
+        List<Map<?, ?>> stops = new ArrayList<>();
+        List<Map<?, ?>> skipped = new ArrayList<>();
+        for (Map<?, ?> e : events(r.out())) {
+            if ("stopped".equals(e.get("event"))) stops.add(e);
+            if ("condition_skipped".equals(e.get("event"))) skipped.add(e);
+        }
+        assertEquals(1, stops.size(), r.out());
+        assertTrue(Json.write(stops.get(0).get("variables")).contains("{\"name\": \"i\", \"type\": \"i64\", \"value\": \"3\"}"), r.out());
+        // A condition that is no bool is said once, and does not stop.
+        assertEquals(1, skipped.size(), r.out());
+        assertEquals("it is a i64, not a bool", skipped.get(0).get("message"));
+    }
+
+    @Test
+    void aLineIsReachedOnceUnlessTheRunGoesBackToIt() throws IOException {
+        Path p = write("l.al", """
+            fn main() {
+                var n: i64 = 0;
+                if n == 0 { n = 1; }
+                for i in 0..3 { n += i; }
+                print(n);
+            }
+            """);
+        Result r = debug("", p.toString(), "--break", "3", "--break", "4");
+        // Line 3 once, though two statements start on it; line 4 as the loop starts, then each time it goes back round.
+        assertEquals(1, r.out().split("stopped at breakpoint 1", -1).length - 1, r.out());
+        assertEquals(3, r.out().split("stopped at breakpoint 2", -1).length - 1, r.out());
     }
 
     private static List<Map<?, ?>> events(String out) {

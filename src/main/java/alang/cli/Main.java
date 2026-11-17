@@ -829,7 +829,7 @@ public final class Main {
         Interpreter interp = new Interpreter(src, json ? held : out, maxSteps);
         java.io.BufferedReader commands = new java.io.BufferedReader(new java.io.InputStreamReader(in, StandardCharsets.UTF_8));
         boolean interactive = in == System.in && System.console() != null;
-        Debug d = new Debug(src, p, commands, out, json, interactive, maxStops, held);
+        Debug d = new Debug(src, p, commands, out, json, interactive, maxStops, held, r.check().expressions());
         int code = d.session(interp, target, breaks);
         out.flush();
         return code;

@@ -139,6 +139,20 @@ public final class Interpreter {
         flush();
     }
 
+    /**
+     * Evaluates {@code e}, checked for a debugger, in a copy of {@code slots}: the frame of a stopped run, which it
+     * cannot change. It has a budget of its own and writes what it prints to {@code out}.
+     */
+    public static Object evaluate(Source source, Expr e, Object[] slots, long maxSteps, OutputStream out) {
+        Interpreter in = new Interpreter(source, out, maxSteps);
+        in.callStack.push(new Frame("debugger", e.span, null, slots));
+        try {
+            return in.owned(e, slots);
+        } finally {
+            in.flushOutput();
+        }
+    }
+
     /** Evaluates a constant expression (the checker guarantees it needs no frame). */
     public static Object evalConst(Expr e) {
         Interpreter in = new Interpreter(null, OutputStream.nullOutputStream(), 0);
@@ -310,11 +324,13 @@ public final class Interpreter {
         int r = NORMAL;
         for (int k = 0; k < stmts.size(); k++) {
             Stmt s = stmts.get(k);
+            // The run reaches a line anew unless the statement before it in this frame is on the same line, further
+            // left: `a; b;` and `if c { a; }` reach their line once, and a loop on one line each time it goes round.
+            Span prev = frame.last;
+            boolean sameLine = prev != null && prev.line() == s.span.line() && prev.file() == s.span.file()
+                && prev.col() < s.span.col();
             frame.at = s.span;
-            // A statement that goes on a line the one before it started on is not the line's first: a breakpoint
-            // on the line has stopped already.
-            Span prev = k > 0 ? stmts.get(k - 1).span : null;
-            boolean sameLine = prev != null && prev.line() == s.span.line() && prev.file() == s.span.file();
+            frame.last = s.span;
             debugger.statement(s, !sameLine, frame, callStack.size());
             int mark = frame.live.size();
             frame.mark = mark;

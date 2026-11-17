@@ -944,7 +944,7 @@ breakpoints before the first command.
 
 | Command | Short | What it does |
 |---------|-------|--------------|
-| `break LOC` | `b` | Stops at LOC: a line of the main file (`12`), a line of an imported one (`lib/fmt.al:12`), or a function (`add_word`), at the first statement of each call. A line must have a statement start on it; if it does not, the error names the nearest lines that do. |
+| `break LOC` | `b` | Stops at LOC: a line of the main file (`12`), a line of an imported one (`lib/fmt.al:12`), or a function (`add_word`), at the first statement of each call. A line must have a statement start on it; if it does not, the error names the nearest lines that do. `break LOC if COND` stops only where the bool expression COND is true: `break 12 if i == 3 and len(xs) > 0`. |
 | `delete [N]` | `d` | Deletes breakpoint N, or every one. |
 | `breakpoints` | | Lists the breakpoints, with how often each was hit. |
 | `run` | `r` | Starts the program, which then stops at breakpoints and traps. |
@@ -955,14 +955,25 @@ breakpoints before the first command.
 | `where` | `bt` | The call stack, innermost first, with the statement each frame is at. |
 | `frame N` | | Looks at frame N (0 is the innermost) for `locals`, `print` and `list`. |
 | `locals` | `v` | The frame's parameters and the variables in scope, with their types and values. |
-| `print PATH` | `p` | A variable or constant, or a part of one: `xs[2]`, `p.name`, `pair.0`, `m["key"]`, `s[0]` (a byte). |
+| `print EXPR` | `p` | The value of an expression, in the scope of the frame: `xs[i].name`, `len(xs) - 1`, `total(xs)`, `m["key"]`, `match k { 3 => "three", _ => "other" }`. |
 | `list [LINE]` | `l` | The source around the stop, or around LINE. |
 | `display` | | Also shows the variables at every stop; again to stop showing them. |
 | `help` | `h` | The commands. |
 | `quit` | `q` | Ends the session, and the program with it. |
 
-A stop is before a statement runs: a line breakpoint stops at the first statement that starts on the line
-each time it is reached, so a loop body stops once per iteration, and `a; b;` on one line stops once.
+A stop is before a statement runs. A line breakpoint stops where the run reaches its line anew: at a statement
+that starts on the line, unless the statement before it in the same frame started on that line too, further
+left. So `a; b;` and `if c { a; }` on one line stop once, a loop body on lines of its own stops once per
+iteration, and `for i in 0..3 { n += i; }` on one line stops as the loop starts and then each time it goes
+back round.
+
+An expression of `print` or of a condition is checked as if it were written at the statement the frame is
+at, with the variables in scope there, the constants and the functions of the program; it is then evaluated
+on a copy of the frame, with a budget of its own (10 million steps) that the program's steps do not include.
+A call with a `mut` argument is refused (E0215), so an expression cannot change the program; what a function
+it calls prints is shown with its value. A condition that does not check where its breakpoint is reached (a
+name not yet in scope, a value that is no bool) is reported once for that place, as `condition_skipped`,
+and does not stop there; one that traps when it is evaluated stops, and says so.
 A variable is in scope from the statement after its declaration to the end of its block; a loop's
 variables are in scope in its body, and the names a match arm binds in the arm. A trap always stops, where
 it happens and before the stack unwinds: `where`, `frame`, `locals` and `print` show the state that led to
@@ -976,10 +987,10 @@ without stopping. So `alang debug file.al --break 12 < /dev/null` prints the sta
 it is reached.
 
 With `--json`, every line of output is one JSON object with an `"event"`: `breakpoint` when one is set,
-`stopped` (with `"reason"` `breakpoint`, `step` or `trap`; `file`, `line`, `column`, `source_line`,
+`condition_skipped`, `stopped` (with `"reason"` `breakpoint`, `step` or `trap`; a `condition_error` when the condition trapped; `file`, `line`, `column`, `source_line`,
 `function`, `steps`; a trap's `code` and `message`; and `variables`, each `{"name", "type", "value"}`,
 when the variables are shown), `output` with the text the program printed since the last event, `stack`,
-`frame`, `variables`, `value`, `source`, `breakpoints`, `deleted`, `display` and `error` (`message` and
+`frame`, `variables`, `value` (the `expression`, its `type` and `value`, and any `output`), `source`, `breakpoints`, `deleted`, `display` and `error` (`message` and
 `hint`) in answer to commands, and last `exited`: `"ok": true` with the steps and a tool's `result`, or
 `"ok": false` with the `trap` as `run --json` reports it. Without `--json`, the program's output and the
 debugger's share stdout, in the order they happen.

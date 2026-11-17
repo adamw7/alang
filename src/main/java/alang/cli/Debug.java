@@ -2,7 +2,8 @@ package alang.cli;
 
 import alang.ast.Ast.Arm;
 import alang.ast.Ast.Block;
-import alang.ast.Ast.ConstDecl;
+import alang.ast.Ast.Expr;
+import alang.ast.Ast.ExprStmt;
 import alang.ast.Ast.FnDecl;
 import alang.ast.Ast.For;
 import alang.ast.Ast.If;
@@ -11,12 +12,18 @@ import alang.ast.Ast.Program;
 import alang.ast.Ast.Routine;
 import alang.ast.Ast.Stmt;
 import alang.ast.Ast.While;
+import alang.check.Expressions;
+import alang.diag.Diagnostic;
+import alang.diag.Diagnostics;
 import alang.diag.Source;
 import alang.diag.Span;
 import alang.interp.Debugger;
 import alang.interp.Frame;
 import alang.interp.Interpreter;
 import alang.interp.Trap;
+import alang.parse.Parser;
+import alang.types.PrimKind;
+import alang.types.Type;
 import alang.util.Json;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
@@ -25,6 +32,7 @@ import java.io.PrintStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -46,7 +54,8 @@ final class Debug implements Debugger {
     static final String HELP = """
         commands (a resuming command runs the program until the next stop):
           break LOC      b   stop at LOC: a line (12), a line of an imported file (lib/fmt.al:12),
-                             or the first statement of a function (add_word)
+                             or the first statement of a function (add_word); `break LOC if COND`
+                             stops only where COND is true, as `break 12 if i == 3`
           delete [N]     d   delete breakpoint N, or all of them
           breakpoints        list the breakpoints and how often each was hit
           run            r   start the program (it then stops only at breakpoints and traps)
@@ -57,7 +66,8 @@ final class Debug implements Debugger {
           where          bt  the call stack, innermost first
           frame N            look at frame N of the stack (0 is the innermost)
           locals         v   the variables in scope in the frame, with their values
-          print PATH     p   a variable, a constant, or a part of one: xs[2], p.name, pair.0, m["key"]
+          print EXPR     p   the value of an expression, in the scope of the frame: xs[i].name,
+                             len(xs) - 1, total(xs), m["key"]; it cannot change the program
           list [LINE]    l   the source around the stop, or around LINE
           display            also show the variables at every stop (again to stop showing them)
           help           h   this text
@@ -66,11 +76,33 @@ final class Debug implements Debugger {
 
     private enum Mode { CONTINUE, STEP, NEXT, FINISH }
 
-    private record Breakpoint(int id, Source file, int line, String function, int[] hits) {
+    /**
+     * A breakpoint; {@code condition} is the text of its `if`, or null, and {@code checked} the condition checked for
+     * each scope it was reached in.
+     */
+    private record Breakpoint(int id, Source file, int line, String function, String condition, int[] hits,
+                              Map<List<Object>, Checked> checked) {
         String where() {
-            return function != null ? "fn " + function : file.path + ":" + line;
+            return (function != null ? "fn " + function : file.path + ":" + line) + (condition == null ? "" : " if " + condition);
         }
     }
+
+    /** An expression typed at a stop, checked for its frame: what to evaluate, and the frame to evaluate it in. */
+    private record Checked(Expr expr, Routine frame) {}
+
+    /** An expression that could not be checked or evaluated: what to say, and how to fix it. */
+    private static final class EvalError extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+        final String hint;
+
+        EvalError(String message, String hint) {
+            super(message, null, false, false);
+            this.hint = hint;
+        }
+    }
+
+    /** The budget of an expression typed at a stop, in steps; it is not charged to the program. */
+    static final long EXPRESSION_STEPS = 10_000_000L;
 
     private static final class Quit extends RuntimeException {
         private static final long serialVersionUID = 1L;
@@ -89,7 +121,7 @@ final class Debug implements Debugger {
     private final int maxStops;
     /** With --json the program's output is held here and shown as an "output" event before each stop. */
     private final ByteArrayOutputStream held;
-    private final List<ConstDecl> constants;
+    private final Expressions expressions;
     /** For each file, the lines a statement starts on. */
     private final Map<Source, TreeSet<Integer>> lines = new java.util.HashMap<>();
 
@@ -109,7 +141,7 @@ final class Debug implements Debugger {
     private int selected;
 
     Debug(Source src, Program program, BufferedReader commands, PrintStream out, boolean json, boolean interactive,
-          int maxStops, ByteArrayOutputStream held) {
+          int maxStops, ByteArrayOutputStream held, Expressions expressions) {
         this.src = src;
         this.program = program;
         this.commands = commands;
@@ -118,7 +150,7 @@ final class Debug implements Debugger {
         this.interactive = interactive;
         this.maxStops = maxStops;
         this.held = held;
-        this.constants = program.itemsOf(ConstDecl.class);
+        this.expressions = expressions;
         for (Routine r : program.itemsOf(Routine.class)) collect(r.body);
     }
 
@@ -202,7 +234,18 @@ final class Debug implements Debugger {
 
     @Override
     public void statement(Stmt s, boolean lineStart, Frame top, int depth) {
-        Breakpoint bp = stopsExhausted ? null : breakpointAt(s, lineStart, top);
+        Breakpoint bp = null;
+        String conditionError = null;
+        for (Breakpoint b : stopsExhausted ? List.<Breakpoint>of() : breakpointsAt(s, lineStart, top)) {
+            try {
+                if (b.condition != null && !condition(b, top)) continue;
+            } catch (EvalError e) {
+                // A condition that checks but cannot be worked out here, as one that traps, stops, to say so.
+                conditionError = e.getMessage();
+            }
+            bp = b;
+            break;
+        }
         boolean stepped = switch (mode) {
             case CONTINUE -> false;
             case STEP -> true;
@@ -217,6 +260,7 @@ final class Debug implements Debugger {
         Span at = s.span;
         Map<String, Object> j = Json.obj("event", "stopped", "reason", bp != null ? "breakpoint" : "step");
         if (bp != null) j.put("breakpoint", bp.id);
+        if (conditionError != null) j.put("condition_error", conditionError);
         String head = (bp != null ? "stopped at breakpoint " + bp.id : "stepped") + " in " + frames.get(0).name() + ", "
             + where(at);
         placeJson(j, at);
@@ -228,9 +272,74 @@ final class Debug implements Debugger {
         } else {
             line(head);
             line(sourceLine(at, "  "));
+            if (conditionError != null) line("  the condition `" + bp.condition + "` could not be evaluated: " + conditionError);
             if (auto || display) printVariables(frames.get(0));
         }
         pause();
+    }
+
+    /** Whether the condition of {@code bp} holds in {@code top}. */
+    private boolean condition(Breakpoint bp, Frame top) {
+        List<Object> key = new ArrayList<>();
+        key.add(top.routine());
+        key.addAll(top.scope());
+        Checked c = bp.checked.get(key);
+        if (c == null) {
+            try {
+                c = check(bp.condition, top);
+                if (!(c.expr.type instanceof Type.Prim p && p.kind() == PrimKind.BOOL)) {
+                    throw new EvalError("it is a " + c.expr.type + ", not a bool", "write a comparison, such as `i == 3`");
+                }
+            } catch (EvalError e) {
+                // Where the condition does not check, such as on the line of a loop before its variable is declared,
+                // the breakpoint does not stop: that is said once for each scope, and the run goes on.
+                c = new Checked(null, null);
+                Span at = top.at();
+                Map<String, Object> j = Json.obj("event", "condition_skipped", "breakpoint", bp.id, "condition", bp.condition,
+                    "message", e.getMessage(), "hint", e.hint);
+                placeJson(j, at);
+                event(j, "breakpoint " + bp.id + " does not stop at " + where(at) + ": its condition `" + bp.condition
+                    + "` does not check there: " + e.getMessage() + "\n  = hint: " + e.hint);
+            }
+            bp.checked.put(key, c);
+        }
+        if (c.expr == null) return false;
+        ByteArrayOutputStream ignored = new ByteArrayOutputStream();
+        try {
+            return (Boolean) top.evaluate(c.expr, c.frame, EXPRESSION_STEPS, ignored);
+        } catch (Trap t) {
+            throw new EvalError("trap[" + t.code.name() + "]: " + t.getMessage(), "make the condition safe where it is reached");
+        }
+    }
+
+    /** Parses and checks {@code text} as an expression written at the statement {@code f} is at. */
+    private Checked check(String text, Frame f) {
+        String body = text.strip();
+        while (body.endsWith(";")) body = body.substring(0, body.length() - 1).strip();
+        if (body.isEmpty()) throw new EvalError("expected an expression", "write a variable, such as `xs`, or an expression, such as `len(xs) - 1`");
+        // The expression is the only statement of a function of its own, on a line of its own, so that its columns
+        // are those of the text typed.
+        Source wrap = new Source("<expression>", "fn debugger() {\n" + body + ";\n}\n");
+        Diagnostics d = new Diagnostics(wrap);
+        Parser.Parsed parsed = Parser.parse(wrap, d, false);
+        if (parsed == null) throw firstError(d, "write one expression, such as `xs[i].name` or `len(xs) - 1`");
+        List<Stmt> stmts = parsed.program.itemsOf(FnDecl.class).get(0).body.stmts();
+        if (stmts.size() != 1 || !(stmts.get(0) instanceof ExprStmt es)) {
+            throw new EvalError("expected one expression, found `" + body + "`", "write one expression, such as `xs[i].name`");
+        }
+        Diagnostics errors = new Diagnostics(wrap);
+        Routine frame = expressions.check(es.expr, f.routine(), f.scope(), errors);
+        if (frame == null) throw firstError(errors, "`locals` lists the variables in scope here");
+        return new Checked(es.expr, frame);
+    }
+
+    private static EvalError firstError(Diagnostics d, String fallback) {
+        for (Diagnostic x : d.all()) {
+            if (x.isError()) {
+                return new EvalError(x.message() + " (column " + x.span().col() + ")", x.hint() == null || x.hint().isEmpty() ? fallback : x.hint());
+            }
+        }
+        return new EvalError("the expression is not valid", fallback);
     }
 
     @Override
@@ -288,19 +397,21 @@ final class Debug implements Debugger {
         commandLoop();
     }
 
-    private Breakpoint breakpointAt(Stmt s, boolean lineStart, Frame top) {
+    /** The breakpoints at statement {@code s}, in the order they were set. */
+    private List<Breakpoint> breakpointsAt(Stmt s, boolean lineStart, Frame top) {
         Source file = s.span.file() != null ? s.span.file() : src;
+        List<Breakpoint> found = new ArrayList<>();
         for (Breakpoint b : breakpoints) {
             if (b.function != null) {
                 Routine r = top.routine();
                 if (r instanceof FnDecl f && f.name.equals(b.function) && !r.body.stmts().isEmpty() && r.body.stmts().get(0) == s) {
-                    return b;
+                    found.add(b);
                 }
             } else if (lineStart && b.file == file && b.line == s.span.line()) {
-                return b;
+                found.add(b);
             }
         }
-        return null;
+        return found;
     }
 
     // =================================================================== commands
@@ -428,15 +539,33 @@ final class Debug implements Debugger {
                 else printVariables(f);
             }
             case "print", "p" -> {
-                if (arg.isEmpty()) return error("`print` needs a variable", "write `print x`, `print xs[0]` or `print p.name`");
-                Frame.Variable v;
+                if (arg.isEmpty()) return error("`print` needs an expression", "write `print x`, `print xs[0]` or `print len(xs) - 1`");
+                Frame f = stack.get(selected);
+                ByteArrayOutputStream printed = new ByteArrayOutputStream();
+                Checked c;
+                Object v;
                 try {
-                    v = stack.get(selected).lookup(arg, constants);
-                } catch (Frame.LookupException e) {
-                    return error(e.getMessage(), "`locals` lists the variables in scope");
+                    c = check(arg, f);
+                    try {
+                        v = f.evaluate(c.expr, c.frame, EXPRESSION_STEPS, printed);
+                    } catch (Trap t) {
+                        throw new EvalError("trap[" + t.code.name() + "]: " + t.getMessage(), t.code.explanation);
+                    }
+                } catch (EvalError e) {
+                    return error(e.getMessage(), e.hint);
                 }
-                if (json) line(Json.write(variableJson(v, "value")));
-                else line(v.name() + ": " + v.type() + " = " + clip(v.value()));
+                String value = Frame.text(v, c.expr.type);
+                String out2 = printed.toString(StandardCharsets.UTF_8);
+                if (json) {
+                    Map<String, Object> j = Json.obj("event", "value", "expression", arg.strip(), "type", c.expr.type.toString(),
+                        "value", clip(value));
+                    if (value.length() > MAX_VALUE_CHARS) j.put("length", value.length());
+                    if (!out2.isEmpty()) j.put("output", out2);
+                    line(Json.write(j));
+                } else {
+                    if (!out2.isEmpty()) out.print(out2.endsWith("\n") ? out2 : out2 + "\n");
+                    line(arg.strip() + ": " + c.expr.type + " = " + clip(value));
+                }
             }
             case "list", "l" -> list(arg, stack.get(selected).at());
             default -> {
@@ -456,7 +585,18 @@ final class Debug implements Debugger {
         return false;
     }
 
-    private void addBreak(String loc) {
+    private void addBreak(String spec) {
+        String loc = spec.strip();
+        String condition = null;
+        int cond = loc.indexOf(" if ");
+        if (cond >= 0) {
+            condition = loc.substring(cond + 4).strip();
+            loc = loc.substring(0, cond).strip();
+            if (condition.isEmpty()) {
+                error("`break " + loc + " if` needs a condition", "write `break " + loc + " if i == 3`");
+                return;
+            }
+        }
         Source file = src;
         String lineText = loc;
         int colon = loc.lastIndexOf(':');
@@ -495,10 +635,11 @@ final class Debug implements Debugger {
                         : "the nearest lines with one are " + String.join(" and ", near));
                 return;
             }
-            Breakpoint b = new Breakpoint(nextId++, file, n, null, new int[1]);
+            Breakpoint b = new Breakpoint(nextId++, file, n, null, condition, new int[1], new HashMap<>());
             breakpoints.add(b);
             Map<String, Object> j = Json.obj("event", "breakpoint", "id", b.id, "file", file.path, "line", n);
-            event(j, "breakpoint " + b.id + " at " + file.path + ":" + n);
+            if (condition != null) j.put("condition", condition);
+            event(j, "breakpoint " + b.id + " at " + b.where());
             return;
         }
         if (colon > 0 || !isName(loc)) {
@@ -513,9 +654,11 @@ final class Debug implements Debugger {
             error("no function `" + loc + "`", "the functions are: " + String.join(", ", fns.keySet()));
             return;
         }
-        Breakpoint b = new Breakpoint(nextId++, null, 0, loc, new int[1]);
+        Breakpoint b = new Breakpoint(nextId++, null, 0, loc, condition, new int[1], new HashMap<>());
         breakpoints.add(b);
-        event(Json.obj("event", "breakpoint", "id", b.id, "function", loc), "breakpoint " + b.id + " at fn " + loc);
+        Map<String, Object> j = Json.obj("event", "breakpoint", "id", b.id, "function", loc);
+        if (condition != null) j.put("condition", condition);
+        event(j, "breakpoint " + b.id + " at " + b.where());
     }
 
     private static boolean isName(String s) {
@@ -549,6 +692,7 @@ final class Debug implements Debugger {
                 j.put("file", b.file.path);
                 j.put("line", b.line);
             }
+            if (b.condition != null) j.put("condition", b.condition);
             j.put("hits", b.hits[0]);
             list.add(j);
             sb.append(b.id).append(": ").append(b.where()).append(", hit ").append(b.hits[0]).append(" time(s)\n");

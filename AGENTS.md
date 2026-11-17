@@ -33,7 +33,8 @@ When a value is wrong and you cannot see why, debug instead of adding `print`s: 
 variable in scope, then the program's outcome. `--break add_word` stops at each call of a function,
 `--test NAME` and `--call TOOL '{...}'` debug a test or a tool, and a trap always stops where it happens,
 with the variables of the frame that trapped. To drive it, pipe commands in, one per line: `step`, `next`,
-`finish`, `continue`, `where`, `frame N`, `locals`, `print entries[0].word` (`help` lists them).
+`finish`, `continue`, `where`, `frame N`, `locals`, `print len(entries) - 1` (any expression; `help`
+lists them). `--break "12 if i == 3"` stops only where the condition holds.
 
 No `bin/alang` yet? Unpack `alang-VERSION.tar.gz` from <https://github.com/adamw7/alang/releases/latest>
 and use its `bin/alang` (`bin\alang.cmd` on Windows); it needs only Java 21 or newer.
