@@ -40,9 +40,13 @@ public final class Interpreter {
     private final Meter meter;
     private Object retVal;
 
-    private record CallSite(String name, Span site) {}
+    /** The call stack, innermost first: the routine of each frame, its slots, and with a debugger where it is. */
+    private final Deque<Frame> callStack = new ArrayDeque<>();
 
-    private final Deque<CallSite> callStack = new ArrayDeque<>();
+    /** Told of each statement and trap; null when no debugger is attached, as for every run but `alang debug`. */
+    private Debugger debugger;
+    /** The trap the debugger was last told of, which every statement it unwinds through rethrows. */
+    private Trap reported;
 
     /** print() formats into this fixed buffer, which goes to {@link #out} whenever it fills up. */
     private final class PrintSink implements ByteSink {
@@ -121,6 +125,20 @@ public final class Interpreter {
         this.meter = meter;
     }
 
+    /**
+     * Attaches a debugger, which is told of each statement before it runs and of each trap before the stack
+     * unwinds. It reads the run's frames and does not change them: the run computes the same values and steps.
+     */
+    public void attach(Debugger d) {
+        this.debugger = d;
+    }
+
+    /** Writes out what print() has formatted so far: a debugger calls it before it shows where the run stopped. */
+    public void flushOutput() {
+        printSink.drain();
+        flush();
+    }
+
     /** Evaluates a constant expression (the checker guarantees it needs no frame). */
     public static Object evalConst(Expr e) {
         Interpreter in = new Interpreter(null, OutputStream.nullOutputStream(), 0);
@@ -158,7 +176,7 @@ public final class Interpreter {
             int cap = ((Type.Str) p.type).cap();
             if (input.length > cap) {
                 Trap t = new Trap(Code.R0004, p.span, "standard input exceeds str capacity " + cap + " of `" + p.name + "`");
-                callStack.push(new CallSite("fn main", main.nameSpan));
+                callStack.push(new Frame("fn main", main.nameSpan, main, new Object[main.locals.size()]));
                 fillTrace(t);
                 throw t;
             }
@@ -176,7 +194,7 @@ public final class Interpreter {
         Trap got = null;
         try {
             Object[] slots = new Object[t.locals.size()];
-            callStack.push(new CallSite(entry, t.span));
+            callStack.push(new Frame(entry, t.span, t, slots));
             execBlock(t.body, slots);
             callStack.pop();
         } catch (Trap trap) {
@@ -209,12 +227,12 @@ public final class Interpreter {
     private void fillTrace(Trap t) {
         if (!t.trace.isEmpty()) return;
         int i = 0;
-        for (CallSite c : callStack) {
+        for (Frame c : callStack) {
             boolean outermost = ++i == callStack.size();
             // A call in an imported file names the file; the entry point is always in the main one.
-            String where = outermost ? " (entry point, line " + c.site.line() + ")"
-                : " (called at " + c.site.where(source) + ")";
-            t.trace.add(c.name + where);
+            String where = outermost ? " (entry point, line " + c.site().line() + ")"
+                : " (called at " + c.site().where(source) + ")";
+            t.trace.add(c.name() + where);
         }
         callStack.clear();
     }
@@ -243,7 +261,7 @@ public final class Interpreter {
     private Object invoke(FnDecl f, Object[] args, Span site) {
         Object[] slots = new Object[f.locals.size()];
         System.arraycopy(args, 0, slots, 0, args.length);
-        callStack.push(new CallSite("fn " + f.name, site));
+        callStack.push(new Frame("fn " + f.name, site, f, slots));
         for (Expr r : f.requires) {
             if (!(Boolean) eval(r, slots)) {
                 throw new Trap(Code.R0006, site, "precondition of `" + f.name + "` failed: requires " + text(r.span));
@@ -273,6 +291,7 @@ public final class Interpreter {
     // =================================================================== statements
 
     private int execBlock(Block b, Object[] slots) {
+        if (debugger != null) return debugBlock(b, slots);
         for (Stmt s : b.stmts()) {
             int r = exec(s, slots);
             if (r != NORMAL) return r;
@@ -280,11 +299,63 @@ public final class Interpreter {
         return NORMAL;
     }
 
+    /**
+     * execBlock with a debugger attached: it is told of each statement first, and the variables declared in the
+     * block go out of scope when it ends.
+     */
+    private int debugBlock(Block b, Object[] slots) {
+        Frame frame = callStack.peek();
+        int live = frame.live.size();
+        List<Stmt> stmts = b.stmts();
+        int r = NORMAL;
+        for (int k = 0; k < stmts.size(); k++) {
+            Stmt s = stmts.get(k);
+            frame.at = s.span;
+            // A statement that goes on a line the one before it started on is not the line's first: a breakpoint
+            // on the line has stopped already.
+            Span prev = k > 0 ? stmts.get(k - 1).span : null;
+            boolean sameLine = prev != null && prev.line() == s.span.line() && prev.file() == s.span.file();
+            debugger.statement(s, !sameLine, frame, callStack.size());
+            int mark = frame.live.size();
+            frame.mark = mark;
+            try {
+                r = exec(s, slots);
+            } catch (Trap t) {
+                if (t != reported) {
+                    reported = t;
+                    frame.at = s.span;
+                    debugger.trap(t, frames());
+                }
+                throw t;
+            }
+            // A loop's variables, and the names an arm of a match binds, end with the statement.
+            if (!(s instanceof Let || s instanceof Destructure)) frame.truncate(mark);
+            if (r != NORMAL) break;
+        }
+        frame.truncate(live);
+        return r;
+    }
+
+    /** The frames of the run, innermost first: for a debugger, which reads them where it stops. */
+    public List<Frame> frames() {
+        return List.copyOf(callStack);
+    }
+
+    /** With a debugger attached, notes that {@code v} now holds a value in the innermost frame. */
+    private void bound(LocalVar v) {
+        if (debugger != null && v != null) callStack.peek().bind(v);
+    }
+
     private int exec(Stmt s, Object[] slots) {
         step(s.span);
         return switch (s) {
             case Let l -> {
                 slots[l.var.slot] = Values.coerce(owned(l.init, slots), l.var.type, meter);
+                if (debugger != null) {
+                    // Names a match in the initializer bound are gone once it has its value.
+                    callStack.peek().truncate(callStack.peek().mark);
+                    bound(l.var);
+                }
                 yield NORMAL;
             }
             case Assign a -> {
@@ -293,7 +364,9 @@ public final class Interpreter {
             }
             case Destructure d -> {
                 // The pattern always matches; matching it binds its names.
-                matches(d.pattern, Values.coerce(owned(d.init, slots), d.init.type, meter), slots);
+                Object v = Values.coerce(owned(d.init, slots), d.init.type, meter);
+                if (debugger != null) callStack.peek().truncate(callStack.peek().mark);
+                matches(d.pattern, v, slots);
                 yield NORMAL;
             }
             case If i -> {
@@ -408,6 +481,7 @@ public final class Interpreter {
         while (true) {
             step(f.span);
             slots[f.var.slot] = i;
+            bound(f.var);
             int r = body(f, f.body, slots);
             if (r != GO) return r;
             if (f.rev) {
@@ -441,6 +515,8 @@ public final class Interpreter {
                 if (f.indexVar != null) slots[f.indexVar.slot] = (long) i;
                 slots[f.var.slot] = items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF);
             }
+            bound(f.indexVar);
+            bound(f.var);
             int r = body(f, f.body, slots);
             if (r != GO) return r;
         }
@@ -463,6 +539,8 @@ public final class Interpreter {
                 step(f.span);
                 if (f.indexVar != null) slots[f.indexVar.slot] = index++;
                 slots[f.var.slot] = d >>> 8;
+                bound(f.indexVar);
+                bound(f.var);
                 int r = body(f, f.body, slots);
                 if (r != GO) return r;
             }
@@ -501,6 +579,8 @@ public final class Interpreter {
             if (before > piece.len) Arrays.fill(piece.b, piece.len, before, (byte) 0);
             if (f.indexVar != null) slots[f.indexVar.slot] = index++;
             slots[f.var.slot] = piece;
+            bound(f.indexVar);
+            bound(f.var);
             int r = body(f, f.body, slots);
             if (r != GO) return r;
             if (pos < 0) break;
@@ -525,6 +605,7 @@ public final class Interpreter {
             case BindPat b -> {
                 // A copy, as the C backend makes: the arm may change the value it was taken from.
                 slots[b.var.slot] = Values.copy(v, meter);
+                bound(b.var);
                 yield true;
             }
             case VariantPat vp -> {
