@@ -3,7 +3,7 @@ error[E0102]: unknown function `parse_int`
   |
 5 |     let n: i64 = parse_int(s);
   |                  ^^^^^^^^^
-  = hint: convert the text with an integer type's name: i64(trim(s)), which traps unless the text is a decimal integer, so check is_int(trim(s)) first
+  = hint: use parse_i64(trim(s)), an Option<i64> that is Option.None for text that is not a decimal integer; or i64(trim(s)), which traps on such text, after checking is_int(trim(s))
 
 error[E0102]: unknown function `int`
  --> tests/errors/E0102_missing_library.al:6:18
@@ -73,7 +73,7 @@ error[E0102]: unknown function `filter`
    |
 15 |     filter(s);
    |     ^^^^^^
-  = hint: write the loop, or a function that takes one: fn keep<T>(xs: list[T; _], f: fn(T) -> bool, out: mut list[T; _]) { for x in xs { if f(x) { push(mut out, x); } } }
+  = hint: use retain(mut xs, keep) with fn keep(x: T) -> bool: it keeps the elements for which keep is true
 
 error[E0102]: unknown function `enumerate`
   --> tests/errors/E0102_missing_library.al:16:5
