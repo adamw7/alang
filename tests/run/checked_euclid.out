@@ -1,0 +1,20 @@
+Option.Some(3) Option.None Option.None
+Option.None Option.Some(2) Option.Some(-128) Option.None
+Option.Some(2147418112) Option.None Option.Some(-2147483648)
+Option.Some(18446744069414584320) Option.None
+Option.None Option.Some(-9223372036854775808) Option.Some(0)
+Option.Some(65535) Option.None Option.None
+Option.Some(4294967295)
+product 12
+4 2 1 1 0
+-4 4 -3 3 -4
+0 126 -2
+0 1 9223372036854775807 1 -3074457345618258603
+5 1844674407370955161
+-7: 10
+0: 30
+7: 50
+737564071 3 3
+2 0
+1
+16 1 1

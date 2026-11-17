@@ -169,14 +169,19 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `s.split(",")`, `s.split()`, `", ".join(xs)` | `let parts: list[str[16]; 8] = split(s, ",");`, `words(s)`, `let line: str[64] = join(xs, ", ");` |
 | the same on input that may not fit | `var parts: list[str[16]; 8] = []; let ok: bool = try_split(mut parts, s, ",");` |
 | `s.count(",")`, `xs.count(x)` | `count(s, ',')`, `count(xs, x)` |
-| `int(s)`, `s.parse::<i64>()` | `i64(trim(s))`, after checking `is_int(trim(s))`: bad text traps |
-| `float(s)`, `s.parse::<f64>()` | `f64(trim(s))`, after checking `is_float(trim(s))`: an optional sign, digits and at most one `.` (`3.`, `.25` count), and an optional exponent (`1e5`, `2.5E-3`) |
+| `int(s)`, `s.parse::<i64>()` | `parse_i64(trim(s))`: `Option.Some(n)`, or `Option.None` for bad text; or `i64(trim(s))` after checking `is_int(trim(s))`, as bad text traps |
+| `float(s)`, `s.parse::<f64>()` | `parse_f64(trim(s))`, or `f64(trim(s))` after checking `is_float(trim(s))`: an optional sign, digits and at most one `.` (`3.`, `.25` count), and an optional exponent (`1e5`, `2.5E-3`) |
+| `a % m` in Python (never negative), `a.rem_euclid(m)`, `Math.floorMod(a, m)` | `rem_euclid(a, m)`: `rem_euclid(-1, 5)` is 4, where `-1 % 5` is -1; `a // m` is `div_euclid(a, m)` |
+| `(a * b) % m` with big numbers, `pow(a, b, m)` | `mul_mod(a, b, m)`: exact however large `a * b` is (for `pow(a, b, m)`, square and multiply with it) |
+| `a.checked_add(b)`, `Math.addExact` in a `try` | `checked_add(a, b)`, `checked_sub`, `checked_mul`: an `Option`, `Option.None` when it does not fit |
 | `f"{x:.2f}"`, `format!("{:.2}", x)`, `x.toFixed(2)` | `fixed(x, 2)`, in `print`/`append` or stored in a typed str |
 | `f"{n:03}"`, `s.rjust(8)`, `s.ljust(8)`, `padStart` | `pad_left(n, 3, '0')`, `pad_left(s, 8, ' ')`, `pad_right(s, 8, ' ')` |
 | `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
 | `def f(x, y=2)`, `function f(x, y = 2)` | `fn f(x: i64, y: i64 = 2)`: a constant default, after the parameters without one |
 | `fn first<T>(xs: &[T]) -> T`, `def first(xs)` | `fn first<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
-| `xs.filter(f)`, `map(f, xs)`, a callback | a parameter `f: fn(T) -> bool`, passed by name: `count_if(xs, is_even)`; no closures or lambdas |
+| `any(f(x) for x in xs)`, `xs.iter().all(f)`, `xs.filter(f).count()`, `xs.iter().position(f)` | `any(xs, f)`, `all(xs, f)`, `count_if(xs, f)`, `find_index(xs, f)` (-1 if none), with `fn f(x: T) -> bool` passed by name |
+| `xs = [x for x in xs if f(x)]`, `xs.retain(f)` | `retain(mut xs, f);` |
+| `map(f, xs)`, a callback of your own | a parameter `f: fn(T) -> U`, passed by name: `fn apply(xs: list[i64; _], f: fn(i64) -> i64)`; no closures or lambdas |
 | `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
 | a `str[256]` passed where `str[16]` is wanted | `str[16](s)` after checking `len(s) <= 16` |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
@@ -185,7 +190,7 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `sorted(set(xs))`, `xs.dedup()`, `uniq` | `sort(mut xs);` then `dedup(mut xs);` |
 | `bisect_left(xs, x)`, `xs.binary_search(&x)` | `binary_search(xs, x)` on a sorted list: the position of an equal element, or -1 |
 | `xs.sort()`, `sorted(xs, reverse=True)` | `sort(mut xs);` then `reverse(mut xs);` |
-| `xs.sort(key=f)`, `xs.sort_by(cmp)`, `Collections.sort(xs, cmp)` | `sort_by(mut xs, before)` from [examples/helpers.al](examples/helpers.al), with `fn before(a: T, b: T) -> bool` |
+| `xs.sort(key=f)`, `xs.sort_by(cmp)`, `Collections.sort(xs, cmp)` | `sort_by(mut xs, before)`, with `fn before(a: T, b: T) -> bool` true when `a` must come first; stable |
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
 | `println!("{}", x)` | `print(x);` |
 | `throw` / `raise` | return an enum, or `panic("message")` |
@@ -206,15 +211,15 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 ## The standard library
 
 Builtins that work on any type and capacity. Their names are reserved: call `gcd`, do not define it. For
-what it leaves out (parsing into an enum instead of trapping, pseudo-random numbers, a map that keeps
-the order its keys were added in, sorting by an order of your own), [examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
+what it leaves out (pseudo-random numbers, a map that keeps the order its keys were added in),
+[examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
 
 | Area | Functions |
 |------|-----------|
-| Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
+| Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` (an `Option`) `rem_euclid` `div_euclid` `mul_mod(a, b, m)` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
-| Collections | `sort(mut xs)` `reverse(mut xs)` `dedup(mut xs)` `binary_search(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear` |
+| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `parse_i64` `parse_f64` (an `Option`) `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
+| Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `binary_search(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `retain(mut xs, keep)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear` |
 
 - `split`, `words`, `join` and `replace` take their type from the variable they are stored in, so make the
   call the whole right side of a typed `let`/`var`, assignment or `return`:
@@ -226,8 +231,8 @@ the order its keys were added in, sorting by an order of your own), [examples/he
   `trim(p)` or `slice(p, ...)`: check `len(p)` and narrow it with `str[16](p)` first, then work on that.
   Use this for anything read from input.
 - A separator or search pattern is a str or a character: `split(line, ',')`, `contains(s, "ab")`.
-- `i64(s)` and `f64(s)` parse decimal text and trap on anything else; `trim` it and check `is_int` or
-  `is_float` first. `f64` takes an optional sign and digits with at most one `.` (`19.99`, `-0.5`, `3`, `.25`), then an optional exponent (`1e5`, `2.5E-3`), and
+- `parse_i64(s)` and `parse_f64(s)` read decimal text into an `Option`, `Option.None` for anything else;
+  `i64(s)` and `f64(s)` trap on it instead, so check `is_int` or `is_float` first. `trim` the text either way. `f64` takes an optional sign and digits with at most one `.` (`19.99`, `-0.5`, `3`, `.25`), then an optional exponent (`1e5`, `2.5E-3`), and
   converts up to 15 significant digits exactly.
 - `fixed(x, 2)`, `pad_left(v, width, fill)` and `pad_right(...)` make text for `print` and `append`, or for
   a typed str: `append(mut s, "$", cents / 100, ".", pad_left(cents % 100, 2, '0'));`,
@@ -235,8 +240,11 @@ the order its keys were added in, sorting by an order of your own), [examples/he
 - `index_of` returns -1 when nothing is found.
 - `sort` orders every type: numbers, then strs by bytes (as `<` does), structs field by field, enums by variant. To
   sort records by a key, make the key the first field; for descending order, `reverse` afterwards. For any
-  other order, `sort_by(mut xs, before)` in [examples/helpers.al](examples/helpers.al) sorts by a function of
-  your own, stably.
+  other order, `sort_by(mut xs, before)` sorts by a function of your own, stably.
+- `any`, `all`, `count_if`, `find_index`, `retain` and `sort_by` take a function by its name, of exactly the
+  type wanted: for a `list[Entry; 16]`, `fn adult(e: Entry) -> bool` or `fn older(a: Entry, b: Entry) -> bool`.
+- `x % m` keeps the sign of `x`; `rem_euclid(x, m)` is never negative, so `xs[rem_euclid(i - 1, n)]` wraps
+  around. `checked_add` and the others return `Option.None` instead of trapping on overflow.
 
 ```alang
 struct Score {
@@ -277,14 +285,13 @@ test "best first, bad lines skipped" {
 
 ```alang
 // A type parameter takes any type, and a parameter of a function type a function, passed by name.
-fn count_if<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
-    var n: i64 = 0;
+fn first_where<T>(xs: list[T; _], keep: fn(T) -> bool, otherwise: T) -> T {
     for x in xs {
         if keep(x) {
-            n += 1;
+            return x;
         }
     }
-    return n;
+    return otherwise;
 }
 
 fn largest<T>(xs: list[T; _]) -> T
@@ -305,7 +312,7 @@ fn is_even(x: i64) -> bool {
 
 fn main() {
     let xs: list[i64; 8] = [3, 8, 1, 6];
-    print(count_if(xs, is_even), " ", largest(xs), " ", largest(["b", "a"]));
+    print(first_where(xs, is_even, 0), " ", largest(xs), " ", largest(["b", "a"]), " ", count_if(xs, is_even));
 }
 ```
 

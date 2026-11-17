@@ -131,10 +131,10 @@ interpreter and the C backend alike, traps included
 | Area | Functions |
 |------|-----------|
 | Core | `print` `len` `cap` `push` `pop` `clear` `append` `panic` |
-| Math | `abs` `min` `max` (of two numbers, or of a list) `sum` `clamp` `pow` `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2` `is_nan` `is_finite` |
+| Math | `abs` `min` `max` (of two numbers, or of a list) `sum` `clamp` `pow` `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` `rem_euclid` `div_euclid` `mul_mod` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2` `is_nan` `is_finite` |
 | Characters | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` |
-| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice` `trim` `split` `words` `try_split` `try_words` `join` `replace` `is_int` `is_float` `fixed` `pad_left` `pad_right`, and `i64(s)`, `f64(s)` to parse; UTF-8 code points: `is_utf8` `char_count` `chars` `push_char` `slice_chars` |
-| Collections | `sort` `reverse` `dedup` `binary_search` `insert` `remove` (and `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays); `map[K, V; N]` and `set[T; N]` with `m[k]`, `get_or`, `insert`, `remove`, `contains` |
+| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice` `trim` `split` `words` `try_split` `try_words` `join` `replace` `is_int` `is_float` `parse_i64` `parse_f64` `fixed` `pad_left` `pad_right`, and `i64(s)`, `f64(s)` to parse; UTF-8 code points: `is_utf8` `char_count` `chars` `push_char` `slice_chars` |
+| Collections | `sort` `sort_by` `reverse` `dedup` `binary_search` `insert` `remove` `retain`; `any` `all` `count_if` `find_index` with a function passed by name (and `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays); `map[K, V; N]` and `set[T; N]` with `m[k]`, `get_or`, `insert`, `remove`, `contains` |
 
 A user function takes any capacity with a `_` in a parameter's type: `fn total(xs: list[i64; _])`.
 
@@ -246,8 +246,8 @@ same, so measure before switching a harness over. `--delimiter tab` saves a litt
 - [bench/](bench): do models write more correct tools in ALang or in Python?
 - [harness/toon.py](harness/toon.py): tool results as TOON for a model's prompt
 - [examples/](examples): complete programs, each with tests
-- [examples/helpers.al](examples/helpers.al): tested helpers the standard library leaves out (parsing
-  into an enum, pseudo-random numbers, a map in insertion order, a stable sort by an order of your own), for lists and strs of any capacity, to import
+- [examples/helpers.al](examples/helpers.al): tested helpers the standard library leaves out
+  (pseudo-random numbers, a map in insertion order), for lists and strs of any capacity, to import
   (`import "helpers.al";`, as [examples/tally.al](examples/tally.al) does) or copy into a program
 
 `src/main/java/alang/` holds the toolchain, one package per component (see the architecture);
@@ -309,7 +309,7 @@ The toolchain checks, tests, formats (`alang fmt`) and fixes (`alang fix`) progr
 its limits (`alang fuzz`), compiles to heap-free C99 (`alang build`), and serves tools over MCP
 (`alang serve`, with `--watch` to pick up each version that compiles). Every call runs within a
 deterministic step budget that bounds its time. [examples/helpers.al](examples/helpers.al) adds tested
-helpers the standard library leaves out, such as `sort_by`, a stable sort by an order of your own.
+helpers the standard library leaves out, such as a map that keeps its keys in insertion order.
 
 ## License
 

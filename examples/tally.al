@@ -1,5 +1,5 @@
-// Tallies "name points" lines from the standard input and ranks the names, with the map and the parser of
-// helpers.al, imported instead of copied. Run it on a file, or on your own input:
+// Tallies "name points" lines from the standard input and ranks the names, with the map of helpers.al,
+// imported instead of copied, and parse_i64. Run it on a file, or on your own input:
 //     bin/alang run examples/tally.al < examples/tally.in
 import "helpers.al";
 
@@ -35,13 +35,13 @@ tool fn tally(text: str[INPUT]) -> Tally {
         var counted: bool = false;
         if fits and len(parts) == 2 {
             match parse_i64(parts[1]) {
-                ParsedI64.Ok(n) => {
+                Option.Some(n) => {
                     match lookup(points, parts[0]) {
-                        MaybeI64.Some(before) => {
+                        Option.Some(before) => {
                             store(mut points, parts[0], before + n);
                             counted = true;
                         }
-                        MaybeI64.None => {
+                        Option.None => {
                             if len(points) < ITEMS {
                                 store(mut points, parts[0], n);
                                 counted = true;
@@ -49,7 +49,7 @@ tool fn tally(text: str[INPUT]) -> Tally {
                         }
                     }
                 }
-                ParsedI64.Bad => { }
+                Option.None => { }
             }
         }
         if not counted {

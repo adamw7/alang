@@ -104,6 +104,47 @@ final class Stdlib {
         return r.longValue();
     }
 
+    /**
+     * checked_add/sub/mul: the exact result if it is a value of k, else null (Option.None). Values of u64 are carried
+     * as their bit pattern, as everywhere.
+     */
+    static Long checked(Builtin b, PrimKind k, long a, long y) {
+        BigInteger x = IntOps.toBig(k, a);
+        BigInteger z = IntOps.toBig(k, y);
+        BigInteger r = switch (b) {
+            case CHECKED_ADD -> x.add(z);
+            case CHECKED_SUB -> x.subtract(z);
+            default -> x.multiply(z);
+        };
+        return r.compareTo(k.min()) < 0 || r.compareTo(k.max()) > 0 ? null : r.longValue();
+    }
+
+    /** rem_euclid(a, m): a % m, plus abs(m) when that is negative; R0002 if m is 0. */
+    static long remEuclid(PrimKind k, long a, long m, Span at) {
+        if (m == 0) throw new Trap(Code.R0002, at, "rem_euclid by zero");
+        long r = IntOps.rem(k, a, m, at);
+        // r - m, for m < 0, lies between 0 and -m, a value of k even when m is the minimum.
+        if (k.signed && r < 0) r = m < 0 ? r - m : r + m;
+        return r;
+    }
+
+    /** div_euclid(a, m): a / m, moved down (m > 0) or up (m < 0) when a % m is negative; R0002 if m is 0. */
+    static long divEuclid(PrimKind k, long a, long m, Span at) {
+        if (m == 0) throw new Trap(Code.R0002, at, "div_euclid by zero");
+        long q = IntOps.div(k, a, m, at);
+        if (k.signed && IntOps.rem(k, a, m, at) < 0) q = m > 0 ? q - 1 : q + 1;
+        return q;
+    }
+
+    /** mul_mod(a, b, m): (a * b) mod m, exactly, between 0 and m - 1; R0013 unless m > 0. */
+    static long mulMod(PrimKind k, long a, long b, long m, Span at) {
+        BigInteger bm = IntOps.toBig(k, m);
+        if (bm.signum() <= 0) {
+            throw new Trap(Code.R0013, at, "mul_mod() needs a modulus above 0, found " + IntOps.toString(k, m));
+        }
+        return IntOps.toBig(k, a).multiply(IntOps.toBig(k, b)).mod(bm).longValue();
+    }
+
     static Object clamp(Type t, Object x, Object lo, Object hi, Span at) {
         PrimKind k = Type.kind(t);
         if (k.isFloat) {
@@ -627,6 +668,18 @@ final class Stdlib {
 
     static boolean isFloat(StrV s, Meter cost) {
         return decimalFloat(s, new double[1], cost) == EXACT;
+    }
+
+    /** parse_f64(s): its value, or null for text that f64(s) would trap on. */
+    static Double parseFloatOrNull(StrV s, Meter cost) {
+        double[] v = new double[1];
+        return decimalFloat(s, v, cost) == EXACT ? v[0] : null;
+    }
+
+    /** parse_i64(s): its value, or null for text that i64(s) would trap on. */
+    static Long parseIntOrNull(StrV s, Meter cost) {
+        BigInteger v = decimal(s, cost);
+        return v != null && PrimKind.I64.fits(v) ? v.longValue() : null;
     }
 
     /** The conversion of text to f64: R0009 unless {@link #isFloat}. */

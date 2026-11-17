@@ -51,6 +51,23 @@ public enum Builtin {
         "a - b for two integers of the same type, held to the type's range: saturating_sub(u8(3), 5) is 0. Never traps."),
     SATURATING_MUL(Group.MATH, true, "saturating_mul", "saturating_mul(a, b) -> T",
         "a * b for two integers of the same type, held to the type's range. Never traps."),
+    CHECKED_ADD(Group.MATH, true, "checked_add", "checked_add(a, b) -> Option<T>",
+        "a + b for two integers of the same type as Option.Some, or Option.None if it does not fit. Never traps."),
+    CHECKED_SUB(Group.MATH, true, "checked_sub", "checked_sub(a, b) -> Option<T>",
+        "a - b for two integers of the same type as Option.Some, or Option.None if it does not fit: "
+            + "checked_sub(u8(3), 5) is Option.None. Never traps."),
+    CHECKED_MUL(Group.MATH, true, "checked_mul", "checked_mul(a, b) -> Option<T>",
+        "a * b for two integers of the same type as Option.Some, or Option.None if it does not fit. Never traps."),
+    REM_EUCLID(Group.MATH, true, "rem_euclid", "rem_euclid(a, m) -> T",
+        "The remainder of a / m that is never negative, for two integers of the same type: 0 <= r < abs(m). "
+            + "rem_euclid(-1, 5) is 4, where -1 % 5 is -1; use it to wrap an index around: xs[rem_euclid(i + k, n)]. "
+            + "Traps (R0002) if m is 0."),
+    DIV_EUCLID(Group.MATH, true, "div_euclid", "div_euclid(a, m) -> T",
+        "The quotient that goes with rem_euclid: a == div_euclid(a, m) * m + rem_euclid(a, m). div_euclid(-7, 2) is -4, "
+            + "where -7 / 2 is -3. Traps (R0002) if m is 0, and (R0001) where / overflows."),
+    MUL_MOD(Group.MATH, true, "mul_mod", "mul_mod(a, b, m) -> T",
+        "(a * b) mod m, computed exactly however large a * b is, for three integers of the same type: "
+            + "rem_euclid(a, m) * rem_euclid(b, m) reduced mod m, so 0 <= result < m. Traps (R0013) unless m > 0."),
     SQRT(Group.MATH, true, "sqrt", "sqrt(x) -> f", "Square root of an f32/f64."),
     FLOOR(Group.MATH, true, "floor", "floor(x) -> f", "Largest integral value not greater than x (f32/f64)."),
     CEIL(Group.MATH, true, "ceil", "ceil(x) -> f", "Smallest integral value not less than x (f32/f64)."),
@@ -140,6 +157,13 @@ public enum Builtin {
             + "left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. An exponent may follow: "
             + "1e5, 2.5E-3."),
 
+    PARSE_I64(Group.TEXT, true, "parse_i64", "parse_i64(s) -> Option<i64>",
+        "The str as an i64, Option.Some(n), when is_int(s) holds (an optional + or -, then digits, within the i64 range); "
+            + "otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike i64(s)."),
+    PARSE_F64(Group.TEXT, true, "parse_f64", "parse_f64(s) -> Option<f64>",
+        "The str as an f64, Option.Some(x), when is_float(s) holds (19.99, -0.5, 3, .25, 2.5e3); otherwise Option.None. "
+            + "Strict: no spaces, so trim(s) first. Never traps, unlike f64(s)."),
+
     IS_UTF8(Group.TEXT, true, "is_utf8", "is_utf8(s) -> bool",
         "Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or "
             + "cut-off sequences."),
@@ -166,6 +190,23 @@ public enum Builtin {
     DEDUP(Group.COLLECTIONS, false, "dedup", "dedup(mut xs)",
         "Removes each element of a list (byte of a str) equal to the one before it, keeping the first of each run. "
             + "After sort(mut xs), every value is left once."),
+    SORT_BY(Group.COLLECTIONS, false, "sort_by", "sort_by(mut xs, before)",
+        "Sorts a list or array in place into the order that before, a function fn(T, T) -> bool passed by name, gives: "
+            + "before(a, b) is true when a must come before b. Stable: elements neither comes before keep their order, so "
+            + "sorting by one key and then by another sorts by both. A binary insertion sort: about n log2(n) calls of before."),
+    ANY(Group.COLLECTIONS, false, "any", "any(xs, f) -> bool",
+        "Whether f(x) is true for some element x of an array or list, f being a function fn(T) -> bool passed by name: "
+            + "any(xs, is_even). Calls f from the first element on, and stops at the first true; false if xs is empty."),
+    ALL(Group.COLLECTIONS, false, "all", "all(xs, f) -> bool",
+        "Whether f(x) is true for every element x of an array or list (as for any); stops at the first false; true if "
+            + "xs is empty."),
+    COUNT_IF(Group.COLLECTIONS, false, "count_if", "count_if(xs, f) -> i64",
+        "How many elements x of an array or list have f(x) true, f being a function fn(T) -> bool passed by name."),
+    FIND_INDEX(Group.COLLECTIONS, false, "find_index", "find_index(xs, f) -> i64",
+        "The position of the first element x of an array or list with f(x) true (as for any), or -1 if there is none."),
+    RETAIN(Group.COLLECTIONS, false, "retain", "retain(mut xs, keep)",
+        "Keeps the elements x of a list for which keep(x) is true, in their order, and removes the rest; keep is a "
+            + "function fn(T) -> bool passed by name, called once per element, first to last."),
     BINARY_SEARCH(Group.COLLECTIONS, true, "binary_search", "binary_search(xs, x) -> i64",
         "In an array or list sorted as sort sorts it, the position of the first element e with compare(e, x) == 0, or -1 if "
             + "there is none. "
@@ -244,7 +285,7 @@ public enum Builtin {
     /** Whether the first argument is modified, and so passed as `mut`. */
     public boolean modifiesFirst() {
         return switch (this) {
-            case PUSH, POP, CLEAR, APPEND, PUSH_CHAR, SORT, REVERSE, DEDUP, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
+            case PUSH, POP, CLEAR, APPEND, PUSH_CHAR, SORT, SORT_BY, RETAIN, REVERSE, DEDUP, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
             default -> false;
         };
     }

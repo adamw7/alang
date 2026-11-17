@@ -58,7 +58,7 @@ Some tasks favor one language; the table lists the pitfalls we expected, so you 
 | `luhn_valid` | Luhn checksum | neutral |
 | `max_drawdown` | largest drop in a price series | neutral |
 | `merge_intervals` | merge overlapping intervals (structs) | neutral |
-| `mul_mod` | `(a * b) mod m` for `m` up to 2^62 | favors Python: unbounded integers. ALang: the naive product traps |
+| `product_mod` | `(a * b) mod m` for `m` up to 2^62 | favors Python: unbounded integers. ALang: the naive product traps |
 | `parse_duration` | `"1h30m"` to seconds, strict | Python: `int()` leniency, as above |
 | `rle_encode` | run-length encoding | neutral |
 | `roman_to_int` | Roman numeral to integer | neutral |
@@ -82,7 +82,7 @@ pip install -r bench/requirements.txt
 export ANTHROPIC_API_KEY=...
 
 python3 bench/bench.py selftest                       # offline: tasks, grader and loop work (~1.5 min)
-python3 bench/bench.py run --tasks mul_mod            # a small paid run, to see the cost
+python3 bench/bench.py run --tasks product_mod        # a small paid run, to see the cost
 python3 bench/bench.py run --samples 3                # the full benchmark, 120 conversations
 python3 bench/bench.py report bench/results/*.jsonl   # Markdown summary of one or more runs
 ```

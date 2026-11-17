@@ -211,7 +211,7 @@ public enum Code {
         "An arithmetic result does not fit its type. ALang never wraps silently. Use a wider type, or check before computing.",
         "let x: u8 = 200;\nlet y: u8 = x + x;  // trap"),
     R0002("division by zero",
-        "Integer division or remainder by zero.",
+        "Integer division or remainder by zero, with /, %, div_euclid or rem_euclid.",
         "let z: i32 = 1 / n;  // trap when n == 0"),
     R0003("index out of bounds",
         "An index is negative or not smaller than the length of the array, list or string.",
@@ -253,7 +253,7 @@ public enum Code {
     R0013("invalid argument",
         "A standard library function received an argument outside its domain: a negative exponent for pow, bounds "
             + "with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or "
-            + "max(xs), or a number that is not a Unicode code point for push_char.",
+            + "max(xs), a modulus that is not above 0 for mul_mod, or a number that is not a Unicode code point for push_char.",
         "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap");
 
     public final String title;

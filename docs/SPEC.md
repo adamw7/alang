@@ -349,7 +349,7 @@ call with new types runs an instance made for them, checked again with the types
 --memory` lists them). Structs and enums take type parameters too (§2).
 
 **Function parameters.** A parameter of a function type, `keep: fn(T) -> bool`, takes a function by its name,
-`count_if(xs, is_even)`, and the body calls it, `keep(x)`. The function's parameter and result types must be the
+`first_where(xs, is_even, 0)`, and the body calls it, `keep(x)`. The function's parameter and result types must be the
 parameter's exactly (type parameters aside, which they can fix), it cannot have `mut` parameters, and it cannot be
 a builtin (wrap one in a function of your own) or itself take a `_`, type parameter or function. A parameter of a
 function type can be passed on to another function, but not stored, returned or put in a variable: there are no
@@ -357,14 +357,13 @@ closures. Each call with a new function runs an instance that calls that functio
 stays known, and passing a function to something that calls it back is recursion (E0401).
 
 ```
-fn count_if<T>(xs: list[T; _], keep: fn(T) -> bool) -> i64 {
-    var n: i64 = 0;
+fn first_where<T>(xs: list[T; _], keep: fn(T) -> bool, otherwise: T) -> T {
     for x in xs {
         if keep(x) {
-            n += 1;
+            return x;
         }
     }
-    return n;
+    return otherwise;
 }
 ```
 
@@ -570,6 +569,10 @@ them all.
 | `lcm(a, b) -> T` | Least common multiple, never negative; 0 if either is 0. Traps if it does not fit (R0001). |
 | `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | Same-type integers; the exact result wrapped around to the type (modulo 2^bits), so they never trap: `wrapping_add(u8(250), 10)` is `4`, `wrapping_mul(h, 16777619)` is the multiply of 32-bit FNV. |
 | `saturating_add(a, b)`, `saturating_sub(a, b)`, `saturating_mul(a, b)` | Same-type integers; the exact result, or the type's largest or smallest value when it does not fit: `saturating_sub(u8(3), 5)` is `0`. Never trap. |
+| `checked_add(a, b)`, `checked_sub(a, b)`, `checked_mul(a, b)` -> `Option<T>` | Same-type integers; the exact result as `Option.Some`, or `Option.None` when it does not fit: `checked_sub(u8(3), 5)` is `Option.None`. Never trap. |
+| `rem_euclid(a, m) -> T` | Same-type integers; the remainder of `a / m` that is never negative, `0 <= r < abs(m)`: `rem_euclid(-1, 5)` is `4`, where `-1 % 5` is `-1`. Wraps an index around: `xs[rem_euclid(i + k, n)]`. Traps (R0002) if `m` is 0. |
+| `div_euclid(a, m) -> T` | The quotient that goes with it, `a == div_euclid(a, m) * m + rem_euclid(a, m)`: `div_euclid(-7, 2)` is `-4`, where `-7 / 2` is `-3`. Traps (R0002) if `m` is 0, and (R0001) where `/` overflows. |
+| `mul_mod(a, b, m) -> T` | Same-type integers; `(a * b) mod m` computed exactly however large `a * b` is, from 0 to `m - 1` (`a` and `b` reduced as `rem_euclid` reduces them). Traps (R0013) unless `m > 0`. |
 | `sqrt(x)`, `floor(x)`, `ceil(x)` | On `f32`/`f64`, correctly rounded. |
 | `round(x)`, `trunc(x)` | On `f32`/`f64`, exact: `round` halves away from zero (`round(2.5)` is `3.0`, `round(-0.5)` is `-1.0`); `trunc` drops the fraction (`trunc(-2.7)` is `-2.0`). |
 | `exp(x)`, `log(x)`, `log2(x)`, `log10(x)` | On `f32`/`f64`: e^x and the logarithms; `log` of 0 is `-inf` and of a negative number NaN. `log2` of a power of two and `log10` of a power of ten are exact. |
@@ -582,7 +585,8 @@ same bits everywhere: ALang computes them itself (`exp`, `log`, `log10`, `sin`, 
 `atan2` as fdlibm does, see THIRD-PARTY-NOTICES), and an `f32` result is the `f64` one rounded once.
 
 A literal argument takes the type of the other arguments or, for `min`, `max`, `clamp`, `pow`, `gcd`,
-`lcm` and the wrapping and saturating functions, of the variable the result is stored in: `let b: u8 = pow(2, 7);`.
+`lcm`, `rem_euclid`, `div_euclid`, `mul_mod` and the wrapping and saturating functions, of the variable the result is
+stored in: `let b: u8 = pow(2, 7);`.
 
 ### 9.3 Characters
 
@@ -619,6 +623,8 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `try_words(mut parts, s) -> bool` | `words(s)` into the list `parts`, as `try_split` does. |
 | `is_int(s) -> bool` | Whether `i64(s)` would succeed: decimal text that fits an `i64`. |
 | `is_float(s) -> bool` | Whether `f64(s)` would succeed: decimal text that converts exactly (§6). |
+| `parse_i64(s) -> Option<i64>` | `Option.Some(i64(s))` when `is_int(s)`, else `Option.None`: never traps. Strict, as `i64(s)` is: `trim` first. |
+| `parse_f64(s) -> Option<f64>` | `Option.Some(f64(s))` when `is_float(s)`, else `Option.None`: never traps. |
 | `fixed(x, n)`, `pad_left(v, w, fill)`, `pad_right(v, w, fill)` | Formatted text (§9.6). |
 
 **Results typed by where they are stored.** The size of what `split`, `words`, `join` and `replace`
@@ -686,7 +692,8 @@ test "lines that do not fit are left out" {
 or `-`, then at least one ASCII digit, and nothing else, so `trim` it first. Other text, or a value out of
 the type's range, traps (R0009). `is_int(s)` says whether `i64(s)` succeeds; for a narrower type, convert
 to `i64` and check the range. `f64(s)` reads a decimal number such as `19.99` (§6), and `is_float(s)`
-says whether it succeeds.
+says whether it succeeds. `parse_i64(s)` and `parse_f64(s)` do both at once: an `Option`, `Option.None` for
+text the conversion would trap on.
 
 ```alang
 /// Sums the integers in a comma-separated list, skipping empty items; -1 if an item is not an integer.
@@ -736,7 +743,12 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 | `sort(mut xs)` | Sorts a list, array or str in place, ascending, in the order below. |
 | `reverse(mut xs)` | Reverses a list, array or str in place. |
 | `dedup(mut xs)` | Removes each element of a list (byte of a str) that is `==` to the one before it, keeping the first of each run and the order. After `sort`, every value is left once. |
+| `sort_by(mut xs, before)` | Sorts a list or array in place into the order of `before`, a function `fn(T, T) -> bool` passed by name that is true when its first argument must come before its second. Stable: elements neither comes before keep their order. A binary insertion sort: about n log2(n) calls of `before`, made in the same order on every backend. |
 | `binary_search(xs, x) -> i64` | In an array or list sorted as `sort` sorts it, the position of the first element `e` with `compare(e, x) == 0`, or -1. It looks at about log2(len(xs)) elements; on one that is not sorted it may miss an equal element, the same way on every backend. |
+| `any(xs, f) -> bool`, `all(xs, f) -> bool` | Whether `f(x)` is true for some (every) element `x` of an array or list; `f` is a function `fn(T) -> bool` passed by name: `any(xs, is_even)`. They call `f` from the first element on and stop at the first true (false); `any` of an empty one is false, `all` true. |
+| `count_if(xs, f) -> i64` | How many elements `x` of an array or list have `f(x)` true. |
+| `find_index(xs, f) -> i64` | The position of the first element `x` with `f(x)` true, or -1. |
+| `retain(mut xs, keep)` | Keeps the elements `x` of a list for which `keep(x)` is true, in their order, and removes the rest; `keep` is called once per element, first to last. |
 | `insert(mut xs, i, v)` | Inserts `v` into a list (a `u8` into a str) at position `i`, moving the rest up. Traps unless `0 <= i <= len(xs)` (R0003), then if full (R0004). |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position `i` of a list (a byte of a str), moving the rest down. Traps unless `0 <= i < len(xs)` (R0003). Like `pop`, it may be a statement of its own. |
 
@@ -755,7 +767,13 @@ element, a prefix before a longer value (sets too; maps entry by entry, key then
 by the order of their variants, then by payload. So a list of structs sorts by its first field, then its
 second: put the key first, and sort on a negated key, or `reverse` afterwards, for descending order. Two
 values this order calls equal cannot be told apart, so the result is the same whatever the algorithm,
-and no sort is stable or unstable in a way a program can see.
+and no sort is stable or unstable in a way a program can see. For any other order, `sort_by` takes a function
+of your own, and is stable.
+
+The function passed to `any`, `all`, `count_if`, `find_index`, `retain` or `sort_by` follows the rules of a
+parameter of a function type (§5): a function of exactly the type wanted (its parameters the element type, and
+`bool` back), passed by its name, or a parameter of a function type passed on. A trap in it stops the call where
+it is, as a trap in any call does.
 
 ### 9.6 Text formatting
 

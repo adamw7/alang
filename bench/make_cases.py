@@ -247,7 +247,7 @@ INPUTS = {
         ],
         gen=lambda r: (lambda xs: {"xs": xs, "target": r.choice(xs + [r.randint(-50, 50)]) if xs else 0})(
             sorted(r.randint(-50, 50) for _ in range(r.randint(0, 32))))),
-    "mul_mod": dict(
+    "product_mod": dict(
         examples=[{"a": 3, "b": 4, "m": 5}, {"a": 123456789, "b": 987654321, "m": 1000000007},
                   {"a": 10**15, "b": 10**15 + 7, "m": 10**18 + 9}],
         hidden=[
