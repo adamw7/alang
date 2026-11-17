@@ -72,10 +72,35 @@ class FloatParseTest {
     }
 
     @Test
+    void textWithAnExponentConvertsToTheNearestF64() {
+        long x = 7;
+        int accepted = 0;
+        for (int i = 0; i < 200_000; i++) {
+            x = x * 6364136223846793005L + 1442695040888963407L;
+            String s = text(x);
+            if (s.equals(".") || s.equals("-.") || s.equals("+.")) continue;
+            int exponent = (int) Long.remainderUnsigned(x >>> 20, 81) - 40;
+            String withExponent = s + ((x >>> 50 & 1) == 0 ? "e" : "E") + ((x >>> 51 & 1) == 0 && exponent >= 0 ? "+" : "")
+                + exponent;
+            Values.StrV v = str(withExponent);
+            if (Stdlib.isFloat(v, new Meter(0))) {
+                accepted++;
+                long want = Double.doubleToRawLongBits(Double.parseDouble(withExponent));
+                assertEquals(want, Double.doubleToRawLongBits(Stdlib.parseFloat(v, null, new Meter(0))), withExponent);
+            } else {
+                Trap t = assertThrows(Trap.class, () -> Stdlib.parseFloat(v, null, new Meter(0)), withExponent);
+                assertEquals(Code.R0009, t.code, withExponent);
+            }
+        }
+        assertTrue(accepted > 50_000, accepted + " accepted");
+    }
+
+    @Test
     void fifteenSignificantDigitsAlwaysConvert() {
         for (String s : new String[] {"123456789012345", "0.123456789012345", "1234567.89012345", "-999999999999999",
             "1e0".replace("e0", ""), "0.0000000000000000000001", "1" + "0".repeat(22), "123456789012345" + "0".repeat(22),
-            "9007199254740992", "3.", ".5", "-0", "0.000", "+19.99"}) {
+            "9007199254740992", "3.", ".5", "-0", "0.000", "+19.99", "1e5", "1E5", "2.5e-3", "-6.02e+23", "0e999999999", "1e22",
+            "123456789012345e22", "1e-22", ".5E1"}) {
             Values.StrV v = str(s);
             assertTrue(Stdlib.isFloat(v, new Meter(0)), s);
             assertEquals(Double.doubleToRawLongBits(Double.parseDouble(s)), Double.doubleToRawLongBits(Stdlib.parseFloat(v, null, new Meter(0))), s);
@@ -84,7 +109,8 @@ class FloatParseTest {
 
     @Test
     void otherTextIsRejected() {
-        for (String s : new String[] {"", ".", "-", "+", "1e5", "1E5", "1.2.3", " 1", "1 ", "0x10", "inf", "nan", "1_000",
+        for (String s : new String[] {"", ".", "-", "+", "1e", "1e+", "1E-", "e5", ".e5", "1e5.0", "1e5e2", "1e 5", "1e-23",
+            "1e39", "1e9999999999999999999", "1.2.3", " 1", "1 ", "0x10", "inf", "nan", "1_000",
             "9007199254740993", "12345678901234567", "0.00000000000000000000001", "1" + "0".repeat(39), "--1", "1-"}) {
             assertFalse(Stdlib.isFloat(str(s), new Meter(0)), s);
         }

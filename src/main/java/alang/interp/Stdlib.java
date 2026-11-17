@@ -241,6 +241,74 @@ final class Stdlib {
         return -1;
     }
 
+    /** The position of the last element of a list or array equal to x, or -1. */
+    static long lastIndexOf(Object xs, Object x, Type elem, Meter cost) {
+        Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+        int n = xs instanceof ListV l ? l.len : items.length;
+        for (int i = n - 1; i >= 0; i--) {
+            cost.elements(1);
+            if (Values.equal(items[i], x, elem, cost)) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * The last position where {@code n} occurs in the first {@code hn} bytes of h, or -1; hn for an empty n. It costs
+     * an element and a byte for each position it looks at, as {@link #find} does.
+     */
+    static int findLast(byte[] h, int hn, byte[] n, Meter cost) {
+        cost.elements(1);
+        for (int i = hn - n.length; i >= 0; i--) {
+            cost.bytes(1);
+            if (Arrays.equals(h, i, i + n.length, n, 0, n.length)) {
+                cost.bytes(n.length);
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** dedup(mut xs): removes each element of a list (byte of a str) equal to the one before it. */
+    static void dedup(Object xs, Type t, Meter cost) {
+        if (xs instanceof StrV s) {
+            cost.bytes(s.len);
+            int w = 0;
+            for (int i = 0; i < s.len; i++) {
+                if (w == 0 || s.b[w - 1] != s.b[i]) s.b[w++] = s.b[i];
+            }
+            s.len = w;
+            return;
+        }
+        ListV l = (ListV) xs;
+        Type elem = Type.elementOf(t);
+        int w = 0;
+        for (int i = 0; i < l.len; i++) {
+            cost.elements(1);
+            if (w == 0 || !Values.equal(l.items[w - 1], l.items[i], elem, cost)) l.items[w++] = l.items[i];
+        }
+        Arrays.fill(l.items, w, l.len, null);
+        l.len = w;
+    }
+
+    /**
+     * binary_search(xs, x): the first position whose element is not before x in the order of sort, if that element
+     * is equal to x; otherwise -1. The C backend searches the same positions in the same order.
+     */
+    static long binarySearch(Object xs, Object x, Type elem, Meter cost) {
+        Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+        int n = xs instanceof ListV l ? l.len : items.length;
+        int lo = 0;
+        int hi = n;
+        while (lo < hi) {
+            int mid = lo + (hi - lo) / 2;
+            cost.elements(1);
+            if (compare(items[mid], x, elem, cost) < 0) lo = mid + 1;
+            else hi = mid;
+        }
+        cost.elements(1);
+        return lo < n && compare(items[lo], x, elem, cost) == 0 ? lo : -1;
+    }
+
     /** The non-overlapping occurrences of p in s, left to right; R0013 if p is empty. */
     static long count(StrV s, byte[] p, Span at, Meter cost) {
         if (p.length == 0) throw new Trap(Code.R0013, at, "count pattern is empty");
@@ -473,7 +541,8 @@ final class Stdlib {
     private static final int EXACT = 2;
 
     /**
-     * Decimal text as an f64: an optional + or -, then digits with at most one `.` among them. It is
+     * Decimal text as an f64: an optional + or -, then digits with at most one `.` among them, then, optionally, an
+     * exponent: e or E, an optional + or -, and digits (`1.5e3`, `2E-4`). It is
      * M * 10^E with M the digits between the first and last that are not 0; the text converts when M is at
      * most 2^53 and 10^E (or M * 10^(E - 22) and 10^22) is an f64 too, so that one multiplication or division
      * rounds the exact value to the nearest f64. The C backend's al_parse_f64 is the same algorithm. Returns
@@ -488,7 +557,25 @@ final class Stdlib {
         int beforePoint = -1;
         int first = -1;
         int last = -1;
+        // The digits end at an e or E, followed by the exponent: an optional + or -, then at least one digit.
+        int end = s.len;
+        long exponent = 0;
         for (int j = i; j < s.len; j++) {
+            if (s.b[j] != 'e' && s.b[j] != 'E') continue;
+            end = j;
+            int k = j + 1;
+            boolean minus = k < s.len && s.b[k] == '-';
+            if (k < s.len && (s.b[k] == '+' || s.b[k] == '-')) k++;
+            if (k == s.len) return NOT_DECIMAL;
+            for (; k < s.len; k++) {
+                if (!isDigit(s.b[k])) return NOT_DECIMAL;
+                // Far beyond any f64, and still far from overflowing a long.
+                if (exponent < 1_000_000) exponent = exponent * 10 + (s.b[k] - '0');
+            }
+            if (minus) exponent = -exponent;
+            break;
+        }
+        for (int j = i; j < end; j++) {
             byte c = s.b[j];
             if (c == '.') {
                 if (beforePoint >= 0) return NOT_DECIMAL;
@@ -512,14 +599,14 @@ final class Stdlib {
         if (last - first >= 16) return TOO_PRECISE;
         long m = 0;
         int k = 0;
-        for (int j = i; j < s.len; j++) {
+        for (int j = i; j < end; j++) {
             if (s.b[j] == '.') continue;
             if (k >= first && k <= last) m = m * 10 + (s.b[j] - '0');
             k++;
         }
         if (m > EXACT_MAX) return TOO_PRECISE;
         // The value is m * 10^e.
-        long e = (long) beforePoint - 1 - last;
+        long e = (long) beforePoint - 1 - last + exponent;
         double v;
         if (e < 0) {
             if (e < -22) return TOO_PRECISE;

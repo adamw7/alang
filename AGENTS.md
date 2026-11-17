@@ -170,7 +170,7 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | the same on input that may not fit | `var parts: list[str[16]; 8] = []; let ok: bool = try_split(mut parts, s, ",");` |
 | `s.count(",")`, `xs.count(x)` | `count(s, ',')`, `count(xs, x)` |
 | `int(s)`, `s.parse::<i64>()` | `i64(trim(s))`, after checking `is_int(trim(s))`: bad text traps |
-| `float(s)`, `s.parse::<f64>()` | `f64(trim(s))`, after checking `is_float(trim(s))`: an optional sign, digits and at most one `.` (`3.`, `.25` count), no exponent |
+| `float(s)`, `s.parse::<f64>()` | `f64(trim(s))`, after checking `is_float(trim(s))`: an optional sign, digits and at most one `.` (`3.`, `.25` count), and an optional exponent (`1e5`, `2.5E-3`) |
 | `f"{x:.2f}"`, `format!("{:.2}", x)`, `x.toFixed(2)` | `fixed(x, 2)`, in `print`/`append` or stored in a typed str |
 | `f"{n:03}"`, `s.rjust(8)`, `s.ljust(8)`, `padStart` | `pad_left(n, 3, '0')`, `pad_left(s, 8, ' ')`, `pad_right(s, 8, ' ')` |
 | `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
@@ -180,6 +180,10 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
 | a `str[256]` passed where `str[16]` is wanted | `str[16](s)` after checking `len(s) <= 16` |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
+| `s.rfind("x")`, `xs.lastIndexOf(x)` | `last_index_of(s, "x")`, `last_index_of(xs, x)` (-1 if absent) |
+| `sum(xs)`, `min(xs)`, `max(xs)`, `xs.iter().sum()` | `sum(xs)`, `min(xs)`, `max(xs)` on an array or list of numbers (`min`/`max` trap on an empty one) |
+| `sorted(set(xs))`, `xs.dedup()`, `uniq` | `sort(mut xs);` then `dedup(mut xs);` |
+| `bisect_left(xs, x)`, `xs.binary_search(&x)` | `binary_search(xs, x)` on a sorted list: the position of an equal element, or -1 |
 | `xs.sort()`, `sorted(xs, reverse=True)` | `sort(mut xs);` then `reverse(mut xs);` |
 | `xs.sort(key=f)`, `xs.sort_by(cmp)`, `Collections.sort(xs, cmp)` | `sort_by(mut xs, before)` from [examples/helpers.al](examples/helpers.al), with `fn before(a: T, b: T) -> bool` |
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
@@ -207,10 +211,10 @@ the order its keys were added in, sorting by an order of your own), [examples/he
 
 | Area | Functions |
 |------|-----------|
-| Math | `abs` `min` `max` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
+| Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
-| Collections | `sort(mut xs)` `reverse(mut xs)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear` |
+| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
+| Collections | `sort(mut xs)` `reverse(mut xs)` `dedup(mut xs)` `binary_search(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)`; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear` |
 
 - `split`, `words`, `join` and `replace` take their type from the variable they are stored in, so make the
   call the whole right side of a typed `let`/`var`, assignment or `return`:
@@ -223,7 +227,7 @@ the order its keys were added in, sorting by an order of your own), [examples/he
   Use this for anything read from input.
 - A separator or search pattern is a str or a character: `split(line, ',')`, `contains(s, "ab")`.
 - `i64(s)` and `f64(s)` parse decimal text and trap on anything else; `trim` it and check `is_int` or
-  `is_float` first. `f64` takes an optional sign and digits with at most one `.` (`19.99`, `-0.5`, `3`, `.25`), no exponent, and
+  `is_float` first. `f64` takes an optional sign and digits with at most one `.` (`19.99`, `-0.5`, `3`, `.25`), then an optional exponent (`1e5`, `2.5E-3`), and
   converts up to 15 significant digits exactly.
 - `fixed(x, 2)`, `pad_left(v, width, fill)` and `pad_right(...)` make text for `print` and `append`, or for
   a typed str: `append(mut s, "$", cents / 100, ".", pad_left(cents % 100, 2, '0'));`,

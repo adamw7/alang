@@ -603,7 +603,7 @@ while true limit 10 { }  // trap after 10 iterations
 ```
 let b: u8 = u8(-1);  // trap
 let n: i64 = i64("12a");  // trap
-let x: f64 = f64("1e5");  // trap: no exponents
+let x: f64 = f64("1,5");  // trap: write 1.5
 ```
 
 ## R0010
@@ -632,7 +632,7 @@ let x: u32 = 1 << 32;  // trap
 
 ## R0013
 
-**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, an empty separator or pattern for split or replace, or a number that is not a Unicode code point for push_char.
+**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or max(xs), or a number that is not a Unicode code point for push_char.
 
 ```
 let p: i64 = pow(2, -1);  // trap
@@ -661,8 +661,9 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | Signature | Description |
 |-----------|-------------|
 | `abs(x) -> T` | Absolute value of a signed integer or float. Traps on overflow (abs of the minimum integer). |
-| `min(a, b) -> T` | Smaller of two numbers of the same type. |
-| `max(a, b) -> T` | Larger of two numbers of the same type. |
+| `min(a, b) -> T` | Smaller of two numbers of the same type. min(xs), with one array or list of numbers, is its smallest element; traps (R0013) if it is empty. |
+| `max(a, b) -> T` | Larger of two numbers of the same type. max(xs), with one array or list of numbers, is its largest element; traps (R0013) if it is empty. |
+| `sum(xs) -> T` | The total of an array or list of numbers, added left to right; 0 if it is empty. Traps (R0001) if an integer total does not fit its type, as + does. |
 | `clamp(x, lo, hi) -> T` | x limited to lo..hi (numbers of the same type). Traps (R0013) unless lo <= hi. |
 | `pow(x, n) -> T` | x to the power n. For integers: n >= 0, pow(0, 0) is 1, traps on overflow, and (R0013) if n < 0. For an f32/f64 x, n is a float of the same type: pow(2.0, 0.5); never traps (pow(-8.0, 0.5) is NaN), with the special cases of C99. |
 | `gcd(a, b) -> T` | Greatest common divisor of two integers of the same type, never negative; gcd(0, 0) is 0. Traps if it does not fit. |
@@ -711,6 +712,7 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 |-----------|-------------|
 | `contains(xs, x) -> bool` | Whether a str contains a str or u8 byte, or an array/list contains an element equal to x. |
 | `index_of(xs, x) -> i64` | Position of the first occurrence of x (as for contains), or -1 if there is none. |
+| `last_index_of(xs, x) -> i64` | Position of the last occurrence of x (as for contains), or -1 if there is none; for the empty str, len(xs). |
 | `starts_with(s, prefix) -> bool` | Whether a str begins with a str or u8 byte. |
 | `ends_with(s, suffix) -> bool` | Whether a str ends with a str or u8 byte. |
 | `slice(xs, from, to) -> T` | A copy of the elements from..to (half-open) of a str, list or array, of the same type (a list for an array). Traps (R0003) unless 0 <= from <= to <= len(xs). |
@@ -726,7 +728,7 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `pad_right(value, width, fill) -> str[N]` | As pad_left, with the fill added after the text: pad_right("ab", 4, '.') is "ab..". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
 | `count(xs, x) -> i64` | How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right (traps (R0013) if the str is empty); in an array or list, the elements equal to x. |
 | `is_int(s) -> bool` | Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it. |
-| `is_float(s) -> bool` | Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. No exponents. |
+| `is_float(s) -> bool` | Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. An exponent may follow: 1e5, 2.5E-3. |
 | `is_utf8(s) -> bool` | Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or cut-off sequences. |
 | `char_count(s) -> i64` | The number of Unicode code points in a str (len(s) counts bytes). Each byte that does not start a well-formed UTF-8 sequence counts as one. |
 | `chars(s) -> list[u32; N]` | The Unicode code points of a str, decoding UTF-8; a byte that does not start a well-formed sequence gives U+FFFD (65533). Its type is that of the variable it is stored in; traps (R0004) if they do not fit. for c in chars(s) goes through them one at a time instead, each a u32, and never traps. |
@@ -739,6 +741,8 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 |-----------|-------------|
 | `sort(mut xs)` | Sorts a list, array or str in place, ascending. Every type is ordered: numbers by value (-0.0 before 0.0, NaN last), false before true, strs and lists element by element (a prefix first), structs field by field, enums by variant, then payload. |
 | `reverse(mut xs)` | Reverses a list, array or str in place. |
+| `dedup(mut xs)` | Removes each element of a list (byte of a str) equal to the one before it, keeping the first of each run. After sort(mut xs), every value is left once. |
+| `binary_search(xs, x) -> i64` | In an array or list sorted as sort sorts it, the position of the first element e with compare(e, x) == 0, or -1 if there is none. Looks at about log2(len(xs)) elements; on a list that is not sorted, it may miss an equal element, but never traps and gives the same answer on every run. |
 | `insert(mut xs, i, value)` | Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and insert(mut s, x) adds x to a set; both trap (R0004) when a new key does not fit. |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether it was there. |
 | `compare(a, b) -> i64` | -1, 0 or 1 as a comes before b, is equal to it, or comes after it in the order of sort: two values of the same type, any type. For a type parameter, compare(a, b) < 0 is a < b. |

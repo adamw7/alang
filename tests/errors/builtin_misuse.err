@@ -69,7 +69,7 @@ error[E0204]: max() takes 2 argument(s) but 1 were given
    |
 21 |     let e: i64 = max(1);
    |                  ^^^^^^
-  = hint: signature: max(a, b) -> T
+  = hint: signature: max(a, b) -> T; max(xs) takes one array or list of numbers
 
 error[E0203]: abs() needs a signed integer or float, found u8
   --> tests/errors/builtin_misuse.al:22:21

@@ -61,12 +61,12 @@ error[E0102]: unknown function `isdigit`
    |     ^^^^^^^
   = hint: use is_digit(c) on a u8 byte
 
-error[E0102]: unknown function `sum`
+error[E0102]: unknown function `rfind`
   --> tests/errors/E0102_missing_library.al:14:5
    |
-14 |     sum(s);
-   |     ^^^
-  = hint: there is no sum; add in a loop: var total: i64 = 0; for x in xs { total += x; }
+14 |     rfind(s);
+   |     ^^^^^
+  = hint: use last_index_of(xs, x), which is -1 when x is absent
 
 error[E0102]: unknown function `filter`
   --> tests/errors/E0102_missing_library.al:15:5

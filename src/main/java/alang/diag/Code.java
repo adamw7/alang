@@ -238,7 +238,7 @@ public enum Code {
         "A conversion such as u8(x), i32(f), i64(s) or f64(s) received a value that the target type cannot represent: a "
             + "number out of its range, NaN, a str that is not a decimal integer (check it first with is_int(s)), or one "
             + "that is not a decimal number f64 converts exactly (check it first with is_float(s)).",
-        "let b: u8 = u8(-1);  // trap\nlet n: i64 = i64(\"12a\");  // trap\nlet x: f64 = f64(\"1e5\");  // trap: no exponents"),
+        "let b: u8 = u8(-1);  // trap\nlet n: i64 = i64(\"12a\");  // trap\nlet x: f64 = f64(\"1,5\");  // trap: write 1.5"),
     R0010("panic",
         "The program called panic(message).",
         "panic(\"unreachable state\");"),
@@ -252,8 +252,8 @@ public enum Code {
         "let x: u32 = 1 << 32;  // trap"),
     R0013("invalid argument",
         "A standard library function received an argument outside its domain: a negative exponent for pow, bounds "
-            + "with lo > hi for clamp, an empty separator or pattern for split or replace, or a number that is not a Unicode "
-            + "code point for push_char.",
+            + "with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or "
+            + "max(xs), or a number that is not a Unicode code point for push_char.",
         "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap");
 
     public final String title;

@@ -11,7 +11,7 @@ fn main() {
     reversed(s);
     substring(s);
     isdigit(s);
-    sum(s);
+    rfind(s);
     filter(s);
     enumerate(s);
     ord(s);

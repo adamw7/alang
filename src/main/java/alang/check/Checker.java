@@ -2669,7 +2669,14 @@ public final class Checker {
             case "islower" -> "use is_lower(c) on a u8 byte";
             case "isnan" -> "use is_nan(x)";
             case "isfinite" -> "use is_finite(x)";
-            case "sum" -> "there is no sum; add in a loop: var total: i64 = 0; for x in xs { total += x; }";
+            case "rfind", "rindex", "lastIndexOf", "last_index", "find_last", "rposition" ->
+                "use last_index_of(xs, x), which is -1 when x is absent";
+            case "unique", "uniq", "distinct", "dedupe", "dedup_by" -> "sort(mut xs); then dedup(mut xs); leaves every value once";
+            case "bisect", "bisect_left", "binarySearch", "binsearch", "lower_bound", "bsearch" ->
+                "use binary_search(xs, x) on a sorted list: the position of an element equal to x, or -1";
+            case "minimum", "maximum", "min_of", "max_of", "min_element", "max_element", "amin", "amax" ->
+                "use min(xs) or max(xs) on an array or list of numbers";
+            case "total", "add_all", "accumulate" -> "use sum(xs) on an array or list of numbers";
             case "map", "filter", "reduce", "fold", "any", "all", "zip", "foreach", "for_each", "forEach" ->
                 "write the loop, or a function that takes one: fn keep<T>(xs: list[T; _], f: fn(T) -> bool, out: mut list[T; _]) "
                     + "{ for x in xs { if f(x) { push(mut out, x); } } }";
@@ -2896,6 +2903,16 @@ public final class Checker {
                 return t;
             }
             case MIN, MAX -> {
+                if (args.size() == 1) {
+                    noMut(args.get(0));
+                    Type t = expr(args.get(0).expr(), null);
+                    if (t instanceof Type.ArrayT || t instanceof Type.ListT) return numbersOf(b, args.get(0), t);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0204, c.span, b.name + "() takes 2 argument(s) but 1 were given",
+                            "signature: " + b.signature + "; " + b.name + "(xs) takes one array or list of numbers");
+                    }
+                    return Type.ERROR;
+                }
                 if (!arity(c, 2)) return Type.ERROR;
                 noMut(args.get(0));
                 noMut(args.get(1));
@@ -2907,6 +2924,10 @@ public final class Checker {
                     return Type.ERROR;
                 }
                 return ts[0];
+            }
+            case SUM -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                return numbersArg(b, args.get(0));
             }
             case SQRT, FLOOR, CEIL, ROUND, TRUNC, EXP, LOG, LOG2, LOG10, SIN, COS, TAN, ASIN, ACOS, ATAN -> {
                 if (!arity(c, 1)) return Type.ERROR;
@@ -3023,7 +3044,7 @@ public final class Checker {
                 }
                 return t;
             }
-            case CONTAINS, INDEX_OF -> {
+            case CONTAINS, INDEX_OF, LAST_INDEX_OF -> {
                 Type ret = b == Builtin.CONTAINS ? Type.BOOL : Type.I64;
                 if (!arity(c, 2)) return ret;
                 noMut(args.get(0));
@@ -3216,6 +3237,33 @@ public final class Checker {
                 if (!arity(c, 1)) return Type.VOID;
                 sequenceArg(c, args.get(0));
                 return Type.VOID;
+            }
+            case DEDUP -> {
+                if (!arity(c, 1)) return Type.VOID;
+                collectionArg(c, args.get(0));
+                return Type.VOID;
+            }
+            case BINARY_SEARCH -> {
+                if (!arity(c, 2)) return Type.I64;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                readInPlace(args.get(0).expr());
+                noMut(args.get(1));
+                if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
+                    Type elem = Type.elementOf(t);
+                    Type x = expr(args.get(1).expr(), elem);
+                    if (!Type.isError(x) && !Type.assignable(x, elem)) {
+                        diags.error(Code.E0201, args.get(1).span(), "binary_search() looks for an element of type " + elem
+                            + ", found " + x);
+                    }
+                } else {
+                    expr(args.get(1).expr(), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, args.get(0).span(), "binary_search() needs a sorted array or list, found " + t,
+                            t instanceof Type.Str ? "to find text in a str, use index_of" : null);
+                    }
+                }
+                return Type.I64;
             }
             case INSERT -> {
                 Type keyed = args.isEmpty() ? null : keyedArg(c, args.get(0));
@@ -3533,6 +3581,25 @@ public final class Checker {
     }
 
     /** The argument of sort and reverse: a `mut` list, array or str. */
+    /** The one argument of sum, min and max over a collection: an array or list of numbers, whose element type is the result. */
+    private Type numbersArg(Builtin b, Arg a) {
+        noMut(a);
+        return numbersOf(b, a, expr(a.expr(), null));
+    }
+
+    /** {@link #numbersArg} for an argument already checked, of type t. */
+    private Type numbersOf(Builtin b, Arg a, Type t) {
+        readInPlace(a.expr());
+        if (Type.isError(t)) return t;
+        Type elem = t instanceof Type.ArrayT || t instanceof Type.ListT ? Type.elementOf(t) : null;
+        if (elem == null || !Type.isNumeric(elem)) {
+            diags.error(Code.E0203, a.span(), b.name + "() of one argument needs an array or list of numbers, found " + t,
+                b == Builtin.SUM ? null : "for two numbers, write " + b.name + "(a, b)");
+            return Type.ERROR;
+        }
+        return elem;
+    }
+
     private Type sequenceArg(Call c, Arg a) {
         if (!a.mut()) {
             Type t = expr(a.expr(), null);
