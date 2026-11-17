@@ -19,6 +19,7 @@ bin/alang fmt   prog.al --write   #    lay the file out the one way
 bin/alang test  prog.al --filter X #    run only the tests whose name contains X
 bin/alang check prog.al --memory   #    per-function worst-case stack table
 bin/alang build prog.al -o prog.c  #    compile to heap-free C99 (needs a C compiler to run it)
+bin/alang debug prog.al --break 12 --json < /dev/null  # every stop at line 12, with the variables in scope
 ```
 
 Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. A diagnostic
@@ -26,6 +27,14 @@ with a `= fix:` line has a mechanical one: `alang fix --write` makes it, and eve
 deterministic: a test that fails once fails every time, identically. `fuzz` tries the inputs your tests
 did not: empty and full strs of many shapes, full lists, the smallest and largest numbers. Each trap it
 reports comes with the arguments that caused it; handle that input, or narrow it with `requires`.
+
+When a value is wrong and you cannot see why, debug instead of adding `print`s: `alang debug prog.al
+--break LINE --json < /dev/null` prints one `"stopped"` event per time line LINE is reached, with every
+variable in scope, then the program's outcome. `--break add_word` stops at each call of a function,
+`--test NAME` and `--call TOOL '{...}'` debug a test or a tool, and a trap always stops where it happens,
+with the variables of the frame that trapped. To drive it, pipe commands in, one per line: `step`, `next`,
+`finish`, `continue`, `where`, `frame N`, `locals`, `print len(entries) - 1` (any expression; `help`
+lists them). `--break "12 if i == 3"` stops only where the condition holds.
 
 No `bin/alang` yet? Unpack `alang-VERSION.tar.gz` from <https://github.com/adamw7/alang/releases/latest>
 and use its `bin/alang` (`bin\alang.cmd` on Windows); it needs only Java 21 or newer.

@@ -187,7 +187,39 @@ public final class Checker {
                 }
             }
         }
-        return new CheckResult(program, memory);
+        return new CheckResult(program, memory, this::checkExpression);
+    }
+
+    /** See {@link Expressions#check}. */
+    private Routine checkExpression(Expr e, Routine routine, List<LocalVar> visible, Diagnostics into) {
+        Ctx savedCtx = ctx;
+        Diagnostics savedDiags = diags;
+        diags = into;
+        try {
+            // A frame of its own, so that a name a match in the expression binds gets a new slot, and the routine's
+            // own frame stays as it is.
+            TestDecl frame = new TestDecl(routine.span, "debugger", new Block(routine.span, List.of()));
+            frame.scope = routine.scope;
+            frame.locals.addAll(routine.locals);
+            ctx = new Ctx();
+            enterScope(routine);
+            ctx.routine = frame;
+            if (routine instanceof FnDecl f) ctx.typeParams = typeParamsOf(f);
+            Map<String, LocalVar> scope = new HashMap<>();
+            for (LocalVar v : visible) scope.put(v.name, v);
+            ctx.scopes.push(scope);
+            int before = diags.errorCount();
+            expr(e, null);
+            if (diags.errorCount() == before && e.type instanceof Type.Void) {
+                diags.error(Code.E0201, e.span, "this has no value: the function returns nothing", "print an expression that has a value");
+            }
+            // A generic function the expression calls with types the program never does is checked now.
+            checkInstances(new HashSet<>());
+            return diags.errorCount() == before ? frame : null;
+        } finally {
+            ctx = savedCtx;
+            diags = savedDiags;
+        }
     }
 
     // =================================================================== declarations

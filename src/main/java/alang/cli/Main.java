@@ -83,6 +83,9 @@ public final class Main {
           fix <file.al>                print the file with the fix of every diagnostic that has one (those
                                        marked `= fix:`), checking it again after each round; --write
                                        rewrites it
+          debug <file.al> [json]       run fn main under a debugger that reads commands from stdin (`help`
+                                       lists them): breakpoints, stepping, the stack and the variables,
+                                       also where a trap happens; --test or --call debugs a test or a tool
           explain <CODE>               explain a diagnostic or trap code, e.g. E0201 (or --all, markdown)
           grammar                      print the path of the ANTLR grammar, grammar/ALang.g4
           version                      print the version
@@ -101,6 +104,12 @@ public final class Main {
           -o FILE            output file (build)
           --write            rewrite the file in place (fmt, fix)
           --check            report a file that is not formatted, and change nothing (fmt)
+          --break LOC        a breakpoint before the first command: a line, file:line or a function (debug;
+                             may be given more than once)
+          --input FILE       the standard input of a fn main that takes it (debug, whose stdin is commands)
+          --test NAME        debug the test whose name is, or contains, NAME (debug)
+          --call TOOL        debug a call of tool fn TOOL, with the JSON arguments after the file (debug)
+          --max-stops N      once the commands run out, show at most N more stops (debug; default %d)
           --watch            poll the program's files and serve each version that compiles, telling the
                              host when the tools change (serve)
 
@@ -122,16 +131,19 @@ public final class Main {
         Map.entry("build", Set.of("-o", "--max-stack")),
         Map.entry("fmt", Set.of("--write", "--check")),
         Map.entry("fix", Set.of("--write", "--json", "--max-stack")),
+        Map.entry("debug", Set.of("--json", "--max-steps", "--max-stack", "--break", "--input", "--test", "--call",
+            "--max-stops")),
         Map.entry("explain", Set.of()),
         Map.entry("grammar", Set.of()),
         Map.entry("version", Set.of()),
         Map.entry("--version", Set.of()));
 
     /** The options that take a value, the next argument. */
-    private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--timeout", "--filter", "-o");
+    private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--timeout", "--filter", "-o",
+        "--break", "--input", "--test", "--call", "--max-stops");
 
     private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--timeout",
-        "--filter", "-o", "--write", "--check", "--watch");
+        "--filter", "-o", "--write", "--check", "--watch", "--break", "--input", "--test", "--call", "--max-stops");
 
     private final PrintStream out;
     private final PrintStream err;
@@ -147,6 +159,14 @@ public final class Main {
     private long timeoutMillis = Watchdog.DEFAULT_MILLIS;
     private String filter;
     private String output;
+    private final List<String> breaks = new ArrayList<>();
+    private String inputFile;
+    private String debugTest;
+    private String debugTool;
+    private int maxStops = DEFAULT_MAX_STOPS;
+
+    /** How many stops `alang debug` shows once its commands have run out. */
+    static final int DEFAULT_MAX_STOPS = 1000;
     private final List<String> positional = new ArrayList<>();
 
     Main(PrintStream out, PrintStream err) {
@@ -170,7 +190,7 @@ public final class Main {
     int run(String[] args) {
         if (args.length == 0 || args[0].equals("help") || args[0].equals("--help") || args[0].equals("-h")) {
             out.print(String.format(Locale.ROOT, USAGE, VERSION, Interpreter.DEFAULT_MAX_STEPS, Watchdog.DEFAULT_MILLIS / 1000,
-                Checker.DEFAULT_MAX_STACK));
+                Checker.DEFAULT_MAX_STACK, DEFAULT_MAX_STOPS));
             return args.length == 0 ? 2 : 0;
         }
         String cmd = args[0];
@@ -201,6 +221,11 @@ public final class Main {
                         case "--timeout" -> timeoutMillis = millis(next(args, ++i, a), a);
                         case "--filter" -> filter = next(args, ++i, a);
                         case "-o" -> output = next(args, ++i, a);
+                        case "--break" -> breaks.add(next(args, ++i, a));
+                        case "--input" -> inputFile = next(args, ++i, a);
+                        case "--test" -> debugTest = next(args, ++i, a);
+                        case "--call" -> debugTool = next(args, ++i, a);
+                        case "--max-stops" -> maxStops = (int) Math.min(Integer.MAX_VALUE, nonNegative(next(args, ++i, a), a));
                         default -> throw new IllegalStateException(a);
                     }
                 } else {
@@ -215,7 +240,7 @@ public final class Main {
             // A changed file name or filter would quietly open another file or match no test. The JSON
             // argument of `call` is checked by call() itself, which reports it as a JSON error.
             for (int i = 0; i < positional.size(); i++) {
-                if (!(cmd.equals("call") && i == 2)) requireDecodable(positional.get(i));
+                if (!(cmd.equals("call") && i == 2) && !(cmd.equals("debug") && i == 1)) requireDecodable(positional.get(i));
             }
             if (filter != null) requireDecodable(filter);
             if (output != null) requireDecodable(output);
@@ -230,6 +255,7 @@ public final class Main {
                 case "build" -> build(file());
                 case "fmt" -> fmt(file());
                 case "fix" -> fix(file());
+                case "debug" -> debug(file());
                 case "explain" -> explain();
                 case "grammar" -> {
                     line(out, "grammar/ALang.g4 (ANTLR 4) in the ALang repository");
@@ -252,6 +278,7 @@ public final class Main {
     private static int maxPositional(String cmd) {
         return switch (cmd) {
             case "call" -> 3;
+            case "debug" -> 2;
             case "grammar", "version", "--version" -> 0;
             default -> 1;
         };
@@ -695,6 +722,127 @@ public final class Main {
         }
         line(out, Json.write(report));
         return report.get("ok") == Boolean.TRUE ? 0 : 1;
+    }
+
+    // =================================================================== debug
+
+    /** A tool's result, as the debugger's last event shows it: JSON, and the text print() would write. */
+    record ToolResult(Object json, String text) {}
+
+    /**
+     * `alang debug`: fn main, the test --test names, or the tool --call names, run under {@link Debug}, which reads
+     * its commands from stdin. Compile errors and a bad target are reported as `run` reports them.
+     */
+    private int debug(Source src) {
+        if (debugTest != null && debugTool != null) throw new UsageException("--test and --call cannot be used together");
+        if (positional.size() > 1 && debugTool == null) {
+            throw new UsageException("unexpected argument `" + positional.get(1) + "`: JSON arguments go with --call TOOL");
+        }
+        Frontend.Result r = compile(src);
+        Map<String, Object> j = Json.obj("ok", false, "file", src.path);
+        if (!report(r, j)) return failCompile(r, j);
+        Program p = r.program();
+        Debug.Target target;
+        if (debugTest != null) {
+            List<TestDecl> found = new ArrayList<>();
+            List<String> names = new ArrayList<>();
+            for (TestDecl t : p.itemsOf(TestDecl.class)) {
+                names.add("\"" + t.name + "\"");
+                if (t.name.equals(debugTest)) {
+                    found.clear();
+                    found.add(t);
+                    break;
+                }
+                if (t.name.contains(debugTest)) found.add(t);
+            }
+            if (found.size() != 1) {
+                List<String> hits = new ArrayList<>();
+                for (TestDecl t : found) hits.add("\"" + t.name + "\"");
+                return debugError(j, found.isEmpty()
+                    ? "no test name contains \"" + debugTest + "\"; " + (names.isEmpty() ? src.path + " has no tests"
+                        : "the tests are " + String.join(", ", names))
+                    : "--test \"" + debugTest + "\" matches " + found.size() + " tests: " + String.join(", ", hits)
+                        + "; give one's whole name");
+            }
+            TestDecl t = found.get(0);
+            target = in -> {
+                in.runTest(t);
+                return null;
+            };
+        } else if (debugTool != null) {
+            FnDecl f = p.function(debugTool);
+            if (f == null || !f.tool) {
+                List<String> tools = new ArrayList<>();
+                for (FnDecl fd : p.itemsOf(FnDecl.class)) {
+                    if (fd.tool) tools.add(fd.name);
+                }
+                return debugError(j, (f == null ? "no function `" + debugTool + "`" : "`" + debugTool + "` is not declared as `tool fn`")
+                    + "; available tools: " + tools);
+            }
+            Object[] args;
+            try {
+                String text = positional.size() > 1 ? positional.get(1) : "{}";
+                if (undecodable(text)) {
+                    return debugError(j, "the JSON argument could not be decoded in this host locale; use a UTF-8 locale such as C.UTF-8");
+                }
+                args = toolArguments(f, Json.parse(text));
+            } catch (Json.ParseException e) {
+                return debugError(j, "arguments are not valid JSON: " + e.getMessage());
+            } catch (JsonValues.DecodeException e) {
+                return debugError(j, "bad arguments: " + e.getMessage());
+            }
+            target = in -> {
+                Object v = in.call(f, args, f.nameSpan);
+                if (f.ret instanceof Type.Void) return null;
+                Object jv;
+                try {
+                    jv = JsonValues.toJson(v, f.ret);
+                } catch (JsonValues.EncodeException e) {
+                    jv = null;
+                }
+                return new ToolResult(jv, alang.interp.Format.toText(v, f.ret));
+            };
+        } else {
+            FnDecl main = p.function("main");
+            if (main == null) {
+                return debugError(j, "no `fn main()` in " + src.path + "; debug a test with --test or a tool with --call");
+            }
+            byte[] input = new byte[0];
+            if (!main.paramVars.isEmpty() && inputFile != null) {
+                try (InputStream f = Files.newInputStream(Path.of(inputFile))) {
+                    input = f.readNBytes(((Type.Str) main.paramVars.get(0).type).cap() + 1);
+                } catch (NoSuchFileException e) {
+                    throw new UsageException("file not found: " + inputFile);
+                } catch (IOException e) {
+                    throw new UsageException("cannot read " + inputFile + ": " + e.getMessage());
+                }
+            } else if (inputFile != null) {
+                throw new UsageException("--input given, but fn main in " + src.path + " takes no input");
+            }
+            byte[] given = input;
+            target = in -> {
+                in.runMain(main, given);
+                return null;
+            };
+        }
+        java.io.ByteArrayOutputStream held = json ? new java.io.ByteArrayOutputStream() : null;
+        Interpreter interp = new Interpreter(src, json ? held : out, maxSteps);
+        java.io.BufferedReader commands = new java.io.BufferedReader(new java.io.InputStreamReader(in, StandardCharsets.UTF_8));
+        boolean interactive = in == System.in && System.console() != null;
+        Debug d = new Debug(src, p, commands, out, json, interactive, maxStops, held, r.check().expressions());
+        int code = d.session(interp, target, breaks);
+        out.flush();
+        return code;
+    }
+
+    private int debugError(Map<String, Object> j, String msg) {
+        if (json) {
+            j.put("error", msg);
+            line(out, Json.write(j));
+        } else {
+            line(err, "alang: " + msg);
+        }
+        return 1;
     }
 
     /**

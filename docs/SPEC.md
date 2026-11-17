@@ -933,3 +933,68 @@ are no exceptions: model recoverable failures as enum return values (see `exampl
   byte-identical to the interpreter's.
 
 Recommended: `cc -std=c99 -O2 file.c -lm`. The test suite checks gcc and clang at `-O0` to `-O3`.
+
+## 13. The debugger
+
+`alang debug file.al` runs `fn main` under a debugger that reads commands from stdin, one per line.
+`--test NAME` runs the test whose name is NAME, or the one test whose name contains it, instead, and
+`--call TOOL '{"n": 4}'` a call of a tool with those JSON arguments. A `fn main(input: str[N])` gets the
+bytes of `--input FILE`, or none, since stdin carries the commands. `--break LOC`, once or more, sets
+breakpoints before the first command.
+
+| Command | Short | What it does |
+|---------|-------|--------------|
+| `break LOC` | `b` | Stops at LOC: a line of the main file (`12`), a line of an imported one (`lib/fmt.al:12`), or a function (`add_word`), at the first statement of each call. A line must have a statement start on it; if it does not, the error names the nearest lines that do. `break LOC if COND` stops only where the bool expression COND is true: `break 12 if i == 3 and len(xs) > 0`. |
+| `delete [N]` | `d` | Deletes breakpoint N, or every one. |
+| `breakpoints` | | Lists the breakpoints, with how often each was hit. |
+| `run` | `r` | Starts the program, which then stops at breakpoints and traps. |
+| `continue` | `c` | Runs to the next breakpoint or trap, or the end. |
+| `step` | `s` | Runs to the next statement, in a function the current one calls if it calls one; before the program starts, to its first statement. |
+| `next` | `n` | Runs to the next statement of the current function, or of its caller once it returns. |
+| `finish` | `f` | Runs until the current function returns, to the next statement of its caller. |
+| `where` | `bt` | The call stack, innermost first, with the statement each frame is at. |
+| `frame N` | | Looks at frame N (0 is the innermost) for `locals`, `print` and `list`. |
+| `locals` | `v` | The frame's parameters and the variables in scope, with their types and values. |
+| `print EXPR` | `p` | The value of an expression, in the scope of the frame: `xs[i].name`, `len(xs) - 1`, `total(xs)`, `m["key"]`, `match k { 3 => "three", _ => "other" }`. |
+| `list [LINE]` | `l` | The source around the stop, or around LINE. |
+| `display` | | Also shows the variables at every stop; again to stop showing them. |
+| `help` | `h` | The commands. |
+| `quit` | `q` | Ends the session, and the program with it. |
+
+A stop is before a statement runs. A line breakpoint stops where the run reaches its line anew: at a statement
+that starts on the line, unless the statement before it in the same frame started on that line too, further
+left. So `a; b;` and `if c { a; }` on one line stop once, a loop body on lines of its own stops once per
+iteration, and `for i in 0..3 { n += i; }` on one line stops as the loop starts and then each time it goes
+back round.
+
+An expression of `print` or of a condition is checked as if it were written at the statement the frame is
+at, with the variables in scope there, the constants and the functions of the program; it is then evaluated
+on a copy of the frame, with a budget of its own (10 million steps) that the program's steps do not include.
+A call with a `mut` argument is refused (E0215), so an expression cannot change the program; what a function
+it calls prints is shown with its value. A condition that does not check where its breakpoint is reached (a
+name not yet in scope, a value that is no bool) is reported once for that place, as `condition_skipped`,
+and does not stop there; one that traps when it is evaluated stops, and says so.
+A variable is in scope from the statement after its declaration to the end of its block; a loop's
+variables are in scope in its body, and the names a match arm binds in the arm. A trap always stops, where
+it happens and before the stack unwinds: `where`, `frame`, `locals` and `print` show the state that led to
+it, and any command that resumes then ends the program with the trap, reported as `run` reports it. Values
+are written as trap messages write them, strs in quotes; one longer than 2000 characters is cut, with the
+count of the rest.
+
+When the commands run out, as they do at once with `< /dev/null`, the program runs on: each later stop is
+shown with the variables in scope and passed, up to `--max-stops` (1000), after which it runs to its end
+without stopping. So `alang debug file.al --break 12 < /dev/null` prints the state at line 12 every time
+it is reached.
+
+With `--json`, every line of output is one JSON object with an `"event"`: `breakpoint` when one is set,
+`condition_skipped`, `stopped` (with `"reason"` `breakpoint`, `step` or `trap`; a `condition_error` when the condition trapped; `file`, `line`, `column`, `source_line`,
+`function`, `steps`; a trap's `code` and `message`; and `variables`, each `{"name", "type", "value"}`,
+when the variables are shown), `output` with the text the program printed since the last event, `stack`,
+`frame`, `variables`, `value` (the `expression`, its `type` and `value`, and any `output`), `source`, `breakpoints`, `deleted`, `display` and `error` (`message` and
+`hint`) in answer to commands, and last `exited`: `"ok": true` with the steps and a tool's `result`, or
+`"ok": false` with the `trap` as `run --json` reports it. Without `--json`, the program's output and the
+debugger's share stdout, in the order they happen.
+
+The debugger only reads: a run under it prints the same output, takes the same steps and traps at the same
+place as `alang run`, and the same program, commands and input give the same transcript. The exit code is
+0 when the program ran to its end, 1 when it trapped or a `quit` stopped it, and 2 for a usage error.
