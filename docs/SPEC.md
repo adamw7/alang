@@ -433,7 +433,7 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 | f32 → f64 | exact |
 | bool → integer | `true` → 1, `false` → 0 |
 | str → integer | decimal text: an optional `+` or `-`, then digits; other text or out of range traps (R0009) |
-| str → f64 | decimal text: an optional `+` or `-`, then digits with at most one `.` among them (`2.5`, `-0.5`, `3.`, `.25`; no exponent); the nearest f64. It converts when the digits from the first to the last that is not 0 make a number of at most 2^53, between about 1e-22 and 1e37 in size, so that one correctly rounded operation gives that f64 on every backend: 15 significant digits always do. Other text traps (R0009); `is_float(s)` says first. For an f32, `f32(f64(s))`. |
+| str → f64 | decimal text: an optional `+` or `-`, then digits with at most one `.` among them, then optionally an exponent: `e` or `E`, an optional sign and digits (`2.5`, `-0.5`, `3.`, `.25`, `1e5`, `2.5E-3`); the nearest f64. It converts when the digits from the first to the last that is not 0 make a number of at most 2^53, between about 1e-22 and 1e37 in size, so that one correctly rounded operation gives that f64 on every backend: 15 significant digits always do. Other text traps (R0009); `is_float(s)` says first. For an f32, `f32(f64(s))`. |
 | anything → bool | not allowed (E0214); compare instead |
 | `str[M]` → `str[N]` | the same bytes; more than N bytes traps (R0004) |
 | `list[T; M]` → `list[T; N]` | the same elements, of the same type T; more than N traps (R0004) |
@@ -562,6 +562,8 @@ them all.
 | Function | Description |
 |----------|-------------|
 | `abs(x)`, `min(a, b)`, `max(a, b)` | Same-type numbers. `abs` of the minimum integer traps (R0001). |
+| `min(xs)`, `max(xs)` | The smallest or largest element of a non-empty array or list of numbers, compared as `min(a, b)` compares (a NaN is kept only if it is first). Traps (R0013) if it is empty. |
+| `sum(xs) -> T` | The elements of an array or list of numbers added left to right, as `+` adds them, in their type; 0 if it is empty. An integer total that does not fit traps (R0001), as `+` does, so sum a `list[u8; N]` into a wider type with a loop. |
 | `clamp(x, lo, hi) -> T` | `lo` if `x < lo`, `hi` if `x > hi`, else `x`; same-type numbers. Traps (R0013) unless `lo <= hi`, so a NaN bound traps. |
 | `pow(x, n) -> T` | `x` (any integer type) to the power `n` (any integer type); `pow(0, 0)` is 1. Traps if `n < 0` (R0013) or the result does not fit (R0001). For an `f32`/`f64` `x`, `n` is a float of the same type (`pow(2.0, 0.5)`, `pow(x, 3.0)`) and nothing traps: the special cases are C99's (`pow(-8.0, 0.5)` is NaN, `pow(0.0, -1.0)` is `inf`), an integer `n` gives the correctly rounded power (`pow(2.0, 10.0)` is `1024.0`), and `pow(x, 0.5)` is `sqrt(x)`. |
 | `gcd(a, b) -> T` | Greatest common divisor of same-type integers, never negative; `gcd(0, 0)` is 0. `gcd(x, 0)` for the minimum `x` does not fit and traps (R0001). |
@@ -604,6 +606,7 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 |----------|-------------|
 | `contains(xs, x) -> bool` | In a str, whether the pattern `x` occurs (the empty str always does); in an array or list, whether an element `== x`. |
 | `index_of(xs, x) -> i64` | Where the first occurrence starts, as for `contains`, or -1. |
+| `last_index_of(xs, x) -> i64` | Where the last occurrence starts, or -1; `len(xs)` for the empty str. |
 | `count(xs, x) -> i64` | In a str, the non-overlapping occurrences of the pattern `x`, left to right (`count("aaaa", "aa")` is 2); traps (R0013) if `x` is an empty str. In an array or list, the elements `== x`. |
 | `starts_with(s, p) -> bool`, `ends_with(s, p) -> bool` | Whether the str `s` begins or ends with the pattern `p`. |
 | `slice(xs, from, to) -> T` | The elements `from..to` (half-open) of a str or list, of the same type, or of an array, as a `list[T; N]`. Traps (R0003) unless `0 <= from <= to <= len(xs)`. `xs[from..to]` is the same, and either end may be left out: `s[1..]`, `xs[..n]`, `xs[..]` (§6). |
@@ -732,6 +735,8 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 |----------|-------------|
 | `sort(mut xs)` | Sorts a list, array or str in place, ascending, in the order below. |
 | `reverse(mut xs)` | Reverses a list, array or str in place. |
+| `dedup(mut xs)` | Removes each element of a list (byte of a str) that is `==` to the one before it, keeping the first of each run and the order. After `sort`, every value is left once. |
+| `binary_search(xs, x) -> i64` | In an array or list sorted as `sort` sorts it, the position of the first element `e` with `compare(e, x) == 0`, or -1. It looks at about log2(len(xs)) elements; on one that is not sorted it may miss an equal element, the same way on every backend. |
 | `insert(mut xs, i, v)` | Inserts `v` into a list (a `u8` into a str) at position `i`, moving the rest up. Traps unless `0 <= i <= len(xs)` (R0003), then if full (R0004). |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position `i` of a list (a byte of a str), moving the rest down. Traps unless `0 <= i < len(xs)` (R0003). Like `pop`, it may be a statement of its own. |
 
@@ -741,7 +746,7 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 
 | `compare(a, b) -> i64` | -1, 0 or 1 as `a` comes before, equals or comes after `b` in the order below; two values of any one type, so it orders the values of a type parameter. |
 
-`len`, `cap`, `clear` and `contains` work on maps and sets too, by key. `contains`, `index_of`, `count` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
+`len`, `cap`, `clear` and `contains` work on maps and sets too, by key. `contains`, `index_of`, `last_index_of`, `count` and `slice` (§9.4) work on arrays and lists too. Positions (`i`, `from`, `to`) may
 be of any integer type, as indexes may.
 
 **The order of `sort`** is defined for every type: numbers by value, with `-0.0` before `0.0` and every

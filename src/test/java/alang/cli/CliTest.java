@@ -622,7 +622,7 @@ class CliTest {
     @Test
     void callsReportTheStepsTheyRan() throws IOException {
         Path p = write("t.al", """
-            tool fn sum(n: i64) -> i64 {
+            tool fn total_of(n: i64) -> i64 {
                 var total: i64 = 0;
                 for i in 0..n {
                     total += 10 / (3 - i);
@@ -632,13 +632,13 @@ class CliTest {
             """);
         // var, for, two iterations of one step each plus the +=, return: 7.
         assertEquals("{\"ok\": true, \"result\": 8, \"stdout\": \"\", \"steps\": 7}\n",
-            run("call", p.toString(), "sum", "{\"n\": 2}").out());
+            run("call", p.toString(), "total_of", "{\"n\": 2}").out());
         // The fourth iteration divides by zero at its += , the tenth step.
-        Map<?, ?> trap = (Map<?, ?>) Json.parse(run("call", p.toString(), "sum", "{\"n\": 5}").out());
+        Map<?, ?> trap = (Map<?, ?>) Json.parse(run("call", p.toString(), "total_of", "{\"n\": 5}").out());
         assertEquals("R0002", ((Map<?, ?>) trap.get("error")).get("code"), trap.toString());
         assertEquals(BigInteger.valueOf(10), trap.get("steps"), trap.toString());
         assertEquals("{\"ok\": false, \"error\": {\"code\": \"bad_arguments\", \"message\": \"n: expected an integer\"}}\n",
-            run("call", p.toString(), "sum", "{\"n\": \"2\"}").out());
+            run("call", p.toString(), "total_of", "{\"n\": \"2\"}").out());
     }
 
     /**

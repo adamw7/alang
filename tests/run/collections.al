@@ -4,7 +4,7 @@ struct Pair {
     b: [i32; 3],
 }
 
-fn sum(xs: list[i32; 16]) -> i64 {
+fn total_of(xs: list[i32; 16]) -> i64 {
     var t: i64 = 0;
     for x in xs {
         t += i64(x);
@@ -16,9 +16,9 @@ fn main() {
     var xs: list[i32; 16] = [3, 1, 4];
     push(mut xs, 1);
     push(mut xs, 5);
-    print(xs, " len=", len(xs), " cap=", cap(xs), " sum=", sum(xs));
+    print(xs, " len=", len(xs), " cap=", cap(xs), " sum=", total_of(xs));
     let small: list[i32; 4] = [9, 9];
-    print(sum(small), " ", small == [9, 9], " ", xs == small);
+    print(total_of(small), " ", small == [9, 9], " ", xs == small);
     xs[0] = 30;
     let popped: i32 = pop(mut xs);
     print(xs, " popped ", popped);

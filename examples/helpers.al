@@ -30,7 +30,7 @@ enum ParsedF64 {
     Bad,
 }
 
-/// A decimal number such as 19.99, -0.5 or 42 that f64(s) converts exactly; f64(s) traps on other text,
+/// A decimal number such as 19.99, -0.5, 42 or 2.5e3 that f64(s) converts exactly; f64(s) traps on other text,
 /// this returns Bad instead. To write a number with a fixed number of decimals, use fixed(x, 2).
 fn parse_f64(s: str[_]) -> ParsedF64 {
     if is_float(s) {
@@ -114,7 +114,7 @@ fn sort_by<T>(xs: mut list[T; _], before: fn(T, T) -> bool) {
 
 fn main() {
     print(parse_i64("-9223372036854775808"), " ", parse_i64("12x"));
-    print(parse_f64("19.99"), " ", parse_f64("1e5"));
+    print(parse_f64("19.99"), " ", parse_f64("1,5"));
     print(next_random(2024));
     var stock: list[Entry; 16] = [];
     store(mut stock, "apples", 3);
@@ -144,7 +144,7 @@ test "parse_f64 reads decimal numbers and nothing else" {
     assert parse_f64("19.99") == ParsedF64.Ok(19.99);
     assert parse_f64("-0.5") == ParsedF64.Ok(-0.5);
     assert parse_f64("42") == ParsedF64.Ok(42.0);
-    assert parse_f64("1e5") == ParsedF64.Bad;
+    assert parse_f64("2.5e3") == ParsedF64.Ok(2500.0);
     assert parse_f64("") == ParsedF64.Bad;
     assert parse_f64("1,5") == ParsedF64.Bad;
 }

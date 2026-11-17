@@ -1571,6 +1571,18 @@ static int64_t al_find_bytes(const uint8_t *h, uint32_t hn, const uint8_t *n, ui
     return -1;
 }
 
+/* last_index_of() in a str: the last position where n occurs, or -1; hn for an empty n. */
+static int64_t al_find_last_bytes(const uint8_t *h, uint32_t hn, const uint8_t *n, uint32_t nn) {
+    uint32_t i, j;
+    if (nn > hn) return -1;
+    for (i = hn - nn + 1; i > 0; i--) {
+        for (j = 0; j < nn && h[i - 1 + j] == n[j]; j++) {
+        }
+        if (j == nn) return (int64_t)i - 1;
+    }
+    return -1;
+}
+
 static bool al_starts_with(const uint8_t *s, uint32_t n, const uint8_t *p, uint32_t pn) {
     return pn <= n && al_eq_bytes(s, pn, p, pn);
 }
@@ -1858,7 +1870,7 @@ static void al_parse_trap(const uint8_t *b, uint32_t n, const char *type, int ra
 
 /*
  * Decimal text as a double, the algorithm of the interpreter's Stdlib.decimalFloat: an optional + or -,
- * then digits with at most one '.' among them. With M the digits between the first and last that are not 0
+ * then digits with at most one '.' among them, then optionally e or E, an optional sign and digits. With M the digits between the first and last that are not 0
  * and the value M * 10^E, it converts when M <= 2^53 and 10^E (or M * 10^(E - 22) and 10^22) is a double,
  * so that one multiplication or division rounds the exact value to the nearest double.
  * Returns 0 for text of another form, 1 for a number too precise to convert exactly, 2 with *out set.
@@ -1868,13 +1880,29 @@ static const double al_pow10[23] = {
     1e19, 1e20, 1e21, 1e22};
 
 static int al_parse_f64(const uint8_t *b, uint32_t n, double *out) {
-    uint32_t i = 0, j;
+    uint32_t i = 0, j, end = n;
     int negative = n > 0 && b[0] == '-';
-    int64_t digits = 0, before = -1, first = -1, last = -1, k = 0, e;
+    int64_t digits = 0, before = -1, first = -1, last = -1, k = 0, e, x = 0;
     uint64_t m = 0;
     double v;
     if (n > 0 && (b[0] == '+' || b[0] == '-')) i = 1;
     for (j = i; j < n; j++) {
+        uint32_t p;
+        int minus;
+        if (b[j] != 'e' && b[j] != 'E') continue;
+        end = j;
+        p = j + 1;
+        minus = p < n && b[p] == '-';
+        if (p < n && (b[p] == '+' || b[p] == '-')) p++;
+        if (p == n) return 0;
+        for (; p < n; p++) {
+            if (b[p] < '0' || b[p] > '9') return 0;
+            if (x < 1000000) x = x * 10 + (b[p] - '0');
+        }
+        if (minus) x = -x;
+        break;
+    }
+    for (j = i; j < end; j++) {
         if (b[j] == '.') {
             if (before >= 0) return 0;
             before = digits;
@@ -1895,13 +1923,13 @@ static int al_parse_f64(const uint8_t *b, uint32_t n, double *out) {
         return 2;
     }
     if (last - first >= 16) return 1;
-    for (j = i; j < n; j++) {
+    for (j = i; j < end; j++) {
         if (b[j] == '.') continue;
         if (k >= first && k <= last) m = m * 10u + (uint64_t)(b[j] - '0');
         k++;
     }
     if (m > ((uint64_t)1 << 53)) return 1;
-    e = before - 1 - last;
+    e = before - 1 - last + x;
     if (e < 0) {
         if (e < -22) return 1;
         v = (double)m / al_pow10[-e];

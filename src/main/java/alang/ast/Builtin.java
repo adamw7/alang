@@ -18,8 +18,15 @@ public enum Builtin {
 
     // ---- math
     ABS(Group.MATH, true, "abs", "abs(x) -> T", "Absolute value of a signed integer or float. Traps on overflow (abs of the minimum integer)."),
-    MIN(Group.MATH, true, "min", "min(a, b) -> T", "Smaller of two numbers of the same type."),
-    MAX(Group.MATH, true, "max", "max(a, b) -> T", "Larger of two numbers of the same type."),
+    MIN(Group.MATH, true, "min", "min(a, b) -> T",
+        "Smaller of two numbers of the same type. min(xs), with one array or list of numbers, is its smallest element; "
+            + "traps (R0013) if it is empty."),
+    MAX(Group.MATH, true, "max", "max(a, b) -> T",
+        "Larger of two numbers of the same type. max(xs), with one array or list of numbers, is its largest element; "
+            + "traps (R0013) if it is empty."),
+    SUM(Group.MATH, true, "sum", "sum(xs) -> T",
+        "The total of an array or list of numbers, added left to right; 0 if it is empty. Traps (R0001) if an integer "
+            + "total does not fit its type, as + does."),
     CLAMP(Group.MATH, true, "clamp", "clamp(x, lo, hi) -> T",
         "x limited to lo..hi (numbers of the same type). Traps (R0013) unless lo <= hi."),
     POW(Group.MATH, true, "pow", "pow(x, n) -> T",
@@ -82,6 +89,8 @@ public enum Builtin {
         "Whether a str contains a str or u8 byte, or an array/list contains an element equal to x."),
     INDEX_OF(Group.TEXT, true, "index_of", "index_of(xs, x) -> i64",
         "Position of the first occurrence of x (as for contains), or -1 if there is none."),
+    LAST_INDEX_OF(Group.TEXT, true, "last_index_of", "last_index_of(xs, x) -> i64",
+        "Position of the last occurrence of x (as for contains), or -1 if there is none; for the empty str, len(xs)."),
     STARTS_WITH(Group.TEXT, true, "starts_with", "starts_with(s, prefix) -> bool", "Whether a str begins with a str or u8 byte."),
     ENDS_WITH(Group.TEXT, true, "ends_with", "ends_with(s, suffix) -> bool", "Whether a str ends with a str or u8 byte."),
     SLICE(Group.TEXT, true, "slice", "slice(xs, from, to) -> T",
@@ -128,7 +137,8 @@ public enum Builtin {
     IS_FLOAT(Group.TEXT, true, "is_float", "is_float(s) -> bool",
         "Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then "
             + "digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are "
-            + "left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. No exponents."),
+            + "left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. An exponent may follow: "
+            + "1e5, 2.5E-3."),
 
     IS_UTF8(Group.TEXT, true, "is_utf8", "is_utf8(s) -> bool",
         "Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or "
@@ -153,6 +163,13 @@ public enum Builtin {
             + "NaN last), false before true, strs and lists element by element (a prefix first), structs field by field, "
             + "enums by variant, then payload."),
     REVERSE(Group.COLLECTIONS, false, "reverse", "reverse(mut xs)", "Reverses a list, array or str in place."),
+    DEDUP(Group.COLLECTIONS, false, "dedup", "dedup(mut xs)",
+        "Removes each element of a list (byte of a str) equal to the one before it, keeping the first of each run. "
+            + "After sort(mut xs), every value is left once."),
+    BINARY_SEARCH(Group.COLLECTIONS, true, "binary_search", "binary_search(xs, x) -> i64",
+        "In an array or list sorted as sort sorts it, the position of the first element e with compare(e, x) == 0, or -1 if "
+            + "there is none. "
+            + "Looks at about log2(len(xs)) elements; on a list that is not sorted, it may miss an equal element, but never traps and gives the same answer on every run."),
     INSERT(Group.COLLECTIONS, false, "insert", "insert(mut xs, i, value)",
         "Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. "
             + "Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and "
@@ -227,7 +244,7 @@ public enum Builtin {
     /** Whether the first argument is modified, and so passed as `mut`. */
     public boolean modifiesFirst() {
         return switch (this) {
-            case PUSH, POP, CLEAR, APPEND, PUSH_CHAR, SORT, REVERSE, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
+            case PUSH, POP, CLEAR, APPEND, PUSH_CHAR, SORT, REVERSE, DEDUP, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
             default -> false;
         };
     }

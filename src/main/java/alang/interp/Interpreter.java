@@ -1100,13 +1100,36 @@ public final class Interpreter {
                 return IntOps.abs(Type.kind(t), (Long) v, c.span);
             }
             case MIN, MAX -> {
+                if (args.size() == 1) {
+                    Object xs = eval(args.get(0).expr(), slots);
+                    Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                    int n = xs instanceof ListV l ? l.len : items.length;
+                    if (n == 0) {
+                        throw new Trap(Code.R0013, c.span, c.builtin.name + "() of an empty "
+                            + (xs instanceof ListV ? "list" : "array"));
+                    }
+                    Object best = items[0];
+                    for (int i = 1; i < n; i++) {
+                        meter.elements(1);
+                        if (takesSecond(c.builtin, c.type, best, items[i])) best = items[i];
+                    }
+                    return best;
+                }
                 Object a = eval(args.get(0).expr(), slots);
                 Object b = eval(args.get(1).expr(), slots);
-                // b < a and b > a, so that a NaN operand gives a, as in the C backend.
-                boolean min = c.builtin == Builtin.MIN;
-                boolean takeB = Type.isFloat(c.type) ? (min ? (Double) b < (Double) a : (Double) b > (Double) a)
-                    : Integer.signum(IntOps.compare(Type.kind(c.type), (Long) b, (Long) a)) == (min ? -1 : 1);
-                return takeB ? b : a;
+                return takesSecond(c.builtin, c.type, a, b) ? b : a;
+            }
+            case SUM -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                PrimKind k = Type.kind(c.type);
+                Object total = k.isFloat ? (Object) 0.0 : (Object) 0L;
+                for (int i = 0; i < n; i++) {
+                    meter.elements(1);
+                    total = arith(BinOp.ADD, k, k, total, items[i], c.span);
+                }
+                return total;
             }
             case SQRT, FLOOR, CEIL, ROUND, TRUNC, EXP, LOG, LOG2, LOG10, SIN, COS, TAN, ASIN, ACOS, ATAN -> {
                 double d = (Double) eval(args.get(0).expr(), slots);
@@ -1184,6 +1207,12 @@ public final class Interpreter {
                 boolean upper = c.builtin == Builtin.TO_UPPER;
                 if (v instanceof StrV s) return Stdlib.mapCase(s, upper, meter);
                 return upper ? Stdlib.toUpper((Long) v) : Stdlib.toLower((Long) v);
+            }
+            case LAST_INDEX_OF -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object x = eval(args.get(1).expr(), slots);
+                return xs instanceof StrV s ? (long) Stdlib.findLast(s.b, s.len, Stdlib.pattern(x, meter), meter)
+                    : Stdlib.lastIndexOf(xs, x, Type.elementOf(args.get(0).expr().type), meter);
             }
             case CONTAINS, INDEX_OF -> {
                 Object xs = eval(args.get(0).expr(), slots);
@@ -1302,6 +1331,16 @@ public final class Interpreter {
                 else Stdlib.reverse(xs, meter);
                 return null;
             }
+            case DEDUP -> {
+                Stdlib.dedup(ref(args.get(0).expr(), slots).get(), args.get(0).expr().type, meter);
+                return null;
+            }
+            case BINARY_SEARCH -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                Object x = Values.coerce(eval(args.get(1).expr(), slots), elem, meter);
+                return Stdlib.binarySearch(xs, x, elem, meter);
+            }
             case INSERT -> {
                 if (args.get(0).expr().type instanceof Type.MapT mt) {
                     MapV m = (MapV) ref(args.get(0).expr(), slots).get();
@@ -1361,5 +1400,15 @@ public final class Interpreter {
             }
         }
         throw new IllegalStateException();
+    }
+
+    /**
+     * Whether min or max of a and b is b: b < a or b > a, so that a NaN, or an equal value, gives a, as in the C
+     * backend.
+     */
+    private static boolean takesSecond(Builtin which, Type t, Object a, Object b) {
+        boolean min = which == Builtin.MIN;
+        return Type.isFloat(t) ? (min ? (Double) b < (Double) a : (Double) b > (Double) a)
+            : Integer.signum(IntOps.compare(Type.kind(t), (Long) b, (Long) a)) == (min ? -1 : 1);
     }
 }
