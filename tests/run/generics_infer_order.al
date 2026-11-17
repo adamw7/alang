@@ -1,5 +1,6 @@
 // A call fixes a type parameter from the arguments that give one, in any order: `[]`, Option.None and Tree.Empty
-// give none, so the literal beside them decides, before or after them.
+// give none, so the literal beside them decides, before or after them. The same holds for the two sides of
+// `==` and of compare().
 enum Tree<T> {
     Leaf(T),
     Empty,
@@ -30,4 +31,6 @@ fn main() {
     print(or_else(Option.None, 7), " ", leaf_or(Tree.Empty, 0.5), " ", both([], [1]), " ", both([1, 2], []));
     let x: u8 = 9;
     print(first_or([], x), " ", or_else(Option.Some(3), 4));
+    print(Option.None == Option.Some(1), " ", Option.Some(1) == Option.None, " ", Tree.Empty != Tree.Leaf(2.5));
+    print(compare(Option.None, Option.Some(1)), " ", compare(Option.Some(1), Option.None), " ", compare(Tree.Empty, Tree.Leaf("a")));
 }
