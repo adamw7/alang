@@ -347,10 +347,8 @@ public final class Interpreter {
         r.set(arith(a.op, Type.kind(t), Type.kind(a.value.type), r.get(), rhs, a.span));
     }
 
-    /** What a loop does after its body: go on with the next iteration, leave the loop, or pass the result out. */
-    private static final int GO = 0;
-    private static final int LEAVE = 1;
-    private static final int OUT = 2;
+    /** What {@link #body} returns when the loop goes on with its next iteration. */
+    private static final int GO = -1;
 
     /**
      * The loop that a `break label;` or `continue label;` being carried out jumps to; null for one without a
@@ -358,11 +356,13 @@ public final class Interpreter {
      */
     private Loop jumpTarget;
 
-    private int after(Loop l, int r) {
+    /** Runs the body of loop l once: GO when the loop goes on, else what the loop statement returns. */
+    private int body(Loop l, Block b, Object[] slots) {
+        int r = execBlock(b, slots);
         if (r == NORMAL) return GO;
-        if (r == RETURN || jumpTarget != null && jumpTarget != l) return OUT;
+        if (r == RETURN || jumpTarget != null && jumpTarget != l) return r;
         jumpTarget = null;
-        return r == BREAK ? LEAVE : GO;
+        return r == BREAK ? NORMAL : GO;
     }
 
     private int whileLoop(While w, Object[] slots) {
@@ -377,10 +377,8 @@ public final class Interpreter {
             }
             count++;
             step(w.span);
-            int r = execBlock(w.body, slots);
-            int a = after(w, r);
-            if (a == LEAVE) break;
-            if (a == OUT) return r;
+            int r = body(w, w.body, slots);
+            if (r != GO) return r;
         }
         return NORMAL;
     }
@@ -410,10 +408,8 @@ public final class Interpreter {
         while (true) {
             step(f.span);
             slots[f.var.slot] = i;
-            int r = execBlock(f.body, slots);
-            int a = after(f, r);
-            if (a == LEAVE) break;
-            if (a == OUT) return r;
+            int r = body(f, f.body, slots);
+            if (r != GO) return r;
             if (f.rev) {
                 if (Long.compareUnsigned(i - from, step) < 0) break;
                 i -= step;
@@ -431,35 +427,22 @@ public final class Interpreter {
         // The collection is evaluated once and iterated as a snapshot: a copy, when it is a variable the body
         // may change, else the value itself.
         Object coll = f.snapshot ? owned(f.from, slots) : eval(f.from, slots);
-        if (coll instanceof MapV m) {
-            // A map gives its keys in order, or with `for k, v in m` each key with its value.
-            for (int k = 0; k < m.len; k++) {
-                int i = f.rev ? m.len - 1 - k : k;
-                step(f.span);
-                if (f.indexVar != null) {
-                    slots[f.indexVar.slot] = m.keys[i];
-                    slots[f.var.slot] = m.vals[i];
-                } else {
-                    slots[f.var.slot] = m.keys[i];
-                }
-                int r = execBlock(f.body, slots);
-                int a = after(f, r);
-                if (a == LEAVE) break;
-                if (a == OUT) return r;
-            }
-            return NORMAL;
-        }
+        // A map gives its keys in order, or with `for k, v in m` each key with its value.
+        MapV m = coll instanceof MapV mv ? mv : null;
         Object[] items = coll instanceof ArrV a ? a.items : coll instanceof ListV l ? l.items : null;
-        int n = length(coll);
+        int n = m != null ? m.len : length(coll);
         for (int k = 0; k < n; k++) {
             int i = f.rev ? n - 1 - k : k;
             step(f.span);
-            if (f.indexVar != null) slots[f.indexVar.slot] = (long) i;
-            slots[f.var.slot] = items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF);
-            int r = execBlock(f.body, slots);
-            int a = after(f, r);
-            if (a == LEAVE) break;
-            if (a == OUT) return r;
+            if (m != null) {
+                if (f.indexVar != null) slots[f.indexVar.slot] = m.keys[i];
+                slots[f.var.slot] = f.indexVar != null ? m.vals[i] : m.keys[i];
+            } else {
+                if (f.indexVar != null) slots[f.indexVar.slot] = (long) i;
+                slots[f.var.slot] = items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF);
+            }
+            int r = body(f, f.body, slots);
+            if (r != GO) return r;
         }
         return NORMAL;
     }
@@ -480,10 +463,8 @@ public final class Interpreter {
                 step(f.span);
                 if (f.indexVar != null) slots[f.indexVar.slot] = index++;
                 slots[f.var.slot] = d >>> 8;
-                int r = execBlock(f.body, slots);
-                int a = after(f, r);
-                if (a == LEAVE) break;
-                if (a == OUT) return r;
+                int r = body(f, f.body, slots);
+                if (r != GO) return r;
             }
             return NORMAL;
         }
@@ -520,10 +501,8 @@ public final class Interpreter {
             if (before > piece.len) Arrays.fill(piece.b, piece.len, before, (byte) 0);
             if (f.indexVar != null) slots[f.indexVar.slot] = index++;
             slots[f.var.slot] = piece;
-            int r = execBlock(f.body, slots);
-            int a = after(f, r);
-            if (a == LEAVE) break;
-            if (a == OUT) return r;
+            int r = body(f, f.body, slots);
+            if (r != GO) return r;
             if (pos < 0) break;
         }
         return NORMAL;
@@ -958,7 +937,7 @@ public final class Interpreter {
      */
     private Object resize(Resize r, Object v) {
         int n = length(v);
-        int cap = r.type instanceof Type.Str s ? s.cap() : ((Type.ListT) r.type).cap();
+        int cap = Type.capacity(r.type);
         if (n > cap) {
             String what = v instanceof StrV ? n + " bytes" : n + " elements";
             throw new Trap(Code.R0004, r.span, "a " + (v instanceof StrV ? "str" : "list") + " of " + what
@@ -1022,13 +1001,7 @@ public final class Interpreter {
                 // The capacity is the type's, but the argument is evaluated all the same, as every argument is: cap(xs[9])
                 // traps on a bad index, and cap(m[k]) on a missing key, in both backends.
                 eval(args.get(0).expr(), slots);
-                Type t = args.get(0).expr().type;
-                return (long) switch (t) {
-                    case Type.Str s -> s.cap();
-                    case Type.MapT m -> m.cap();
-                    case Type.SetT s -> s.cap();
-                    default -> ((Type.ListT) t).cap();
-                };
+                return (long) Type.capacity(args.get(0).expr().type);
             }
             case PUSH -> {
                 Object container = ref(args.get(0).expr(), slots).get();

@@ -1019,6 +1019,22 @@ public final class CGen {
         if (c.brkUsed) emit(c.brk + ":;");
     }
 
+    /** A loop's body, where `continue` goes to its end; then the C loop and the block around it close. */
+    private void loopBody(Loop l, Block body) {
+        CLoop cl = enterLoop(l, false);
+        block(body);
+        endBody(cl);
+        close("}");
+        exitLoop(cl);
+        close("}");
+    }
+
+    /** A C variable for v, marked used: the C compiler would otherwise warn of one the program never reads. */
+    private void declare(String ctype, LocalVar v, String init) {
+        emit(ctype + " " + cName(v) + " = " + init + ";");
+        emit("(void)" + cName(v) + ";");
+    }
+
     private void jump(Loop target, boolean brk) {
         CLoop inner = loops.peek();
         CLoop to = inner;
@@ -1063,12 +1079,7 @@ public final class CGen {
         emit(count + "++;");
         // The body goes straight into the loop: a block of its own made each while loop three brackets
         // deep in C, so loops nested within the nesting limit went past the 256 that clang accepts.
-        CLoop cl = enterLoop(w, false);
-        block(w.body);
-        endBody(cl);
-        close("}");
-        exitLoop(cl);
-        close("}");
+        loopBody(w, w.body);
     }
 
     private void rangeLoop(For f) {
@@ -1082,14 +1093,8 @@ public final class CGen {
         String to = tmp(f.var.type, lower(f.to));
         String i = "t" + ++tmpCount;
         open("for (" + t + " " + i + " = " + from + "; " + i + " < " + to + "; " + i + "++) {");
-        emit(t + " " + cName(f.var) + " = " + i + ";");
-        emit("(void)" + cName(f.var) + ";");
-        CLoop cl = enterLoop(f, false);
-        block(f.body);
-        endBody(cl);
-        close("}");
-        exitLoop(cl);
-        close("}");
+        declare(t, f.var, i);
+        loopBody(f, f.body);
     }
 
     /** a - b as an unsigned 64-bit number, for values a >= b of type t: exact, as the difference fits. */
@@ -1129,8 +1134,7 @@ public final class CGen {
             emit(t + " " + i + " = " + from + ";");
         }
         open("for (;;) {");
-        emit(t + " " + cName(f.var) + " = " + i + ";");
-        emit("(void)" + cName(f.var) + ";");
+        declare(t, f.var, i);
         CLoop cl = enterLoop(f, true);
         block(f.body);
         endBody(cl);
@@ -1160,40 +1164,20 @@ public final class CGen {
         String i = "t" + ++tmpCount;
         String n = ct instanceof Type.ArrayT a ? a.len() + "u" : coll + ".len";
         String elem = ct instanceof Type.Str ? coll + ".b[" + i + "]" : coll + ".v[" + i + "]";
+        emit("uint32_t " + i + ";");
+        open(f.rev ? "for (" + i + " = " + n + "; " + i + "-- > 0;) {" : "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
         if (ct instanceof Type.MapT) {
             // The keys in order, or with `for k, v in m` each key and its value.
-            emit("uint32_t " + i + ";");
-            open(f.rev ? "for (" + i + " = " + n + "; " + i + "-- > 0;) {" : "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
             if (f.indexVar != null) {
-                emit(ct(f.indexVar.type) + " " + cName(f.indexVar) + " = " + coll + ".k[" + i + "];");
-                emit("(void)" + cName(f.indexVar) + ";");
+                declare(ct(f.indexVar.type), f.indexVar, coll + ".k[" + i + "]");
             } else {
                 elem = coll + ".k[" + i + "]";
             }
-            emit(ct(f.var.type) + " " + cName(f.var) + " = " + elem + ";");
-            emit("(void)" + cName(f.var) + ";");
-            CLoop cl = enterLoop(f, false);
-            block(f.body);
-            endBody(cl);
-            close("}");
-            exitLoop(cl);
-            close("}");
-            return;
+        } else if (f.indexVar != null) {
+            declare("int64_t", f.indexVar, "(int64_t)" + i);
         }
-        emit("uint32_t " + i + ";");
-        open(f.rev ? "for (" + i + " = " + n + "; " + i + "-- > 0;) {" : "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
-        if (f.indexVar != null) {
-            emit("int64_t " + cName(f.indexVar) + " = (int64_t)" + i + ";");
-            emit("(void)" + cName(f.indexVar) + ";");
-        }
-        emit(ct(f.var.type) + " " + cName(f.var) + " = " + elem + ";");
-        emit("(void)" + cName(f.var) + ";");
-        CLoop cl = enterLoop(f, false);
-        block(f.body);
-        endBody(cl);
-        close("}");
-        exitLoop(cl);
-        close("}");
+        declare(ct(f.var.type), f.var, elem);
+        loopBody(f, f.body);
     }
 
     /**
@@ -1217,16 +1201,10 @@ public final class CGen {
             emit("uint32_t " + pos + " = 0, " + len + ";");
             emit("int " + ok + ";");
             open("while (" + pos + " < (" + s + ").len) {");
-            emit("uint32_t " + cName(f.var) + " = al_utf8_next((" + s + ").b, (" + s + ").len, " + pos + ", &" + len + ", &" + ok + ");");
-            emit("(void)" + cName(f.var) + ";");
+            declare("uint32_t", f.var, "al_utf8_next((" + s + ").b, (" + s + ").len, " + pos + ", &" + len + ", &" + ok + ")");
             emit(pos + " += " + len + ";");
             pieceIndex(f, index);
-            CLoop cl = enterLoop(f, false);
-            block(f.body);
-            endBody(cl);
-            close("}");
-            exitLoop(cl);
-            close("}");
+            loopBody(f, f.body);
             return;
         }
         boolean words = c.builtin == Builtin.WORDS;
@@ -1248,20 +1226,14 @@ public final class CGen {
             + ", &" + from + ", &" + to + ")) {");
         emit(x + ".len = al_copy_bytes(" + x + ".b, (" + s + ").b + " + from + ", " + to + " - " + from + ");");
         pieceIndex(f, index);
-        CLoop cl = enterLoop(f, false);
-        block(f.body);
-        endBody(cl);
-        close("}");
-        exitLoop(cl);
-        close("}");
+        loopBody(f, f.body);
     }
 
     /** The index variable of `for i, p in split(...)`: counted up at the start of each piece. */
     private void pieceIndex(For f, String counter) {
         if (counter == null) return;
         emit(counter + "++;");
-        emit("int64_t " + cName(f.indexVar) + " = " + counter + ";");
-        emit("(void)" + cName(f.indexVar) + ";");
+        declare("int64_t", f.indexVar, counter);
     }
 
     private void match(Match m) {
@@ -1318,8 +1290,7 @@ public final class CGen {
     /** Declares the names a pattern binds, each a copy of the part of the value it takes. */
     private void bind(Map<LocalVar, String> binds) {
         for (Map.Entry<LocalVar, String> b : binds.entrySet()) {
-            emit(ct(b.getKey().type) + " " + cName(b.getKey()) + " = " + b.getValue() + ";");
-            emit("(void)" + cName(b.getKey()) + ";");
+            declare(ct(b.getKey().type), b.getKey(), b.getValue());
         }
     }
 
@@ -1898,13 +1869,7 @@ public final class CGen {
                 // The argument is evaluated, for its traps (cap(xs[9]), cap(m[k])), and then not needed: used once, so
                 // that the index or pointer computed for it is not an unused variable.
                 emit("(void)(" + lower(args.get(0).expr()) + ");");
-                int cap = switch (t) {
-                    case Type.Str s -> s.cap();
-                    case Type.MapT m -> m.cap();
-                    case Type.SetT s -> s.cap();
-                    default -> ((Type.ListT) t).cap();
-                };
-                return "INT64_C(" + cap + ")";
+                return "INT64_C(" + Type.capacity(t) + ")";
             }
             case PUSH -> {
                 Type t = args.get(0).expr().type;
@@ -1913,7 +1878,7 @@ public final class CGen {
                 String v = coerce(lower(args.get(1).expr()), args.get(1).expr().type, elem);
                 // The value cannot refer to the target (E0208), so an aggregate is stored from where it is.
                 String vt = Type.isAggregate(elem) ? v : tmp(elem, v);
-                int cap = t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap();
+                int cap = Type.capacity(t);
                 String kind = t instanceof Type.Str ? "str" : "list";
                 emit("if ((" + place + ").len >= " + cap + "u) AL_TRAP(\"R0004\", \"push to a full " + kind + " (capacity " + cap + ")\", " + at + ");");
                 emit("(" + place + ")." + (t instanceof Type.Str ? "b" : "v") + "[(" + place + ").len++] = " + vt + ";");
@@ -2393,7 +2358,7 @@ public final class CGen {
                 String v = coerce(lower(args.get(2).expr()), args.get(2).expr().type, elem);
                 // As in push, the value cannot refer to the target (E0208), so an aggregate is stored from where it is.
                 String vt = Type.isAggregate(elem) ? v : tmp(elem, v);
-                int cap = t instanceof Type.Str s ? s.cap() : ((Type.ListT) t).cap();
+                int cap = Type.capacity(t);
                 String kind = t instanceof Type.Str ? "str" : "list";
                 String arr = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
                 String i = tmp(Type.U32, "al_insert_pos(" + pos + ", (" + place + ").len, " + at + ")");
