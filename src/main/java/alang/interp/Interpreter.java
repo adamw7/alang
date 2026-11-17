@@ -1164,6 +1164,95 @@ public final class Interpreter {
                 long b = (Long) eval(args.get(1).expr(), slots);
                 return Stdlib.wrapOrSaturate(c.builtin, Type.kind(c.type), a, b);
             }
+            case CHECKED_ADD, CHECKED_SUB, CHECKED_MUL -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                long b = (Long) eval(args.get(1).expr(), slots);
+                Long r = Stdlib.checked(c.builtin, Type.kind(args.get(0).expr().type), a, b);
+                return option(r);
+            }
+            case REM_EUCLID, DIV_EUCLID -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                long m = (Long) eval(args.get(1).expr(), slots);
+                PrimKind k = Type.kind(c.type);
+                return c.builtin == Builtin.REM_EUCLID ? Stdlib.remEuclid(k, a, m, c.span) : Stdlib.divEuclid(k, a, m, c.span);
+            }
+            case MUL_MOD -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                long b = (Long) eval(args.get(1).expr(), slots);
+                long m = (Long) eval(args.get(2).expr(), slots);
+                return Stdlib.mulMod(Type.kind(c.type), a, b, m, c.span);
+            }
+            case PARSE_I64 -> {
+                return option(Stdlib.parseIntOrNull((StrV) eval(args.get(0).expr(), slots), meter));
+            }
+            case PARSE_F64 -> {
+                return option(Stdlib.parseFloatOrNull((StrV) eval(args.get(0).expr(), slots), meter));
+            }
+            case ANY, ALL, COUNT_IF, FIND_INDEX -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                long count = 0;
+                for (int i = 0; i < n; i++) {
+                    meter.elements(1);
+                    boolean yes = test(c, items[i]);
+                    switch (c.builtin) {
+                        case ANY -> {
+                            if (yes) return true;
+                        }
+                        case ALL -> {
+                            if (!yes) return false;
+                        }
+                        case FIND_INDEX -> {
+                            if (yes) return (long) i;
+                        }
+                        default -> {
+                            if (yes) count++;
+                        }
+                    }
+                }
+                return switch (c.builtin) {
+                    case ANY -> false;
+                    case ALL -> true;
+                    case FIND_INDEX -> -1L;
+                    default -> count;
+                };
+            }
+            case RETAIN -> {
+                ListV l = (ListV) ref(args.get(0).expr(), slots).get();
+                int w = 0;
+                for (int i = 0; i < l.len; i++) {
+                    meter.elements(1);
+                    if (test(c, l.items[i])) l.items[w++] = l.items[i];
+                }
+                Arrays.fill(l.items, w, l.len, null);
+                l.len = w;
+                return null;
+            }
+            case SORT_BY -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                // A binary insertion sort, as the C backend's: each element goes after every one it does not come
+                // before, so equal ones keep their order; before is called in the same order in both.
+                for (int i = 1; i < n; i++) {
+                    Object x = items[i];
+                    int lo = 0;
+                    int hi = i;
+                    while (lo < hi) {
+                        int mid = lo + (hi - lo) / 2;
+                        meter.elements(1);
+                        if (test(c, x, items[mid])) hi = mid;
+                        else lo = mid + 1;
+                    }
+                    if (lo < i) {
+                        meter.elements(i - lo);
+                        System.arraycopy(items, lo, items, lo + 1, i - lo);
+                        items[lo] = x;
+                    }
+                }
+                return null;
+            }
             case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
                 long ch = (Long) eval(args.get(0).expr(), slots);
                 return switch (c.builtin) {
@@ -1375,6 +1464,25 @@ public final class Interpreter {
             }
         }
         throw new IllegalStateException();
+    }
+
+    /** Option.Some(v), or Option.None for null. */
+    private static EnumV option(Object v) {
+        return v == null ? new EnumV(0, new Object[0]) : new EnumV(1, new Object[] {v});
+    }
+
+    /**
+     * Calls the function passed to a builtin such as any or sort_by (c.fnArg) with the given elements, and returns its
+     * result. Like a call written in the program, it is charged where it is made.
+     */
+    private boolean test(Call c, Object... values) {
+        FnDecl f = c.fnArg;
+        Object[] a = new Object[f.params.size()];
+        for (int i = 0; i < a.length; i++) a[i] = Values.coerce(values[i], f.paramVars.get(i).type, meter);
+        Span caller = meter.at();
+        Object result = invoke(f, a, c.span);
+        meter.at(caller);
+        return (Boolean) result;
     }
 
     /**

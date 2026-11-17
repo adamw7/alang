@@ -1004,6 +1004,11 @@ public final class Ast {
         /** A call of a parameter of a function type, in a function checked as written: which one. */
         public LocalVar fnParam;
         /**
+         * The function that a builtin such as any or sort_by calls: the one passed to it by name. Null in a function
+         * checked as written that passes on a parameter of a function type; its instances know the function.
+         */
+        public FnDecl fnArg;
+        /**
          * A fixed, pad_left or pad_right call whose text print or append writes out directly, or pad_left or
          * pad_right pads: it builds no str, and its type is a nominal str[0].
          */

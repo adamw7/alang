@@ -1,6 +1,3 @@
-ParsedI64.Ok(-9223372036854775808) ParsedI64.Bad
-ParsedF64.Ok(19.99) ParsedF64.Bad
 131874305
 [Entry(key: "apples", value: 7), Entry(key: "pears", value: 5)]
-MaybeI64.Some(7) MaybeI64.None
-[Entry(key: "pears", value: 5), Entry(key: "apples", value: 7)]
+Option.Some(7) Option.None

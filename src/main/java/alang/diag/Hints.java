@@ -10,6 +10,6 @@ public final class Hints {
         + "m[key] = value; and var s: set[i64; 32] = []; insert(mut s, x);";
 
     /** For reading a number from text: {@code parse_int(s)}, {@code atoi(s)}. */
-    public static final String PARSE_NUMBER = "convert the text with an integer type's name: i64(trim(s)), which "
-        + "traps unless the text is a decimal integer, so check is_int(trim(s)) first";
+    public static final String PARSE_NUMBER = "use parse_i64(trim(s)), an Option<i64> that is Option.None for "
+        + "text that is not a decimal integer; or i64(trim(s)), which traps on such text, after checking is_int(trim(s))";
 }

@@ -2,42 +2,12 @@
 // examples/tally.al does with `import "helpers.al";` (its main and tests stay out of your program), or copy
 // the helpers you need. Their parameters take any capacity (`str[_]`, `list[Entry; _]`), so they work on
 // your strs and lists as they are; change Entry if your keys or values have other types. For ordering
-// strs (`<`), padding (pad_left), split, trim, index_of, sort, pow and the rest, use the language and the
-// standard library (docs/SPEC.md, section 9).
+// strs (`<`), padding (pad_left), split, trim, index_of, parse_i64, sort, sort_by, pow and the rest, use the
+// language and the standard library (docs/SPEC.md, section 9).
 
 const TEXT: i64 = 64;
-const I64_MIN: i64 = -9223372036854775807 - 1;
 
 // ------------------------------------------------------------------ numbers
-
-enum ParsedI64 {
-    Ok(i64),
-    Bad,
-}
-
-/// A decimal integer with an optional sign, as strict as Rust's `parse::<i64>()`: no spaces, no other
-/// characters, nothing outside the i64 range. i64(s) traps on such text; this returns Bad instead.
-/// To turn a number into text, use append(mut s, n).
-fn parse_i64(s: str[_]) -> ParsedI64 {
-    if is_int(s) {
-        return ParsedI64.Ok(i64(s));
-    }
-    return ParsedI64.Bad;
-}
-
-enum ParsedF64 {
-    Ok(f64),
-    Bad,
-}
-
-/// A decimal number such as 19.99, -0.5, 42 or 2.5e3 that f64(s) converts exactly; f64(s) traps on other text,
-/// this returns Bad instead. To write a number with a fixed number of decimals, use fixed(x, 2).
-fn parse_f64(s: str[_]) -> ParsedF64 {
-    if is_float(s) {
-        return ParsedF64.Ok(f64(s));
-    }
-    return ParsedF64.Bad;
-}
 
 /// The next number of a pseudo-random sequence from 0 to 2147483647 (a linear congruential generator
 /// with the C standard's example constants). ALang has no randomness: take the first seed as a tool
@@ -57,19 +27,14 @@ struct Entry {
     value: i64,
 }
 
-enum MaybeI64 {
-    None,
-    Some(i64),
-}
-
 /// The value stored under `key`: a dictionary lookup, in a list of entries of any capacity.
-fn lookup(entries: list[Entry; _], key: str[_]) -> MaybeI64 {
+fn lookup(entries: list[Entry; _], key: str[_]) -> Option<i64> {
     for e in entries {
         if e.key == key {
-            return MaybeI64.Some(e.value);
+            return Option.Some(e.value);
         }
     }
-    return MaybeI64.None;
+    return Option.None;
 }
 
 /// Sets the value under `key`, adding the key if it is new. Traps (R0004) when a new key does not fit:
@@ -84,37 +49,7 @@ fn store(entries: mut list[Entry; _], key: str[_], value: i64) {
     push(mut entries, Entry(key: str[TEXT](key), value: value));
 }
 
-// ------------------------------------------------------------------ sorting by your own order
-
-/// Sorts `xs` in place into the order `before` gives: before(a, b) is true when a must come before b.
-/// Stable: items neither comes before keep their order, so sorting by one key and then by another sorts by
-/// both. Sort by a field, in reverse, or ignoring case with a two-line function; sort(mut xs) is the
-/// natural order. A binary insertion sort: n log n calls of `before`, and items moved in place, no buffer.
-fn sort_by<T>(xs: mut list[T; _], before: fn(T, T) -> bool) {
-    for i in 1..len(xs) {
-        let x: T = xs[i];
-        // The first place in the sorted xs[0..i] whose item x comes before; after every equal item.
-        var lo: i64 = 0;
-        var hi: i64 = i;
-        // The range halves every pass, so 64 passes cover any list.
-        while lo < hi limit 64 {
-            let mid: i64 = lo + (hi - lo) / 2;
-            if before(x, xs[mid]) {
-                hi = mid;
-            } else {
-                lo = mid + 1;
-            }
-        }
-        if lo < i {
-            let moved: T = remove(mut xs, i);
-            insert(mut xs, lo, moved);
-        }
-    }
-}
-
 fn main() {
-    print(parse_i64("-9223372036854775808"), " ", parse_i64("12x"));
-    print(parse_f64("19.99"), " ", parse_f64("1,5"));
     print(next_random(2024));
     var stock: list[Entry; 16] = [];
     store(mut stock, "apples", 3);
@@ -122,31 +57,6 @@ fn main() {
     store(mut stock, "apples", 7);
     print(stock);
     print(lookup(stock, "apples"), " ", lookup(stock, "kiwis"));
-    sort_by(mut stock, shorter_key);
-    print(stock);
-}
-
-test "parse_i64 accepts exactly the i64 range" {
-    assert parse_i64("0") == ParsedI64.Ok(0);
-    assert parse_i64("+17") == ParsedI64.Ok(17);
-    assert parse_i64("-17") == ParsedI64.Ok(-17);
-    assert parse_i64("9223372036854775807") == ParsedI64.Ok(9223372036854775807);
-    assert parse_i64("-9223372036854775808") == ParsedI64.Ok(I64_MIN);
-    assert parse_i64("9223372036854775808") == ParsedI64.Bad;
-    assert parse_i64("-9223372036854775809") == ParsedI64.Bad;
-    assert parse_i64("") == ParsedI64.Bad;
-    assert parse_i64("-") == ParsedI64.Bad;
-    assert parse_i64(" 1") == ParsedI64.Bad;
-    assert parse_i64("1.5") == ParsedI64.Bad;
-}
-
-test "parse_f64 reads decimal numbers and nothing else" {
-    assert parse_f64("19.99") == ParsedF64.Ok(19.99);
-    assert parse_f64("-0.5") == ParsedF64.Ok(-0.5);
-    assert parse_f64("42") == ParsedF64.Ok(42.0);
-    assert parse_f64("2.5e3") == ParsedF64.Ok(2500.0);
-    assert parse_f64("") == ParsedF64.Bad;
-    assert parse_f64("1,5") == ParsedF64.Bad;
 }
 
 test "next_random repeats for the same seed and stays in range" {
@@ -165,62 +75,10 @@ test "a list of entries works as a map, at any capacity" {
     store(mut m, "b", 2);
     store(mut m, "a", 3);
     assert len(m) == 2;
-    assert lookup(m, "a") == MaybeI64.Some(3);
-    assert lookup(m, "c") == MaybeI64.None;
+    assert lookup(m, "a") == Option.Some(3);
+    assert lookup(m, "c") == Option.None;
     var big: list[Entry; 100] = [];
     let long_key: str[200] = "a key in a long buffer";
     store(mut big, long_key, 9);
-    assert lookup(big, "a key in a long buffer") == MaybeI64.Some(9);
-}
-
-fn larger_value(a: Entry, b: Entry) -> bool {
-    return a.value > b.value;
-}
-
-fn shorter_key(a: Entry, b: Entry) -> bool {
-    return len(a.key) < len(b.key);
-}
-
-fn descending(a: i64, b: i64) -> bool {
-    return a > b;
-}
-
-test "sort_by sorts in the order given" {
-    var xs: list[i64; 8] = [3, 1, 4, 1, 5, 9, 2, 6];
-    sort_by(mut xs, descending);
-    assert xs == [9, 6, 5, 4, 3, 2, 1, 1];
-    var none: list[i64; 4] = [];
-    sort_by(mut none, descending);
-    assert len(none) == 0;
-    var one: list[i64; 1] = [7];
-    sort_by(mut one, descending);
-    assert one == [7];
-}
-
-test "sort_by keeps equal items in their order" {
-    var es: list[Entry; 8] = [];
-    store(mut es, "pear", 1);
-    store(mut es, "fig", 2);
-    store(mut es, "kiwi", 3);
-    store(mut es, "yam", 4);
-    store(mut es, "plum", 5);
-    sort_by(mut es, shorter_key);
-    assert es[0].key == "fig" and es[1].key == "yam";
-    assert es[2].key == "pear" and es[3].key == "kiwi" and es[4].key == "plum";
-    sort_by(mut es, larger_value);
-    assert es[0].key == "plum" and es[4].key == "pear";
-}
-
-test "sort_by agrees with sort on a full list" {
-    var xs: list[i64; 64] = [];
-    var seed: i64 = 7;
-    for k in 0..64 {
-        seed = next_random(seed);
-        push(mut xs, (seed + k) % 100);
-    }
-    var ys: list[i64; 64] = xs;
-    sort_by(mut xs, descending);
-    sort(mut ys);
-    reverse(mut ys);
-    assert xs == ys;
+    assert lookup(big, "a key in a long buffer") == Option.Some(9);
 }

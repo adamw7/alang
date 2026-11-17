@@ -2630,13 +2630,13 @@ public final class Checker {
             case "remove_at", "delete", "erase", "pop_at" -> "use remove(mut xs, i), which returns the element";
             case "exit", "abort", "fail", "error", "throw", "raise" -> "use panic(\"message\")";
             case "range" -> "use a range loop: for i in 0..n { }, for i in 0..=n step 2 { }, or backwards: for i in rev 0..n { }";
-            case "sorted", "sort_by", "sort_by_key", "order_by" ->
-                "sort a list in place with sort(mut xs); to order by a key, sort structs whose first field is the key "
-                    + "(structs order field by field), and reverse(mut xs) for descending";
+            case "sorted", "order_by" ->
+                "sort a list in place with sort(mut xs), and reverse(mut xs) for descending; for an order of your own, "
+                    + "sort_by(mut xs, before) with fn before(a: T, b: T) -> bool";
             case "reversed", "rev" -> "go through it backwards with for x in rev xs { }, or reverse it in place with reverse(mut xs)";
             case "implode", "join_with", "joined", "concat_with" -> "use join(parts, sep): let line: str[64] = join(parts, \", \");";
             case "includes", "has" -> "use contains(xs, x)";
-            case "find", "indexOf", "index", "position", "find_index", "search" -> "use index_of(xs, x), which is -1 when x is absent";
+            case "find", "indexOf", "index", "position", "search" -> "use index_of(xs, x), which is -1 when x is absent; find_index(xs, f) finds the first x with f(x) true";
             case "startswith", "startsWith", "has_prefix" -> "use starts_with(s, prefix)";
             case "endswith", "endsWith", "has_suffix" -> "use ends_with(s, suffix)";
             case "substr", "substring", "sub", "mid", "subslice" -> "slice it: s[from..to], s[from..] or s[..to]";
@@ -2649,10 +2649,10 @@ public final class Checker {
                 "use words(s) to split on whitespace, or split(s, sep): let parts: list[str[32]; 16] = split(s, '\\n');";
             case "int", "float", "double", "long", "short", "usize", "isize" ->
                 "convert with the target type's name: i64(x), f64(x), u8(x); i64(s) and f64(s) also read a number from text";
-            case "parse", "parse_int", "parseInt", "parse_i64", "parse_i32", "atoi", "atol", "stoi", "strtol", "to_int",
+            case "parse", "parse_int", "parseInt", "parse_i32", "atoi", "atol", "stoi", "strtol", "to_int",
                  "toInt", "to_i64", "to_number", "number", "Number" -> Hints.PARSE_NUMBER;
-            case "parse_float", "parse_f64", "atof", "parseFloat", "strtod", "to_float", "toFloat" ->
-                "use f64(s), checked with is_float(s) first: it traps (R0009) on text that is not a decimal number";
+            case "parse_float", "parse_f32", "atof", "parseFloat", "strtod", "to_float", "toFloat" ->
+                "use parse_f64(trim(s)), an Option<f64> that is Option.None for text that is not a decimal number";
             case "powf", "powi", "fpow" -> "use pow(x, y): on floats it takes a float exponent, pow(2.0, 0.5)";
             case "exp2" -> "use pow(2.0, x)";
             case "ln" -> "use log(x), the natural logarithm";
@@ -2677,7 +2677,24 @@ public final class Checker {
             case "minimum", "maximum", "min_of", "max_of", "min_element", "max_element", "amin", "amax" ->
                 "use min(xs) or max(xs) on an array or list of numbers";
             case "total", "add_all", "accumulate" -> "use sum(xs) on an array or list of numbers";
-            case "map", "filter", "reduce", "fold", "any", "all", "zip", "foreach", "for_each", "forEach" ->
+            case "filter", "keep_if", "remove_if", "retain_if", "filter_in_place", "removeIf" ->
+                "use retain(mut xs, keep) with fn keep(x: T) -> bool: it keeps the elements for which keep is true";
+            case "some", "any_of", "anyMatch", "exists" -> "use any(xs, f) with fn f(x: T) -> bool";
+            case "every", "all_of", "allMatch", "forall" -> "use all(xs, f) with fn f(x: T) -> bool";
+            case "count_where", "countIf", "count_by", "count_matching" -> "use count_if(xs, f) with fn f(x: T) -> bool";
+            case "find_if", "findIndex", "index_where", "find_first", "indexWhere" ->
+                "use find_index(xs, f) with fn f(x: T) -> bool: the first position where f is true, or -1";
+            case "sortBy", "sort_by_key", "sorted_by", "sort_with", "sortWith", "sort_by_cmp", "stable_sort" ->
+                "use sort_by(mut xs, before) with fn before(a: T, b: T) -> bool, true when a must come first";
+            case "mod", "modulo", "floor_mod", "floorMod", "rem", "euclid_mod", "pymod", "positive_mod" ->
+                "use rem_euclid(a, m), which is never negative: rem_euclid(-1, 5) is 4, where -1 % 5 is -1";
+            case "floor_div", "floorDiv", "div_floor", "floordiv", "euclid_div" ->
+                "use div_euclid(a, m), which goes with rem_euclid: div_euclid(-7, 2) is -4";
+            case "mulmod", "mod_mul", "modmul", "mul_mod_u64", "mulmod64" -> "use mul_mod(a, b, m): (a * b) mod m without overflow";
+            case "overflowing_add", "try_add", "add_checked", "safe_add", "overflowing_sub", "try_sub", "safe_sub",
+                 "overflowing_mul", "try_mul", "safe_mul", "mul_checked" ->
+                "use checked_add(a, b), checked_sub(a, b) or checked_mul(a, b): Option.None when the result does not fit";
+            case "map", "reduce", "fold", "zip", "foreach", "for_each", "forEach" ->
                 "write the loop, or a function that takes one: fn keep<T>(xs: list[T; _], f: fn(T) -> bool, out: mut list[T; _]) "
                     + "{ for x in xs { if f(x) { push(mut out, x); } } }";
             case "enumerate" -> "for i, x in xs { } gives each element with its index";
@@ -2964,6 +2981,38 @@ public final class Checker {
                 }
                 return Type.BOOL;
             }
+            case CHECKED_ADD, CHECKED_SUB, CHECKED_MUL -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0));
+                noMut(args.get(1));
+                Type hint = expected instanceof Type.EnumT et && Ast.origin(et.decl()) == enums.get("Option")
+                    && Type.isInt(et.decl().variants.get(1).payload.get(0)) ? et.decl().variants.get(1).payload.get(0) : null;
+                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), hint);
+                if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
+                if (!Type.isInt(ts[0]) || !ts[0].equals(ts[1])) {
+                    diags.error(Code.E0201, c.span, b.name + "() needs two integers of the same type, found "
+                        + ts[0] + " and " + ts[1]);
+                    return Type.ERROR;
+                }
+                return optionOf(ts[0]);
+            }
+            case MUL_MOD -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                for (Arg a : args) noMut(a);
+                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isInt(expected) ? expected : null);
+                if (Type.isError(ts[0]) || Type.isError(ts[1])) {
+                    expr(args.get(2).expr(), null);
+                    return Type.ERROR;
+                }
+                Type mt = expr(args.get(2).expr(), ts[0]);
+                if (Type.isError(mt)) return Type.ERROR;
+                if (!Type.isInt(ts[0]) || !ts[0].equals(ts[1]) || !ts[0].equals(mt)) {
+                    diags.error(Code.E0201, c.span, "mul_mod() needs three integers of the same type, found "
+                        + ts[0] + ", " + ts[1] + " and " + mt);
+                    return Type.ERROR;
+                }
+                return ts[0];
+            }
             case CLAMP -> {
                 if (!arity(c, 3)) return Type.ERROR;
                 for (Arg a : args) noMut(a);
@@ -3008,7 +3057,8 @@ public final class Checker {
                 }
                 return x;
             }
-            case GCD, LCM, WRAPPING_ADD, WRAPPING_SUB, WRAPPING_MUL, SATURATING_ADD, SATURATING_SUB, SATURATING_MUL -> {
+            case GCD, LCM, WRAPPING_ADD, WRAPPING_SUB, WRAPPING_MUL, SATURATING_ADD, SATURATING_SUB, SATURATING_MUL,
+                 REM_EUCLID, DIV_EUCLID -> {
                 if (!arity(c, 2)) return Type.ERROR;
                 noMut(args.get(0));
                 noMut(args.get(1));
@@ -3127,6 +3177,12 @@ public final class Checker {
                 textArg(b, args.get(0));
                 return Type.BOOL;
             }
+            case PARSE_I64, PARSE_F64 -> {
+                Type ret = optionOf(b == Builtin.PARSE_I64 ? Type.I64 : Type.F64);
+                if (!arity(c, 1)) return ret;
+                textArg(b, args.get(0));
+                return ret;
+            }
             case SPLIT, WORDS -> {
                 if (b == Builtin.SPLIT && args.size() == 1) {
                     diags.error(Code.E0204, c.span, "split() takes 2 argument(s) but 1 were given",
@@ -3236,6 +3292,47 @@ public final class Checker {
             case SORT, REVERSE -> {
                 if (!arity(c, 1)) return Type.VOID;
                 sequenceArg(c, args.get(0));
+                return Type.VOID;
+            }
+            case ANY, ALL, COUNT_IF, FIND_INDEX -> {
+                Type ret = b == Builtin.ANY || b == Builtin.ALL ? Type.BOOL : Type.I64;
+                if (!arity(c, 2)) return ret;
+                Arg xs = args.get(0);
+                noMut(xs);
+                Type t = expr(xs.expr(), null);
+                readInPlace(xs.expr());
+                if (!(t instanceof Type.ArrayT) && !(t instanceof Type.ListT)) {
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, xs.span(), b.name + "() needs an array or list, found " + t,
+                            t instanceof Type.Str ? "go through the bytes with a loop: for c in s { }" : null);
+                    }
+                    return ret;
+                }
+                fnArg(c, args.get(1), new Type.FnT(List.of(Type.elementOf(t)), Type.BOOL));
+                return ret;
+            }
+            case RETAIN, SORT_BY -> {
+                if (!arity(c, 2)) return Type.VOID;
+                Arg xs = args.get(0);
+                Type t;
+                if (!xs.mut()) {
+                    t = expr(xs.expr(), null);
+                    missingMut(xs, c.name + "() modifies its first argument",
+                        "write " + c.name + "(mut " + exprText(xs.expr()) + ", " + (b == Builtin.RETAIN ? "keep" : "before") + ")");
+                } else {
+                    t = mutPlace(xs.expr());
+                }
+                boolean ok = t instanceof Type.ListT || b == Builtin.SORT_BY && t instanceof Type.ArrayT;
+                if (!ok) {
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, xs.span(), c.name + "() needs a " + (b == Builtin.RETAIN ? "list" : "list or array")
+                            + ", found " + t, t instanceof Type.ArrayT ? "an array has a fixed length; copy the elements to keep "
+                                + "into a list[T; N]" : null);
+                    }
+                    return Type.VOID;
+                }
+                Type elem = Type.elementOf(t);
+                fnArg(c, args.get(1), new Type.FnT(b == Builtin.RETAIN ? List.of(elem) : List.of(elem, elem), Type.BOOL));
                 return Type.VOID;
             }
             case DEDUP -> {
@@ -3417,6 +3514,27 @@ public final class Checker {
             return new Type.Str(0);
         }
         return storedType(c, b, expected);
+    }
+
+    /** Option<t>: the instance of the built-in Option for t. */
+    private Type optionOf(Type t) {
+        Item made = instantiate(enums.get("Option"), List.of(t));
+        return made == null ? Type.ERROR : typeOf(made);
+    }
+
+    /**
+     * The function argument of any, all, count_if, find_index, retain and sort_by: a function of type {@code want},
+     * passed by name, which the call then calls.
+     */
+    private void fnArg(Call c, Arg a, Type.FnT want) {
+        // No type parameters to fix: the function must have exactly this type, type variables of the caller included.
+        FnDecl f = functionValue(a, want, null, new HashMap<>(), null);
+        if (f == null) return;
+        c.fnArg = f;
+        if (ctx.routine != null) {
+            ctx.routine.fnValues.add(f);
+            ctx.routine.callees.add(f);
+        }
     }
 
     private boolean arity(Call c, int n) {

@@ -539,7 +539,7 @@ let y: u8 = x + x;  // trap
 
 ## R0002
 
-**division by zero**: Integer division or remainder by zero.
+**division by zero**: Integer division or remainder by zero, with /, %, div_euclid or rem_euclid.
 
 ```
 let z: i32 = 1 / n;  // trap when n == 0
@@ -632,7 +632,7 @@ let x: u32 = 1 << 32;  // trap
 
 ## R0013
 
-**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or max(xs), or a number that is not a Unicode code point for push_char.
+**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or max(xs), a modulus that is not above 0 for mul_mod, or a number that is not a Unicode code point for push_char.
 
 ```
 let p: i64 = pow(2, -1);  // trap
@@ -674,6 +674,12 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `saturating_add(a, b) -> T` | a + b for two integers of the same type, or the type's largest or smallest value if it does not fit: saturating_add(u8(250), 10) is 255. Never traps. |
 | `saturating_sub(a, b) -> T` | a - b for two integers of the same type, held to the type's range: saturating_sub(u8(3), 5) is 0. Never traps. |
 | `saturating_mul(a, b) -> T` | a * b for two integers of the same type, held to the type's range. Never traps. |
+| `checked_add(a, b) -> Option<T>` | a + b for two integers of the same type as Option.Some, or Option.None if it does not fit. Never traps. |
+| `checked_sub(a, b) -> Option<T>` | a - b for two integers of the same type as Option.Some, or Option.None if it does not fit: checked_sub(u8(3), 5) is Option.None. Never traps. |
+| `checked_mul(a, b) -> Option<T>` | a * b for two integers of the same type as Option.Some, or Option.None if it does not fit. Never traps. |
+| `rem_euclid(a, m) -> T` | The remainder of a / m that is never negative, for two integers of the same type: 0 <= r < abs(m). rem_euclid(-1, 5) is 4, where -1 % 5 is -1; use it to wrap an index around: xs[rem_euclid(i + k, n)]. Traps (R0002) if m is 0. |
+| `div_euclid(a, m) -> T` | The quotient that goes with rem_euclid: a == div_euclid(a, m) * m + rem_euclid(a, m). div_euclid(-7, 2) is -4, where -7 / 2 is -3. Traps (R0002) if m is 0, and (R0001) where / overflows. |
+| `mul_mod(a, b, m) -> T` | (a * b) mod m, computed exactly however large a * b is, for three integers of the same type: rem_euclid(a, m) * rem_euclid(b, m) reduced mod m, so 0 <= result < m. Traps (R0013) unless m > 0. |
 | `sqrt(x) -> f` | Square root of an f32/f64. |
 | `floor(x) -> f` | Largest integral value not greater than x (f32/f64). |
 | `ceil(x) -> f` | Smallest integral value not less than x (f32/f64). |
@@ -729,6 +735,8 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `count(xs, x) -> i64` | How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right (traps (R0013) if the str is empty); in an array or list, the elements equal to x. |
 | `is_int(s) -> bool` | Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it. |
 | `is_float(s) -> bool` | Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. An exponent may follow: 1e5, 2.5E-3. |
+| `parse_i64(s) -> Option<i64>` | The str as an i64, Option.Some(n), when is_int(s) holds (an optional + or -, then digits, within the i64 range); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike i64(s). |
+| `parse_f64(s) -> Option<f64>` | The str as an f64, Option.Some(x), when is_float(s) holds (19.99, -0.5, 3, .25, 2.5e3); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike f64(s). |
 | `is_utf8(s) -> bool` | Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or cut-off sequences. |
 | `char_count(s) -> i64` | The number of Unicode code points in a str (len(s) counts bytes). Each byte that does not start a well-formed UTF-8 sequence counts as one. |
 | `chars(s) -> list[u32; N]` | The Unicode code points of a str, decoding UTF-8; a byte that does not start a well-formed sequence gives U+FFFD (65533). Its type is that of the variable it is stored in; traps (R0004) if they do not fit. for c in chars(s) goes through them one at a time instead, each a u32, and never traps. |
@@ -742,6 +750,12 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `sort(mut xs)` | Sorts a list, array or str in place, ascending. Every type is ordered: numbers by value (-0.0 before 0.0, NaN last), false before true, strs and lists element by element (a prefix first), structs field by field, enums by variant, then payload. |
 | `reverse(mut xs)` | Reverses a list, array or str in place. |
 | `dedup(mut xs)` | Removes each element of a list (byte of a str) equal to the one before it, keeping the first of each run. After sort(mut xs), every value is left once. |
+| `sort_by(mut xs, before)` | Sorts a list or array in place into the order that before, a function fn(T, T) -> bool passed by name, gives: before(a, b) is true when a must come before b. Stable: elements neither comes before keep their order, so sorting by one key and then by another sorts by both. A binary insertion sort: about n log2(n) calls of before. |
+| `any(xs, f) -> bool` | Whether f(x) is true for some element x of an array or list, f being a function fn(T) -> bool passed by name: any(xs, is_even). Calls f from the first element on, and stops at the first true; false if xs is empty. |
+| `all(xs, f) -> bool` | Whether f(x) is true for every element x of an array or list (as for any); stops at the first false; true if xs is empty. |
+| `count_if(xs, f) -> i64` | How many elements x of an array or list have f(x) true, f being a function fn(T) -> bool passed by name. |
+| `find_index(xs, f) -> i64` | The position of the first element x of an array or list with f(x) true (as for any), or -1 if there is none. |
+| `retain(mut xs, keep)` | Keeps the elements x of a list for which keep(x) is true, in their order, and removes the rest; keep is a function fn(T) -> bool passed by name, called once per element, first to last. |
 | `binary_search(xs, x) -> i64` | In an array or list sorted as sort sorts it, the position of the first element e with compare(e, x) == 0, or -1 if there is none. Looks at about log2(len(xs)) elements; on a list that is not sorted, it may miss an equal element, but never traps and gives the same answer on every run. |
 | `insert(mut xs, i, value)` | Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and insert(mut s, x) adds x to a set; both trap (R0004) when a new key does not fit. |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether it was there. |

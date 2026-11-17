@@ -1,5 +1,5 @@
 {
-  "tool": "mul_mod",
+  "tool": "product_mod",
   "examples": [
     {"args": {"a": 3, "b": 4, "m": 5}, "expect": 2},
     {"args": {"a": 123456789, "b": 987654321, "m": 1000000007}, "expect": 259106859},

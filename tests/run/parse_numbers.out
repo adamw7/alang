@@ -1,0 +1,17 @@
+"0": Option.Some(0) Option.Some(0.0)
+"+17": Option.Some(17) Option.Some(17.0)
+"-17": Option.Some(-17) Option.Some(-17.0)
+"9223372036854775807": Option.Some(9223372036854775807) Option.None
+"-9223372036854775808": Option.Some(-9223372036854775808) Option.None
+"9223372036854775808": Option.None Option.None
+"-9223372036854775809": Option.None Option.None
+"": Option.None Option.None
+"-": Option.None Option.None
+" 1": Option.None Option.None
+"1.5": Option.None Option.Some(1.5)
+"2.5e3": Option.None Option.Some(2500.0)
+".25": Option.None Option.Some(0.25)
+"1,5": Option.None Option.None
+skipped x
+skipped 7.5
+8

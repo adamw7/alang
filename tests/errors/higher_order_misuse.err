@@ -1,0 +1,72 @@
+error[E0201]: expected a function of type fn(i64) -> bool, found i64
+  --> tests/errors/higher_order_misuse.al:14:19
+   |
+14 |     print(any(xs, 3));
+   |                   ^
+  = hint: pass a function by its name: f(is_even), where fn is_even(x: i64) -> bool
+
+error[E0203]: all() needs an array or list, found str[3]
+  --> tests/errors/higher_order_misuse.al:15:15
+   |
+15 |     print(all("abc", is_even));
+   |               ^^^^^
+  = hint: go through the bytes with a loop: for c in s { }
+
+error[E0201]: a builtin cannot be passed as a function
+  --> tests/errors/higher_order_misuse.al:16:24
+   |
+16 |     print(count_if(xs, abs));
+   |                        ^^^
+  = hint: wrap it in a function of your own: fn my_abs(...) { return abs(...); }
+
+error[E0201]: `shorter` is fn(str[8], str[8]) -> bool, but fn(i64) -> bool is expected
+  --> tests/errors/higher_order_misuse.al:17:26
+   |
+17 |     print(find_index(xs, shorter));
+   |                          ^^^^^^^
+
+error[E0203]: retain() needs a list, found [i64; 3]
+  --> tests/errors/higher_order_misuse.al:18:12
+   |
+18 |     retain(mut fixed, is_even);
+   |            ^^^^^^^^^
+  = hint: an array has a fixed length; copy the elements to keep into a list[T; N]
+
+error[E0207]: sort_by() modifies its first argument
+  --> tests/errors/higher_order_misuse.al:19:13
+   |
+19 |     sort_by(xs, shorter);
+   |             ^^
+  = hint: write sort_by(mut xs, before)
+  = fix: insert `mut `
+
+error[E0201]: `shorter` is fn(str[8], str[8]) -> bool, but fn(i64, i64) -> bool is expected
+  --> tests/errors/higher_order_misuse.al:19:17
+   |
+19 |     sort_by(xs, shorter);
+   |                 ^^^^^^^
+
+error[E0201]: `shorter` is fn(str[8], str[8]) -> bool, but fn(str[16], str[16]) -> bool is expected
+  --> tests/errors/higher_order_misuse.al:20:24
+   |
+20 |     sort_by(mut names, shorter);
+   |                        ^^^^^^^
+
+error[E0201]: checked_add() needs two integers of the same type, found i32 and u8
+  --> tests/errors/higher_order_misuse.al:21:11
+   |
+21 |     print(checked_add(i32(1), u8(2)));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0201]: mul_mod() needs three integers of the same type, found i64, i64 and f64
+  --> tests/errors/higher_order_misuse.al:22:11
+   |
+22 |     print(mul_mod(1, 2, 3.0));
+   |           ^^^^^^^^^^^^^^^^^^
+
+error[E0203]: parse_i64() needs a str, found i64
+  --> tests/errors/higher_order_misuse.al:23:21
+   |
+23 |     print(parse_i64(12));
+   |                     ^^
+

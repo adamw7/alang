@@ -748,6 +748,63 @@ static uint64_t al_sat_u(uint64_t a, uint64_t b, int op, uint64_t hi) {
     return a != 0 && b > hi / a ? hi : a * b;
 }
 
+/*
+ * checked_add, checked_sub and checked_mul (op 0, 1, 2) of two values of a signed type with limits lo..hi: whether
+ * the result fits, and then the result in *r. The tests are al_sat_s's, which never overflow int64_t.
+ */
+static bool al_checked_s(int64_t a, int64_t b, int op, int64_t lo, int64_t hi, int64_t *r) {
+    if (op == 0) {
+        if ((b > 0 && a > hi - b) || (b < 0 && a < lo - b)) return false;
+    } else if (op == 1) {
+        if ((b < 0 && a > hi + b) || (b > 0 && a < lo + b)) return false;
+    } else if (a != 0 && b != 0) {
+        if (a > 0 ? (b > 0 ? a > hi / b : b < lo / a) : (b > 0 ? a < lo / b : b < hi / a)) return false;
+    }
+    *r = op == 0 ? a + b : op == 1 ? a - b : a * b;
+    return true;
+}
+
+static bool al_checked_u(uint64_t a, uint64_t b, int op, uint64_t hi, uint64_t *r) {
+    if (op == 0 ? a > hi - b : op == 1 ? a < b : a != 0 && b > hi / a) return false;
+    *r = op == 0 ? a + b : op == 1 ? a - b : a * b;
+    return true;
+}
+
+/* (a * b) mod m for a, b < m: doubling and adding mod m, so that no step overflows 64 unsigned bits. */
+static uint64_t al_mul_mod(uint64_t a, uint64_t b, uint64_t m) {
+    uint64_t r = 0;
+    while (b > 0) {
+        if (b & 1u) r = r >= m - a ? r - (m - a) : r + a;
+        a = a >= m - a ? a - (m - a) : a + a;
+        b >>= 1;
+    }
+    return r;
+}
+
+static void al_mul_mod_trap(int neg, int64_t s, uint64_t u, int line, int col) {
+    al_out e = al_trap_begin("R0013");
+    AL_PUTS(&e, "mul_mod() needs a modulus above 0, found ");
+    if (neg) al_fmt_i64(&e, s);
+    else al_fmt_u64(&e, u);
+    al_trap_end(&e, line, col);
+}
+
+/* mul_mod() of a signed type: a and b reduced to 0..m-1 first, as rem_euclid reduces them. */
+static int64_t al_mul_mod_s(int64_t a, int64_t b, int64_t m, int line, int col) {
+    int64_t ra, rb;
+    if (m <= 0) al_mul_mod_trap(1, m, 0, line, col);
+    ra = a % m;
+    rb = b % m;
+    if (ra < 0) ra += m;
+    if (rb < 0) rb += m;
+    return (int64_t)al_mul_mod((uint64_t)ra, (uint64_t)rb, (uint64_t)m);
+}
+
+static uint64_t al_mul_mod_u(uint64_t a, uint64_t b, uint64_t m, int line, int col) {
+    if (m == 0) al_mul_mod_trap(0, 0, m, line, col);
+    return al_mul_mod(a % m, b % m, m);
+}
+
 static double al_trunc(double d) {
     return d < 0 ? ceil(d) : floor(d);
 }
@@ -1950,6 +2007,21 @@ static int al_parse_f64(const uint8_t *b, uint32_t n, double *out) {
 static bool al_is_float(const uint8_t *b, uint32_t n) {
     double v;
     return al_parse_f64(b, n, &v) == 2;
+}
+
+/* parse_i64(): whether the text is one that i64(s) converts, and then its value in *out. */
+static bool al_parse_i64_opt(const uint8_t *b, uint32_t n, int64_t *out) {
+    int neg, big;
+    uint64_t mag;
+    if (!al_is_int(b, n)) return false;
+    al_parse_dec(b, n, &neg, &mag, &big);
+    *out = !neg ? (int64_t)mag : mag == 0 ? 0 : -(int64_t)(mag - 1u) - 1;
+    return true;
+}
+
+/* parse_f64(): whether the text is one that f64(s) converts, and then its value in *out. */
+static bool al_parse_f64_opt(const uint8_t *b, uint32_t n, double *out) {
+    return al_parse_f64(b, n, out) == 2;
 }
 
 static double al_str_to_f64(const uint8_t *b, uint32_t n, int line, int col) {

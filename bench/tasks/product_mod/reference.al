@@ -1,4 +1,4 @@
-tool fn mul_mod(a: i64, b: i64, m: i64) -> i64
+tool fn product_mod(a: i64, b: i64, m: i64) -> i64
     requires m >= 1 and m <= 4611686018427387904
     requires a >= 0 and a < m and b >= 0 and b < m
 {

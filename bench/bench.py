@@ -719,7 +719,7 @@ def cmd_selftest(a) -> int:
     print("An end-to-end run with the reference model, and its report:")
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "run.jsonl"
-        args = argparse.Namespace(tasks="mul_mod,top_words", langs="alang,python", model="reference", effort="high",
+        args = argparse.Namespace(tasks="product_mod,top_words", langs="alang,python", model="reference", effort="high",
                                   no_fallbacks=False, attempts=3, samples=1, jobs=2, out=str(out), resume=None)
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull), \
                 contextlib.redirect_stderr(devnull):

@@ -1604,6 +1604,28 @@ public final class CGen {
         return "(" + base + ")." + (tt instanceof Type.Str ? "b" : "v") + "[" + i + "]";
     }
 
+    /** A call of the function passed to a builtin such as any or sort_by (c.fnArg), with the given elements: a C bool. */
+    private String fnArgCall(Call c, String... values) {
+        FnDecl f = c.fnArg;
+        List<String> args = new ArrayList<>();
+        for (int i = 0; i < values.length; i++) {
+            args.add(Type.isAggregate(f.paramVars.get(i).type) ? "&(" + values[i] + ")" : values[i]);
+        }
+        if (!f.requires.isEmpty()) args.add(loc(c.span));
+        return fnName(f) + "(" + String.join(", ", args) + ")";
+    }
+
+    /** A value of {@code option}, an Option<T>: Option.Some(value) where {@code some} holds, else Option.None. */
+    private String optionValue(Type option, String some, String value) {
+        Variant v = ((Type.EnumT) option).decl().variants.get(1);
+        String t = tmp(option, "{0}");
+        open("if (" + some + ") {");
+        emit(t + ".tag = " + v.index + "u;");
+        emit(t + ".u.v_" + v.name + ".p0 = " + value + ";");
+        close("}");
+        return t;
+    }
+
     private String call(Call c) {
         FnDecl f = c.fn;
         List<String> args = new ArrayList<>();
@@ -1922,6 +1944,132 @@ public final class CGen {
                     emit(sp + "->len = al_o.len;");
                     close("}");
                 }
+                close("}");
+                return null;
+            }
+            case CHECKED_ADD, CHECKED_SUB, CHECKED_MUL -> {
+                Type it = args.get(0).expr().type;
+                PrimKind k = Type.kind(it);
+                String a = tmp(it, lower(args.get(0).expr()));
+                String b = tmp(it, lower(args.get(1).expr()));
+                int op = c.builtin == Builtin.CHECKED_ADD ? 0 : c.builtin == Builtin.CHECKED_SUB ? 1 : 2;
+                String r = "t" + ++tmpCount;
+                emit((k.signed ? "int64_t " : "uint64_t ") + r + " = 0;");
+                String fits = tmp(Type.BOOL, k.signed
+                    ? "al_checked_s((int64_t)" + a + ", (int64_t)" + b + ", " + op + ", INT" + k.bits + "_MIN, INT" + k.bits + "_MAX, &" + r + ")"
+                    : "al_checked_u((uint64_t)" + a + ", (uint64_t)" + b + ", " + op + ", UINT" + k.bits + "_MAX, &" + r + ")");
+                return optionValue(c.type, fits, "(" + cPrim(k) + ")" + r);
+            }
+            case REM_EUCLID, DIV_EUCLID -> {
+                PrimKind k = Type.kind(c.type);
+                String a = tmp(c.type, lower(args.get(0).expr()));
+                String m = tmp(c.type, lower(args.get(1).expr()));
+                boolean rem = c.builtin == Builtin.REM_EUCLID;
+                emit("if (" + m + " == 0) al_div_zero(\"" + c.builtin.name + " by zero\", " + at + ");");
+                // a % m in C, without the undefined MIN % -1.
+                String r = k.signed ? "(" + m + " == -1 ? 0 : (" + cPrim(k) + ")(" + a + " % " + m + "))" : "(" + a + " % " + m + ")";
+                if (rem) {
+                    String v = tmp(c.type, r);
+                    if (k.signed) emit("if (" + v + " < 0) " + v + " = (" + cPrim(k) + ")(" + m + " < 0 ? " + v + " - " + m + " : " + v + " + " + m + ");");
+                    return v;
+                }
+                String q = tmp(c.type, arith(BinOp.DIV, k, k, a, m, c.span));
+                if (k.signed) emit("if (" + r + " < 0) " + q + " = (" + cPrim(k) + ")(" + m + " > 0 ? " + q + " - 1 : " + q + " + 1);");
+                return q;
+            }
+            case MUL_MOD -> {
+                PrimKind k = Type.kind(c.type);
+                String a = tmp(c.type, lower(args.get(0).expr()));
+                String b = tmp(c.type, lower(args.get(1).expr()));
+                String m = tmp(c.type, lower(args.get(2).expr()));
+                return tmp(c.type, "(" + cPrim(k) + ")" + (k.signed
+                    ? "al_mul_mod_s((int64_t)" + a + ", (int64_t)" + b + ", (int64_t)" + m + ", " + at + ")"
+                    : "al_mul_mod_u((uint64_t)" + a + ", (uint64_t)" + b + ", (uint64_t)" + m + ", " + at + ")"));
+            }
+            case PARSE_I64, PARSE_F64 -> {
+                String v = lowerLvalue(args.get(0).expr());
+                boolean i64 = c.builtin == Builtin.PARSE_I64;
+                String r = "t" + ++tmpCount;
+                emit((i64 ? "int64_t " : "double ") + r + " = 0;");
+                String fits = tmp(Type.BOOL, (i64 ? "al_parse_i64_opt((" : "al_parse_f64_opt((") + v + ").b, (" + v + ").len, &" + r + ")");
+                return optionValue(c.type, fits, r);
+            }
+            case ANY, ALL, COUNT_IF, FIND_INDEX -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String n = xs.type instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + h + ").len";
+                String result = tmp(c.type, switch (c.builtin) {
+                    case ANY -> "false";
+                    case ALL -> "true";
+                    case FIND_INDEX -> "-1";
+                    default -> "0";
+                });
+                String i = "t" + ++tmpCount;
+                String yes = fnArgCall(c, "(" + h + ").v[" + i + "]");
+                open("{");
+                emit("uint32_t " + i + ";");
+                open("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                switch (c.builtin) {
+                    case ANY -> emit("if (" + yes + ") { " + result + " = true; break; }");
+                    case ALL -> emit("if (!" + yes + ") { " + result + " = false; break; }");
+                    case FIND_INDEX -> emit("if (" + yes + ") { " + result + " = (int64_t)" + i + "; break; }");
+                    default -> emit("if (" + yes + ") " + result + "++;");
+                }
+                close("}");
+                close("}");
+                return result;
+            }
+            case RETAIN -> {
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String sp = "t" + ++tmpCount;
+                String w = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                open("{");
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                emit("uint32_t " + w + " = 0, " + i + ";");
+                open("for (" + i + " = 0; " + i + " < " + sp + "->len; " + i + "++) {");
+                open("if (" + fnArgCall(c, sp + "->v[" + i + "]") + ") {");
+                emit("if (" + w + " != " + i + ") " + sp + "->v[" + w + "] = " + sp + "->v[" + i + "];");
+                emit(w + "++;");
+                close("}");
+                close("}");
+                emit(sp + "->len = " + w + ";");
+                close("}");
+                return null;
+            }
+            case SORT_BY -> {
+                // A binary insertion sort, as the interpreter's: before is called with the same elements in the same order.
+                Type t = args.get(0).expr().type;
+                Type elem = Type.elementOf(t);
+                String place = lower(args.get(0).expr());
+                String sp = "t" + ++tmpCount;
+                String n = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                String lo = "t" + ++tmpCount;
+                String hi = "t" + ++tmpCount;
+                String mid = "t" + ++tmpCount;
+                String x = "t" + ++tmpCount;
+                open("{");
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                emit("uint32_t " + n + " = " + (t instanceof Type.ArrayT arr ? arr.len() + "u" : sp + "->len") + ", " + i + ", "
+                    + lo + ", " + hi + ", " + mid + ";");
+                open("for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
+                emit(ct(elem) + " " + x + " = " + sp + "->v[" + i + "];");
+                emit(lo + " = 0;");
+                emit(hi + " = " + i + ";");
+                open("while (" + lo + " < " + hi + ") {");
+                emit(mid + " = " + lo + " + (" + hi + " - " + lo + ") / 2u;");
+                emit("if (" + fnArgCall(c, x, sp + "->v[" + mid + "]") + ") " + hi + " = " + mid + ";");
+                emit("else " + lo + " = " + mid + " + 1u;");
+                close("}");
+                open("if (" + lo + " < " + i + ") {");
+                emit("uint32_t " + mid + "2;");
+                emit("for (" + mid + "2 = " + i + "; " + mid + "2 > " + lo + "; " + mid + "2--) " + sp + "->v[" + mid + "2] = "
+                    + sp + "->v[" + mid + "2 - 1];");
+                emit(sp + "->v[" + lo + "] = " + x + ";");
+                close("}");
+                close("}");
                 close("}");
                 return null;
             }
