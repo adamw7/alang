@@ -120,7 +120,7 @@ class DebugTest {
     void aFunctionBreakpointStopsAtEachCall() throws IOException {
         Path p = write("p.al", PROGRAM);
         Result r = debug("break bump\nrun\nc\nbreakpoints\nc\n", p.toString());
-        assertEquals(2, r.out().split("stopped at breakpoint 1 in fn bump, " + p + ":7:5", -1).length - 1, r.out());
+        assertEquals(2, count(r.out(), "stopped at breakpoint 1 in fn bump, " + p + ":7:5"), r.out());
         assertTrue(r.out().contains("1: fn bump, hit 2 time(s)"), r.out());
     }
 
@@ -170,7 +170,7 @@ class DebugTest {
     void maxStopsBoundsAnUnattendedSession() throws IOException {
         Path p = write("p.al", PROGRAM);
         Result r = debug("", p.toString(), "--break", "8", "--max-stops", "1");
-        assertEquals(1, r.out().split("stopped at breakpoint", -1).length - 1, r.out());
+        assertEquals(1, count(r.out(), "stopped at breakpoint"), r.out());
         assertTrue(r.out().contains("reached 1 stop(s) (--max-stops); the program runs on without stopping"), r.out());
         assertTrue(r.out().endsWith("program exited normally after 12 step(s)\n"), r.out());
     }
@@ -256,7 +256,9 @@ class DebugTest {
             }
             """);
         Result r = debug("break util.al:3\nrun\nlocals\nc\n", p.toString());
-        assertTrue(r.out().contains("stopped at breakpoint 1 in fn twice, " + dir.resolve("lib/util.al") + ":3:5"), r.out());
+        // An imported file is named by the path the import resolves to, which has `/` on Windows too.
+        assertTrue(r.out().contains("stopped at breakpoint 1 in fn twice, "), r.out());
+        assertTrue(r.out().contains("lib/util.al:3:5\n"), r.out());
         assertTrue(r.out().contains("  n: i64 = 4\n  d: i64 = 8\n"), r.out());
         assertFalse(r.out().contains("error"), r.out());
     }
@@ -350,8 +352,15 @@ class DebugTest {
             """);
         Result r = debug("", p.toString(), "--break", "3", "--break", "4");
         // Line 3 once, though two statements start on it; line 4 as the loop starts, then each time it goes back round.
-        assertEquals(1, r.out().split("stopped at breakpoint 1", -1).length - 1, r.out());
-        assertEquals(3, r.out().split("stopped at breakpoint 2", -1).length - 1, r.out());
+        assertEquals(1, count(r.out(), "stopped at breakpoint 1"), r.out());
+        assertEquals(3, count(r.out(), "stopped at breakpoint 2"), r.out());
+    }
+
+    /** How often {@code text} occurs in {@code s}: plain text, not a regex, as a Windows path is no regex. */
+    private static int count(String s, String text) {
+        int n = 0;
+        for (int i = s.indexOf(text); i >= 0; i = s.indexOf(text, i + text.length())) n++;
+        return n;
     }
 
     private static List<Map<?, ?>> events(String out) {
