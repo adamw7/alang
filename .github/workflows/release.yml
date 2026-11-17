@@ -2,8 +2,9 @@ name: Release
 
 # Publishing a GitHub release (drafted in the GitHub UI, which creates its tag vX.Y.Z or X.Y.Z) publishes the
 # version X.Y.Z (it is not compared with pom.xml) once the whole CI passes on the tagged commit:
-# - the runnable jar, the archives (jar, launcher, AGENTS.md, docs, examples), AGENTS.md on its own and
-#   SHA256SUMS, attached to that release, whose notes gain a table of these files;
+# - the runnable jar, the archives (jar, launcher, AGENTS.md, docs, examples), the native binaries that need
+#   no Java (alang-PLATFORM archives, built and tested by the ci job), AGENTS.md on its own and SHA256SUMS,
+#   attached to that release, whose notes gain a table of these files;
 # - the Maven artifacts (io.github.adamw7:alang: the jar, its pom and the archives) in GitHub Packages.
 # The workflow creates no tag and no release: both exist before it starts. Run by hand from the Actions tab
 # with a release's tag, it publishes that release again: for one whose tag predates this workflow, or one
@@ -92,6 +93,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Fetch the native binaries
+        # The archives that the ci job's native builds made and tested, from this same run.
+        uses: actions/download-artifact@v4
+        with:
+          pattern: alang-native-*
+          path: native
+          merge-multiple: true
+
       - name: Attach the files to the GitHub release
         timeout-minutes: 3
         env:
@@ -105,16 +114,18 @@ jobs:
           mkdir -p "$assets"
           cp target/alang.jar "$assets/alang-$FILES.jar"
           cp "target/alang-$FILES.tar.gz" "target/alang-$FILES.zip" AGENTS.md "$assets/"
+          cp native/alang-*.tar.gz native/alang-*.zip "$assets/"
           (cd "$assets" && sha256sum -- * > SHA256SUMS)
 
           # The release and its tag already exist; --clobber lets a re-run replace the files.
           gh release upload "$TAG" "$assets"/* --clobber
 
           cat > "$RUNNER_TEMP/files.md" <<EOF
-          Needs Java 21 or newer. Unpack \`alang-$FILES.tar.gz\` (or the \`.zip\`) and run \`alang-$FILES/bin/alang\`, or run the jar directly: \`java -jar alang-$FILES.jar\`. Agents start with [AGENTS.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/AGENTS.md).
+          Install on Linux or macOS with \`curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.sh | sh\`, which puts the binary for your platform on your PATH; it needs no Java. Elsewhere, unpack \`alang-$FILES.tar.gz\` (or the \`.zip\`) and run \`alang-$FILES/bin/alang\`, or run the jar directly: \`java -jar alang-$FILES.jar\`; both need Java 21 or newer. Agents start with [AGENTS.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/AGENTS.md).
 
           | File | Contents |
           |------|----------|
+          | \`alang-linux-x64.tar.gz\`, \`alang-linux-arm64.tar.gz\`, \`alang-macos-arm64.tar.gz\`, \`alang-windows-x64.zip\` | \`bin/alang\` (\`bin\\alang.exe\`) as a native binary that needs no Java, with AGENTS.md, the docs and the examples; Linux needs glibc 2.35 or newer |
           | \`alang-$FILES.tar.gz\`, \`alang-$FILES.zip\` | \`bin/alang\`, \`lib/alang.jar\`, AGENTS.md, README.md, the spec, the error catalog and the other docs, the grammar, the examples, \`harness/toon.py\`, the licenses |
           | \`alang-$FILES.jar\` | The toolchain as one runnable jar, with AGENTS.md inside (\`/alang/AGENTS.md\` on the classpath) |
           | \`AGENTS.md\` | The guide for agents writing ALang |

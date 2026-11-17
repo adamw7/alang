@@ -36,8 +36,10 @@ with the variables of the frame that trapped. To drive it, pipe commands in, one
 `finish`, `continue`, `where`, `frame N`, `locals`, `print len(entries) - 1` (any expression; `help`
 lists them). `--break "12 if i == 3"` stops only where the condition holds.
 
-No `bin/alang` yet? Unpack `alang-VERSION.tar.gz` from <https://github.com/adamw7/alang/releases/latest>
-and use its `bin/alang` (`bin\alang.cmd` on Windows); it needs only Java 21 or newer.
+No `bin/alang` yet? On Linux or macOS, `curl -fsSL https://raw.githubusercontent.com/adamw7/alang/main/install.sh | sh`
+installs `alang` on your PATH (as `~/.local/bin/alang`). Or unpack `alang-VERSION.tar.gz` from
+<https://github.com/adamw7/alang/releases/latest> and use its `bin/alang` (`bin\alang.cmd` on Windows); it needs
+only Java 21 or newer.
 
 ## A complete program
 

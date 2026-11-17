@@ -57,6 +57,9 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 {"ok": true, "result": [334, 333, 333], "stdout": "", "steps": 16}
 ```
 
+Install it with `curl -fsSL https://raw.githubusercontent.com/adamw7/alang/main/install.sh | sh` (see
+[Install](#install)), then give your agent [AGENTS.md](AGENTS.md).
+
 ## Why
 
 | Property | How ALang guarantees it |
@@ -73,7 +76,21 @@ and Java, with programs you can run.
 
 ## Install
 
-Download `alang-VERSION.tar.gz` (or `.zip`) from the [latest release](https://github.com/adamw7/alang/releases/latest)
+On Linux or macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/adamw7/alang/main/install.sh | sh
+```
+
+It installs the toolchain in `~/.alang` and links `~/.local/bin/alang` to it; `ALANG_HOME`, `ALANG_BIN_DIR` and
+`ALANG_VERSION` choose another place or release ([install.sh](install.sh) says how). On Linux (x64 and arm64,
+glibc 2.35 or newer) and on macOS with Apple silicon it installs a native binary, which needs no Java and starts
+in milliseconds; elsewhere it installs the jar's archive below, which needs Java 21 or newer. It checks every
+download against the release's `SHA256SUMS`. Releases after 0.6.0 carry the native binaries, also on their own:
+`alang-linux-x64.tar.gz`, `alang-linux-arm64.tar.gz`, `alang-macos-arm64.tar.gz` and, for Windows,
+`alang-windows-x64.zip` with `bin\alang.exe`.
+
+Or download `alang-VERSION.tar.gz` (or `.zip`) from the [latest release](https://github.com/adamw7/alang/releases/latest)
 and unpack it; it needs only Java 21 or newer. It holds `bin/alang` (put it, or a link to it, on your
 `PATH`), `lib/alang.jar`, [AGENTS.md](AGENTS.md), the docs and the examples, so the commands below work in
 it as they do in a clone. On Windows, `bin\alang.cmd` runs it from cmd.exe or PowerShell. Both shells can strip
