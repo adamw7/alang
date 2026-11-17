@@ -2353,7 +2353,8 @@ public final class CGen {
                 Expr xs = args.get(0).expr();
                 Type elem = Type.elementOf(xs.type);
                 String h = lowerLvalue(xs);
-                String x = keyLvalue(args.get(1).expr(), elem);
+                // A str needle of any capacity: al_cmp_bytes compares its bytes and length as they are.
+                String x = elem instanceof Type.Str ? lowerLvalue(args.get(1).expr()) : keyLvalue(args.get(1).expr(), elem);
                 String n = xs.type instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + h + ").len";
                 String lo = "t" + ++tmpCount;
                 String hi = "t" + ++tmpCount;

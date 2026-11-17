@@ -103,6 +103,8 @@ public final class Formatter {
     private static boolean space(Token a, Token b, boolean touching) {
         int x = a.getType();
         int y = b.getType();
+        // Two minus signs never touch: `- -a`, not `--a`, which reads as a decrement.
+        if (x == ALangLexer.MINUS && y == ALangLexer.MINUS) return true;
         if (touching) return false;
         if (x == ALangLexer.LPAREN || x == ALangLexer.LBRACK || x == ALangLexer.DOT) return false;
         if (y == ALangLexer.RPAREN || y == ALangLexer.RBRACK || y == ALangLexer.COMMA || y == ALangLexer.SEMI

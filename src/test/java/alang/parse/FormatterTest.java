@@ -137,6 +137,14 @@ class FormatterTest {
     }
 
     @Test
+    void twoMinusSignsKeepASpace() {
+        String text = "fn main() {\n    let a: i64 = 3;\n    print(- -a, 5 - -a, -(-a));\n}\n";
+        assertEquals("fn main() {\n    let a: i64 = 3;\n    print(- -a, 5 - -a, -(-a));\n}\n", format("neg.al", text));
+        assertEquals("fn main() {\n    let a: i64 = 3;\n    print(- -a);\n}\n",
+            format("neg.al", "fn main() {\n    let a: i64 = 3;\n    print(-  -a);\n}\n"));
+    }
+
+    @Test
     void codeWithSyntaxErrorsIsNotFormatted() {
         Source src = new Source("bad.al", "fn main() {\n    let x: i64 = ;\n}\n");
         Diagnostics diags = new Diagnostics(src);

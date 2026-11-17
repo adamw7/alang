@@ -1338,7 +1338,9 @@ public final class Interpreter {
             case BINARY_SEARCH -> {
                 Object xs = eval(args.get(0).expr(), slots);
                 Type elem = Type.elementOf(args.get(0).expr().type);
-                Object x = Values.coerce(eval(args.get(1).expr(), slots), elem, meter);
+                Object x = eval(args.get(1).expr(), slots);
+                // A str is compared as it is, whatever its capacity: copying it to the element's could cut it short.
+                if (!(elem instanceof Type.Str)) x = Values.coerce(x, elem, meter);
                 return Stdlib.binarySearch(xs, x, elem, meter);
             }
             case INSERT -> {
