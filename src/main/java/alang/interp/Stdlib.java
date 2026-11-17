@@ -691,7 +691,7 @@ final class Stdlib {
             msg.writeBytes("cannot convert ".getBytes(StandardCharsets.UTF_8));
             Format.format(ByteSink.of(msg), s, new Type.Str(s.b.length), true);
             msg.writeBytes((" to f64" + (kind == NOT_DECIMAL ? ": not a decimal number"
-                : ": more digits than an f64 converts exactly")).getBytes(StandardCharsets.UTF_8));
+                : ": too many digits, or too large or small, for an f64 to convert exactly")).getBytes(StandardCharsets.UTF_8));
             throw new Trap(Code.R0009, at, msg.toByteArray());
         }
         return v[0];

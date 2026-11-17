@@ -4414,7 +4414,9 @@ public final class Checker {
             && (!isUntyped(r) || hint == null && !hasFloatLiteral(l) && hasFloatLiteral(r))
             || isArrayLiteral(l) && !isArrayLiteral(r) && !isUntyped(r)
             // m == Option.None: the variant takes its type from m.
-            || hint == null && contextTyped(l) && !contextTyped(r);
+            || hint == null && contextTyped(l) && !contextTyped(r)
+            // Option.None == Option.Some(2): the payload of the right side says what T is.
+            || hint == null && givesNoType(l) && !givesNoType(r);
         if (rightFirst) {
             rt = expr(r, hint);
             lt = expr(l, Type.isError(rt) ? hint : rt);

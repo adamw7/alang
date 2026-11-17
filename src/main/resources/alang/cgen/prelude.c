@@ -2032,7 +2032,7 @@ static double al_str_to_f64(const uint8_t *b, uint32_t n, int line, int col) {
         AL_PUTS(&e, "cannot convert ");
         al_fmt_str(&e, b, n, 1);
         if (kind == 0) AL_PUTS(&e, " to f64: not a decimal number");
-        else AL_PUTS(&e, " to f64: more digits than an f64 converts exactly");
+        else AL_PUTS(&e, " to f64: too many digits, or too large or small, for an f64 to convert exactly");
         al_trap_end(&e, line, col);
     }
     return v;
