@@ -181,7 +181,9 @@ With `--json`, the report is one line of JSON that names the source `file` once,
 has `severity`, `code`, `title`, `message`, `line`, `column`, `length`, `source_line` and `hint`. Where the
 hint's change is mechanical, a `"fix"` lists the edits that make it (`line`, `column`, `length` in code
 points, and the `replacement`), and the text shows it as `= fix:`: `&&` becomes `and`, `xs.len()` becomes
-`len(xs)`, a missing `;` or `mut` is inserted. `alang fix prog.al --write` applies them all. A trap
+`len(xs)`, a missing `;` or `mut` is inserted, `let n = len(xs);` gets its type (`let n: i64`), and a call
+with `mut` arguments inside a condition or an expression moves to a `let` of its own on the line above.
+`alang fix prog.al --write` applies them all. A trap
 gives its `line`, `column` and `source_line` the same way, and a diagnostic or trap in an imported file
 adds its `file`. Habits from other languages (`&&`, `x++`, `Color::Red`, `Point { x: 1 }`, `xs.len()`,
 `let x = 5`, `while` without a limit, `null`, `use`/`#include`, `substr`, `parse_int`, `sorted`, ...) are answered with the ALang spelling.

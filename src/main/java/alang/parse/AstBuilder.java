@@ -309,9 +309,11 @@ final class AstBuilder {
             LetStmtContext l = ctx.letStmt();
             boolean mutable = l.kind.getType() == ALangLexer.VAR;
             if (l.identifier() == null) {
-                return new Destructure(sp, mutable, pattern(l.pattern()), type(l.type()), expr(l.expression()));
+                return new Destructure(sp, mutable, pattern(l.pattern()), l.type() == null ? null : type(l.type()),
+                    expr(l.expression()));
             }
-            return new Let(sp, mutable, l.identifier().getText(), span(l.identifier()), type(l.type()), expr(l.expression()));
+            return new Let(sp, mutable, l.identifier().getText(), span(l.identifier()),
+                l.type() == null ? null : type(l.type()), expr(l.expression()));
         }
         if (ctx.assignStmt() != null) {
             AssignStmtContext a = ctx.assignStmt();

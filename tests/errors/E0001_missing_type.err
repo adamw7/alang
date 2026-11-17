@@ -1,8 +1,0 @@
-error[E0001]: unexpected '=', expected ':'
- --> tests/errors/E0001_missing_type.al:3:11
-  |
-3 |     let x = 5;
-  |           ^
-  = hint: every variable needs an explicit type: let x: i64 = 0;
-  = fix: insert `: i64`
-

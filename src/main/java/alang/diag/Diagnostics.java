@@ -65,6 +65,18 @@ public final class Diagnostics {
         list.add(new Diagnostic(code, message, span, hint, List.copyOf(fixes)));
     }
 
+    /** A mark of how many diagnostics there are, for {@link #dropSince}. */
+    public int mark() {
+        return list.size();
+    }
+
+    /** Drops the diagnostics with {@code code} added since {@code mark}: ones another diagnostic says more about. */
+    public void dropSince(int mark, Code code) {
+        for (int i = list.size() - 1; i >= mark; i--) {
+            if (list.get(i).code() == code) list.remove(i);
+        }
+    }
+
     /** How many diagnostics have fixes that `alang fix` can apply. */
     public int fixableCount() {
         return (int) list.stream().filter(d -> !d.fixes().isEmpty()).count();

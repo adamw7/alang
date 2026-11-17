@@ -1,7 +1,0 @@
-error[E0001]: unexpected '=', expected ':'
- --> tests/errors/E0001_tuple_let.al:3:16
-  |
-3 |     let (a, b) = (1, 2);
-  |                ^
-  = hint: a tuple is built as (a, b), read as t.0 and t.1, and taken apart with a typed let: let (a, b): (i64, i64) = pair;
-

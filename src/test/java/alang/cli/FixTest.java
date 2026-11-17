@@ -28,8 +28,9 @@ class FixTest {
                 assertEquals(src.text, o.text(), "no fix, no change");
                 return;
             }
-            // Every edit stays on its line: the file keeps its line count.
-            assertEquals(src.text.split("\n", -1).length, o.text().split("\n", -1).length, o.text());
+            // Every edit stays on its line, so the file keeps its line count, but for the lines E0215 inserts.
+            long inserted = o.fixed().stream().filter(f -> f.description().startsWith("insert the line ")).count();
+            assertEquals(src.text.split("\n", -1).length + inserted, o.text().split("\n", -1).length, o.text());
             List<Edit> left = new ArrayList<>();
             for (Diagnostic d : o.result().diags().all()) {
                 if (d.span().file() == null || d.span().file().path.equals(src.path)) left.addAll(d.fixes());

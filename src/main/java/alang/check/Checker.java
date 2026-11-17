@@ -110,6 +110,8 @@ public final class Checker {
         final Deque<Loop> loops = new ArrayDeque<>();
         boolean inEnsures;
         Expr mutCallAllowed;
+        /** The statement being checked: where E0215 moves a call with `mut` arguments out to. */
+        Stmt stmt;
         /**
          * The expression stored by the let/var, assignment, return or constant being checked, whose type it
          * then takes: split, words, join and replace build a value of that type.
@@ -1213,15 +1215,30 @@ public final class Checker {
     }
 
     private boolean stmt(Stmt s) {
+        Stmt outer = ctx.stmt;
+        ctx.stmt = s;
+        try {
+            return checkStmt(s);
+        } finally {
+            ctx.stmt = outer;
+        }
+    }
+
+    private boolean checkStmt(Stmt s) {
         return switch (s) {
             case Let l -> {
-                Type t = resolveType(l.typeRef);
                 ctx.mutCallAllowed = l.init;
                 ctx.stored = l.init;
-                Type it = expr(l.init, t);
+                Type t;
+                if (l.typeRef == null) {
+                    t = missingType(l.mutable, l.name, l.nameSpan, l.init);
+                } else {
+                    t = resolveType(l.typeRef);
+                    Type it = expr(l.init, t);
+                    requireAssignable(l.init, it, t);
+                }
                 ctx.mutCallAllowed = null;
                 ctx.stored = null;
-                requireAssignable(l.init, it, t);
                 l.var = declare(l.name, l.nameSpan, t, l.mutable);
                 letInits.put(l.var, l.init);
                 yield false;
@@ -1323,11 +1340,16 @@ public final class Checker {
      * it apart into new variables; it must match every value of the type (E0306), as a let cannot fail.
      */
     private void destructure(Destructure d) {
-        Type t = resolveType(d.typeRef);
+        Type t;
         ctx.mutCallAllowed = d.init;
-        Type it = expr(d.init, t);
+        if (d.typeRef == null) {
+            t = missingType(d.mutable, exprTextOf(d.pattern.span), d.pattern.span, d.init);
+        } else {
+            t = resolveType(d.typeRef);
+            Type it = expr(d.init, t);
+            requireAssignable(d.init, it, t);
+        }
         ctx.mutCallAllowed = null;
-        requireAssignable(d.init, it, t);
         if (d.pattern instanceof TuplePat tp && !Type.isError(t)) {
             String problem = null;
             String hint = null;
@@ -1339,7 +1361,7 @@ public final class Checker {
                 hint = "give one name per element, and _ for one you do not need";
             }
             if (problem != null) {
-                diags.error(Code.E0201, d.typeRef.span(), problem, hint);
+                diags.error(Code.E0201, d.typeRef == null ? d.pattern.span : d.typeRef.span(), problem, hint);
                 t = Type.ERROR;
             }
         }
@@ -2764,13 +2786,124 @@ public final class Checker {
         return "fn " + f.name + "(" + String.join(", ", ps) + ")" + ret;
     }
 
+    /**
+     * `let x = e;`: a let or var without its type (E0219). The value is checked on its own, and where that gives it a
+     * type that is the one meant, the diagnostic writes it in; a str or collection literal does not say what capacity
+     * the variable needs, so it only asks for one. Returns the type the variable then has, so the rest is checked too.
+     */
+    private Type missingType(boolean mutable, String name, Span nameSpan, Expr init) {
+        int mark = diags.mark();
+        Type it = expr(init, null);
+        // `let xs = [];`: that its type cannot be inferred is this diagnostic's to say.
+        diags.dropSince(mark, Code.E0216);
+        // A capacity that a literal set says nothing of what the variable is to hold: `to_upper("abc")` is a str[3].
+        boolean known = diags.mark() == mark && !Type.isError(it) && !(it instanceof Type.Void)
+            && !(it.toString().contains("[") && sizedByLiteral(init));
+        String kw = mutable ? "var" : "let";
+        String message = "`" + kw + " " + name + "` needs a type: ALang does not infer the types of variables";
+        Span at = new Span(nameSpan.line(), nameSpan.col(), nameSpan.length(), nameSpan.file());
+        if (known) {
+            Span after = new Span(nameSpan.line(), nameSpan.col() + nameSpan.length(), 0, nameSpan.file());
+            diags.fixable(Code.E0219, at, message, "the value is of type " + it + ": " + kw + " " + name + ": " + it + " = "
+                + exprText(init) + ";", List.of(new Edit(after, ": " + it)));
+            return it;
+        }
+        String decl = kw + " " + name + ": ";
+        String value = " = " + exprText(init) + ";";
+        String hint = init instanceof StrLit
+            ? "give it the most bytes it will hold: " + decl + "str[64]" + value
+            : init instanceof ArrayLit || init instanceof Repeat
+            ? "give it its element type and capacity, e.g. " + decl + "list[i64; 16]" + value
+            : diags.mark() == mark && !Type.isError(it) && !(it instanceof Type.Void)
+            ? "the value is of type " + it + ", sized by a literal in it; write the type with the capacity the variable "
+                + "needs: " + decl + it + value
+            : "write its type: " + decl + "T" + value;
+        diags.error(Code.E0219, at, message, hint);
+        return Type.ERROR;
+    }
+
+    /**
+     * The fix of E0215: `if not try_split(mut parts, s, ',') { }` becomes `let ok1: bool = try_split(mut parts, s, ',');`
+     * on a line of its own, then `if not ok1 { }`. Only where the call is the first thing the statement evaluates, so
+     * that moving it ahead changes no order, and where the statement starts its line; otherwise none.
+     */
+    private List<Edit> hoist(Call c, Type result) {
+        Stmt s = ctx.stmt;
+        // `len(mut s)` needs its `mut` removed (E0207), not the call moved.
+        if (s == null || result instanceof Type.Void || Type.isError(result) || c.span.file() != s.span.file()
+            || c.builtin != null && !c.builtin.modifiesFirst()
+            || !evaluatedFirst(c, firstExpr(s))) {
+            return List.of();
+        }
+        alang.diag.Source src = s.span.file() == null ? diags.source() : s.span.file();
+        String line = src.line(s.span.line());
+        String indent = line.substring(0, line.length() - line.stripLeading().length());
+        if (indent.codePointCount(0, indent.length()) != s.span.col() - 1) return List.of();
+        String name = freshName(src.text, c.builtin == Builtin.TRY_SPLIT || c.builtin == Builtin.TRY_WORDS ? "ok" : "value");
+        Span start = new Span(s.span.line(), s.span.col(), 0, s.span.file());
+        return List.of(new Edit(start, "let " + name + ": " + result + " = " + exprText(c) + ";\n" + indent),
+            new Edit(c.span, name));
+    }
+
+    /** The expression that a statement evaluates first, or null where none is safe to move a call ahead of. */
+    private static Expr firstExpr(Stmt s) {
+        return switch (s) {
+            case Let l -> l.init;
+            case Destructure d -> d.init;
+            case Return r -> r.value;
+            case ExprStmt e -> e.expr;
+            case Assert a -> a.cond;
+            case If i -> i.conds.get(0);
+            case Match m -> m.subject;
+            default -> null;
+        };
+    }
+
+    /** Whether {@code target} is what evaluating {@code e} starts with: nothing that could print or trap comes first. */
+    private static boolean evaluatedFirst(Expr target, Expr e) {
+        while (e != null) {
+            if (e == target) return true;
+            e = switch (e) {
+                case Unary u -> u.operand;
+                // A literal does nothing when evaluated: `1 + pop(mut s)`, `print("top: ", pop(mut s))`.
+                case Binary b -> isLiteral(b.left) && b.op != BinOp.AND && b.op != BinOp.OR ? b.right : b.left;
+                case Call c -> c.args.stream().map(Arg::expr).filter(a -> !isLiteral(a)).findFirst().orElse(null);
+                case FieldAccess f -> f.target;
+                case Convert c -> c.arg;
+                case Resize r -> r.arg;
+                default -> null;
+            };
+        }
+        return false;
+    }
+
+    private static boolean isLiteral(Expr e) {
+        return e instanceof IntLit || e instanceof FloatLit || e instanceof StrLit || e instanceof BoolLit;
+    }
+
+    /** The names that E0215 fixes have used, so that two of them in one round do not declare the same one. */
+    private final Set<String> hoistedNames = new HashSet<>();
+
+    /** A name that occurs nowhere in {@code text}, so it is new in the function: {@code base}, else base2, base3... */
+    private String freshName(String text, String base) {
+        for (int i = 1; ; i++) {
+            String name = i == 1 ? base : base + i;
+            if (!hoistedNames.contains(name) && !java.util.regex.Pattern.compile("\\b" + name + "\\b").matcher(text).find()) {
+                hoistedNames.add(name);
+                return name;
+            }
+        }
+    }
+
     private void checkMutCallPosition(Call c, Type result) {
         if (c.hasMutArg() && ctx.mutCallAllowed != c) {
+            List<Edit> fix = hoist(c, result);
+            String name = fix.isEmpty() ? "value" : fix.get(1).replacement();
             String hint = result instanceof Type.Void || Type.isError(result)
                 ? "make it a separate statement: " + exprText(c) + ";"
-                : "store the result first: let value: " + result + " = " + exprText(c) + "; then use `value`";
-            diags.error(Code.E0215, c.span, "a call with `mut` arguments must be its own statement or the whole "
-                + "right-hand side of let/var/assignment/return", hint);
+                : "store the result first: let " + name + ": " + result + " = " + exprText(c) + "; then use `" + name + "`";
+            diags.fixable(Code.E0215, c.span, "a call with `mut` arguments must be its own statement or the whole "
+                + "right-hand side of let/var/assignment/return", hint, fix);
         }
     }
 
@@ -2850,6 +2983,26 @@ public final class Checker {
                 return;
             }
         }
+    }
+
+/** Whether a capacity in the type of {@code e} may come from a str or collection literal rather than a declared type. */
+    private static boolean sizedByLiteral(Expr e) {
+        return switch (e) {
+            case StrLit s -> true;
+            case ArrayLit a -> true;
+            case Repeat r -> true;
+            case Resize r -> false;
+            case Call c -> c.args.stream().anyMatch(a -> sizedByLiteral(a.expr()));
+            case VariantCall c -> c.args.stream().anyMatch(a -> sizedByLiteral(a.expr()));
+            case StructLit s -> s.fields.stream().anyMatch(f -> sizedByLiteral(f.value()));
+            case Unary u -> sizedByLiteral(u.operand);
+            case Binary b -> sizedByLiteral(b.left) || sizedByLiteral(b.right);
+            case IfExpr i -> sizedByLiteral(i.then) || sizedByLiteral(i.otherwise);
+            case MatchExpr m -> m.arms.stream().anyMatch(a -> sizedByLiteral(a.value()));
+            case TupleLit t -> t.elems.stream().anyMatch(Checker::sizedByLiteral);
+            case SliceExpr s -> sizedByLiteral(s.target);
+            default -> false;
+        };
     }
 
     private static boolean mentions(Expr e, LocalVar v) {

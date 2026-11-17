@@ -171,8 +171,9 @@ statement
 // `let` is immutable, `var` is mutable. Both must be initialized.
 // let (q, r): (i64, i64) = divmod(a, b);  takes a value apart with a pattern that always matches (`_` skips a part):
 // let Point(x: px, y: _): Point = p;
+// The type is required; the grammar lets it be left out only so that the checker can name the missing type (E0219).
 letStmt
-    : kind=(LET | VAR) (identifier | pattern) COLON type ASSIGN expression SEMI
+    : kind=(LET | VAR) (identifier | pattern) (COLON type)? ASSIGN expression SEMI
     ;
 
 assignStmt

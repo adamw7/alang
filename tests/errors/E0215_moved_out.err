@@ -1,0 +1,52 @@
+error[E0215]: a call with `mut` arguments must be its own statement or the whole right-hand side of let/var/assignment/return
+ --> tests/errors/E0215_moved_out.al:7:12
+  |
+7 |     if not try_split(mut parts, "a,b", ',') {
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = hint: store the result first: let ok2: bool = try_split(mut parts, "a,b", ','); then use `ok2`
+  = fix: insert the line `let ok2: bool = try_split(mut parts, "a,b", ',');` above, then replace `try_split(mut parts, "a,b", ',')` with `ok2`
+
+error[E0215]: a call with `mut` arguments must be its own statement or the whole right-hand side of let/var/assignment/return
+  --> tests/errors/E0215_moved_out.al:10:20
+   |
+10 |     print("top: ", pop(mut stack));
+   |                    ^^^^^^^^^^^^^^
+  = hint: store the result first: let value: i64 = pop(mut stack); then use `value`
+  = fix: insert the line `let value: i64 = pop(mut stack);` above, then replace `pop(mut stack)` with `value`
+
+error[E0215]: a call with `mut` arguments must be its own statement or the whole right-hand side of let/var/assignment/return
+  --> tests/errors/E0215_moved_out.al:11:22
+   |
+11 |     let n: i64 = 1 + pop(mut stack);
+   |                      ^^^^^^^^^^^^^^
+  = hint: store the result first: let value2: i64 = pop(mut stack); then use `value2`
+  = fix: insert the line `let value2: i64 = pop(mut stack);` above, then replace `pop(mut stack)` with `value2`
+
+error[E0215]: a call with `mut` arguments must be its own statement or the whole right-hand side of let/var/assignment/return
+  --> tests/errors/E0215_moved_out.al:12:31
+   |
+12 |     let k: i64 = len(stack) + pop(mut stack);
+   |                               ^^^^^^^^^^^^^^
+  = hint: store the result first: let value: i64 = pop(mut stack); then use `value`
+
+error[E0215]: a call with `mut` arguments must be its own statement or the whole right-hand side of let/var/assignment/return
+  --> tests/errors/E0215_moved_out.al:15:15
+   |
+15 |     } else if pop(mut stack) > 0 {
+   |               ^^^^^^^^^^^^^^
+  = hint: store the result first: let value: i64 = pop(mut stack); then use `value`
+
+error[E0215]: a call with `mut` arguments must be its own statement or the whole right-hand side of let/var/assignment/return
+  --> tests/errors/E0215_moved_out.al:18:11
+   |
+18 |     while pop(mut stack) > 0 limit 3 { }
+   |           ^^^^^^^^^^^^^^
+  = hint: store the result first: let value: i64 = pop(mut stack); then use `value`
+
+error[E0215]: a call with `mut` arguments must be its own statement or the whole right-hand side of let/var/assignment/return
+  --> tests/errors/E0215_moved_out.al:19:39
+   |
+19 |     let ok: bool = len(stack) > 0 and pop(mut stack) > 0;
+   |                                       ^^^^^^^^^^^^^^
+  = hint: store the result first: let value: i64 = pop(mut stack); then use `value`
+

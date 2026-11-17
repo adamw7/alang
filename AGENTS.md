@@ -14,7 +14,7 @@ bin/alang fuzz  prog.al           # 3. call each tool fn, and a main that reads 
 bin/alang run   prog.al           # 4. run fn main()
 bin/alang run   prog.al < in.txt  #    a fn main(input: str[N]) gets all of stdin
 bin/alang explain E0215           #    explain any code
-bin/alang fix   prog.al --write   #    apply every `= fix:` (`"fix"` in JSON): &&, x++, xs.len(), a missing ; or mut
+bin/alang fix   prog.al --write   #    apply every `= fix:` (`"fix"` in JSON): &&, x++, xs.len(), a missing ;, mut or type
 bin/alang fmt   prog.al --write   #    lay the file out the one way
 bin/alang test  prog.al --filter X #    run only the tests whose name contains X
 bin/alang check prog.al --memory   #    per-function worst-case stack table
