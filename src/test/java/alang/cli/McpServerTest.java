@@ -351,6 +351,22 @@ class McpServerTest {
         }
     }
 
+    /**
+     * A number id with trailing zeros is the same id however it is written: 70.0 and 7e1 are 70, which a key that
+     * kept BigDecimal's scale took for another id.
+     */
+    @Test
+    void anIdEndingInZeroIsFoundWrittenAnyWay() throws Exception {
+        try (Session s = new Session(server(SPIN_PROGRAM, 0, 0, 2))) {
+            s.send(longCall("70"));
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 70.0, \"method\": \"ping\"}");
+            assertEquals(msg("{\"jsonrpc\": \"2.0\", \"id\": 70.0, \"error\": {\"code\": -32600, "
+                + "\"message\": \"id 70.0 is in use by a call that has not been answered\"}}"), s.next());
+            s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \"params\": {\"requestId\": 7e1}}");
+            assertEquals(List.of(), s.end());
+        }
+    }
+
     /** A call that runs past --timeout is stopped, and its answer says so, whatever its step budget. */
     @Test
     void aCallPastItsTimeLimitIsAnErrorResult() throws Exception {

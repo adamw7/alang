@@ -367,11 +367,12 @@ final class McpServer {
 
     /**
      * What identifies request {@code id} in {@link #calls}: the id itself, but numbers by value, so that a
-     * cancellation of 7.0 or 7e0 finds call 7. Without converting to BigInteger, which an id such as 1e999999999
-     * would make huge.
+     * cancellation of 7.0 or 7e0 finds call 7, and 70.0 or 7e1 call 70. Both kinds are stripped of trailing zeros,
+     * as BigDecimal.equals compares the scale too: 70 and 7E+1 differ. Without converting to BigInteger, which an
+     * id such as 1e999999999 would make huge.
      */
     private static Object key(Object id) {
-        if (id instanceof BigInteger i) return new BigDecimal(i);
+        if (id instanceof BigInteger i) return new BigDecimal(i).stripTrailingZeros();
         if (id instanceof BigDecimal d) return d.stripTrailingZeros();
         return id;
     }

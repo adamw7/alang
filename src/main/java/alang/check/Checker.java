@@ -3252,7 +3252,9 @@ public final class Checker {
                 if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
                     Type elem = Type.elementOf(t);
                     Type x = expr(args.get(1).expr(), elem);
-                    if (!Type.isError(x) && !Type.assignable(x, elem)) {
+                    // A str of any capacity is compared byte by byte, as index_of and contains take it.
+                    boolean text = x instanceof Type.Str && elem instanceof Type.Str;
+                    if (!Type.isError(x) && !text && !Type.assignable(x, elem)) {
                         diags.error(Code.E0201, args.get(1).span(), "binary_search() looks for an element of type " + elem
                             + ", found " + x);
                     }
@@ -3580,7 +3582,6 @@ public final class Checker {
                 + "); or go through the pieces one at a time: for p in " + exprText(c) + " { }");
     }
 
-    /** The argument of sort and reverse: a `mut` list, array or str. */
     /** The one argument of sum, min and max over a collection: an array or list of numbers, whose element type is the result. */
     private Type numbersArg(Builtin b, Arg a) {
         noMut(a);
@@ -3600,6 +3601,7 @@ public final class Checker {
         return elem;
     }
 
+    /** The argument of sort and reverse: a `mut` list, array or str. */
     private Type sequenceArg(Call c, Arg a) {
         if (!a.mut()) {
             Type t = expr(a.expr(), null);

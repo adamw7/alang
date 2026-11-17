@@ -31,6 +31,10 @@ fn main() {
     }
     let names: [str[8]; 3] = ["ann", "bob", "cy"];
     print(binary_search(names, "bob"), " ", binary_search(names, "b"), " ", binary_search(names, "zed"));
+    // A str of a larger capacity is searched for as it is, as index_of takes it: a longer one is not found.
+    let wide: str[16] = "cy";
+    let long: str[16] = "cyclopedia";
+    print(binary_search(names, wide), " ", binary_search(names, long), " ", index_of(names, long));
 
     let texts: [str[16]; 8] = ["1e5", "2.5E-3", "-6.02e+23", "0e999", "1e", "e5", "1e-30", "1.5e2.0"];
     for t in texts {
