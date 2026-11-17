@@ -38,6 +38,7 @@ Codes are never reused for a different meaning.
 | [E0216](#e0216) | type cannot be inferred |
 | [E0217](#e0217) | `_` capacity not allowed here |
 | [E0218](#e0218) | misplaced default value |
+| [E0219](#e0219) | missing type |
 | [E0301](#e0301) | missing return |
 | [E0302](#e0302) | break/continue outside loop |
 | [E0303](#e0303) | bad return |
@@ -313,6 +314,15 @@ let s: str[_] = "a";                 // error: write str[64]
 ```
 fn greet(name: str[16], times: i64 = 1) { ... }  // ok: greet("ann") passes times = 1
 fn bad(times: i64 = 1, name: str[16]) { ... }  // error: name needs a default too
+```
+
+## E0219
+
+**missing type**: Every let and var states its type: there is no inference, so the type of a variable is always written where it is declared. Where the type of the value is known, the diagnostic names it and `alang fix` writes it in. A str or list literal says nothing about the capacity it needs, so choose that yourself.
+
+```
+let n = len(xs);              // error: fix writes `let n: i64 = len(xs);`
+var name: str[32] = "ann";   // ok: room for names of up to 32 bytes
 ```
 
 ## E0301

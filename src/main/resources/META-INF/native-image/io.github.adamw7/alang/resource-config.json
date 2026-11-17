@@ -1,0 +1,9 @@
+{
+  "resources": {
+    "includes": [
+      {"pattern": "\\Qalang/version.txt\\E"},
+      {"pattern": "\\Qalang/cgen/prelude.c\\E"},
+      {"pattern": "\\Qalang/AGENTS.md\\E"}
+    ]
+  }
+}

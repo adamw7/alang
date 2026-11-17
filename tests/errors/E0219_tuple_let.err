@@ -1,0 +1,8 @@
+error[E0219]: `let (a, b)` needs a type: ALang does not infer the types of variables
+ --> tests/errors/E0219_tuple_let.al:3:9
+  |
+3 |     let (a, b) = (1, 2);
+  |         ^^^^^^
+  = hint: the value is of type (i64, i64): let (a, b): (i64, i64) = (1, 2);
+  = fix: insert `: (i64, i64)`
+

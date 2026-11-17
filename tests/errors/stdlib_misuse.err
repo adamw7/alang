@@ -71,6 +71,7 @@ error[E0215]: a call with `mut` arguments must be its own statement or the whole
 19 |     print(remove(mut xs, 0));
    |           ^^^^^^^^^^^^^^^^^
   = hint: store the result first: let value: i64 = remove(mut xs, 0); then use `value`
+  = fix: insert the line `let value: i64 = remove(mut xs, 0);` above, then replace `remove(mut xs, 0)` with `value`
 
 error[E0203]: pow() of an integer needs an integer exponent, found f64
   --> tests/errors/stdlib_misuse.al:20:25

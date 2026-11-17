@@ -219,6 +219,148 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 bench/bench.py selftest
 
+  native:
+    name: Native binary (${{ matrix.platform }})
+    # The toolchain compiled ahead of time with GraalVM native-image: one file that needs no Java and starts
+    # in milliseconds. Each binary runs the same smoke test as the jar, and its archive is kept as an
+    # artifact of the run, which release.yml attaches to the release.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on the oldest Ubuntu runners: a binary needs a glibc at least as new as the one it was
+          # built with, and 2.35 covers Ubuntu 22.04, Debian 12, Fedora 36 and later.
+          - {os: ubuntu-22.04, platform: linux-x64}
+          - {os: ubuntu-22.04-arm, platform: linux-arm64}
+          - {os: macos-latest, platform: macos-arm64}
+          - {os: windows-latest, platform: windows-x64, exe: .exe}
+    defaults:
+      run:
+        shell: bash
+    env:
+      EXE: ${{ matrix.exe }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+
+      - name: Build the jar
+        timeout-minutes: 5
+        run: mvn -B -ntp -DskipTests package
+
+      - name: Compile it to a native binary
+        # The options are in the jar: src/main/resources/META-INF/native-image.
+        timeout-minutes: 12
+        run: |
+          mkdir -p target/native
+          # On Windows it is native-image.cmd, which bash finds only by its full name.
+          native_image=native-image
+          if [ "$RUNNER_OS" = Windows ]; then native_image=native-image.cmd; fi
+          "$native_image" -jar target/alang.jar -o target/native/alang
+
+      - name: Smoke test the binary
+        timeout-minutes: 3
+        run: |
+          alang="$GITHUB_WORKSPACE/target/native/alang$EXE"
+          out="$RUNNER_TEMP/native"
+          mkdir -p "$out"
+          version="$(java -jar target/alang.jar version)"
+          test "$("$alang" version)" = "$version"
+
+          # The examples print the same bytes as with the jar, and pass their tests.
+          for f in examples/*.al; do
+            n="$(basename "$f" .al)"
+            input="examples/$n.in"
+            [ -f "$input" ] || input=/dev/null
+            "$alang" check "$f" > /dev/null
+            "$alang" test "$f" > /dev/null
+            "$alang" run "$f" < "$input" > "$out/$n.out"
+            diff -u --strip-trailing-cr "tests/examples/$n.out" "$out/$n.out"
+          done
+          "$alang" fuzz examples/text_tools.al > /dev/null
+
+          # Tools, MCP, the C backend's source, fixes and the guide: what reads resources or starts threads.
+          "$alang" call examples/inventory.al place_order '{"sku": "B-200", "quantity": 2}' | grep -q '"ok": true'
+          echo '{"sku": "B-200", "quantity": 2}' | "$alang" call examples/inventory.al place_order - | grep -q '"ok": true'
+          printf '%s\n' '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | "$alang" serve examples/text_tools.al | grep -q '"name": "word_count"'
+          "$alang" build examples/shapes.al -o "$out/shapes.c"
+          grep -q 'int main' "$out/shapes.c"
+          printf 'fn main() {\n    let n = 2;\n    print(n);\n}\n' > "$out/fix.al"
+          "$alang" fix "$out/fix.al" | grep -q 'let n: i64 = 2;'
+          "$alang" explain E0215 > /dev/null
+
+          # Exit codes: 1 for diagnostics, 2 for usage errors.
+          status=0
+          "$alang" check tests/errors/E0001_and_and.al --json > "$out/err.json" || status=$?
+          test "$status" -eq 1
+          grep -q '"code": "E0001"' "$out/err.json"
+          status=0
+          "$alang" no-such-command 2> /dev/null || status=$?
+          test "$status" -eq 2
+
+          # Non-ASCII arguments in the C locale, which bin/alang handles for the jar by setting a UTF-8 one.
+          if [ "$RUNNER_OS" != Windows ]; then
+            printf 'tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n' > "$out/size.al"
+            LC_ALL=C "$alang" call "$out/size.al" size '{"text": "é"}' | grep -q '"result": 2'
+          fi
+
+          # Startup: the reason for the binary.
+          time "$alang" check examples/sudoku.al > /dev/null
+
+      - name: Archive
+        # alang-PLATFORM/: bin/alang, the guide, the docs and the examples, as in the jar's archive. The name
+        # has no version, so https://github.com/adamw7/alang/releases/latest/download/alang-PLATFORM.tar.gz
+        # is always the latest one (install.sh downloads it).
+        run: |
+          name="alang-${{ matrix.platform }}"
+          dir="$RUNNER_TEMP/archive/$name"
+          mkdir -p "$dir/bin" "$dir/docs" "$dir/examples" "$dir/grammar"
+          cp "target/native/alang$EXE" "$dir/bin/"
+          cp AGENTS.md README.md LICENSE THIRD-PARTY-NOTICES "$dir/"
+          cp docs/*.md "$dir/docs/"
+          cp examples/*.al examples/*.in examples/README.md "$dir/examples/"
+          cp grammar/ALang.g4 "$dir/grammar/"
+          mkdir -p dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            (cd "$RUNNER_TEMP/archive" && 7z a -tzip -bso0 "$GITHUB_WORKSPACE/dist/$name.zip" "$name")
+          else
+            tar -czf "dist/$name.tar.gz" -C "$RUNNER_TEMP/archive" "$name"
+          fi
+          ls -l dist
+
+      - name: Install script
+        # install.sh from a copy of what the release will hold: it picks this binary, checks it against
+        # SHA256SUMS and links it; with ALANG_JAR=1 it installs the jar's archive instead.
+        if: runner.os != 'Windows'
+        run: |
+          release="$RUNNER_TEMP/release"
+          mkdir -p "$release/latest/download"
+          cp dist/* target/alang-*.tar.gz "$release/latest/download/"
+          (cd "$release/latest/download" && shasum -a 256 -- * > SHA256SUMS)
+          home="$RUNNER_TEMP/home"
+          HOME="$home" ALANG_DOWNLOAD_URL="file://$release" sh install.sh
+          cmp "target/native/alang" "$home/.alang/bin/alang"
+          "$home/.local/bin/alang" run examples/hello.al | diff -u tests/examples/hello.out -
+          HOME="$home" ALANG_DOWNLOAD_URL="file://$release" ALANG_JAR=1 sh install.sh
+          test -f "$home/.alang/lib/alang.jar"
+          "$home/.local/bin/alang" run examples/hello.al | diff -u tests/examples/hello.out -
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alang-native-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
   fuzz:
     name: Fuzz (3000 mutations per program)
     runs-on: ubuntu-latest

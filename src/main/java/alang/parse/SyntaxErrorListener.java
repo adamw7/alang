@@ -152,23 +152,6 @@ final class SyntaxErrorListener extends BaseErrorListener {
             if (first == null || last == null) return List.of();
             return List.of(new Edit(before(first), "("), new Edit(after(last), ")"));
         }
-        // `let x = 5;`: the type of a lone literal is the one it has on its own.
-        if (t == ALangLexer.ASSIGN && expected.contains(ALangLexer.COLON) && prev != null && isNameLike(p)) {
-            Token kw = previous(ts, prev);
-            Token value = next;
-            if (value != null && value.getType() == ALangLexer.MINUS) value = next(ts, value);
-            Token end = value == null ? null : next(ts, value);
-            if (kw != null && (kw.getType() == ALangLexer.LET || kw.getType() == ALangLexer.VAR) && end != null
-                && end.getType() == ALangLexer.SEMI) {
-                String type = switch (value.getType()) {
-                    case ALangLexer.INT_LIT -> "i64";
-                    case ALangLexer.FLOAT_LIT -> "f64";
-                    case ALangLexer.TRUE, ALangLexer.FALSE -> value == next ? "bool" : null;
-                    default -> null;
-                };
-                if (type != null) return List.of(new Edit(after(prev), ": " + type));
-            }
-        }
         // `Point { x: 1, y: 2 }` is Point(x: 1, y: 2): only where a field and `:` follow the brace.
         if (t == ALangLexer.LBRACE && p == ALangLexer.IDENT && Character.isUpperCase(prev.getText().charAt(0))
             && next != null && isNameLike(next.getType()) && next(ts, next) != null
@@ -487,12 +470,6 @@ final class SyntaxErrorListener extends BaseErrorListener {
         }
         if (p == ALangLexer.FOR && t == ALangLexer.LPAREN) {
             return "for loops iterate a range or a collection: for i in 0..n { ... } or for x in xs { ... }";
-        }
-        if (expected != null && expected.contains(ALangLexer.COLON) && t == ALangLexer.ASSIGN && p == ALangLexer.RPAREN) {
-            return TUPLES; // `let (a, b) = pair;`
-        }
-        if (expected != null && expected.contains(ALangLexer.COLON) && t == ALangLexer.ASSIGN) {
-            return "every variable needs an explicit type: let x: i64 = 0;";
         }
         if (expected != null && expected.contains(ALangLexer.COLON)
             && (t == ALangLexer.COMMA || t == ALangLexer.RPAREN) && p == ALangLexer.IDENT) {

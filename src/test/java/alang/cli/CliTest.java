@@ -1754,8 +1754,9 @@ class CliTest {
         assertEquals(0, printed.code(), printed.err());
         assertEquals(fixed, printed.out());
         assertEquals(broken, Files.readString(p, StandardCharsets.UTF_8), "printing changes nothing");
-        assertTrue(printed.err().startsWith("fixed[E0001] " + p + ":7:29: insert `;`\nfixed[E0001] " + p + ":8:11: insert `: i64`\n"),
-            printed.err());
+        assertTrue(printed.err().startsWith("fixed[E0001] " + p + ":7:29: insert `;`\n"), printed.err());
+        // The type of `let n = 2;` is named once the program parses: by the checker, after the syntax errors.
+        assertTrue(printed.err().contains("\nfixed[E0219] " + p + ":8:9: insert `: i64`\n"), printed.err());
 
         Result json = run("fix", p.toString(), "--json");
         Map<?, ?> j = (Map<?, ?>) Json.parse(json.out());

@@ -105,6 +105,12 @@ public enum Code {
             + "is not fixed (a `_` capacity, a type parameter or a function type) nor the input of `main`.",
         "fn greet(name: str[16], times: i64 = 1) { ... }  // ok: greet(\"ann\") passes times = 1\n"
             + "fn bad(times: i64 = 1, name: str[16]) { ... }  // error: name needs a default too"),
+    E0219("missing type",
+        "Every let and var states its type: there is no inference, so the type of a variable is always written where "
+            + "it is declared. Where the type of the value is known, the diagnostic names it and `alang fix` writes it "
+            + "in. A str or list literal says nothing about the capacity it needs, so choose that yourself.",
+        "let n = len(xs);              // error: fix writes `let n: i64 = len(xs);`\n"
+            + "var name: str[32] = \"ann\";   // ok: room for names of up to 32 bytes"),
 
     // ---- control flow ----
     E0301("missing return",
