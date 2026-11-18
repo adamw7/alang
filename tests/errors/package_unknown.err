@@ -1,0 +1,7 @@
+error[E0704]: tests/errors/alang.json declares no package `txt`
+ --> tests/errors/package_unknown.al:2:8
+  |
+2 | import "@txt/fmt.al";
+  |        ^^^^^^^^^^^^^
+  = hint: it declares `text`, `loose`, `stale`, `gone`, `escape`, `broken`, `bare`, `twin`; add `txt` to its "dependencies" or fix the name
+

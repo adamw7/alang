@@ -1,0 +1,7 @@
+error[E0706]: package `stale` in tests/errors/pkg/stale is not the one pinned in tests/errors/alang.json: its files have changed
+ --> tests/errors/package_changed.al:2:8
+  |
+2 | import "@stale/stale.al";
+  |        ^^^^^^^^^^^^^^^^^
+  = hint: restore its files, or, if the change is wanted, run: alang deps tests/errors/package_changed.al --lock (its sha256 is now 4a7829d82f3bff1d6316ae04ed49c89205493ce2a41c4030a151ccce458327cb)
+

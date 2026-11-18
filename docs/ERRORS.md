@@ -57,6 +57,9 @@ Codes are never reused for a different meaning.
 | [E0701](#e0701) | imported file not found |
 | [E0702](#e0702) | invalid import |
 | [E0703](#e0703) | import cycle |
+| [E0704](#e0704) | unknown package |
+| [E0705](#e0705) | invalid package manifest |
+| [E0706](#e0706) | package not pinned |
 | [W0301](#w0301) | unreachable code |
 | [W0302](#w0302) | unused result |
 | [W0303](#w0303) | character literal printed as a number |
@@ -475,6 +478,39 @@ import "C:\\lib\\text.al";  // error: write a relative path with /
 ```
 // a.al: import "b.al";
 // b.al: import "a.al";  // error
+```
+
+## E0704
+
+**unknown package**: An import "@name/file.al" names a package that no alang.json declares. The manifest that counts is the nearest one: in the importing file's directory or the closest directory above it; for a file of a package, the package's own. Declare the package under "dependencies" with the directory it is vendored in.
+
+```
+// alang.json: {"dependencies": {"text": {"path": "vendor/text", "sha256": "..."}}}
+import "@text/fmt.al";   // reads vendor/text/fmt.al
+import "@txt/fmt.al";    // error: no package `txt`
+```
+
+## E0705
+
+**invalid package manifest**: An alang.json is a JSON object with an optional "name" and "version" and a "dependencies" object: each package name (lowercase letters, digits and _) maps to {"path": DIR, "sha256": HASH}, where DIR is relative to alang.json, with /, and must exist. The toolchain never downloads: vendor each package there, by copying it or as a git submodule.
+
+```
+{
+  "name": "report",
+  "version": "1.0.0",
+  "dependencies": {
+    "text": {"path": "vendor/text", "sha256": "3f1c..."}
+  }
+}
+```
+
+## E0706
+
+**package not pinned**: Each package is pinned by the SHA-256 of its .al files and alang.json, so that a program builds from exactly the files it was written against. The error comes when the pin is missing, when the files no longer match it, or when one program would use two different copies of a package (two vendored versions); identical copies are one package. `alang deps prog.al --lock` writes the hashes of the packages as they are now.
+
+```
+alang deps report.al          # each package, its version and whether it matches its pin
+alang deps report.al --lock   # pin every package to its files as they are now
 ```
 
 ## W0301

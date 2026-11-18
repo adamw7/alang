@@ -109,6 +109,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `fix FILE [--write]` | Apply every diagnostic's mechanical `= fix:` |
 | `fmt FILE [--write \| --check]` | Lay the file out the one way |
 | `debug FILE [--break LOC]... [--test NAME \| --call TOOL]` | Debugger driven by commands on stdin ([SPEC.md §13](docs/SPEC.md#13-the-debugger)) |
+| `deps FILE [--lock]` | List the packages `alang.json` declares; `--lock` pins each to the SHA-256 of its files |
 | `explain CODE \| --all \| --markdown` | Explain a diagnostic or trap code |
 
 Most commands take `--json`, `--max-steps N` and `--max-stack B`. Exit codes: `0` success, `1` errors,
@@ -252,7 +253,7 @@ then attaches the jar, archives, native binaries, AGENTS.md and `SHA256SUMS`, an
 
 ## Status
 
-Version 0.6: imports, generics, `Option`/`Result`, function values, tuples, maps, sets, slices, labelled
+Version 0.6: imports, vendored packages pinned by hash, generics, `Option`/`Result`, function values, tuples, maps, sets, slices, labelled
 loops, nested patterns with guards, `if let`, `match` and `if` expressions, default parameters, UTF-8 text,
 wrapping/saturating arithmetic and bit-identical float functions.
 

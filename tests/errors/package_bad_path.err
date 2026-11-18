@@ -1,0 +1,21 @@
+error[E0702]: invalid import path "@text/../fmt.al": the path leaves the package
+ --> tests/errors/package_bad_path.al:2:8
+  |
+2 | import "@text/../fmt.al";
+  |        ^^^^^^^^^^^^^^^^^
+  = hint: import a file of a package by the package's name and the file's path in it: import "@text/fmt.al";
+
+error[E0702]: invalid import path "@Text/fmt.al": `Text` is not a package name: lowercase letters, digits and _, starting with a letter
+ --> tests/errors/package_bad_path.al:3:8
+  |
+3 | import "@Text/fmt.al";
+  |        ^^^^^^^^^^^^^^
+  = hint: import a file of a package by the package's name and the file's path in it: import "@text/fmt.al";
+
+error[E0702]: invalid import path "@text": name a file of the package after its name
+ --> tests/errors/package_bad_path.al:4:8
+  |
+4 | import "@text";
+  |        ^^^^^^^
+  = hint: import a file of a package by the package's name and the file's path in it: import "@text/fmt.al";
+

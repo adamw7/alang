@@ -63,12 +63,15 @@ public final class Main {
           debug <file.al> [json]       run fn main under a debugger that reads commands from stdin (`help`
                                        lists them): breakpoints, stepping, the stack and the variables,
                                        also where a trap happens; --test or --call debugs a test or a tool
+          deps <file.al>               list the packages the program's alang.json declares, with each one's
+                                       version and whether its files match their pinned sha256; --lock
+                                       pins each package to its files as they are now
           explain <CODE>               explain a diagnostic or trap code, e.g. E0201 (or --all, markdown)
           grammar                      print the path of the ANTLR grammar, grammar/ALang.g4
           version                      print the version
 
         options (an option a command does not take is a usage error):
-          --json             machine-readable output (check, run, test, tools, fuzz, fix; call always prints JSON)
+          --json             machine-readable output (check, run, test, tools, fuzz, fix, deps; call always prints JSON)
           --max-steps N      interpreter step budget: statements, and the data they go through (run, test,
                              call, tools, fuzz, serve; default %d, 0 = unlimited)
           --timeout SECONDS  stop a tool call that runs longer, a backstop to the step budget (call, serve;
@@ -81,6 +84,8 @@ public final class Main {
           -o FILE            output file (build)
           --write            rewrite the file in place (fmt, fix)
           --check            report a file that is not formatted, and change nothing (fmt)
+          --lock             write the sha256 of each package that is unpinned or changed into
+                             alang.json (deps)
           --break LOC        a breakpoint before the first command: a line, file:line or a function (debug;
                              may be given more than once)
           --input FILE       the standard input of a fn main that takes it (debug, whose stdin is commands)
@@ -121,6 +126,7 @@ public final class Main {
         Map.entry("fix", Set.of("--write", "--json", "--max-stack")),
         Map.entry("debug", Set.of("--json", "--max-steps", "--max-stack", "--break", "--input", "--test", "--call",
             "--max-stops")),
+        Map.entry("deps", Set.of("--json", "--lock")),
         Map.entry("explain", Set.of()),
         Map.entry("grammar", Set.of()),
         Map.entry("version", Set.of()),
@@ -132,7 +138,7 @@ public final class Main {
         "--allow-origin");
 
     private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--timeout",
-        "--filter", "-o", "--write", "--check", "--watch", "--break", "--input", "--test", "--call", "--max-stops",
+        "--filter", "-o", "--write", "--check", "--lock", "--watch", "--break", "--input", "--test", "--call", "--max-stops",
         "--workers", "--max-queued", "--http", "--token-file", "--allow-origin");
 
     private final PrintStream out;
@@ -143,6 +149,7 @@ public final class Main {
     private boolean memoryTable;
     private boolean write;
     private boolean checkOnly;
+    private boolean lock;
     private boolean watch;
     private long maxSteps = Interpreter.DEFAULT_MAX_STEPS;
     private long maxStack = Checker.DEFAULT_MAX_STACK;
@@ -210,6 +217,7 @@ public final class Main {
                         case "--memory" -> memoryTable = true;
                         case "--write" -> write = true;
                         case "--check" -> checkOnly = true;
+                        case "--lock" -> lock = true;
                         case "--watch" -> watch = true;
                         case "--max-steps" -> maxSteps = nonNegative(next(args, ++i, a), a);
                         case "--max-stack" -> maxStack = nonNegative(next(args, ++i, a), a);
@@ -256,6 +264,7 @@ public final class Main {
                 case "fmt" -> fmt(file());
                 case "fix" -> fix(file());
                 case "debug" -> debug(file());
+                case "deps" -> deps();
                 case "explain" -> explain();
                 case "grammar" -> {
                     line(out, "grammar/ALang.g4 (ANTLR 4) in the ALang repository");
@@ -1132,6 +1141,92 @@ public final class Main {
         }
         line(out, "formatted " + src.path);
         return 0;
+    }
+
+    /**
+     * `alang deps`: the packages of the manifest nearest to the program, each with its directory, version and
+     * whether its files match the sha256 pinned for it; with --lock, pins those that are unpinned or changed.
+     */
+    private int deps() {
+        if (positional.size() != 1) throw new UsageException("usage: alang deps <file.al> [--lock] [--json]");
+        String main = positional.get(0);
+        if (!Files.isRegularFile(Path.of(main))) throw new UsageException("file not found: " + main);
+        Packages.Manifest m = Packages.nearest(main, null);
+        if (m == null) {
+            if (json) {
+                line(out, Json.write(Json.obj("ok", true, "manifest", null, "packages", List.of())));
+            } else {
+                line(out, "no " + Packages.MANIFEST + " beside " + main + " or above it: the program uses no packages");
+            }
+            return 0;
+        }
+        if (m.error() != null) {
+            String message = "invalid " + m.file() + ": " + m.error();
+            if (json) {
+                line(out, Json.write(Json.obj("ok", false, "manifest", m.file(), "error", message)));
+            } else {
+                line(err, "error[E0705]: " + message);
+            }
+            return 1;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        Map<String, String> pins = new LinkedHashMap<>();
+        for (Packages.Dependency d : m.deps().values()) {
+            String dir = m.dirOf(d);
+            if (dir.isEmpty()) dir = ".";
+            String version = null;
+            String hash = null;
+            String status;
+            if (!Files.isDirectory(Path.of(dir))) {
+                status = "missing";
+            } else {
+                Packages.Manifest own = Files.isRegularFile(Path.of(dir, Packages.MANIFEST)) ? Packages.read(dir + "/" + Packages.MANIFEST) : null;
+                if (own != null) version = own.version();
+                try {
+                    hash = Packages.hash(dir);
+                } catch (IOException | UncheckedIOException e) {
+                    status = "unreadable";
+                    rows.add(Json.obj("name", d.name(), "path", dir, "version", version, "pinned", d.sha256(), "sha256", null,
+                        "status", status));
+                    continue;
+                }
+                status = d.sha256() == null ? "unpinned" : d.sha256().equals(hash) ? "ok" : "changed";
+                if (lock && !status.equals("ok")) {
+                    pins.put(d.name(), hash);
+                    status = "locked";
+                }
+            }
+            rows.add(Json.obj("name", d.name(), "path", dir, "version", version, "pinned", lock && pins.containsKey(d.name()) ? hash
+                : d.sha256(), "sha256", hash, "status", status));
+        }
+        if (!pins.isEmpty()) {
+            try {
+                Files.writeString(Path.of(m.file()), Packages.withPins(m, pins), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                line(err, "alang: cannot write " + m.file() + ": " + e.getMessage());
+                return 1;
+            }
+        }
+        boolean ok = rows.stream().allMatch(r -> r.get("status").equals("ok") || r.get("status").equals("locked"));
+        if (json) {
+            line(out, Json.write(Json.obj("ok", ok, "manifest", m.file(), "packages", rows)));
+        } else {
+            line(out, m.file() + (m.deps().isEmpty() ? ": no dependencies" : ""));
+            for (Map<String, Object> r : rows) {
+                String version = r.get("version") == null ? "" : " " + r.get("version");
+                String note = switch ((String) r.get("status")) {
+                    case "ok" -> "ok";
+                    case "locked" -> "pinned to " + r.get("sha256");
+                    case "unpinned" -> "not pinned; run: alang deps " + main + " --lock";
+                    case "changed" -> "files changed since pinned (sha256 now " + r.get("sha256") + "); restore them, or run: alang deps "
+                        + main + " --lock";
+                    case "missing" -> "missing: vendor it in " + r.get("path") + "; the toolchain never downloads";
+                    default -> "cannot read " + r.get("path");
+                };
+                line(out, "  " + r.get("name") + version + "  " + r.get("path") + "  " + note);
+            }
+        }
+        return ok ? 0 : 1;
     }
 
     private int fix(Source src) {

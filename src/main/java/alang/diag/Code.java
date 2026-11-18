@@ -179,6 +179,28 @@ public enum Code {
         "Files import each other, directly or through other files. Imports form a tree (a file may be imported "
             + "by several others); move what the files share into a file that both import.",
         "// a.al: import \"b.al\";\n// b.al: import \"a.al\";  // error"),
+    E0704("unknown package",
+        "An import \"@name/file.al\" names a package that no alang.json declares. The manifest that counts is the "
+            + "nearest one: in the importing file's directory or the closest directory above it; for a file of a "
+            + "package, the package's own. Declare the package under \"dependencies\" with the directory it is "
+            + "vendored in.",
+        "// alang.json: {\"dependencies\": {\"text\": {\"path\": \"vendor/text\", \"sha256\": \"...\"}}}\n"
+            + "import \"@text/fmt.al\";   // reads vendor/text/fmt.al\nimport \"@txt/fmt.al\";    // error: no package `txt`"),
+    E0705("invalid package manifest",
+        "An alang.json is a JSON object with an optional \"name\" and \"version\" and a \"dependencies\" object: "
+            + "each package name (lowercase letters, digits and _) maps to {\"path\": DIR, \"sha256\": HASH}, where "
+            + "DIR is relative to alang.json, with /, and must exist. The toolchain never downloads: vendor each "
+            + "package there, by copying it or as a git submodule.",
+        "{\n  \"name\": \"report\",\n  \"version\": \"1.0.0\",\n  \"dependencies\": {\n"
+            + "    \"text\": {\"path\": \"vendor/text\", \"sha256\": \"3f1c...\"}\n  }\n}"),
+    E0706("package not pinned",
+        "Each package is pinned by the SHA-256 of its .al files and alang.json, so that a program builds from "
+            + "exactly the files it was written against. The error comes when the pin is missing, when the files "
+            + "no longer match it, or when one program would use two different copies of a package (two "
+            + "vendored versions); identical copies are one package. `alang deps prog.al --lock` writes the "
+            + "hashes of the packages as they are now.",
+        "alang deps report.al          # each package, its version and whether it matches its pin\n"
+            + "alang deps report.al --lock   # pin every package to its files as they are now"),
 
     // ---- warnings ----
     W0301("unreachable code",

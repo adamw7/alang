@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "text": {"path": "pkg/text", "sha256": "e5fdd7b242bd6f56a0c5ffd2bf9bab97c9544b04aee26022d8185c2ef9b3f94a"},
+    "loose": {"path": "pkg/loose"},
+    "stale": {"path": "pkg/stale", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "gone": {"path": "pkg/gone"},
+    "escape": {"path": "pkg/escape", "sha256": "e1059d006ea5d49cb5f02cf77d577af3adf726ecea38e49a7f028802ea24b87b"},
+    "broken": {"path": "pkg/broken", "sha256": "54dbbb51cfc2d3eb4493f0033d1d6a6878aed285e525940ae7424886fb332256"},
+    "bare": {"path": "pkg/bare", "sha256": "e1f3fc33a194d363a978c438618acb9b804e93ed9938793bed43c882fbf5e977"},
+    "twin": {"path": "pkg/twin", "sha256": "4023f5a0abf2bf298ee792df714c2b1c5edd325d3d04c6ab9d403f32832a3b32"}
+  }
+}

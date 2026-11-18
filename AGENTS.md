@@ -12,6 +12,7 @@ bin/alang fuzz  prog.al           # 3. call each tool fn, and a main that reads 
 bin/alang run   prog.al           # 4. run fn main()
 bin/alang run   prog.al < in.txt  #    a fn main(input: str[N]) gets all of stdin
 bin/alang explain E0215           #    explain any code
+bin/alang deps  prog.al --lock    #    pin the packages alang.json declares (import "@name/file.al")
 bin/alang fix   prog.al --write   #    apply every `= fix:` (`"fix"` in JSON): &&, x++, xs.len(), a missing ;, mut or type
 bin/alang fmt   prog.al --write   #    lay the file out the one way
 bin/alang test  prog.al --filter X #    run only the tests whose name contains X
@@ -408,6 +409,17 @@ The loop builds no list, so the input can be as large as `fn main` accepts (up t
 
 **Several files**: `bin/alang check report.al` checks it and its imports, and a diagnostic or trap in an
 imported file names that file. Names must be unique across them, unless imported `as name`.
+
+**Packages**: a directory of `.al` files declared in `alang.json` beside the program (or above it) is
+imported by name, `import "@text/fmt.al" as text;`, and pinned by the SHA-256 of its files:
+
+```json
+{"dependencies": {"text": {"path": "vendor/text", "sha256": "..."}}}
+```
+
+Nothing is downloaded: vendor the package in its `path` (a copy or a git submodule), then
+`bin/alang deps prog.al --lock` writes its `sha256`. An edited package fails `check` with E0706 until it is
+restored or locked again. Details: [SPEC.md §3.2](docs/SPEC.md#32-packages).
 
 **Contracts document and check intent**
 

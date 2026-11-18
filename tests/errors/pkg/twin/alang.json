@@ -1,0 +1,6 @@
+{
+  "name": "twin",
+  "dependencies": {
+    "text": {"path": "vendor/text", "sha256": "16103a94d32a9fb860b4cda88d0df6a6970d54fb7251538cf3bb1709ae6fd99a"}
+  }
+}

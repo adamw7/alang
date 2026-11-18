@@ -1667,6 +1667,67 @@ class CliTest {
     }
 
     @Test
+    void depsListsLocksAndChecksPackages() throws IOException {
+        Files.createDirectories(dir.resolve("vendor/text"));
+        write("vendor/text/alang.json", "{\"name\": \"text\", \"version\": \"1.2.0\"}\n");
+        write("vendor/text/fmt.al", "fn shout(s: str[32]) -> str[32] {\n    return to_upper(s);\n}\n");
+        write("vendor/text/NOTES.md", "not part of the hash\n");
+        write("alang.json", "{\"name\": \"app\", \"dependencies\": {\"text\": {\"path\": \"vendor/text\"}}}\n");
+        Path prog = write("app.al", "import \"@text/fmt.al\" as text;\n\nfn main() {\n    print(text.shout(\"hi\"));\n}\n");
+
+        Result unpinned = run("check", prog.toString());
+        assertEquals(1, unpinned.code());
+        assertTrue(unpinned.err().contains("error[E0706]: package `text` is not pinned in "), unpinned.err());
+
+        Result listed = run("deps", prog.toString());
+        assertEquals(1, listed.code(), listed.err());
+        assertTrue(listed.out().contains("  text 1.2.0  ") && listed.out().contains("not pinned; run: alang deps "), listed.out());
+
+        Result locked = run("deps", prog.toString(), "--lock");
+        assertEquals(0, locked.code(), locked.out() + locked.err());
+        String manifest = Files.readString(dir.resolve("alang.json"), StandardCharsets.UTF_8);
+        Matcher sha = Pattern.compile("\"sha256\": \"([0-9a-f]{64})\"").matcher(manifest);
+        assertTrue(sha.find(), manifest);
+        assertTrue(manifest.startsWith("{\n  \"name\": \"app\",\n  \"dependencies\": {\n    \"text\": {\"path\": \"vendor/text\", "),
+            manifest);
+
+        Result ran = run("run", prog.toString());
+        assertEquals(0, ran.code(), ran.err());
+        assertEquals("HI\n", ran.out());
+
+        // Files beside the code do not count; a CRLF checkout of the same code has the same hash.
+        write("vendor/text/NOTES.md", "changed\n");
+        write("vendor/text/fmt.al", "fn shout(s: str[32]) -> str[32] {\r\n    return to_upper(s);\r\n}\r\n");
+        assertEquals(oneLine("{\"ok\": true, \"manifest\": \"" + dir.resolve("alang.json") + "\", \"packages\": [{\"name\": \"text\", "
+                + "\"path\": \"" + dir.resolve("vendor/text") + "\", \"version\": \"1.2.0\", \"pinned\": \"" + sha.group(1) + "\", "
+                + "\"sha256\": \"" + sha.group(1) + "\", \"status\": \"ok\"}]}"),
+            run("deps", prog.toString(), "--json").out());
+
+        write("vendor/text/fmt.al", "fn shout(s: str[32]) -> str[32] {\n    return to_lower(s);\n}\n");
+        Result changed = run("check", prog.toString());
+        assertEquals(1, changed.code());
+        assertTrue(changed.err().contains("is not the one pinned in ") && changed.err().contains("its files have changed"), changed.err());
+        assertEquals(1, run("deps", prog.toString()).code());
+        assertEquals(0, run("deps", prog.toString(), "--lock").code());
+        assertEquals("hi\n", run("run", prog.toString()).out());
+
+        write("alang.json", "{\"dependencies\": {\"text\": {\"path\": \"vendor/text\", \"url\": \"x\"}}}\n");
+        Result invalid = run("deps", prog.toString());
+        assertEquals(1, invalid.code());
+        assertTrue(invalid.err().startsWith("error[E0705]: invalid ") && invalid.err().contains("unknown key \"url\""), invalid.err());
+    }
+
+    @Test
+    void depsWithoutAManifest() throws IOException {
+        Path prog = write("solo.al", "fn main() { }\n");
+        Result r = run("deps", prog.toString(), "--json");
+        // A temporary directory has no alang.json above it, as long as the machine's / has none.
+        if (Files.exists(Path.of("/alang.json"))) return;
+        assertEquals(0, r.code(), r.err());
+        assertEquals(oneLine("{\"ok\": true, \"manifest\": null, \"packages\": []}"), r.out());
+    }
+
+    @Test
     void fmtPrintsChecksAndWritesTheLayout() throws IOException {
         String messy = "fn main(){\nprint(1+2);\n}\n";
         String tidy = "fn main() {\n    print(1 + 2);\n}\n";
