@@ -3,6 +3,15 @@
 set -e
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 JAR="$ROOT/target/alang.jar"
+# The JVM announces JAVA_TOOL_OPTIONS on stderr ("Picked up JAVA_TOOL_OPTIONS: ...") each time it starts,
+# which buries the diagnostics in a sandbox that sets it for a proxy. Give the same options on the
+# command line instead, where they apply the same way unannounced. A value with quotes, which the JVM
+# would read as one option with spaces, is left as it is.
+opts=""
+case "${JAVA_TOOL_OPTIONS:-}" in
+  *\"* | *\'*) ;;
+  *) opts="${JAVA_TOOL_OPTIONS:-}"; unset JAVA_TOOL_OPTIONS ;;
+esac
 if [ ! -f "$JAR" ]; then
   reason="first run"
 elif [ -n "$(find "$ROOT/pom.xml" "$ROOT/grammar" "$ROOT/src/main" -newer "$JAR" -print | head -n 1)" ]; then
@@ -12,9 +21,13 @@ elif [ -n "$(find "$ROOT/pom.xml" "$ROOT/grammar" "$ROOT/src/main" -newer "$JAR"
 fi
 if [ -n "${reason:-}" ]; then
   echo "alang: building $JAR ($reason)..." >&2
-  (cd "$ROOT" && mvn -q -B -DskipTests package >&2)
+  (cd "$ROOT" && MAVEN_OPTS="${MAVEN_OPTS:-}${MAVEN_OPTS:+${opts:+ }}$opts" mvn -q -B -DskipTests package >&2)
 fi
 # Java decodes command-line arguments (file names, `alang call` JSON) with the host locale's
 # charset; under a POSIX/C locale every non-ASCII byte would be replaced. Use UTF-8 so the
 # result never depends on the host locale (the toolchain's own output is locale-independent).
-exec env LC_ALL=C.UTF-8 java -jar "$JAR" "$@"
+set -f    # split the options on spaces, but never expand a `*` in them (as in http.nonProxyHosts)
+# shellcheck disable=SC2086
+set -- $opts -jar "$JAR" "$@"
+set +f
+exec env LC_ALL=C.UTF-8 java "$@"
