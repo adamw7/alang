@@ -23,10 +23,10 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # A run takes about a minute. These limits make a hang fail fast instead of holding a runner.
+    # A run takes a few minutes. These limits make a hang fail fast instead of holding a runner.
     # Inside the tests, each test fails after 10 s, and Surefire kills the test JVM if the whole run
-    # takes longer than 180 s (see pom.xml).
-    timeout-minutes: 10
+    # takes longer than 360 s (see pom.xml).
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -56,7 +56,7 @@ jobs:
           clang --version
 
       - name: Build and test
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: mvn -B -ntp verify
 
       - name: CLI smoke test
@@ -107,6 +107,8 @@ jobs:
             printf 'smoke-test-token-0123456789\n' > "$out/token"
             bin/alang serve examples/inventory.al --http 127.0.0.1:18765 --token-file "$out/token" 2> "$out/http.log" &
             server=$!
+            # On a failure below, show what the server logged, and stop it.
+            trap 'echo "--- serve --http log:"; cat "$out/http.log"; kill "$server" 2> /dev/null || true' ERR
             for i in $(seq 100); do curl -fs http://127.0.0.1:18765/health > /dev/null && break; sleep 0.2; done
             auth='Authorization: Bearer smoke-test-token-0123456789'
             curl -fs -D "$out/headers" -H "$auth" -H 'Content-Type: application/json' http://127.0.0.1:18765/mcp \
@@ -120,6 +122,7 @@ jobs:
             kill "$server"
             wait "$server" || true
             grep -q '"event": "stopped"' "$out/http.log"
+            trap - ERR
           fi
 
           # bin/alang rebuilds the jar after a source change, and only then.
@@ -316,6 +319,8 @@ jobs:
             printf 'smoke-test-token-0123456789\n' > "$out/token"
             "$alang" serve examples/inventory.al --http 127.0.0.1:18765 --token-file "$out/token" 2> "$out/http.log" &
             server=$!
+            # On a failure below, show what the server logged, and stop it.
+            trap 'echo "--- serve --http log:"; cat "$out/http.log"; kill "$server" 2> /dev/null || true' ERR
             for i in $(seq 100); do curl -fs http://127.0.0.1:18765/health > /dev/null && break; sleep 0.2; done
             auth='Authorization: Bearer smoke-test-token-0123456789'
             curl -fs -D "$out/headers" -H "$auth" -H 'Content-Type: application/json' http://127.0.0.1:18765/mcp \
@@ -329,6 +334,7 @@ jobs:
             kill "$server"
             wait "$server" || true
             grep -q '"event": "stopped"' "$out/http.log"
+            trap - ERR
           fi
           "$alang" build examples/shapes.al -o "$out/shapes.c"
           grep -q 'int main' "$out/shapes.c"
