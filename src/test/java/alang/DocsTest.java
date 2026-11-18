@@ -1,28 +1,17 @@
 package alang;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 import alang.check.Checker;
-import alang.cli.Frontend;
-import alang.cli.Main;
+import alang.cli.*;
 import alang.diag.Source;
 import alang.interp.Trap;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.nio.file.*;
+import java.util.*;
+import java.util.regex.*;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.jupiter.api.*;
 
 /**
  * Keeps the documentation honest: code in the docs compiles, diagnostics and traps shown in the docs
@@ -51,9 +40,7 @@ class DocsTest {
                     Frontend.Result r = Frontend.compile(new Source(name, code), Checker.DEFAULT_MAX_STACK);
                     assertTrue(r.diags().all().isEmpty(), () -> r.diags().renderText());
                     assertEquals(List.of(), Harness.runTests(r));
-                    if (r.program().function("main") != null) {
-                        assertEquals(null, Harness.runMain(r).trap());
-                    }
+                    if (r.program().function("main") != null) assertEquals(null, Harness.runMain(r).trap());
                 }));
             }
         }

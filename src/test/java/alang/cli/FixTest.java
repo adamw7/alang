@@ -1,19 +1,14 @@
 package alang.cli;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 import alang.Harness;
 import alang.check.Checker;
-import alang.diag.Diagnostic;
-import alang.diag.Edit;
-import alang.diag.Source;
+import alang.diag.*;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.jupiter.api.*;
 
 /** `alang fix` on every program the conformance tests reject: it ends, and leaves nothing it could still fix. */
 class FixTest {

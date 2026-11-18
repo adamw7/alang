@@ -1,22 +1,14 @@
 package alang;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 import alang.cli.Frontend;
-import alang.diag.Diagnostic;
-import alang.diag.Source;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
-import java.util.TreeSet;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import alang.diag.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.regex.*;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.jupiter.api.*;
 
 /**
  * tests/run/NAME.al     must compile cleanly; stdout must equal NAME.out;
@@ -66,9 +58,7 @@ class ConformanceTest {
             TreeSet<String> got = new TreeSet<>();
             for (Diagnostic d : r.diags().all()) got.add(d.code().name());
             assertEquals(expected, got, () -> r.diags().renderText());
-            for (Diagnostic d : r.diags().all()) {
-                assertTrue(d.span().line() > 0, "diagnostic without location: " + d);
-            }
+            for (Diagnostic d : r.diags().all()) assertTrue(d.span().line() > 0, "diagnostic without location: " + d);
             Path errFile = Path.of(p.toString().substring(0, p.toString().length() - 3) + ".err");
             if (Files.exists(errFile)) {
                 assertEquals(Harness.read(errFile), r.diags().renderText(), "diagnostics of " + name);

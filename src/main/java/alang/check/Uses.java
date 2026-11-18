@@ -1,17 +1,10 @@
 package alang.check;
 
-import alang.ast.Ast;
+import alang.ast.*;
 import alang.ast.Ast.*;
-import alang.ast.Builtin;
-import alang.diag.Code;
-import alang.diag.Diagnostics;
-import alang.diag.Edit;
-import alang.diag.Span;
+import alang.diag.*;
 import alang.types.Type;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Function;
 
 /**

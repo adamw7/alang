@@ -1,15 +1,11 @@
 package alang.api;
 
-import alang.cli.Frontend;
-import alang.cli.Main;
+import alang.cli.*;
 import alang.diag.Source;
 import alang.util.Utf8;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.*;
 
 /** The entry point: compiles ALang programs, and gives the toolchain's version and the guide for agents. */
 public final class Alang {

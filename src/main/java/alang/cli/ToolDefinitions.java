@@ -1,44 +1,12 @@
 package alang.cli;
 
-import alang.ast.Ast.ArrayLit;
-import alang.ast.Ast.BinOp;
-import alang.ast.Ast.Binary;
-import alang.ast.Ast.BoolLit;
-import alang.ast.Ast.Call;
-import alang.ast.Ast.ConstDecl;
-import alang.ast.Ast.Convert;
-import alang.ast.Ast.Expr;
-import alang.ast.Ast.FieldAccess;
-import alang.ast.Ast.FloatLit;
-import alang.ast.Ast.FnDecl;
-import alang.ast.Ast.IfExpr;
-import alang.ast.Ast.Index;
-import alang.ast.Ast.IntLit;
-import alang.ast.Ast.LocalVar;
-import alang.ast.Ast.MatchExpr;
-import alang.ast.Ast.Name;
-import alang.ast.Ast.Repeat;
-import alang.ast.Ast.Resize;
-import alang.ast.Ast.SliceExpr;
-import alang.ast.Ast.StrLit;
-import alang.ast.Ast.StructLit;
-import alang.ast.Ast.TupleLit;
-import alang.ast.Ast.Unary;
-import alang.ast.Ast.VariantCall;
+import alang.ast.Ast.*;
 import alang.ast.Builtin;
-import alang.interp.Interpreter;
-import alang.interp.JsonValues;
-import alang.interp.Trap;
+import alang.interp.*;
 import alang.types.Type;
 import alang.util.Json;
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.EnumSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.math.*;
+import java.util.*;
 
 /**
  * What a model is told about a `tool fn`: its description, which lists the contract, and its input
@@ -171,9 +139,7 @@ public final class ToolDefinitions {
 
     /** The schema of a parameter, or of a field reached from one through `.field`s; null for anything else. */
     private static Map<String, Object> node(Map<String, Object> props, FnDecl f, Expr e) {
-        if (e instanceof Name n) {
-            return f.paramVars.contains(n.local) ? map(props.get(n.name)) : null;
-        }
+        if (e instanceof Name n) return f.paramVars.contains(n.local) ? map(props.get(n.name)) : null;
         if (e instanceof FieldAccess fa && fa.variant == null) {
             Map<String, Object> outer = node(props, f, fa.target);
             if (outer == null) return null;
@@ -237,9 +203,7 @@ public final class ToolDefinitions {
         String min = t instanceof Type.Str ? "minLength" : t instanceof Type.ListT ? "minItems" : null;
         String max = t instanceof Type.Str ? "maxLength" : t instanceof Type.ListT ? "maxItems" : null;
         if (min == null) return;  // an array's length is fixed by its type
-        if (atLeast != null && atLeast.signum() > 0) {
-            raise(node, min, t instanceof Type.Str ? BigInteger.ONE : atLeast);
-        }
+        if (atLeast != null && atLeast.signum() > 0) raise(node, min, t instanceof Type.Str ? BigInteger.ONE : atLeast);
         if (atMost != null && atMost.signum() >= 0) lower(node, max, atMost);
     }
 

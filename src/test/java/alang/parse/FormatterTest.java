@@ -1,21 +1,14 @@
 package alang.parse;
 
 import static alang.Harness.dynamicTest;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 import alang.Harness;
-import alang.diag.Diagnostics;
-import alang.diag.Source;
+import alang.diag.*;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.jupiter.api.*;
 
 /**
  * `alang fmt`: the examples are laid out the way it lays them out, it changes nothing a second time, it

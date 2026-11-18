@@ -1,8 +1,7 @@
 package alang.api;
 
 import alang.interp.Meter;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Stops a call from another thread: pass it in {@link CallOptions#cancellation}, then {@link #cancel}. A call

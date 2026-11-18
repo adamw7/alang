@@ -1,8 +1,6 @@
 package alang.check;
 
-import alang.ast.Ast.Expr;
-import alang.ast.Ast.LocalVar;
-import alang.ast.Ast.Routine;
+import alang.ast.Ast.*;
 import alang.diag.Diagnostics;
 import java.util.List;
 

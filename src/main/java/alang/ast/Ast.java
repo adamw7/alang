@@ -1,16 +1,9 @@
 package alang.ast;
 
-import alang.diag.Source;
-import alang.diag.Span;
-import alang.types.PrimKind;
-import alang.types.Type;
+import alang.diag.*;
+import alang.types.*;
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Supplier;
 
 /**

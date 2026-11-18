@@ -1,7 +1,6 @@
 package alang.interp;
 
-import alang.diag.Code;
-import alang.diag.Span;
+import alang.diag.*;
 
 /**
  * What a run costs, in steps, against its budget (`--max-steps`), and a way for another thread to stop it.

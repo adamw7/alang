@@ -1,25 +1,19 @@
 package alang;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assertions.*;
 
 import alang.check.Checker;
 import alang.cli.Frontend;
 import alang.diag.Source;
-import alang.interp.Interpreter;
-import alang.interp.Trap;
-import java.io.OutputStream;
+import alang.interp.*;
 import alang.parser.ALangLexer;
+import java.io.OutputStream;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.SplittableRandom;
+import java.util.*;
 import java.util.stream.Stream;
-import org.antlr.v4.runtime.CharStreams;
-import org.antlr.v4.runtime.Token;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.TestFactory;
+import org.antlr.v4.runtime.*;
+import org.junit.jupiter.api.*;
 
 /**
  * Mutation fuzzing: deleting, duplicating or swapping tokens of valid programs must never

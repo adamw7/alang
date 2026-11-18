@@ -1,11 +1,7 @@
 package alang.util;
 
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.math.*;
+import java.util.*;
 
 /**
  * A tiny JSON reader/writer without dependencies.
@@ -98,9 +94,7 @@ public final class Json {
     /** Convenience builder for ordered objects: obj("a", 1, "b", 2). */
     public static Map<String, Object> obj(Object... kv) {
         Map<String, Object> m = new LinkedHashMap<>();
-        for (int i = 0; i < kv.length; i += 2) {
-            m.put((String) kv[i], kv[i + 1]);
-        }
+        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], kv[i + 1]);
         return m;
     }
 
@@ -119,9 +113,7 @@ public final class Json {
         r.skipWs();
         Object v = r.value();
         r.skipWs();
-        if (r.pos != text.length()) {
-            throw new ParseException("unexpected trailing characters at offset " + r.pos);
-        }
+        if (r.pos != text.length()) throw new ParseException("unexpected trailing characters at offset " + r.pos);
         return v;
     }
 

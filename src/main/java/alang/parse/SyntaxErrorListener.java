@@ -1,24 +1,11 @@
 package alang.parse;
 
-import alang.diag.Code;
-import alang.diag.Diagnostics;
-import alang.diag.Edit;
-import alang.diag.Hints;
-import alang.diag.Source;
-import alang.diag.Span;
-import alang.parser.ALangLexer;
-import alang.parser.ALangParser;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import org.antlr.v4.runtime.BaseErrorListener;
+import alang.diag.*;
+import alang.parser.*;
+import java.util.*;
+import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.InputMismatchException;
-import org.antlr.v4.runtime.NoViableAltException;
 import org.antlr.v4.runtime.Parser;
-import org.antlr.v4.runtime.RecognitionException;
-import org.antlr.v4.runtime.Recognizer;
-import org.antlr.v4.runtime.Token;
-import org.antlr.v4.runtime.TokenStream;
 import org.antlr.v4.runtime.misc.IntervalSet;
 
 /**

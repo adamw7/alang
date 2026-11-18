@@ -3,13 +3,9 @@ package alang.cli;
 import alang.ast.Ast.Program;
 import alang.diag.Source;
 import alang.util.Utf8;
-import java.io.IOException;
-import java.io.PrintStream;
-import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
-import java.nio.file.Path;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
 
 /**
  * `alang serve --watch`: the files of a program, with what they held when it was last compiled, so that the

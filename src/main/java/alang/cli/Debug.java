@@ -1,42 +1,15 @@
 package alang.cli;
 
-import alang.ast.Ast.Arm;
-import alang.ast.Ast.Block;
-import alang.ast.Ast.Expr;
-import alang.ast.Ast.ExprStmt;
-import alang.ast.Ast.FnDecl;
-import alang.ast.Ast.For;
-import alang.ast.Ast.If;
-import alang.ast.Ast.Match;
-import alang.ast.Ast.Program;
-import alang.ast.Ast.Routine;
-import alang.ast.Ast.Stmt;
-import alang.ast.Ast.While;
+import alang.ast.Ast.*;
 import alang.check.Expressions;
-import alang.diag.Diagnostic;
-import alang.diag.Diagnostics;
-import alang.diag.Source;
-import alang.diag.Span;
-import alang.interp.Debugger;
-import alang.interp.Frame;
-import alang.interp.Interpreter;
-import alang.interp.Trap;
+import alang.diag.*;
+import alang.interp.*;
 import alang.parse.Parser;
-import alang.types.PrimKind;
-import alang.types.Type;
+import alang.types.*;
 import alang.util.Json;
-import java.io.BufferedReader;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.PrintStream;
-import java.io.UncheckedIOException;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
-import java.util.TreeSet;
+import java.util.*;
 
 /**
  * `alang debug`: runs fn main, a test or a tool under a debugger driven by commands, one per line, from a

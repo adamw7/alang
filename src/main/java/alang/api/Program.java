@@ -1,18 +1,12 @@
 package alang.api;
 
 import alang.ast.Ast.FnDecl;
-import alang.cli.Main;
-import alang.cli.ToolDefinitions;
-import alang.cli.Watchdog;
+import alang.cli.*;
 import alang.diag.Source;
-import alang.interp.JsonValues;
-import alang.interp.Meter;
+import alang.interp.*;
 import alang.types.Type;
 import alang.util.Json;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * A compiled program. Immutable and safe to share: any number of threads may call its tools at once, and a

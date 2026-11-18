@@ -2,25 +2,12 @@ package alang.interp;
 
 import alang.ast.Ast.*;
 import alang.ast.Builtin;
-import alang.diag.Code;
-import alang.diag.Source;
-import alang.diag.Span;
-import alang.interp.Values.ArrV;
-import alang.interp.Values.EnumV;
-import alang.interp.Values.ListV;
-import alang.interp.Values.MapV;
-import alang.interp.Values.StrV;
-import alang.interp.Values.StructV;
-import alang.types.PrimKind;
-import alang.types.Type;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
+import alang.diag.*;
+import alang.interp.Values.*;
+import alang.types.*;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.Deque;
-import java.util.List;
+import java.util.*;
 
 /**
  * A tree-walking reference interpreter. It implements ALang semantics exactly: value
@@ -970,15 +957,6 @@ public final class Interpreter {
     private boolean compare(Binary b, Object l, Object r) {
         Type t = b.left.type;
         if (b.op.isEquality()) return Values.equal(l, r, t, meter) == (b.op == BinOp.EQ);
-        if (t instanceof Type.Str) {
-            int c = Stdlib.compare(l, r, t, meter);
-            return switch (b.op) {
-                case LT -> c < 0;
-                case LE -> c <= 0;
-                case GT -> c > 0;
-                default -> c >= 0;
-            };
-        }
         if (Type.isFloat(t)) {
             double x = (Double) l;
             double y = (Double) r;
@@ -989,7 +967,7 @@ public final class Interpreter {
                 default -> x >= y;
             };
         }
-        int c = IntOps.compare(Type.kind(t), (Long) l, (Long) r);
+        int c = t instanceof Type.Str ? Stdlib.compare(l, r, t, meter) : IntOps.compare(Type.kind(t), (Long) l, (Long) r);
         return switch (b.op) {
             case LT -> c < 0;
             case LE -> c <= 0;

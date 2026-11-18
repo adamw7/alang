@@ -2,29 +2,14 @@ package alang.cgen;
 
 import alang.ast.Ast.*;
 import alang.ast.Builtin;
-import alang.diag.Source;
-import alang.diag.Span;
+import alang.diag.*;
 import alang.interp.Format;
-import alang.interp.Values.ArrV;
-import alang.interp.Values.EnumV;
-import alang.interp.Values.ListV;
-import alang.interp.Values.MapV;
-import alang.interp.Values.StrV;
-import alang.interp.Values.StructV;
-import alang.types.PrimKind;
-import alang.types.Type;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
+import alang.interp.Values.*;
+import alang.types.*;
+import java.io.*;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -813,9 +798,7 @@ public final class CGen {
     }
 
     private String zero(Type t) {
-        if (t instanceof Type.Prim p) {
-            return p.kind() == PrimKind.BOOL ? "false" : "((" + cPrim(p.kind()) + ")0)";
-        }
+        if (t instanceof Type.Prim p) return p.kind() == PrimKind.BOOL ? "false" : "((" + cPrim(p.kind()) + ")0)";
         return "(" + ct(t) + "){0}";
     }
 
@@ -1289,9 +1272,7 @@ public final class CGen {
 
     /** Declares the names a pattern binds, each a copy of the part of the value it takes. */
     private void bind(Map<LocalVar, String> binds) {
-        for (Map.Entry<LocalVar, String> b : binds.entrySet()) {
-            declare(ct(b.getKey().type), b.getKey(), b.getValue());
-        }
+        for (Map.Entry<LocalVar, String> b : binds.entrySet()) declare(ct(b.getKey().type), b.getKey(), b.getValue());
     }
 
     /**
@@ -1641,9 +1622,7 @@ public final class CGen {
                 args.add(lower(a));
             }
         }
-        if (!f.requires.isEmpty()) {
-            args.add(loc(c.span));
-        }
+        if (!f.requires.isEmpty()) args.add(loc(c.span));
         String call = fnName(f) + "(" + String.join(", ", args) + ")";
         if (f.ret instanceof Type.Void) {
             emit(call + ";");
@@ -2020,22 +1999,7 @@ public final class CGen {
                 return result;
             }
             case RETAIN -> {
-                Type t = args.get(0).expr().type;
-                String place = lower(args.get(0).expr());
-                String sp = "t" + ++tmpCount;
-                String w = "t" + ++tmpCount;
-                String i = "t" + ++tmpCount;
-                open("{");
-                emit(ct(t) + " *" + sp + " = &(" + place + ");");
-                emit("uint32_t " + w + " = 0, " + i + ";");
-                open("for (" + i + " = 0; " + i + " < " + sp + "->len; " + i + "++) {");
-                open("if (" + fnArgCall(c, sp + "->v[" + i + "]") + ") {");
-                emit("if (" + w + " != " + i + ") " + sp + "->v[" + w + "] = " + sp + "->v[" + i + "];");
-                emit(w + "++;");
-                close("}");
-                close("}");
-                emit(sp + "->len = " + w + ";");
-                close("}");
+                compactInPlace(args.get(0).expr(), (sp, w, i) -> fnArgCall(c, sp + "->v[" + i + "]"));
                 return null;
             }
             case SORT_BY -> {
@@ -2441,25 +2405,10 @@ public final class CGen {
             }
             case DEDUP -> {
                 Type t = args.get(0).expr().type;
-                String place = lower(args.get(0).expr());
-                String sp = "t" + ++tmpCount;
-                String w = "t" + ++tmpCount;
-                String i = "t" + ++tmpCount;
-                String v = t instanceof Type.Str ? "b" : "v";
                 Type elem = Type.elementOf(t);
-                open("{");
-                emit(ct(t) + " *" + sp + " = &(" + place + ");");
-                emit("uint32_t " + w + " = 0, " + i + ";");
-                open("for (" + i + " = 0; " + i + " < " + sp + "->len; " + i + "++) {");
-                String same = t instanceof Type.Str ? "(" + sp + "->b[" + w + " - 1] == " + sp + "->b[" + i + "])"
-                    : "(" + eqExpr(elem, elem, sp + "->v[" + w + " - 1]", sp + "->v[" + i + "]") + " != 0)";
-                open("if (" + w + " == 0 || !" + same + ") {");
-                emit("if (" + w + " != " + i + ") " + sp + "->" + v + "[" + w + "] = " + sp + "->" + v + "[" + i + "];");
-                emit(w + "++;");
-                close("}");
-                close("}");
-                emit(sp + "->len = " + w + ";");
-                close("}");
+                compactInPlace(args.get(0).expr(), (sp, w, i) -> w + " == 0 || !" + (t instanceof Type.Str
+                    ? "(" + sp + "->b[" + w + " - 1] == " + sp + "->b[" + i + "])"
+                    : "(" + eqExpr(elem, elem, sp + "->v[" + w + " - 1]", sp + "->v[" + i + "]") + " != 0)"));
                 return null;
             }
             case BINARY_SEARCH -> {
@@ -2666,6 +2615,31 @@ public final class CGen {
         }
         helpers.append("static int ").append(name).append("(const void *pa, const void *pb) {\n").append(body).append("}\n\n");
         return name;
+    }
+
+    private interface Keep {
+        String test(String list, String write, String read);
+    }
+
+    /** retain() and dedup(): keeps, in order, the elements of the list or str xs that keep tests true. */
+    private void compactInPlace(Expr xs, Keep keep) {
+        Type t = xs.type;
+        String place = lower(xs);
+        String sp = "t" + ++tmpCount;
+        String w = "t" + ++tmpCount;
+        String i = "t" + ++tmpCount;
+        String v = t instanceof Type.Str ? "b" : "v";
+        open("{");
+        emit(ct(t) + " *" + sp + " = &(" + place + ");");
+        emit("uint32_t " + w + " = 0, " + i + ";");
+        open("for (" + i + " = 0; " + i + " < " + sp + "->len; " + i + "++) {");
+        open("if (" + keep.test(sp, w, i) + ") {");
+        emit("if (" + w + " != " + i + ") " + sp + "->" + v + "[" + w + "] = " + sp + "->" + v + "[" + i + "];");
+        emit(w + "++;");
+        close("}");
+        close("}");
+        emit(sp + "->len = " + w + ";");
+        close("}");
     }
 
     /** split() and words() into a list of type t: the pieces in turn, each checked for room and then for size. */
