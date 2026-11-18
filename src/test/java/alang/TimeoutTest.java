@@ -1,17 +1,12 @@
 package alang;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.time.Duration;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.*;
 import org.opentest4j.AssertionFailedError;
 
 /**
@@ -39,9 +34,7 @@ class TimeoutTest {
     void dynamicTestsStopOnTimeEvenWhenTheyIgnoreInterrupts() {
         AtomicBoolean done = new AtomicBoolean();
         DynamicTest spin = Harness.dynamicTest("spin", Duration.ofMillis(100), () -> {
-            while (!done.get()) {
-                Thread.onSpinWait();
-            }
+            while (!done.get()) Thread.onSpinWait();
         });
         try {
             AssertionFailedError e = assertThrows(AssertionFailedError.class, spin.getExecutable()::execute);

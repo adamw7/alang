@@ -1,10 +1,8 @@
 package alang.interp;
 
-import alang.diag.Code;
-import alang.diag.Span;
+import alang.diag.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 /** A runtime error. ALang has no undefined behavior: every failure is a trap with a code. */
 public final class Trap extends RuntimeException {

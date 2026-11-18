@@ -1,25 +1,12 @@
 package alang.interp;
 
-import alang.ast.Ast.EnumDecl;
-import alang.ast.Ast.Field;
-import alang.ast.Ast.Variant;
-import alang.interp.Values.ArrV;
-import alang.interp.Values.EnumV;
-import alang.interp.Values.ListV;
-import alang.interp.Values.MapV;
-import alang.interp.Values.StrV;
-import alang.interp.Values.StructV;
-import alang.types.PrimKind;
-import alang.types.Type;
-import alang.util.Json;
-import alang.util.Utf8;
-import java.math.BigDecimal;
-import java.math.BigInteger;
+import alang.ast.Ast.*;
+import alang.interp.Values.*;
+import alang.types.*;
+import alang.util.*;
+import java.math.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Mapping between ALang values and JSON, used by tool calls.

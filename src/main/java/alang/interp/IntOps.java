@@ -1,7 +1,6 @@
 package alang.interp;
 
-import alang.diag.Code;
-import alang.diag.Span;
+import alang.diag.*;
 import alang.types.PrimKind;
 import java.math.BigInteger;
 
@@ -145,9 +144,7 @@ final class IntOps {
         } else {
             ok = v >= min(to) && v <= max(to);
         }
-        if (!ok) {
-            throw new Trap(Code.R0009, at, "value " + toString(from, v) + " does not fit in " + to.name);
-        }
+        if (!ok) throw new Trap(Code.R0009, at, "value " + toString(from, v) + " does not fit in " + to.name);
         return v;
     }
 

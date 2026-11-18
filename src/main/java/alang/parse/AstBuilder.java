@@ -1,24 +1,16 @@
 package alang.parse;
 
-import alang.ast.Ast;
 import alang.ast.Ast.*;
-import alang.diag.Code;
-import alang.diag.Diagnostics;
-import alang.diag.Edit;
-import alang.diag.Source;
-import alang.diag.Span;
-import alang.parser.ALangLexer;
-import alang.parser.ALangParser;
+import alang.ast.Ast;
+import alang.diag.*;
+import alang.parser.*;
 import alang.parser.ALangParser.*;
 import alang.types.PrimKind;
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
-import org.antlr.v4.runtime.BufferedTokenStream;
-import org.antlr.v4.runtime.ParserRuleContext;
-import org.antlr.v4.runtime.Token;
+import java.util.*;
+import org.antlr.v4.runtime.*;
 
 /** Converts the ANTLR parse tree into the {@link Ast}. */
 final class AstBuilder {
@@ -126,9 +118,7 @@ final class AstBuilder {
             }
             return new EnumDecl(span(e.identifier()), e.identifier().getText(), variants, generics(e.typeParams()));
         }
-        if (ctx.functionDecl() != null) {
-            return function(ctx.functionDecl());
-        }
+        if (ctx.functionDecl() != null) return function(ctx.functionDecl());
         TestDeclContext t = ctx.testDecl();
         String name = new String(unescape(t.STRING_LIT().getSymbol()), StandardCharsets.UTF_8);
         Code expected = null;
@@ -232,15 +222,9 @@ final class AstBuilder {
         if (ctx instanceof PrimitiveTypeRefContext p) {
             return new PrimRef(sp, PrimKind.byName(p.primitiveType().getText()));
         }
-        if (ctx instanceof StrTypeRefContext s) {
-            return new StrRef(sp, capacity(s.capacity()));
-        }
-        if (ctx instanceof ListTypeRefContext l) {
-            return new ListRef(sp, type(l.type()), capacity(l.capacity()));
-        }
-        if (ctx instanceof ArrayTypeRefContext a) {
-            return new ArrayRef(sp, type(a.type()), capacity(a.capacity()));
-        }
+        if (ctx instanceof StrTypeRefContext s) return new StrRef(sp, capacity(s.capacity()));
+        if (ctx instanceof ListTypeRefContext l) return new ListRef(sp, type(l.type()), capacity(l.capacity()));
+        if (ctx instanceof ArrayTypeRefContext a) return new ArrayRef(sp, type(a.type()), capacity(a.capacity()));
         if (ctx instanceof FnTypeRefContext f) {
             List<TypeRef> ps = new ArrayList<>();
             List<TypeContext> ts = f.type();
@@ -252,9 +236,7 @@ final class AstBuilder {
         if (ctx instanceof MapTypeRefContext m) {
             return new MapRef(sp, type(m.type(0)), type(m.type(1)), capacity(m.capacity()));
         }
-        if (ctx instanceof SetTypeRefContext s) {
-            return new SetRef(sp, type(s.type()), capacity(s.capacity()));
-        }
+        if (ctx instanceof SetTypeRefContext s) return new SetRef(sp, type(s.type()), capacity(s.capacity()));
         if (ctx instanceof TupleTypeRefContext t) {
             List<TypeRef> elems = new ArrayList<>();
             for (TypeContext e : t.type()) elems.add(type(e));
@@ -482,12 +464,8 @@ final class AstBuilder {
         if (ctx instanceof CharPatternContext c) {
             return new IntPat(sp, BigInteger.valueOf(charValue(c.CHAR_LIT().getSymbol())));
         }
-        if (ctx instanceof StringPatternContext s) {
-            return new StrPat(sp, unescape(s.STRING_LIT().getSymbol()));
-        }
-        if (ctx instanceof BoolPatternContext b) {
-            return new BoolPat(sp, b.TRUE() != null);
-        }
+        if (ctx instanceof StringPatternContext s) return new StrPat(sp, unescape(s.STRING_LIT().getSymbol()));
+        if (ctx instanceof BoolPatternContext b) return new BoolPat(sp, b.TRUE() != null);
         return new WildPat(sp);
     }
 
@@ -525,9 +503,7 @@ final class AstBuilder {
 
     private Expr chain(Span sp, BinOp op, List<UnaryContext> operands) {
         Expr e = unary(operands.get(0));
-        for (int i = 1; i < operands.size(); i++) {
-            e = new Binary(sp, op, e, unary(operands.get(i)));
-        }
+        for (int i = 1; i < operands.size(); i++) e = new Binary(sp, op, e, unary(operands.get(i)));
         return e;
     }
 

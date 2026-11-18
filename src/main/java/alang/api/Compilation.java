@@ -3,8 +3,7 @@ package alang.api;
 import alang.cli.Frontend;
 import alang.diag.Source;
 import alang.util.Json;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 /** The outcome of compiling a program: its diagnostics and, when there are no errors, the program. */
 public final class Compilation {

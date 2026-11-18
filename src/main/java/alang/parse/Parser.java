@@ -1,15 +1,10 @@
 package alang.parse;
 
-import alang.ast.Ast.Item;
-import alang.ast.Ast.Program;
-import alang.diag.Diagnostics;
-import alang.diag.Source;
-import alang.parser.ALangLexer;
-import alang.parser.ALangParser;
+import alang.ast.Ast.*;
+import alang.diag.*;
+import alang.parser.*;
 import java.util.List;
-import org.antlr.v4.runtime.CharStreams;
-import org.antlr.v4.runtime.CommonTokenStream;
-import org.antlr.v4.runtime.Token;
+import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.atn.PredictionMode;
 
 /** Parses ALang source using the parser generated from grammar/ALang.g4. */

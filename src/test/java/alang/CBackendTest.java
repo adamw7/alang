@@ -1,31 +1,20 @@
 package alang;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import alang.cgen.CGen;
 import alang.check.Checker;
 import alang.cli.Frontend;
-import alang.diag.Source;
-import alang.diag.Span;
-import java.io.File;
-import java.io.IOException;
-import java.io.UncheckedIOException;
+import alang.diag.*;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.*;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.jupiter.api.*;
 
 /**
  * Differential test: the generated C must behave exactly like the reference interpreter
@@ -109,9 +98,7 @@ class CBackendTest {
     private static List<String[]> compilers() {
         List<String[]> out = new ArrayList<>();
         String[] flags = {"-std=c99", "-pedantic", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function"};
-        if (available("gcc")) {
-            out.add(concat(new String[] {"gcc", "-O2"}, flags));
-        }
+        if (available("gcc")) out.add(concat(new String[] {"gcc", "-O2"}, flags));
         if (available("clang")) {
             out.add(concat(new String[] {"clang", "-O0"}, flags));
             out.add(concat(concat(new String[] {"clang", "-O3", "-ffp-contract=fast"}, fusedMultiplyAdd()), flags));

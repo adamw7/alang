@@ -1,14 +1,9 @@
 package alang.parse;
 
-import alang.diag.Diagnostics;
-import alang.diag.Source;
+import alang.diag.*;
 import alang.parser.ALangLexer;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
-import org.antlr.v4.runtime.CharStreams;
-import org.antlr.v4.runtime.Token;
+import java.util.*;
+import org.antlr.v4.runtime.*;
 
 /**
  * `alang fmt`: lays a program out the one way. It works on the tokens, comments included, and keeps the lines

@@ -1,12 +1,7 @@
 package alang.cli;
 
-import alang.diag.Diagnostic;
-import alang.diag.Edit;
-import alang.diag.Source;
-import alang.diag.Span;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
+import alang.diag.*;
+import java.util.*;
 import java.util.function.Function;
 
 /**

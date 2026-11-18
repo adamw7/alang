@@ -3,28 +3,16 @@ package alang;
 import static com.tngtech.archunit.core.domain.AccessTarget.Predicates.declaredIn;
 import static com.tngtech.archunit.core.domain.JavaAccess.Predicates.target;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
-import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.name;
-import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.nameMatching;
-import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.fields;
-import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
-import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
-import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noMethods;
+import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.*;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.*;
 
 import com.tngtech.archunit.core.importer.ImportOption;
-import com.tngtech.archunit.junit.AnalyzeClasses;
-import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.junit.*;
 import com.tngtech.archunit.lang.ArchRule;
 import java.time.Duration;
-import java.util.Properties;
-import java.util.Random;
-import java.util.SplittableRandom;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.*;
 
 /**
  * Rules for the test code itself, so the suites stay fast, honest and as reproducible as the

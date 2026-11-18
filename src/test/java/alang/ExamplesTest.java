@@ -1,15 +1,12 @@
 package alang;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 import alang.cli.Frontend;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Stream;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.TestFactory;
+import org.junit.jupiter.api.*;
 
 /**
  * Every example compiles without any diagnostic, passes its tests, and prints its golden output; one whose

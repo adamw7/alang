@@ -1,17 +1,8 @@
 package alang.parse;
 
-import alang.diag.Code;
-import alang.diag.Diagnostics;
-import alang.diag.Source;
+import alang.diag.*;
 import alang.parser.ALangLexer;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import org.antlr.v4.runtime.Token;
 
 /**

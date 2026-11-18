@@ -1,9 +1,7 @@
 # Writing ALang: a guide for AI agents
 
-ALang is built for you: small, explicit and strict, and every mistake comes back as a coded diagnostic
-with a concrete fix. This page covers everything you need; the full rules are in
-[docs/SPEC.md](docs/SPEC.md), the grammar in [grammar/ALang.g4](grammar/ALang.g4), every error code in
-[docs/ERRORS.md](docs/ERRORS.md).
+ALang is small, explicit and strict; every mistake comes back as a coded diagnostic with a fix. Full
+rules: [docs/SPEC.md](docs/SPEC.md); every code: [docs/ERRORS.md](docs/ERRORS.md).
 
 ## The loop
 
@@ -22,24 +20,17 @@ bin/alang build prog.al -o prog.c  #    compile to heap-free C99 (needs a C comp
 bin/alang debug prog.al --break 12 --json < /dev/null  # every stop at line 12, with the variables in scope
 ```
 
-Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit. A diagnostic
-with a `= fix:` line has a mechanical one: `alang fix --write` makes it, and every other such fix, for you. Results are
-deterministic: a test that fails once fails every time, identically. `fuzz` tries the inputs your tests
-did not: empty and full strs of many shapes, full lists, the smallest and largest numbers. Each trap it
-reports comes with the arguments that caused it; handle that input, or narrow it with `requires`.
+Fix the **first** diagnostic first, using its `hint`, and re-run `check` after every edit; `alang fix
+--write` applies every `= fix:`. Results are deterministic. `fuzz` tries inputs your tests did not and
+reports each trap with its arguments: handle that input, or rule it out with `requires`.
 
-When a value is wrong and you cannot see why, debug instead of adding `print`s: `alang debug prog.al
---break LINE --json < /dev/null` prints one `"stopped"` event per time line LINE is reached, with every
-variable in scope, then the program's outcome. `--break add_word` stops at each call of a function,
-`--test NAME` and `--call TOOL '{...}'` debug a test or a tool, and a trap always stops where it happens,
-with the variables of the frame that trapped. To drive it, pipe commands in, one per line: `step`, `next`,
-`finish`, `continue`, `where`, `frame N`, `locals`, `print len(entries) - 1` (any expression; `help`
-lists them). `--break "12 if i == 3"` stops only where the condition holds.
+To see why a value is wrong, debug instead of adding `print`s: `--break LINE` prints every stop at that
+line with the variables in scope (`--break fn_name`, `--break "12 if i == 3"`, `--test NAME`,
+`--call TOOL '{...}'` also work, and a trap always stops). Pipe commands in to drive it: `step`, `next`,
+`finish`, `continue`, `where`, `frame N`, `locals`, `print EXPR`, `help`.
 
-No `bin/alang` yet? On Linux or macOS, `curl -fsSL https://raw.githubusercontent.com/adamw7/alang/main/install.sh | sh`
-installs `alang` on your PATH (as `~/.local/bin/alang`). Or unpack `alang-VERSION.tar.gz` from
-<https://github.com/adamw7/alang/releases/latest> and use its `bin/alang` (`bin\alang.cmd` on Windows); it needs
-only Java 21 or newer.
+No `bin/alang`? `curl -fsSL https://raw.githubusercontent.com/adamw7/alang/main/install.sh | sh` (Linux,
+macOS), or unpack a [release](https://github.com/adamw7/alang/releases/latest) archive (needs Java 21+).
 
 ## A complete program
 
@@ -154,20 +145,14 @@ test "counts repeated words" {
 
 ## Translating habits from other languages
 
-The rules above cover structs, enums, logic, conversions, `while`, methods, `mut` and recursion. Also:
 
 | You might write | Write in ALang |
 |-----------------|----------------|
 | `let x = 5;` / `x := 5` | `let x: i64 = 5;` |
 | `int`, `usize`, `String`, `Vec<T>` | `i32`/`i64`, `i64`, `str[N]`, `list[T; N]` |
-| `Option<T>`, `null`, `T?` | `Option<T>`: `Option.Some(x)`, `Option.None` |
-| `Result<T, E>`, throwing an error | `Result<T, E>`: `Result.Ok(x)`, `Result.Err(why)` |
-| `struct Pair<A, B>`, `class Box<T>` | `struct Pair<A, B> { first: A, second: B }`, used as `Pair<i64, bool>` |
 | `dict`, `HashMap<K, V>`, `set()`, `HashSet<T>` | `map[str[16], i64; 64]`, `set[i64; 32]`: a capacity, keys always in order; `var m: map[str[8], i64; 16] = [];` then `m[k] = v;` |
 | `d.get(k, 0)`, `d[k] = d.get(k, 0) + 1`, `for k, v in d.items()` | `get_or(m, k, 0)`, `m[k] = get_or(m, k, 0) + 1;`, `for k, v in m { }` |
 | `return a, b`, `(a, b) = f()`, `let (q, r) = divmod(a, b)` | `return (a, b);` with `-> (i64, i64)`, then `let (q, r): (i64, i64) = divmod(a, b);` and `p.0`, `p.1` |
-| `i++` | `i += 1;` |
-| `for (i = 0; i < n; i++)` | `for i in 0..n { }` |
 | `for i in range(0, n + 1, 2)`, `(0..=n).step_by(2)` | `for i in 0..=n step 2 { }` |
 | `for i in range(n - 1, -1, -1)`, `(0..n).rev()`, `reversed(xs)` | `for i in rev 0..n { }`, `for x in rev xs { }` |
 | `for i, x in enumerate(xs)`, `xs.iter().enumerate()` | `for i, x in xs { }` |
@@ -187,14 +172,12 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `a.checked_add(b)`, `Math.addExact` in a `try` | `checked_add(a, b)`, `checked_sub`, `checked_mul`: an `Option`, `Option.None` when it does not fit |
 | `f"{x:.2f}"`, `format!("{:.2}", x)`, `x.toFixed(2)` | `fixed(x, 2)`, in `print`/`append` or stored in a typed str |
 | `f"{n:03}"`, `s.rjust(8)`, `s.ljust(8)`, `padStart` | `pad_left(n, 3, '0')`, `pad_left(s, 8, ' ')`, `pad_right(s, 8, ' ')` |
-| `fn total(xs: &[i64])`, `fn f(s: &str)` | `fn total(xs: list[i64; _])`, `fn f(s: str[_])`: any capacity |
 | `def f(x, y=2)`, `function f(x, y = 2)` | `fn f(x: i64, y: i64 = 2)`: a constant default, after the parameters without one |
 | `fn first<T>(xs: &[T]) -> T`, `def first(xs)` | `fn first<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
 | `any(f(x) for x in xs)`, `xs.iter().all(f)`, `xs.filter(f).count()`, `xs.iter().position(f)` | `any(xs, f)`, `all(xs, f)`, `count_if(xs, f)`, `find_index(xs, f)` (-1 if none), with `fn f(x: T) -> bool` passed by name |
 | `xs = [x for x in xs if f(x)]`, `xs.retain(f)` | `retain(mut xs, f);` |
 | `map(f, xs)`, a callback of your own | a parameter `f: fn(T) -> U`, passed by name: `fn apply(xs: list[i64; _], f: fn(i64) -> i64)`; no closures or lambdas |
 | `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
-| a `str[256]` passed where `str[16]` is wanted | `str[16](s)` after checking `len(s) <= 16` |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
 | `s.rfind("x")`, `xs.lastIndexOf(x)` | `last_index_of(s, "x")`, `last_index_of(xs, x)` (-1 if absent) |
 | `sum(xs)`, `min(xs)`, `max(xs)`, `xs.iter().sum()` | `sum(xs)`, `min(xs)`, `max(xs)` on an array or list of numbers (`min`/`max` trap on an empty one) |
@@ -203,27 +186,16 @@ The rules above cover structs, enums, logic, conversions, `while`, methods, `mut
 | `xs.sort()`, `sorted(xs, reverse=True)` | `sort(mut xs);` then `reverse(mut xs);` |
 | `xs.sort(key=f)`, `xs.sort_by(cmp)`, `Collections.sort(xs, cmp)` | `sort_by(mut xs, before)`, with `fn before(a: T, b: T) -> bool` true when `a` must come first; stable |
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
-| `println!("{}", x)` | `print(x);` |
-| `throw` / `raise` | return an enum, or `panic("message")` |
 | `class`, `impl`, `trait`, `interface` | `struct Shape { ... }` and functions that take it: `fn area(s: Shape) -> f64` |
 | `pub fn`, `export function`, `public` | `fn`: every top-level declaration is visible to the files that import it |
 | `const N = 10;` inside a function | `let n: i64 = 10;`; `const` is for the top level of the file |
 | `c ? a : b`, `a if c else b`, `if c { a } else { b }` as a value | `if c then a else b` |
-| `case x if x > 0 =>`, `Some(v) if v > 0 =>` | `_ if x > 0 => { }`, `Option.Some(v) if v > 0 => { }` (guards) |
-| `1 \| 2 =>`, `case 1, 2:`, `1..=5 =>`, `'a'..='z'` | `1 \| 2 => { }`, `1..=5 => { }`, `'a'..='z' => { }` |
-| `let x = match v { ... }`, `x = switch ...` | `let x: T = match v { P => a, _ => b };`: arms are values, separated by commas |
-| `if let Some(v) = m { }`, `if (m != null)` | `if let Option.Some(v) = m { } else { }` |
 | `let Point { x, y } = p;`, `const { x, y } = p` | `let Point(x: px, y: py): Point = p;` |
-| `sys.stdin.read()`, `open(path).read()`, `input()` | `fn main(input: str[4096])`, run with `< path`; split it into lines |
-| `import utils`, `#include "utils.h"`, `use crate::utils` | `import "utils.al";` before any declaration |
-| `import utils as u`, `u.f(x)`, `utils::f(x)` | `import "utils.al" as u;` then `u.f(x)`, `u.CONST`, `u.Type` |
-| `if x { }` with `x: i32` | `if x != 0 { }` |
 
 ## The standard library
 
-Builtins that work on any type and capacity. Their names are reserved: call `gcd`, do not define it. For
-what it leaves out (pseudo-random numbers, a map that keeps the order its keys were added in),
-[examples/helpers.al](examples/helpers.al) has tested helpers to import or copy.
+Builtins work on any type and capacity; their names are reserved. [examples/helpers.al](examples/helpers.al)
+adds tested helpers (pseudo-random numbers, an insertion-ordered map).
 
 | Area | Functions |
 |------|-----------|
@@ -232,30 +204,20 @@ what it leaves out (pseudo-random numbers, a map that keeps the order its keys w
 | Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `parse_i64` `parse_f64` (an `Option`) `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
 | Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `binary_search(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `retain(mut xs, keep)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear` |
 
-- `split`, `words`, `join` and `replace` take their type from the variable they are stored in, so make the
-  call the whole right side of a typed `let`/`var`, assignment or `return`:
-  `let parts: list[str[16]; 8] = split(line, ",");`. Too many or too long pieces trap (R0004), so when the
-  text is not a constant and may not fit, `check` warns (W0307). `try_split(mut parts, s, sep)` and
-  `try_words(mut parts, s)` fill the list instead and return false, leaving it empty, when it does not fit.
-- `for p in split(s, sep) { }` and `for w in words(s) { }` go through the pieces one at a time instead:
-  no list, and no trap however long or many they are. Each piece has the capacity of `s`, and so would
-  `trim(p)` or `slice(p, ...)`: check `len(p)` and narrow it with `str[16](p)` first, then work on that.
-  Use this for anything read from input.
-- A separator or search pattern is a str or a character: `split(line, ',')`, `contains(s, "ab")`.
-- `parse_i64(s)` and `parse_f64(s)` read decimal text into an `Option`, `Option.None` for anything else;
-  `i64(s)` and `f64(s)` trap on it instead, so check `is_int` or `is_float` first. `trim` the text either way. `f64` takes an optional sign and digits with at most one `.` (`19.99`, `-0.5`, `3`, `.25`), then an optional exponent (`1e5`, `2.5E-3`), and
-  converts up to 15 significant digits exactly.
-- `fixed(x, 2)`, `pad_left(v, width, fill)` and `pad_right(...)` make text for `print` and `append`, or for
-  a typed str: `append(mut s, "$", cents / 100, ".", pad_left(cents % 100, 2, '0'));`,
-  `let cell: str[8] = pad_left(n, 6, ' ');`. Widths count bytes; longer text is kept whole.
-- `index_of` returns -1 when nothing is found.
-- `sort` orders every type: numbers, then strs by bytes (as `<` does), structs field by field, enums by variant. To
-  sort records by a key, make the key the first field; for descending order, `reverse` afterwards. For any
-  other order, `sort_by(mut xs, before)` sorts by a function of your own, stably.
-- `any`, `all`, `count_if`, `find_index`, `retain` and `sort_by` take a function by its name, of exactly the
-  type wanted: for a `list[Entry; 16]`, `fn adult(e: Entry) -> bool` or `fn older(a: Entry, b: Entry) -> bool`.
-- `x % m` keeps the sign of `x`; `rem_euclid(x, m)` is never negative, so `xs[rem_euclid(i - 1, n)]` wraps
-  around. `checked_add` and the others return `Option.None` instead of trapping on overflow.
+- `split`, `words`, `join`, `replace` take their type from the typed `let`/`var`/assignment/`return` they
+  are the whole right side of: `let parts: list[str[16]; 8] = split(line, ",");`. Pieces that do not fit
+  trap (R0004; `check` warns W0307), so for input use `try_split`/`try_words` (false, list left empty) or
+  iterate: `for p in split(s, sep) { }` builds no list and never traps; each piece has the capacity of
+  `s`, so check `len(p)` and narrow with `str[16](p)`.
+- A separator or pattern is a str or a character. `index_of` and friends return -1 when absent.
+- `parse_i64`/`parse_f64` give an `Option`; `i64(s)`/`f64(s)` trap on bad text, so check `is_int`/`is_float`
+  first, after `trim`. Floats accept `19.99`, `-0.5`, `.25`, `1e5`, `2.5E-3`.
+- `fixed(x, 2)`, `pad_left(v, width, fill)`, `pad_right` make text for `print`, `append` or a typed str;
+  widths count bytes.
+- `sort` orders every type: numbers, strs by bytes, structs field by field (put the key first), enums by
+  variant; `reverse` for descending, `sort_by(mut xs, before)` for any other order (stable).
+- Functions passed by name must have exactly the wanted type: `fn adult(e: Entry) -> bool`.
+- `x % m` keeps the sign of `x`; `rem_euclid` never is negative. `checked_*` return `Option.None` on overflow.
 
 ```alang
 struct Score {
@@ -442,33 +404,10 @@ fn main(input: str[65536]) {
 }
 ```
 
-The loop builds no list, so the input can be as large as `fn main` accepts (up to 1 MiB); a
-`let lines: list[str[512]; 8192] = split(input, '\n')` would need 4 MB of stack and trap on one long line.
+The loop builds no list, so the input can be as large as `fn main` accepts (up to 1 MiB).
 
-**Splitting a program into files**
-
-```
-// lib/fmt.al
-const WIDTH: i64 = 8;
-
-fn pad(s: str[32]) -> str[32] { ... }
-
-test "pad" { ... }    // bin/alang test lib/fmt.al runs it; report.al leaves it out
-```
-
-```
-// report.al
-import "lib/fmt.al";
-
-fn main() {
-    print(pad("42"), " points");
-}
-```
-
-`bin/alang check report.al` checks both files; a diagnostic or trap in `lib/fmt.al` names that file (a
-`"file"` key in JSON). Every name of the importer and of the files it imports this way must be unique; to use
-two libraries that declare the same names, import each under a name of its own,
-`import "lib/fmt.al" as fmt;`, and write `fmt.pad("42")`, `fmt.WIDTH`.
+**Several files**: `bin/alang check report.al` checks it and its imports, and a diagnostic or trap in an
+imported file names that file. Names must be unique across them, unless imported `as name`.
 
 **Contracts document and check intent**
 
@@ -493,7 +432,6 @@ test "an empty list breaks the contract" traps R0006 {
 }
 ```
 
-A test written `traps CODE` passes only if its body stops with that trap: test that bad input is refused.
 
 ## Writing tools for agents
 
@@ -505,19 +443,14 @@ bin/alang call prog.al word_counts '{"text": "a b a"}'
 # {"ok": true, "result": [{"word": "a", "count": 2}, {"word": "b", "count": 1}], "stdout": "", "steps": 45}
 ```
 
-The definitions are all the calling model knows about your tool, so give them something to say:
+The definitions are all the calling model knows, so give them something to say: `///` on parameters,
+struct fields and enum variants describes them; `requires` clauses are listed, and simple bounds such as
+`requires people > 0 and people <= 16` become `"minimum": 1, "maximum": 16`; test calls with literal
+arguments become `input_examples`; a parameter with a constant default (`max_words: i64 = 16`, after the
+others) is optional.
 
-- A `///` line above a parameter, a struct field or an enum variant describes it in the schema.
-- `requires` clauses are listed in the description, and simple ones such as
-  `requires people > 0 and people <= 16` become schema bounds (`"minimum": 1, "maximum": 16`).
-- Calls in your `test` blocks with literal arguments, such as `word_counts("a b a")`, become
-  `input_examples`.
-- A parameter with a default value, `max_words: i64 = 16`, is optional: the schema shows `"default": 16`
-  and a call that leaves it out gets 16. Defaults are constants and come after the parameters without one.
-
-Before handing tools over, run `bin/alang fuzz prog.al`. It calls each tool with arguments at the limits
-its schema allows and reports every trap with the arguments that caused it; for a word_counts that
-pushed a 17th word into its list of 16, it prints:
+Before handing tools over, run `bin/alang fuzz prog.al`; for a word_counts that pushed a 17th word into
+its list of 16, it prints:
 
 ```text
 tool word_counts: 23 call(s), 1 trap(s)
@@ -526,40 +459,23 @@ trap[R0004]: push to a full list (capacity 16)
   = arguments: {"text": "a b c d e f g h i j k l m n o p q r s t u v w x … (256 bytes)"}
 ```
 
-Each is input a caller can send: handle it (`try_split`, a `len` or `cap` check before a `push`), or rule
-it out with `requires`, which the schema then shows too.
+Handle each such input (`try_split`, a `len`/`cap` check before `push`) or rule it out with `requires`.
 
-JSON mapping: numbers and bools as JSON numbers and booleans, `str[N]` as a string of at most N UTF-8
-bytes (a non-ASCII character takes 2 to 4, so size N in bytes, not characters), arrays and lists as
-arrays, tuples as arrays of fixed length, maps with str keys as objects (others as `[key, value]` pairs), sets as
-arrays of distinct items, structs as objects (all fields required), enum variants as `"Name"` or
-`{"Name": [payload...]}`.
-Tools cannot take `mut` parameters. A trap inside a tool returns `{"ok": false, "error": {"code":
-"R....", ...}}` instead of crashing the caller. JSON has no NaN or infinity, so a float result holding one
-fails with `bad_result` (check for it in the tool); a `str` result must be UTF-8 text, so return raw
-bytes as a `list[u8; N]`. Pass `-` instead of the JSON to read the arguments from stdin.
+JSON mapping: numbers, bools; `str[N]` as a string of at most N UTF-8 *bytes*; arrays, lists and tuples as
+arrays; maps with str keys as objects (others as `[key, value]` pairs); sets as arrays; structs as objects
+(all fields required); enum variants as `"Name"` or `{"Name": [payload...]}`. Tools cannot take `mut`
+parameters. A trap returns `{"ok": false, "error": {"code": "R....", ...}}`. A float result holding NaN or
+infinity fails with `bad_result`; return raw bytes as `list[u8; N]`, not `str`.
 
-To hand the tools to an agent host, run `bin/alang serve prog.al`: an MCP server on stdin and stdout with
-every `tool fn`, its result schema, and the same JSON per call, up to four calls at a time. Restart it
-after editing the program, or serve it with `--watch`: each version that compiles is served a moment after
-it is saved, and the host is told when the tools change; one with errors leaves the last good one served.
-For a host that reaches tools over the network, `bin/alang serve prog.al --http 8080 --token-file token.txt`
-serves the same MCP over HTTP at `http://127.0.0.1:8080/mcp`, with `/health`, `/metrics` and a JSON log line
-per call on stderr.
-
-Tools are safe to run minutes after you wrote them: no file, network, clock or random access, no heap,
-bounded loops, no recursion, and a deterministic step budget. `steps` in a report is a call's cost: one
-per statement, plus the data it goes through (about one per 128 bytes copied or searched), so the default
-budget of 100 million steps is a few seconds of work. `--timeout` (60 s) backs it up.
+`bin/alang serve prog.al [--watch]` serves every tool over MCP on stdio (`--http 8080 --token-file token.txt`
+for HTTP at `/mcp`). Tools have no file, network, clock or random access, and run within a deterministic
+step budget (`steps`: one per statement plus about one per 128 bytes touched; the default 100 million is a
+few seconds), backed by `--timeout` (60 s).
 
 ## Determinism checklist
 
-You get these for free; do not work around them:
-
 - Same input, same output, same trap, on every run, machine, compiler and locale.
-- No time, randomness, environment, threads or I/O other than `print` and the stdin of `fn main`. For a
-  "random" value, take a seed as a tool argument and compute from it.
-- Floats are bit-exact across the interpreter and the C backend, `sin`, `exp`, `log` and float `pow` included:
-  ALang computes them itself rather than calling a math library, whose last bits differ.
+- No time, randomness, environment, threads or I/O but `print` and stdin. For "random", take a seed.
+- Floats are bit-exact across the interpreter and the C backend, `sin`, `exp` and `pow` included.
 - `print` shows floats with at most 6 decimals (`0.1 + 0.2` prints `0.3`); compare floats in tests with a
   tolerance, e.g. `assert abs(x - 0.3) < 0.000001;`.

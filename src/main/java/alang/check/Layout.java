@@ -1,8 +1,6 @@
 package alang.check;
 
-import alang.ast.Ast.EnumDecl;
-import alang.ast.Ast.Field;
-import alang.ast.Ast.Variant;
+import alang.ast.Ast.*;
 import alang.types.Type;
 
 /**

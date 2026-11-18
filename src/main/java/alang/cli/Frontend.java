@@ -1,27 +1,13 @@
 package alang.cli;
 
-import alang.ast.Ast.Import;
-import alang.ast.Ast.Item;
-import alang.ast.Ast.Program;
-import alang.check.CheckResult;
-import alang.check.Checker;
-import alang.diag.Code;
-import alang.diag.Diagnostics;
-import alang.diag.Source;
+import alang.ast.Ast.*;
+import alang.check.*;
+import alang.diag.*;
 import alang.parse.Parser;
 import alang.util.Utf8;
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
-import java.nio.file.NoSuchFileException;
-import java.nio.file.Path;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
 
 /**
  * Parse + check in one call. The program is the given file and every file it imports, directly or through

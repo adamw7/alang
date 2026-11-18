@@ -1,23 +1,10 @@
 package alang.check;
 
-import alang.ast.Ast.BindPat;
-import alang.ast.Ast.BoolPat;
-import alang.ast.Ast.Field;
-import alang.ast.Ast.IntPat;
-import alang.ast.Ast.OrPat;
-import alang.ast.Ast.Pattern;
-import alang.ast.Ast.RangePat;
-import alang.ast.Ast.StrPat;
-import alang.ast.Ast.StructPat;
-import alang.ast.Ast.TuplePat;
-import alang.ast.Ast.Variant;
-import alang.ast.Ast.VariantPat;
-import alang.ast.Ast.WildPat;
+import alang.ast.Ast.*;
 import alang.types.Type;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 /**
  * What the arms of a match cover, for exhaustiveness (E0306) and unreachable arms (E0307): the usefulness algorithm

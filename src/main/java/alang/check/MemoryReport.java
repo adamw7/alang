@@ -1,16 +1,8 @@
 package alang.check;
 
-import alang.ast.Ast.ConstDecl;
-import alang.ast.Ast.FnDecl;
-import alang.ast.Ast.LocalVar;
-import alang.ast.Ast.Program;
-import alang.ast.Ast.Routine;
-import alang.ast.Ast.TestDecl;
+import alang.ast.Ast.*;
 import alang.util.Json;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * The static memory bound of a program. Because ALang has no heap and no recursion, the

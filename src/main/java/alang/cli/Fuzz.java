@@ -1,31 +1,13 @@
 package alang.cli;
 
-import alang.ast.Ast.EnumDecl;
-import alang.ast.Ast.Field;
-import alang.ast.Ast.FnDecl;
-import alang.ast.Ast.Program;
-import alang.ast.Ast.Variant;
-import alang.diag.Code;
-import alang.diag.Source;
-import alang.diag.Span;
-import alang.interp.Interpreter;
-import alang.interp.JsonValues;
-import alang.interp.Meter;
-import alang.interp.Trap;
-import alang.interp.Values;
-import alang.types.PrimKind;
-import alang.types.Type;
+import alang.ast.Ast.*;
+import alang.diag.*;
+import alang.interp.*;
+import alang.types.*;
 import alang.util.Json;
-import java.math.BigDecimal;
-import java.math.BigInteger;
+import java.math.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.function.IntFunction;
 
 /**

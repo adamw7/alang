@@ -1,7 +1,6 @@
 package alang.diag;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 /**
  * The text of one ALang source file. Columns and lengths of a {@link Span} count Unicode code points, as

@@ -1,10 +1,7 @@
 package alang.diag;
 
 import alang.util.Json;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Collects the diagnostics of a program and renders them for humans or machines. The program is the file
@@ -109,9 +106,7 @@ public final class Diagnostics {
     /** Renders diagnostics in a rustc-like format with a source excerpt and caret. */
     public String renderText() {
         StringBuilder sb = new StringBuilder();
-        for (Diagnostic d : all()) {
-            renderOne(sb, source, d);
-        }
+        for (Diagnostic d : all()) renderOne(sb, source, d);
         return sb.toString();
     }
 
@@ -129,9 +124,7 @@ public final class Diagnostics {
             sb.append(lineNo).append(" | ").append(source.line(s.line())).append('\n');
             sb.append(pad).append(" | ").append(source.caret(s)).append('\n');
         }
-        if (d.hint() != null) {
-            sb.append("  = hint: ").append(d.hint()).append('\n');
-        }
+        if (d.hint() != null) sb.append("  = hint: ").append(d.hint()).append('\n');
         if (!d.fixes().isEmpty()) {
             List<String> parts = new ArrayList<>();
             for (Edit e : d.fixes()) parts.add(e.describe(source));
@@ -142,9 +135,7 @@ public final class Diagnostics {
 
     public List<Object> toJson() {
         List<Object> out = new ArrayList<>();
-        for (Diagnostic d : all()) {
-            out.add(toJson(source, d));
-        }
+        for (Diagnostic d : all()) out.add(toJson(source, d));
         return out;
     }
 

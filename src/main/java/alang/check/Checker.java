@@ -1,30 +1,12 @@
 package alang.check;
 
-import alang.ast.Ast;
+import alang.ast.*;
 import alang.ast.Ast.*;
-import alang.ast.Builtin;
-import alang.diag.Code;
-import alang.diag.Diagnostic;
-import alang.diag.Diagnostics;
-import alang.diag.Edit;
-import alang.diag.Hints;
-import alang.diag.Span;
-import alang.interp.Interpreter;
-import alang.interp.Trap;
-import alang.interp.Values;
-import alang.types.PrimKind;
-import alang.types.Type;
+import alang.diag.*;
+import alang.interp.*;
+import alang.types.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Semantic analysis: name resolution, type checking, mutability, aliasing, exhaustiveness,
@@ -3087,9 +3069,7 @@ public final class Checker {
                             t instanceof Type.ListT ? "use push(mut xs, value) for lists" : null);
                     }
                 }
-                if (args.size() < 2) {
-                    diags.error(Code.E0204, c.span, "append() needs at least one value to append");
-                }
+                if (args.size() < 2) diags.error(Code.E0204, c.span, "append() needs at least one value to append");
                 for (int i = 1; i < args.size(); i++) printable(args.get(i));
                 return Type.VOID;
             }
@@ -3173,13 +3153,7 @@ public final class Checker {
                 Type hint = expected instanceof Type.EnumT et && Ast.origin(et.decl()) == enums.get("Option")
                     && Type.isInt(et.decl().variants.get(1).payload.get(0)) ? et.decl().variants.get(1).payload.get(0) : null;
                 Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), hint);
-                if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
-                if (!Type.isInt(ts[0]) || !ts[0].equals(ts[1])) {
-                    diags.error(Code.E0201, c.span, b.name + "() needs two integers of the same type, found "
-                        + ts[0] + " and " + ts[1]);
-                    return Type.ERROR;
-                }
-                return optionOf(ts[0]);
+                return twoInts(c, b, ts) ? optionOf(ts[0]) : Type.ERROR;
             }
             case MUL_MOD -> {
                 if (!arity(c, 3)) return Type.ERROR;
@@ -3248,13 +3222,7 @@ public final class Checker {
                 noMut(args.get(0));
                 noMut(args.get(1));
                 Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isInt(expected) ? expected : null);
-                if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
-                if (!Type.isInt(ts[0]) || !ts[0].equals(ts[1])) {
-                    diags.error(Code.E0201, c.span, b.name + "() needs two integers of the same type, found "
-                        + ts[0] + " and " + ts[1]);
-                    return Type.ERROR;
-                }
-                return ts[0];
+                return twoInts(c, b, ts) ? ts[0] : Type.ERROR;
             }
             case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
                 if (!arity(c, 1)) return Type.BOOL;
@@ -3668,9 +3636,7 @@ public final class Checker {
         Type t = expr(a.expr(), null);
         ctx.text = outer;
         if (t instanceof Type.Str) readInPlace(a.expr());
-        if (t instanceof Type.Void) {
-            diags.error(Code.E0201, a.span(), "cannot print a call that returns nothing");
-        }
+        if (t instanceof Type.Void) diags.error(Code.E0201, a.span(), "cannot print a call that returns nothing");
     }
 
     private void warnCharLiteral(Arg a) {
@@ -4407,6 +4373,14 @@ public final class Checker {
      * {@code 2 + 1.5} types like {@code 1.5 + 2}. An array literal takes its type from the other side
      * too, so that {@code [1, 2] == xs} types like {@code xs == [1, 2]} when {@code xs} is a list.
      */
+    /** Whether both operands are the same integer type; reports E0201 when they are not (and neither is an error). */
+    private boolean twoInts(Call c, Builtin b, Type[] ts) {
+        if (Type.isError(ts[0]) || Type.isError(ts[1])) return false;
+        if (Type.isInt(ts[0]) && ts[0].equals(ts[1])) return true;
+        diags.error(Code.E0201, c.span, b.name + "() needs two integers of the same type, found " + ts[0] + " and " + ts[1]);
+        return false;
+    }
+
     private Type[] sameTypeOperands(Expr l, Expr r, Type hint) {
         Type lt;
         Type rt;
@@ -4768,9 +4742,7 @@ public final class Checker {
             return at;
         }
         if (expected instanceof Type.ListT lt) {
-            if (n > lt.cap()) {
-                diags.error(Code.E0201, r.span, "[_; " + n + "] exceeds the capacity of " + lt);
-            }
+            if (n > lt.cap()) diags.error(Code.E0201, r.span, "[_; " + n + "] exceeds the capacity of " + lt);
             requireAssignable(r.value, expr(r.value, lt.elem()), lt.elem());
             return lt;
         }
@@ -4993,9 +4965,7 @@ public final class Checker {
             }
         }
         int limit = name.length() <= 3 ? 1 : name.length() <= 6 ? 2 : 3;
-        if (best != null && bestD <= limit) {
-            return "did you mean `" + best + "`?";
-        }
+        if (best != null && bestD <= limit) return "did you mean `" + best + "`?";
         return null;
     }
 

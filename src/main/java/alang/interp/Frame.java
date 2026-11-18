@@ -1,17 +1,11 @@
 package alang.interp;
 
-import alang.ast.Ast.Expr;
-import alang.ast.Ast.FnDecl;
-import alang.ast.Ast.LocalVar;
-import alang.ast.Ast.Routine;
-import alang.diag.Span;
-import alang.diag.Source;
+import alang.ast.Ast.*;
+import alang.diag.*;
 import alang.types.Type;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 /**
  * One call of a function, or the run of a test: its routine, the slots of its variables, and for a debugger

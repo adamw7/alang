@@ -1,42 +1,18 @@
 package alang.cli;
 
-import alang.ast.Ast.FnDecl;
-import alang.ast.Ast.LocalVar;
-import alang.ast.Ast.Program;
-import alang.ast.Ast.TestDecl;
+import alang.ast.Ast.*;
 import alang.ast.Builtin;
 import alang.cgen.CGen;
-import alang.check.Checker;
-import alang.check.MemoryReport;
-import alang.diag.Code;
-import alang.diag.Source;
-import alang.diag.Span;
-import alang.interp.Interpreter;
-import alang.interp.JsonValues;
-import alang.interp.Meter;
-import alang.interp.Stopped;
-import alang.interp.Trap;
-import alang.interp.Values;
+import alang.check.*;
+import alang.diag.*;
+import alang.interp.*;
 import alang.types.Type;
-import alang.util.Json;
-import alang.util.Utf8;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.io.UncheckedIOException;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
+import alang.util.*;
+import java.io.*;
+import java.math.*;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.NoSuchFileException;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
+import java.nio.file.*;
+import java.util.*;
 
 /** The `alang` command line tool. */
 public final class Main {
@@ -466,9 +442,7 @@ public final class Main {
     private int runMain(Source src) {
         Frontend.Result r = compile(src);
         Map<String, Object> j = Json.obj("ok", false, "file", src.path);
-        if (!report(r, j)) {
-            return failCompile(r, j);
-        }
+        if (!report(r, j)) return failCompile(r, j);
         FnDecl main = r.program().function("main");
         if (main == null) {
             String msg = "no `fn main()` in " + src.path + "; use `alang test` for tests or `alang call` for tools";
@@ -628,9 +602,7 @@ public final class Main {
                         line(err, "  output:");
                         // Every line, blank ones included; only the newline that ends the output starts no line.
                         String body = stdout.endsWith("\n") ? stdout.substring(0, stdout.length() - 1) : stdout;
-                        for (String line : body.split("\n", -1)) {
-                            line(err, line.isEmpty() ? "" : "    " + line);
-                        }
+                        for (String line : body.split("\n", -1)) line(err, line.isEmpty() ? "" : "    " + line);
                         if (captured.truncated()) line(err, "    " + truncationNote(captured));
                     }
                     err.writeBytes(indented(renderTrapBytes(src, trap)));

@@ -1,19 +1,10 @@
 package alang.interp;
 
-import alang.ast.Ast.EnumDecl;
-import alang.ast.Ast.Field;
-import alang.ast.Ast.Variant;
-import alang.interp.Values.ArrV;
-import alang.interp.Values.EnumV;
-import alang.interp.Values.ListV;
-import alang.interp.Values.MapV;
-import alang.interp.Values.StrV;
-import alang.interp.Values.StructV;
-import alang.types.PrimKind;
-import alang.types.Type;
+import alang.ast.Ast.*;
+import alang.interp.Values.*;
+import alang.types.*;
 import java.io.ByteArrayOutputStream;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
+import java.math.*;
 import java.nio.charset.StandardCharsets;
 
 /**

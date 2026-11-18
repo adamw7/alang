@@ -1,8 +1,7 @@
 package alang.types;
 
 import alang.ast.Ast;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Semantic types. Every type has a size known at compile time: there are no pointers,

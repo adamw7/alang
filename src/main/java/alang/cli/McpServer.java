@@ -1,31 +1,14 @@
 package alang.cli;
 
-import alang.ast.Ast.FnDecl;
-import alang.ast.Ast.Program;
+import alang.ast.Ast.*;
 import alang.diag.Source;
-import alang.interp.JsonValues;
-import alang.interp.Meter;
+import alang.interp.*;
 import alang.types.Type;
-import alang.util.Json;
-import alang.util.Utf8;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.PrintStream;
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import alang.util.*;
+import java.io.*;
+import java.math.*;
+import java.util.*;
+import java.util.concurrent.*;
 import java.util.function.Consumer;
 
 /**
