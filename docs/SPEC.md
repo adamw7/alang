@@ -898,8 +898,9 @@ new version changes the tool definitions (not when only a body changes) the serv
 `notifications/tools/list_changed`, once the client has sent `notifications/initialized`. A version with
 errors is reported on stderr, and the one before it stays served. Each reload is logged there too.
 
-Calls run at the same time, up to four, each on a thread of its own and each still one deterministic run;
-more wait their turn. So a long call holds up neither the others nor the answers to `ping`, `tools/list`
+Calls run at the same time, up to `--workers` (4 by default), each on a thread of its own and each still
+one deterministic run; more wait their turn, up to `--max-queued` (256 by default), and a call beyond that
+is refused at once with the JSON-RPC error -32001 (server busy). So a long call holds up neither the others nor the answers to `ping`, `tools/list`
 and the rest, which come at once; a call's arguments are checked before it waits, so `bad_arguments` comes
 at once too. A call's answer is written when it ends, so answers can come in another order than the
 requests, as JSON-RPC allows. Each call gets `--max-steps` and `--timeout` (60 s by default).
@@ -907,6 +908,29 @@ requests, as JSON-RPC allows. Each call gets `--max-steps` and `--timeout` (60 s
 a numeric `requestId` names the call with the same value (`7.0` is `7`), and one for a call that has ended
 is ignored. When stdin ends, the server finishes the calls it has
 started, writes their answers, and exits.
+
+`alang serve file.al --http [HOST:]PORT` serves the same messages over MCP's Streamable HTTP transport
+instead, at `http://HOST:PORT/mcp` (HOST is 127.0.0.1 unless given). Each `POST /mcp` carries one
+JSON-RPC message: a request is answered with one `application/json` response, once its call ends; a
+notification or a response gets 202 and no body. `initialize` starts a session and returns its id in the
+`Mcp-Session-Id` header, which every later message must carry (400 without it, 404 for one that has ended);
+request ids, the rule against reusing one, and `notifications/cancelled` are per session, and a cancelled
+request is answered with the error -32800. `DELETE /mcp` ends a session and stops its calls; a session
+unused for an hour ends on its own, and at most 1024 are open. The server sends no messages of its own, so
+`GET /mcp` is 405 and `listChanged` is false, also with `--watch`: a client lists the tools again. A request
+with an unsupported `MCP-Protocol-Version` header is 400, and a body over 4 MiB is 413.
+
+`--token-file FILE` makes every request but `GET /health` need `Authorization: Bearer TOKEN`, where TOKEN
+is the file's first line (at least 16 characters), compared in constant time; without it the server
+refuses to listen on any address but a loopback one. A request with an `Origin` header is refused (403)
+unless `--allow-origin` names that origin, or it is on this machine while the server listens only there.
+`GET /health` returns `{"status": "ok", "version": ..., "tools": n}`, and `GET /metrics` counters in the
+Prometheus text format: `alang_tool_calls_total{tool, outcome}` (outcome `ok` or the error code),
+`alang_tool_call_steps_total`, `alang_tool_call_seconds_sum` and `_count`, `alang_tool_calls_in_flight`,
+`alang_sessions` and `alang_http_requests_total{status}`. Each request and each call is logged on stderr
+as one line of JSON (`"event": "request"` or `"call"`, with the time, session, tool, outcome, steps and
+milliseconds). SIGINT or SIGTERM stops the server: it takes no more requests and finishes the calls it has
+started.
 
 ## 11. Runtime errors (traps)
 

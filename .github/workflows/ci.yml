@@ -23,10 +23,10 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # A run takes about a minute. These limits make a hang fail fast instead of holding a runner.
+    # A run takes a few minutes. These limits make a hang fail fast instead of holding a runner.
     # Inside the tests, each test fails after 10 s, and Surefire kills the test JVM if the whole run
-    # takes longer than 180 s (see pom.xml).
-    timeout-minutes: 10
+    # takes longer than 360 s (see pom.xml).
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -56,7 +56,7 @@ jobs:
           clang --version
 
       - name: Build and test
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: mvn -B -ntp verify
 
       - name: CLI smoke test
@@ -102,6 +102,28 @@ jobs:
           # `serve`: the same tools over MCP; it stops when stdin ends.
           printf '%s\n' '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | bin/alang serve examples/text_tools.al > "$out/serve.json"
           grep -q '"name": "word_count"' "$out/serve.json"
+          # `serve --http`: MCP over HTTP with a token, then a clean stop on SIGTERM.
+          if [ "$RUNNER_OS" != Windows ]; then
+            printf 'smoke-test-token-0123456789\n' > "$out/token"
+            bin/alang serve examples/inventory.al --http 127.0.0.1:18765 --token-file "$out/token" 2> "$out/http.log" &
+            server=$!
+            # On a failure below, show what the server logged, and stop it.
+            trap 'echo "--- serve --http log:"; cat "$out/http.log"; kill "$server" 2> /dev/null || true' ERR
+            for i in $(seq 100); do curl -fs http://127.0.0.1:18765/health > /dev/null && break; sleep 0.2; done
+            auth='Authorization: Bearer smoke-test-token-0123456789'
+            curl -fs -D "$out/headers" -H "$auth" -H 'Content-Type: application/json' http://127.0.0.1:18765/mcp \
+              -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}' > /dev/null
+            session="$(grep -i '^mcp-session-id:' "$out/headers" | cut -d' ' -f2 | tr -d '\r')"
+            curl -fs -H "$auth" -H "Mcp-Session-Id: $session" http://127.0.0.1:18765/mcp \
+              -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "place_order", "arguments": {"sku": "B-200", "quantity": 2}}}' \
+              | grep -q '"isError": false'
+            curl -fs -H "$auth" http://127.0.0.1:18765/metrics | grep -q 'alang_tool_calls_total{tool="place_order",outcome="ok"} 1'
+            test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18765/mcp -d '{}')" = 401
+            kill "$server"
+            wait "$server" || true
+            grep -q '"event": "stopped"' "$out/http.log"
+            trap - ERR
+          fi
 
           # bin/alang rebuilds the jar after a source change, and only then.
           touch src/main/java/alang/cli/Main.java
@@ -292,6 +314,28 @@ jobs:
           "$alang" call examples/inventory.al place_order '{"sku": "B-200", "quantity": 2}' | grep -q '"ok": true'
           echo '{"sku": "B-200", "quantity": 2}' | "$alang" call examples/inventory.al place_order - | grep -q '"ok": true'
           printf '%s\n' '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}' | "$alang" serve examples/text_tools.al | grep -q '"name": "word_count"'
+          # `serve --http`: MCP over HTTP with a token, then a clean stop on SIGTERM.
+          if [ "$RUNNER_OS" != Windows ]; then
+            printf 'smoke-test-token-0123456789\n' > "$out/token"
+            "$alang" serve examples/inventory.al --http 127.0.0.1:18765 --token-file "$out/token" 2> "$out/http.log" &
+            server=$!
+            # On a failure below, show what the server logged, and stop it.
+            trap 'echo "--- serve --http log:"; cat "$out/http.log"; kill "$server" 2> /dev/null || true' ERR
+            for i in $(seq 100); do curl -fs http://127.0.0.1:18765/health > /dev/null && break; sleep 0.2; done
+            auth='Authorization: Bearer smoke-test-token-0123456789'
+            curl -fs -D "$out/headers" -H "$auth" -H 'Content-Type: application/json' http://127.0.0.1:18765/mcp \
+              -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}' > /dev/null
+            session="$(grep -i '^mcp-session-id:' "$out/headers" | cut -d' ' -f2 | tr -d '\r')"
+            curl -fs -H "$auth" -H "Mcp-Session-Id: $session" http://127.0.0.1:18765/mcp \
+              -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "place_order", "arguments": {"sku": "B-200", "quantity": 2}}}' \
+              | grep -q '"isError": false'
+            curl -fs -H "$auth" http://127.0.0.1:18765/metrics | grep -q 'alang_tool_calls_total{tool="place_order",outcome="ok"} 1'
+            test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18765/mcp -d '{}')" = 401
+            kill "$server"
+            wait "$server" || true
+            grep -q '"event": "stopped"' "$out/http.log"
+            trap - ERR
+          fi
           "$alang" build examples/shapes.al -o "$out/shapes.c"
           grep -q 'int main' "$out/shapes.c"
           printf 'fn main() {\n    let n = 2;\n    print(n);\n}\n' > "$out/fix.al"

@@ -13,6 +13,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.fields;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noCodeUnits;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noConstructors;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noFields;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
 import static com.tngtech.archunit.library.GeneralCodingRules.NO_CLASSES_SHOULD_ACCESS_STANDARD_STREAMS;
@@ -20,6 +21,7 @@ import static com.tngtech.archunit.library.GeneralCodingRules.NO_CLASSES_SHOULD_
 
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaAccess;
+import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
@@ -41,6 +43,7 @@ import java.io.RandomAccessFile;
 import java.nio.charset.Charset;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.TimeZone;
@@ -59,7 +62,10 @@ import java.util.random.RandomGenerator;
 class ArchitectureTest {
 
     private static final String CLI = "alang.cli..";
+    private static final String API = "alang.api..";
     private static final String MAIN = "alang.cli.Main";
+    /** The HTTP transport of `serve --http`: the one class that serves the network, so it may read the clock. */
+    private static final String HTTP = "alang.cli.HttpTransport";
     private static final String GENERATED_PARSER = "alang.parser..";
 
     // ---------------------------------------------------------------- structure
@@ -75,6 +81,7 @@ class ArchitectureTest {
     static final ArchRule layers = layeredArchitecture()
             .consideringOnlyDependenciesInLayers()
             .ensureAllClassesAreContainedInArchitecture()
+            .layer("Api").definedBy(API)
             .layer("Cli").definedBy(CLI)
             .layer("Check").definedBy("alang.check..")
             .layer("Cgen").definedBy("alang.cgen..")
@@ -84,7 +91,8 @@ class ArchitectureTest {
             .layer("Model").definedBy("alang.ast..", "alang.types..")
             .layer("Diag").definedBy("alang.diag..")
             .layer("Util").definedBy("alang.util..")
-            .whereLayer("Cli").mayNotBeAccessedByAnyLayer()
+            .whereLayer("Api").mayNotBeAccessedByAnyLayer()
+            .whereLayer("Cli").mayOnlyBeAccessedByLayers("Api")
             .whereLayer("Check").mayOnlyAccessLayers("Interp", "Model", "Diag", "Util")
             .whereLayer("Cgen").mayOnlyAccessLayers("Interp", "Model", "Diag", "Util")
             .whereLayer("Interp").mayOnlyAccessLayers("Model", "Diag", "Util")
@@ -94,7 +102,31 @@ class ArchitectureTest {
             .whereLayer("Diag").mayOnlyAccessLayers("Util")
             .whereLayer("Util").mayNotAccessAnyLayer()
             .because("the layers keep the checker, interpreter and C backend independent of each "
-                    + "other's internals and of the CLI");
+                    + "other's internals and of the CLI; alang.api, the embedding API, sits on top and wraps the "
+                    + "CLI's compile-and-call plumbing so that it behaves exactly as `alang call` does");
+
+    /**
+     * alang.api is the supported Java API: a host must be able to use it without touching an internal type,
+     * so that the internals can change in any release. Its public members take and return only JDK types and
+     * alang.api types.
+     */
+    @ArchTest
+    static final ArchRule api_exposes_only_api_types = methods()
+            .that().areDeclaredInClassesThat().resideInAPackage(API)
+            .and().arePublic()
+            .and().areDeclaredInClassesThat().arePublic()
+            .should().haveRawReturnType(resideInAnyPackage("java..", API).or(primitive()).as("a JDK or alang.api type"))
+            .andShould().haveRawParameterTypes(allOf(resideInAnyPackage("java..", API).or(primitive()))
+                    .as("JDK or alang.api types"))
+            .because("an internal type in the API would make every internal change a breaking one");
+
+    @ArchTest
+    static final ArchRule api_constructors_are_hidden = noConstructors()
+            .that().areDeclaredInClassesThat().resideInAPackage(API)
+            .and().areDeclaredInClassesThat().areNotRecords()
+            .should().bePublic()
+            .because("API objects come from Alang.compile and the options' factories, so their fields can change "
+                    + "without breaking a host");
 
     @ArchTest
     static final ArchRule antlr_stays_in_the_parser = noClasses()
@@ -104,9 +136,17 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule only_the_jdk_and_antlr = noClasses()
+            .that().doNotHaveFullyQualifiedName(HTTP)
             .should().dependOnClassesThat().resideOutsideOfPackages("java..", "alang..", "org.antlr.v4.runtime..")
             .because("target/alang.jar shades in every dependency, and the toolchain needs only the JDK and "
                     + "the ANTLR runtime; a new library is a decision for the pom, not a side effect of an import");
+
+    @ArchTest
+    static final ArchRule only_the_jdk_server = noClasses()
+            .that().haveFullyQualifiedName(HTTP)
+            .should().dependOnClassesThat().resideOutsideOfPackages("java..", "alang..", "com.sun.net.httpserver..")
+            .because("`serve --http` uses the JDK's own HTTP server (module jdk.httpserver), so the jar still "
+                    + "needs no web framework");
 
     @ArchTest
     static final ArchRule entry_point_is_cli_main = methods()
@@ -155,13 +195,13 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule io_only_in_the_cli = noClasses()
-            .that().resideOutsideOfPackage(CLI)
+            .that().resideOutsideOfPackages(CLI, API)
             .should().dependOnClassesThat().resideInAnyPackage("java.nio.file..", "java.nio.channels..", "java.net..")
             .orShould().dependOnClassesThat().belongToAnyOf(File.class, FileDescriptor.class,
                     FileInputStream.class, FileOutputStream.class, FileReader.class, FileWriter.class,
                     RandomAccessFile.class, ProcessBuilder.class, Process.class)
             .because("the checker, interpreter and C backend receive sources and output streams from "
-                    + "alang.cli; read or write files there and pass the contents in");
+                    + "alang.cli or alang.api; read or write files there and pass the contents in");
 
     @ArchTest
     static final ArchRule only_main_exits_or_reads_stdin = noClasses()
@@ -201,7 +241,7 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule checked_exceptions_stay_in_the_cli = noCodeUnits()
-            .that().areDeclaredInClassesThat().resideOutsideOfPackage(CLI)
+            .that().areDeclaredInClassesThat().resideOutsideOfPackages(CLI, API)
             .should().declareThrowableOfType(assignableTo(Exception.class)
                     .and(not(assignableTo(RuntimeException.class))).as("a checked exception"))
             .because("the core does no I/O and reports problems as Traps or diagnostics; an IOException "
@@ -217,6 +257,7 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule no_clock_randomness_or_environment = noClasses()
+            .that().doNotHaveFullyQualifiedName(HTTP)
             .should().dependOnClassesThat(resideInAnyPackage("java.time..")
                     .or(assignableTo(RandomGenerator.class))
                     .or(assignableTo(Date.class)).or(assignableTo(Calendar.class)).or(assignableTo(TimeZone.class)))
@@ -226,12 +267,14 @@ class ArchitectureTest {
             .orShould().callMethodWhere(calls(StrictMath.class, "random"))
             .orShould().callMethodWhere(calls(UUID.class, "randomUUID"))
             .because("the toolchain must produce the same bytes on every run and machine; take any "
-                    + "such input as an explicit argument from alang.cli");
+                    + "such input as an explicit argument from alang.cli. The HTTP transport alone reads the clock, "
+                    + "for its log and metrics, and draws session ids; neither reaches a program");
 
     @ArchTest
     static final ArchRule single_threaded = noClasses()
-            .that().doNotHaveFullyQualifiedName("alang.cli.McpServer")
+            .that().haveNameNotMatching("alang\\.cli\\.McpServer(\\$.*)?")
             .and().doNotHaveFullyQualifiedName("alang.cli.Watchdog")
+            .and().doNotHaveFullyQualifiedName(HTTP)
             .should().dependOnClassesThat(resideInAnyPackage("java.util.concurrent..").or(assignableTo(Thread.class)))
             .because("evaluation order is part of the determinism guarantee; keep the toolchain single-threaded. "
                     + "Only the host-facing server runs several tool calls at once (and, with --watch, polls "
@@ -280,12 +323,14 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule no_jvm_limits_or_gc = noClasses()
+            .that().doNotHaveFullyQualifiedName(HTTP)
             .should().dependOnClassesThat(resideInAPackage("java.lang.ref..")
                     .or(belongToAnyOf(Runtime.class))
                     .or(assignableTo(VirtualMachineError.class)))
             .because("a program's limits are the step budget and the checker's memory bound, the same "
                     + "everywhere; heap size, stack depth and GC timing differ between machines, so never "
-                    + "read them, catch StackOverflowError or OutOfMemoryError, or wait for a reference");
+                    + "read them, catch StackOverflowError or OutOfMemoryError, or wait for a reference. The HTTP "
+                    + "transport only adds a shutdown hook, to finish its calls on SIGTERM");
 
     @ArchTest
     static final ArchRule no_reflection = noClasses()
@@ -293,6 +338,14 @@ class ArchitectureTest {
             .orShould().callMethodWhere(calls(Class.class, "forName"))
             .because("reflection lists members in an unspecified order and bypasses the exhaustive switches "
                     + "over the sealed AST and type hierarchies; dispatch with a switch instead");
+
+    private static DescribedPredicate<JavaClass> primitive() {
+        return DescribedPredicate.describe("primitive", JavaClass::isPrimitive);
+    }
+
+    private static DescribedPredicate<List<JavaClass>> allOf(DescribedPredicate<? super JavaClass> each) {
+        return DescribedPredicate.describe("all " + each.getDescription(), list -> list.stream().allMatch(each));
+    }
 
     /** An access to a member of {@code owner} whose name matches {@code names}. */
     private static DescribedPredicate<JavaAccess<?>> calls(Class<?> owner, String names) {

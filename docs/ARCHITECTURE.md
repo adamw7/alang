@@ -97,7 +97,8 @@ flowchart TB
     programs[("<b>ALang programs</b><br/><i>[Container: .al files]</i>")]
 
     subgraph jar ["Toolchain [Container]"]
-        cli["<b>CLI</b><br/><i>[Component: alang.cli]</i><br/><br/>Arguments, files and stdin; text or JSON output; exit codes; the MCP server of serve. Frontend reads the imported files, runs parse + check"]
+        api["<b>Embedding API</b><br/><i>[Component: alang.api]</i><br/><br/>The supported Java API: compile, diagnostics, tool definitions, calls with a step budget, time limit and cancellation"]
+        cli["<b>CLI</b><br/><i>[Component: alang.cli]</i><br/><br/>Arguments, files and stdin; text or JSON output; exit codes; the MCP server of serve, over stdio or HTTP. Frontend reads the imported files, runs parse + check"]
         parse["<b>Parser</b><br/><i>[Component: alang.parse]</i><br/><br/>Nesting limit, syntax-error hints, parse tree to AST"]
         check["<b>Checker</b><br/><i>[Component: alang.check]</i><br/><br/>Types, names, constants, recursion ban, memory bound"]
         interp["<b>Interpreter</b><br/><i>[Component: alang.interp]</i><br/><br/>Reference semantics, the standard library, step budget, traps, formatting, JSON mapping"]
@@ -109,6 +110,7 @@ flowchart TB
     end
 
     launcher -- "Starts<br/>[java -jar]" --> cli
+    api -- "Frontend.compile, Main.runTool" --> cli
     cli -- "Reads<br/>[UTF-8]" --> programs
     cli -- "Parser.parse" --> parse
     cli -- "Checker.check" --> check
@@ -127,7 +129,7 @@ flowchart TB
     classDef container fill:#438dd5,stroke:#2e6295,color:#fff
     classDef component fill:#85bbf0,stroke:#5d82a8,color:#000
     class launcher,programs container
-    class cli,parse,check,interp,cgen,gen,model,diag,util component
+    class api,cli,parse,check,interp,cgen,gen,model,diag,util component
     style jar fill:none,stroke:#888,stroke-dasharray:6 4
 ```
 
@@ -136,17 +138,22 @@ and any may use JSON. The rules behind the arrows, from
 [`ArchitectureTest`](../src/test/java/alang/ArchitectureTest.java):
 
 - **Layers**, bottom-up: JSON, Diagnostics, the Model (`alang.ast` and `alang.types` refer to each
-  other), then Parser, Interpreter, Checker and C backend, with the CLI on top. Nothing uses the CLI.
+  other), then Parser, Interpreter, Checker and C backend, then the CLI, with the embedding API on top.
+  Only the API uses the CLI, so that a host's call runs exactly as `alang call` runs it; nothing uses the
+  API. Its public methods take and return only JDK and `alang.api` types, so every other package can change
+  without breaking a host.
 - **One value per constant**: the checker evaluates constants with `Interpreter.evalConst`, and the C
   backend turns those values into C initializers; the two do not depend on each other.
 - **ANTLR stays in the parser**, and **the AST is written once**: only the parser and the checker set its
   fields, so a checked program can be run, tested and compiled any number of times.
-- **I/O at the edge**: only the CLI touches files, stdin or `System.exit`. No component reads a clock,
+- **I/O at the edge**: only the CLI and the embedding API touch files, and only the CLI stdin or `System.exit`. No component reads a clock,
   randomness or the environment, starts threads, reflects or logs, and no text depends on the host
   locale or charset. The one exception is at the edge too: `alang serve` runs tool calls on threads of
   their own, a watchdog thread stops one that runs past `--timeout`, and with `--watch` a timer thread polls
-  the program's files and swaps in each version that compiles. Each call is still one run of one version on
-  one thread, which another thread can only stop, through its `Meter`.
+  the program's files and swaps in each version that compiles. `serve --http` adds the JDK's HTTP server,
+  whose class alone reads the clock (for its log and metrics), draws random session ids and registers a
+  shutdown hook. Each call is still one run of one version on one thread, which another thread can only
+  stop, through its `Meter`.
 
 ## Dynamic view: a tool call
 

@@ -18,22 +18,28 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
- * `alang serve`: a program's tools over the Model Context Protocol's stdio transport. Each line of stdin
- * is one JSON-RPC 2.0 message, and each answer is one line of stdout; nothing else is written there. The
- * program is checked once, at start, so every call in a session runs the same code.
+ * `alang serve`: a program's tools over the Model Context Protocol. With the stdio transport ({@link #serve}),
+ * each line of stdin is one JSON-RPC 2.0 message, and each answer is one line of stdout; nothing else is
+ * written there. {@link HttpTransport} serves the same messages over Streamable HTTP, one {@link Session}
+ * per client. The program is checked once, at start, so every call in a session runs the same code.
  *
  * <p>Each tools/call runs on a worker thread of its own, up to {@link #WORKERS} at a time, so a long call
  * holds up neither other calls nor the answers to other messages (ping, tools/list, a cancellation); its
  * answer is written when it ends, so answers can come in another order than the requests, as JSON-RPC
  * allows. A call ends within its step budget and its time limit ({@link Watchdog}), and
- * notifications/cancelled stops one early. With {@link Watchdog}, this is the only code that uses threads
+ * notifications/cancelled stops one early. At most {@code maxQueued} calls wait for a worker; one more is
+ * refused at once with {@link #SERVER_BUSY}, so a flood of calls cannot fill the heap. With {@link Watchdog}, this is the only code that uses threads
  * (see ArchitectureTest): each call is still one deterministic run on one thread.
  *
  * <p>With {@link #watch} (`serve --watch`) a timer polls the program's files and serves the program they hold
@@ -56,6 +62,9 @@ final class McpServer {
     static final int METHOD_NOT_FOUND = -32601;
     static final int INVALID_PARAMS = -32602;
     static final int INTERNAL_ERROR = -32603;
+    /** Server-defined JSON-RPC errors: every worker is busy and the queue is full; a call was cancelled. */
+    static final int SERVER_BUSY = -32001;
+    static final int REQUEST_CANCELLED = -32800;
 
     /**
      * The calls that run at once; more wait their turn. A fixed number, not one per processor: the toolchain
@@ -63,9 +72,64 @@ final class McpServer {
      */
     static final int WORKERS = 4;
 
+    /** How many calls may wait for a worker unless --max-queued says otherwise. */
+    static final int MAX_QUEUED = 256;
+
+    /**
+     * What {@link #handle} returns when it started a call: the answer goes to the {@code later} it was given
+     * once the call ends.
+     */
+    static final Map<String, Object> PENDING = java.util.Collections.unmodifiableMap(new java.util.HashMap<>());
+
+    /** Told when each tool call starts and ends, e.g. to log it or count it (see HttpTransport). */
+    interface Observer {
+        /** A call of {@code tool} starts; what is returned comes back to {@link #ended}. */
+        Object started(String tool);
+
+        /** The call ended with {@code report}, as `alang call` prints it; null when it was cancelled. */
+        void ended(Object token, String tool, Map<String, Object> report);
+    }
+
+    private static final Observer NO_OBSERVER = new Observer() {
+        @Override
+        public Object started(String tool) {
+            return null;
+        }
+
+        @Override
+        public void ended(Object token, String tool, Map<String, Object> report) { }
+    };
+
+    /**
+     * One client's state: the calls it has waiting or running, by the {@link #key} of their request id, so that
+     * a cancellation can stop them and ids of two clients never clash; whether it sent notifications/initialized;
+     * and where notifications to it go (null: none can be sent, so it is not told of changed tools).
+     */
+    static final class Session {
+        final Map<Object, Meter> calls = new ConcurrentHashMap<>();
+        volatile boolean initialized;
+        final Consumer<Map<String, Object>> notify;
+
+        Session(Consumer<Map<String, Object>> notify) {
+            this.notify = notify;
+        }
+
+        /** Stops every call of this session, e.g. when it ends; their answers are not sent. */
+        void cancelAll(String why) {
+            for (Meter m : calls.values()) m.stop("cancelled", why);
+        }
+    }
+
     private final long maxSteps;
     private final Watchdog watchdog;
     private final int workers;
+    private final int maxQueued;
+    private volatile Observer observer = NO_OBSERVER;
+    /** Every session that has not ended, and the ones among them that get notifications/tools/list_changed. */
+    private final java.util.Set<Session> sessions = ConcurrentHashMap.newKeySet();
+    private final List<Session> listeners = new CopyOnWriteArrayList<>();
+    private ThreadPoolExecutor pool;
+    private ScheduledExecutorService ticker;
     /** The program served, which a reload replaces, and its main file. */
     private volatile Loaded current;
     /** Whether the client has sent notifications/initialized: notifications/tools/list_changed waits for it. */
@@ -75,20 +139,31 @@ final class McpServer {
     private long pollMillis;
     private PrintStream log;
     /**
-     * The meter of each call that is waiting or running, by the {@link #key} of its request id, so that a
-     * cancellation can stop it.
-     */
-    private final Map<Object, Meter> calls = new ConcurrentHashMap<>();
-
-    /**
      * A server whose calls each get {@code maxSteps} steps and the time limit of {@code watchdog}, with
      * {@code workers} of them running at once.
      */
     McpServer(Source src, Program program, long maxSteps, Watchdog watchdog, int workers) {
+        this(src, program, maxSteps, watchdog, workers, MAX_QUEUED);
+    }
+
+    /** As above, and at most {@code maxQueued} calls wait for a worker. */
+    McpServer(Source src, Program program, long maxSteps, Watchdog watchdog, int workers, int maxQueued) {
+        if (workers < 1 || maxQueued < 1) throw new IllegalArgumentException("workers and maxQueued must be at least 1");
         this.current = new Loaded(src, program);
         this.maxSteps = maxSteps;
         this.watchdog = watchdog;
         this.workers = workers;
+        this.maxQueued = maxQueued;
+    }
+
+    /** Tells {@code o} of every call from now on. */
+    void observe(Observer o) {
+        this.observer = o;
+    }
+
+    /** The number of tools of the program served now. */
+    int toolCount() {
+        return tools(current.program()).size();
     }
 
     /** A program and its main file, whose Source runs its calls. */
@@ -115,34 +190,66 @@ final class McpServer {
         }
     }
 
-    /**
-     * Answers the messages read from {@code in} until it ends, flushing each answer; then waits for the calls
-     * still running, whose answers are written too, and returns.
-     */
-    void serve(InputStream in, PrintStream out) throws IOException {
-        ExecutorService pool = Executors.newFixedThreadPool(workers, r -> {
+    /** Starts the workers, and with {@link #watch} the polling: before the first {@link #handle}. */
+    synchronized void start() {
+        if (pool != null) throw new IllegalStateException("already started");
+        pool = new ThreadPoolExecutor(workers, workers, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(maxQueued), r -> {
             Thread t = new Thread(r, "alang-call");
             t.setDaemon(true);
             return t;
         });
-        ScheduledExecutorService ticker = null;
         if (reloader != null) {
             ticker = Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "alang-watch");
                 t.setDaemon(true);
                 return t;
             });
-            ticker.scheduleWithFixedDelay(() -> reload(out), pollMillis, pollMillis, TimeUnit.MILLISECONDS);
+            ticker.scheduleWithFixedDelay(this::reload, pollMillis, pollMillis, TimeUnit.MILLISECONDS);
         }
+    }
+
+    /** Takes no more calls and waits for those still queued or running, whose answers are sent too. */
+    synchronized void stop() {
+        if (ticker != null) ticker.shutdown();  // no more polls; one under way may finish
+        if (pool == null) return;
+        pool.shutdown();
+        awaitCalls(pool);
+    }
+
+    /** A new client; {@code notify}, unless null, sends it a notification, so it hears of changed tools. */
+    Session newSession(Consumer<Map<String, Object>> notify) {
+        Session s = new Session(notify);
+        sessions.add(s);
+        if (notify != null) listeners.add(s);
+        return s;
+    }
+
+    /** The client is gone: its calls are stopped and it hears nothing more. */
+    void endSession(Session s, String why) {
+        sessions.remove(s);
+        listeners.remove(s);
+        s.cancelAll(why);
+    }
+
+    /**
+     * Answers the messages read from {@code in} until it ends, flushing each answer; then waits for the calls
+     * still running, whose answers are written too, and returns.
+     */
+    void serve(InputStream in, PrintStream out) throws IOException {
+        Consumer<Map<String, Object>> sender = answer -> {
+            if (answer != null) send(out, answer);
+        };
+        Session session = newSession(sender);
+        start();
         try {
             for (byte[] line = readLine(in); line != null; line = readLine(in)) {
-                Map<String, Object> answer = handle(line, pool, out);
-                if (answer != null) send(out, answer);
+                Map<String, Object> answer = handle(session, line, sender);
+                if (answer != null && answer != PENDING) send(out, answer);
             }
         } finally {
-            if (ticker != null) ticker.shutdown();  // no more polls; one under way may finish
-            pool.shutdown();
-            awaitCalls(pool);
+            stop();
+            sessions.remove(session);
+            listeners.remove(session);
         }
     }
 
@@ -150,15 +257,17 @@ final class McpServer {
      * One poll of the program's files: serves the program they now hold, if they changed and it compiled, and
      * tells an initialized client when that changed its tools. A change to a tool's body alone does not.
      */
-    private void reload(PrintStream out) {
+    private void reload() {
         try {
             Program p = reloader.poll(log);
             if (p == null) return;
             List<Object> before = tools(current.program());
             current = new Loaded(p.source, p);
             List<Object> after = tools(p);
-            if (initialized && !before.equals(after)) {
-                send(out, Json.obj("jsonrpc", "2.0", "method", "notifications/tools/list_changed"));
+            if (!before.equals(after)) {
+                for (Session s : listeners) {
+                    if (s.initialized) s.notify.accept(Json.obj("jsonrpc", "2.0", "method", "notifications/tools/list_changed"));
+                }
             }
             // Last, so that whoever reads it can count on the new program and its notification.
             log.print("alang: reloaded " + p.source.path + ": " + after.size() + " tool(s)\n");
@@ -178,14 +287,15 @@ final class McpServer {
     }
 
     /** Waits for the calls still queued or running; if this thread is interrupted, stops them first. */
-    private void awaitCalls(ExecutorService pool) {
+    private void awaitCalls(ThreadPoolExecutor pool) {
         boolean interrupted = false;
         while (true) {
             try {
                 if (pool.awaitTermination(1, TimeUnit.HOURS)) break;
             } catch (InterruptedException e) {
                 interrupted = true;
-                for (Meter m : calls.values()) m.stop("cancelled", "the server is shutting down");
+                for (Session s : sessions) s.cancelAll("the server is shutting down");
+                pool.shutdownNow();
             }
         }
         if (interrupted) Thread.currentThread().interrupt();
@@ -207,12 +317,12 @@ final class McpServer {
     }
 
     /**
-     * The answer to one line: a result or an error for a request, null for a notification, a response
-     * from the client (this server sends no requests), or a blank line. A tools/call request is checked here,
-     * its arguments too, and then runs on {@code pool}, which writes its answer to {@code out} when it ends:
-     * null here too.
+     * The answer to one message of {@code session}: a result or an error for a request, null for a notification,
+     * a response from the client (this server sends no requests), or a blank line. A tools/call request is
+     * checked here, its arguments too, and then runs on a worker, which gives its answer to {@code later} when
+     * it ends (null if it was cancelled): {@link #PENDING} here.
      */
-    private Map<String, Object> handle(byte[] line, ExecutorService pool, PrintStream out) {
+    Map<String, Object> handle(Session session, byte[] line, Consumer<Map<String, Object>> later) {
         String text = Utf8.decode(line);
         if (text == null) return error(null, PARSE_ERROR, "the message is not valid UTF-8");
         if (text.isBlank()) return null;
@@ -237,23 +347,23 @@ final class McpServer {
         try {
             // MCP forbids reusing an id in a session; one still in use would also leave a cancellation unsure
             // which call it stops.
-            if (!notification && calls.containsKey(key(id))) {
+            if (!notification && session.calls.containsKey(key(id))) {
                 throw new RpcException(INVALID_REQUEST, "id " + Json.write(id) + " is in use by a call that has not been answered");
             }
             if (method.equals("tools/call")) {
                 FnDecl f = tool(now.program(), m.get("params"));
                 // A notification wants no answer, and a call changes nothing, so there is nothing to do.
-                return notification ? null : start(id, now.src(), f, m.get("params"), pool, out);
+                return notification ? null : start(session, id, now.src(), f, m.get("params"), later);
             }
             result = switch (method) {
-                case "initialize" -> initialize(m.get("params"));
+                case "initialize" -> initialize(session, m.get("params"));
                 case "notifications/initialized" -> {
-                    initialized = true;
+                    session.initialized = true;
                     yield Json.obj();
                 }
                 case "ping" -> Json.obj();
                 case "tools/list" -> Json.obj("tools", tools(now.program()));
-                case "notifications/cancelled" -> cancel(m.get("params"));
+                case "notifications/cancelled" -> cancel(session, m.get("params"));
                 default -> throw new RpcException(METHOD_NOT_FOUND, "method not found: " + method);
             };
         } catch (RpcException e) {
@@ -262,15 +372,15 @@ final class McpServer {
         return notification ? null : Json.obj("jsonrpc", "2.0", "id", id, "result", result);
     }
 
-    private static Map<String, Object> error(Object id, int code, String message) {
+    static Map<String, Object> error(Object id, int code, String message) {
         return Json.obj("jsonrpc", "2.0", "id", id, "error", Json.obj("code", code, "message", message));
     }
 
-    private Map<String, Object> initialize(Object params) {
+    private Map<String, Object> initialize(Session session, Object params) {
         Object asked = params instanceof Map<?, ?> p ? p.get("protocolVersion") : null;
         String version = asked instanceof String s && PROTOCOL_VERSIONS.contains(s) ? s : PROTOCOL_VERSIONS.get(0);
         return Json.obj("protocolVersion", version,
-            "capabilities", Json.obj("tools", Json.obj("listChanged", reloader != null)),
+            "capabilities", Json.obj("tools", Json.obj("listChanged", reloader != null && session.notify != null)),
             "serverInfo", Json.obj("name", "alang", "version", Main.VERSION),
             "instructions", INSTRUCTIONS);
     }
@@ -317,42 +427,55 @@ final class McpServer {
      * <p>The arguments are decoded here, before the call waits for a worker: arguments that do not fit are
      * answered at once, the return value, and not after the calls ahead of them. Null when the call was started.
      */
-    private Map<String, Object> start(Object id, Source src, FnDecl f, Object params, ExecutorService pool, PrintStream out) {
+    private Map<String, Object> start(Session session, Object id, Source src, FnDecl f, Object params,
+                                      Consumer<Map<String, Object>> later) {
         Map<?, ?> p = (Map<?, ?>) params;
         // "arguments" is optional, and some clients send null for a tool without parameters.
         Object arguments = p.get("arguments") == null ? Json.obj() : p.get("arguments");
         Object[] args;
+        Observer o = observer;
         try {
             args = Main.toolArguments(f, arguments);
         } catch (JsonValues.DecodeException e) {
-            return Json.obj("jsonrpc", "2.0", "id", id, "result", result(f, Main.badArguments(e.getMessage())));
+            Map<String, Object> report = Main.badArguments(e.getMessage());
+            o.ended(o.started(f.name), f.name, report);
+            return Json.obj("jsonrpc", "2.0", "id", id, "result", result(f, report));
         }
         Meter meter = new Meter(maxSteps);
         Object key = key(id);
-        calls.put(key, meter);
-        pool.execute(() -> {
-            // What the client hears if the call fails inside the server, from a bug to a full heap, instead of
-            // waiting for an answer that never comes; such an error still ends the worker thread.
-            Map<String, Object> answer = error(id, INTERNAL_ERROR, "the server failed to run the call");
-            try {
-                Watchdog.Alarm alarm = watchdog.watch(meter);
-                Map<String, Object> report;
+        session.calls.put(key, meter);
+        Object token = o.started(f.name);
+        try {
+            pool.execute(() -> {
+                // What the client hears if the call fails inside the server, from a bug to a full heap, instead of
+                // waiting for an answer that never comes; such an error still ends the worker thread.
+                Map<String, Object> answer = error(id, INTERNAL_ERROR, "the server failed to run the call");
+                Map<String, Object> report = null;
                 try {
-                    report = Main.runTool(src, f, args, meter);
+                    Watchdog.Alarm alarm = watchdog.watch(meter);
+                    try {
+                        report = Main.runTool(src, f, args, meter);
+                    } finally {
+                        alarm.off();
+                    }
+                    boolean cancelled = report.get("error") instanceof Map<?, ?> e && "cancelled".equals(e.get("code"));
+                    answer = cancelled ? null : Json.obj("jsonrpc", "2.0", "id", id, "result", result(f, report));
+                } catch (RuntimeException e) {
+                    answer = error(id, INTERNAL_ERROR, "the server failed to run the call: " + e);
                 } finally {
-                    alarm.off();
+                    // Before the answer, so that the client can use the id again as soon as it has the answer.
+                    session.calls.remove(key, meter);
+                    o.ended(token, f.name, report);
+                    later.accept(answer);
                 }
-                boolean cancelled = report.get("error") instanceof Map<?, ?> e && "cancelled".equals(e.get("code"));
-                answer = cancelled ? null : Json.obj("jsonrpc", "2.0", "id", id, "result", result(f, report));
-            } catch (RuntimeException e) {
-                answer = error(id, INTERNAL_ERROR, "the server failed to run the call: " + e);
-            } finally {
-                // Before the answer, so that the client can use the id again as soon as it has the answer.
-                calls.remove(key, meter);
-                if (answer != null) send(out, answer);
-            }
-        });
-        return null;
+            });
+        } catch (RejectedExecutionException e) {
+            session.calls.remove(key, meter);
+            o.ended(token, f.name, Json.obj("ok", false, "error", Json.obj("code", "busy", "message", "server busy")));
+            return error(id, SERVER_BUSY, "the server is busy: " + workers + " calls are running and " + maxQueued
+                + " are waiting; try again later");
+        }
+        return PENDING;
     }
 
     /**
@@ -361,7 +484,7 @@ final class McpServer {
      * as BigDecimal.equals compares the scale too: 70 and 7E+1 differ. Without converting to BigInteger, which an
      * id such as 1e999999999 would make huge.
      */
-    private static Object key(Object id) {
+    static Object key(Object id) {
         if (id instanceof BigInteger i) return new BigDecimal(i).stripTrailingZeros();
         if (id instanceof BigDecimal d) return d.stripTrailingZeros();
         return id;
@@ -379,9 +502,9 @@ final class McpServer {
      * notifications/cancelled: stops the call with that requestId, if it is still waiting or running, and
      * leaves it unanswered. One that has ended, or that this server never had, is ignored, as MCP asks.
      */
-    private Map<String, Object> cancel(Object params) {
+    private Map<String, Object> cancel(Session session, Object params) {
         if (params instanceof Map<?, ?> p && p.get("requestId") instanceof Object requestId) {
-            Meter meter = calls.get(key(requestId));
+            Meter meter = session.calls.get(key(requestId));
             if (meter != null) meter.stop("cancelled", "the client cancelled the call");
         }
         return Json.obj();
