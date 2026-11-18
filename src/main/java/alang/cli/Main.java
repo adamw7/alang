@@ -74,8 +74,9 @@ public final class Main {
                                        at their limits (empty and full strs and lists of many shapes, the
                                        smallest and largest numbers); report each trap and what hit it
           serve <file.al>              serve the `tool fn` functions to an agent host over MCP: JSON-RPC
-                                       messages, one per line, on stdin and stdout; --watch serves each
-                                       new version of the program's files once it compiles
+                                       messages, one per line, on stdin and stdout, or over HTTP with
+                                       --http; --watch serves each new version of the program's files
+                                       once it compiles
           build <file.al> [-o out.c]   compile to heap-free C99 (no malloc; stack and static data only)
           fmt <file.al>                print the file laid out the one way (indentation, spaces, blank
                                        lines; its line breaks and comments are kept); --write rewrites it,
@@ -112,6 +113,16 @@ public final class Main {
           --max-stops N      once the commands run out, show at most N more stops (debug; default %d)
           --watch            poll the program's files and serve each version that compiles, telling the
                              host when the tools change (serve)
+          --workers N        tool calls that run at once (serve; default %d)
+          --max-queued N     tool calls that may wait for a worker; more are refused as busy (serve;
+                             default %d)
+          --http [HOST:]PORT serve MCP's Streamable HTTP transport at http://HOST:PORT/mcp instead of
+                             stdio, with GET /health and GET /metrics; logs one JSON line per request
+                             and per call on stderr (serve; HOST defaults to 127.0.0.1)
+          --token-file FILE  require `Authorization: Bearer <the file's first line>` on every HTTP request
+                             but /health; needed to listen on anything but a loopback address (serve)
+          --allow-origin O   accept HTTP requests from browser origin O, e.g. https://app.example.com
+                             (serve; may be given more than once)
 
         exit codes: 0 success, 1 errors / traps / failed tests, 2 usage error
         """;
@@ -127,7 +138,8 @@ public final class Main {
         Map.entry("tools", Set.of("--json", "--max-steps", "--max-stack")),
         Map.entry("call", Set.of("--json", "--max-steps", "--max-stack", "--timeout")),
         Map.entry("fuzz", Set.of("--json", "--max-steps", "--max-stack")),
-        Map.entry("serve", Set.of("--max-steps", "--max-stack", "--timeout", "--watch")),
+        Map.entry("serve", Set.of("--max-steps", "--max-stack", "--timeout", "--watch", "--workers", "--max-queued",
+            "--http", "--token-file", "--allow-origin")),
         Map.entry("build", Set.of("-o", "--max-stack")),
         Map.entry("fmt", Set.of("--write", "--check")),
         Map.entry("fix", Set.of("--write", "--json", "--max-stack")),
@@ -140,10 +152,12 @@ public final class Main {
 
     /** The options that take a value, the next argument. */
     private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--timeout", "--filter", "-o",
-        "--break", "--input", "--test", "--call", "--max-stops");
+        "--break", "--input", "--test", "--call", "--max-stops", "--workers", "--max-queued", "--http", "--token-file",
+        "--allow-origin");
 
     private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--timeout",
-        "--filter", "-o", "--write", "--check", "--watch", "--break", "--input", "--test", "--call", "--max-stops");
+        "--filter", "-o", "--write", "--check", "--watch", "--break", "--input", "--test", "--call", "--max-stops",
+        "--workers", "--max-queued", "--http", "--token-file", "--allow-origin");
 
     private final PrintStream out;
     private final PrintStream err;
@@ -164,6 +178,11 @@ public final class Main {
     private String debugTest;
     private String debugTool;
     private int maxStops = DEFAULT_MAX_STOPS;
+    private int workers = McpServer.WORKERS;
+    private int maxQueued = McpServer.MAX_QUEUED;
+    private String http;
+    private String tokenFile;
+    private final List<String> allowOrigins = new ArrayList<>();
 
     /** How many stops `alang debug` shows once its commands have run out. */
     static final int DEFAULT_MAX_STOPS = 1000;
@@ -190,7 +209,7 @@ public final class Main {
     int run(String[] args) {
         if (args.length == 0 || args[0].equals("help") || args[0].equals("--help") || args[0].equals("-h")) {
             out.print(String.format(Locale.ROOT, USAGE, VERSION, Interpreter.DEFAULT_MAX_STEPS, Watchdog.DEFAULT_MILLIS / 1000,
-                Checker.DEFAULT_MAX_STACK, DEFAULT_MAX_STOPS));
+                Checker.DEFAULT_MAX_STACK, DEFAULT_MAX_STOPS, McpServer.WORKERS, McpServer.MAX_QUEUED));
             return args.length == 0 ? 2 : 0;
         }
         String cmd = args[0];
@@ -226,6 +245,11 @@ public final class Main {
                         case "--test" -> debugTest = next(args, ++i, a);
                         case "--call" -> debugTool = next(args, ++i, a);
                         case "--max-stops" -> maxStops = (int) Math.min(Integer.MAX_VALUE, nonNegative(next(args, ++i, a), a));
+                        case "--workers" -> workers = positiveInt(next(args, ++i, a), a);
+                        case "--max-queued" -> maxQueued = positiveInt(next(args, ++i, a), a);
+                        case "--http" -> http = next(args, ++i, a);
+                        case "--token-file" -> tokenFile = next(args, ++i, a);
+                        case "--allow-origin" -> allowOrigins.add(next(args, ++i, a));
                         default -> throw new IllegalStateException(a);
                     }
                 } else {
@@ -341,6 +365,12 @@ public final class Main {
         long n = Long.parseLong(value);
         if (n < 0) throw new UsageException(opt + " must be 0 (no limit) or more, found " + value);
         return n;
+    }
+
+    private static int positiveInt(String value, String opt) {
+        long n = Long.parseLong(value);
+        if (n < 1 || n > 100_000) throw new UsageException(opt + " must be from 1 to 100000, found " + value);
+        return (int) n;
     }
 
     /** Seconds, such as 60 or 0.5, as whole milliseconds (rounded up, so that a limit is never 0 by accident). */
@@ -867,7 +897,7 @@ public final class Main {
      * object holding each parameter, or leaving out one with a default value. Throws a DecodeException that
      * says what does not fit.
      */
-    static Object[] toolArguments(FnDecl f, Object arguments) {
+    public static Object[] toolArguments(FnDecl f, Object arguments) {
         if (!(arguments instanceof Map<?, ?> m)) throw new JsonValues.DecodeException("arguments must be a JSON object");
         for (Object key : m.keySet()) {
             boolean known = f.paramVars.stream().anyMatch(p -> p.name.equals(key));
@@ -887,7 +917,7 @@ public final class Main {
     }
 
     /** The report of a call whose arguments do not fit its tool, which is therefore not made. */
-    static Map<String, Object> badArguments(String message) {
+    public static Map<String, Object> badArguments(String message) {
         return Json.obj("ok", false, "error", Json.obj("code", "bad_arguments", "message", message));
     }
 
@@ -895,7 +925,7 @@ public final class Main {
      * Calls tool {@code f} with {@code args}, from {@link #toolArguments}, and returns the report `alang call`
      * prints, as {@link #callTool} does.
      */
-    static Map<String, Object> runTool(Source src, FnDecl f, Object[] args, Meter meter) {
+    public static Map<String, Object> runTool(Source src, FnDecl f, Object[] args, Meter meter) {
         Map<String, Object> j = Json.obj("ok", false);  // set again below, where it keeps its place as the first key
         CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
         Interpreter in = new Interpreter(src, captured, meter);
@@ -999,15 +1029,69 @@ public final class Main {
             line(err, "check failed: " + r.diags().errorCount() + " error(s)");
             return 1;
         }
+        if (http == null && (tokenFile != null || !allowOrigins.isEmpty())) {
+            throw new UsageException("--token-file and --allow-origin go with --http");
+        }
+        HttpTransport.Config config = http == null ? null : httpConfig();
         try (Watchdog watchdog = new Watchdog(timeoutMillis)) {
-            McpServer server = new McpServer(src, r.program(), maxSteps, watchdog, McpServer.WORKERS);
+            McpServer server = new McpServer(src, r.program(), maxSteps, watchdog, workers, maxQueued);
             if (watch) server.watch(new Reloader(r.program(), maxStack), WATCH_MILLIS, err);
-            server.serve(in, out);
+            if (config == null) {
+                server.serve(in, out);
+                return 0;
+            }
+            HttpTransport transport;
+            try {
+                transport = new HttpTransport(server, config, err);
+            } catch (IllegalArgumentException e) {
+                line(err, "alang: " + e.getMessage());
+                return 2;
+            }
+            try {
+                transport.start();
+            } catch (IOException e) {
+                line(err, "alang: cannot listen on " + config.host() + ":" + config.port() + ": " + e.getMessage());
+                transport.stop();
+                return 1;
+            }
+            transport.stopOnShutdown();
+            transport.await();
         } catch (IOException e) {
             line(err, "alang: cannot read stdin: " + e.getMessage());
             return 1;
         }
         return 0;
+    }
+
+    /** The address --http names, [HOST:]PORT, and the token of --token-file, read once, at start. */
+    private HttpTransport.Config httpConfig() {
+        String host = "127.0.0.1";
+        String port = http;
+        int colon = http.lastIndexOf(':');
+        if (colon >= 0) {
+            host = http.substring(0, colon);
+            port = http.substring(colon + 1);
+            if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
+            if (host.isEmpty()) throw new UsageException("--http takes [HOST:]PORT, found " + http);
+        }
+        int p;
+        try {
+            p = Integer.parseInt(port);
+        } catch (NumberFormatException e) {
+            throw new UsageException("--http takes [HOST:]PORT, found " + http);
+        }
+        if (p < 0 || p > 65535) throw new UsageException("--http: the port must be from 0 to 65535, found " + port);
+        String token = null;
+        if (tokenFile != null) {
+            try {
+                String text = Files.readString(Path.of(tokenFile), StandardCharsets.UTF_8);
+                token = text.lines().findFirst().orElse("").strip();
+            } catch (IOException | RuntimeException e) {
+                throw new UsageException("--token-file: cannot read " + tokenFile + ": " + e.getMessage());
+            }
+            if (token.length() < 16) throw new UsageException("--token-file: the token must be at least 16 characters");
+        }
+        return new HttpTransport.Config(host, p, token, List.copyOf(allowOrigins));
     }
 
     /**

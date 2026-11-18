@@ -102,7 +102,8 @@ and the guide for agents at an address that does not change:
 
 For a JVM host, the jar is in GitHub Packages as `io.github.adamw7:alang` (repository
 `https://maven.pkg.github.com/adamw7/alang`; GitHub asks for a token even to read it), with the ANTLR
-runtime inside and the guide on the classpath at `/alang/AGENTS.md`, ready for a system prompt.
+runtime inside and the guide on the classpath at `/alang/AGENTS.md`, ready for a system prompt. Its API is
+in [Embedding in a JVM host](#embedding-in-a-jvm-host).
 
 ## Quick start
 
@@ -225,10 +226,68 @@ files that compiles, a moment after it is saved, and tells the host when the too
 (`notifications/tools/list_changed`); a version with errors is reported on stderr, and the one before it
 stays served.
 
-Up to four calls run at once, so a slow one holds up neither the others nor `ping` and `tools/list`. Each
+Up to four calls run at once (`--workers N`), so a slow one holds up neither the others nor `ping` and
+`tools/list`; up to 256 more wait (`--max-queued N`), and one beyond that is refused at once as busy. Each
 stops at its step budget, or after `--timeout` seconds (60 by default), with an error result, and the
 host can stop one early with `notifications/cancelled`. When stdin ends, the server finishes the calls it
 has started and exits.
+
+### Over HTTP
+
+For a host that reaches the tools over the network, `--http` serves MCP's Streamable HTTP transport instead
+of stdio:
+
+```sh
+head -c 32 /dev/urandom | base64 > token.txt
+alang serve bill.al --http 0.0.0.0:8080 --token-file token.txt --workers 8
+```
+
+```json
+{"mcpServers": {"bill": {"type": "http", "url": "http://tools.internal:8080/mcp",
+  "headers": {"Authorization": "Bearer <the token>"}}}}
+```
+
+- **Sessions**: `initialize` returns an `Mcp-Session-Id`; each client's request ids and cancellations are its
+  own, and `DELETE /mcp` ends a session. Requests are answered with plain JSON; the server sends no messages
+  of its own, so a client lists the tools again rather than waiting for `list_changed`.
+- **Auth**: with `--token-file`, every request but `/health` needs `Authorization: Bearer <token>`. Without
+  one, the server only listens on a loopback address. Requests from a browser `Origin` are refused unless
+  `--allow-origin` names it.
+- **Health and metrics**: `GET /health` for a load balancer, `GET /metrics` in the Prometheus format (calls
+  by tool and outcome, steps, time, calls in flight, sessions, HTTP status codes).
+- **Logs**: one JSON line per request and per call on stderr, with the session, tool, outcome, steps and
+  milliseconds.
+- **Shutdown**: SIGTERM stops taking requests and finishes the calls under way.
+
+[SPEC.md §10](docs/SPEC.md#10-tools-calling-alang-from-an-agent) has the details.
+
+## Embedding in a JVM host
+
+A Java (or Kotlin, Scala, ...) host can compile and call ALang tools in-process through `alang.api`, the
+jar's one supported API; every other package is internal and can change in any release.
+
+```java
+import alang.api.*;
+
+Compilation c = Alang.compile(Path.of("bill.al"));       // or Alang.compile("bill.al", text)
+if (!c.ok()) {
+    for (Diagnostic d : c.errors()) System.err.println(d + " (" + d.hint() + ")");
+    return;
+}
+Program program = c.program();                            // immutable: share it between threads
+String tools = program.toolsJson();                       // Messages API tool definitions for the model
+
+CallResult r = program.call("split_bill", "{\"total_cents\": 1000, \"people\": 3}",
+    CallOptions.defaults().maxSteps(1_000_000).timeoutMillis(2_000));
+r.ok();           // true
+r.resultJson();   // [334, 333, 333]
+r.toJson();       // the report `alang call` prints: hand it back as the tool result
+```
+
+A call never throws for what the model sends: an unknown tool, bad JSON, arguments that do not fit, a trap,
+the step budget, the time limit and a cancellation (`CallOptions.cancellation(Cancellation)`) all come back as
+a `CallResult` with an `errorCode()`. `Alang.agentsGuide()` returns AGENTS.md for the model's system prompt,
+and `CompileOptions.maxStackBytes` sets the memory budget.
 
 ## Tool results in a prompt
 
@@ -327,7 +386,8 @@ wrapping and saturating arithmetic, and the elementary float functions, bit-iden
 
 The toolchain checks, tests, formats (`alang fmt`) and fixes (`alang fix`) programs, fuzzes every tool at
 its limits (`alang fuzz`), compiles to heap-free C99 (`alang build`), and serves tools over MCP
-(`alang serve`, with `--watch` to pick up each version that compiles). Every call runs within a
+(`alang serve`, over stdio or HTTP, with `--watch` to pick up each version that compiles), and a JVM host
+can do the same in-process through the `alang.api` package. Every call runs within a
 deterministic step budget that bounds its time. [examples/helpers.al](examples/helpers.al) adds tested
 helpers the standard library leaves out, such as a map that keeps its keys in insertion order.
 

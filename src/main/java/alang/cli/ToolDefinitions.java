@@ -45,13 +45,13 @@ import java.util.Set;
  * schema, which also carries the parts of the contract JSON Schema can state. A model that reads
  * `"minimum": 1` does not have to fail a call to learn that `people` must be positive.
  */
-final class ToolDefinitions {
+public final class ToolDefinitions {
     private ToolDefinitions() {}
 
     private static final Set<BinOp> COMPARISONS = EnumSet.of(BinOp.LT, BinOp.LE, BinOp.GT, BinOp.GE, BinOp.EQ);
 
     /** The doc comment, a line per `requires` clause, the return type, and a line per `ensures` clause. */
-    static String description(FnDecl f) {
+    public static String description(FnDecl f) {
         StringBuilder sb = new StringBuilder(f.doc.isEmpty() ? "Calls the ALang function " + f.name + "." : f.doc);
         for (String clause : f.requiresText) sb.append("\nRequires: ").append(clause);
         if (!(f.ret instanceof Type.Void)) sb.append("\nReturns ").append(f.ret).append('.');
@@ -63,7 +63,7 @@ final class ToolDefinitions {
      * An object with one property per parameter, each described by its doc comment and narrowed by the
      * `requires` clauses that compare it, a field of it, or its length with a constant.
      */
-    static Map<String, Object> inputSchema(FnDecl f) {
+    public static Map<String, Object> inputSchema(FnDecl f) {
         Map<String, Object> props = new LinkedHashMap<>();
         List<Object> required = new ArrayList<>();
         for (int i = 0; i < f.paramVars.size(); i++) {
