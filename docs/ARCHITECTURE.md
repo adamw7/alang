@@ -1,44 +1,9 @@
 # Architecture
 
-[C4 model](https://c4model.com) diagrams of ALang: the [system context](#level-1-system-context), its
-[containers](#level-2-containers), the [toolchain's components](#level-3-components-of-the-toolchain) and
-[one tool call](#dynamic-view-a-tool-call); level 4 is the code. Each box names its element type, and
-technology, in brackets; arrows point from user to used; colors follow the C4 key. The diagrams are
-[Mermaid](https://mermaid.js.org) flowcharts, which GitHub renders (Mermaid's own C4 diagrams are
-experimental and cross their arrows). `ArchitectureTest` enforces the component diagram's layering, and
-`DocsTest` fails when its `[Component: ...]` boxes and the toolchain's packages differ.
+[C4](https://c4model.com) diagrams of ALang as Mermaid flowcharts. `ArchitectureTest` enforces the
+component layering; `DocsTest` fails when the `[Component: ...]` boxes and the packages differ.
 
-## Level 1: System context
-
-```mermaid
-flowchart TB
-    agent("<b>AI agent</b><br/><i>[Person]</i><br/><br/>Writes ALang programs and fixes them from coded diagnostics")
-    host["<b>Agent host</b><br/><i>[Software system]</i><br/><br/>An LLM application that registers tool definitions and runs tool calls"]
-    dev("<b>Developer</b><br/><i>[Person]</i><br/><br/>Runs, tests and builds programs; works on the toolchain")
-    alang["<b>ALang</b><br/><i>[Software system]</i><br/><br/>Checks, runs, tests and compiles programs; serves tool fns as JSON tools"]
-    claude["<b>Claude API</b><br/><i>[Software system]</i><br/><br/>Writes the benchmark's tools"]
-    cc["<b>C compiler</b><br/><i>[Software system]</i><br/><br/>gcc or clang"]
-
-    agent -- "Writes .al files; check, test, run<br/>[CLI, --json]" --> alang
-    host -- "tools, call, serve<br/>[CLI, JSON, MCP]" --> alang
-    dev -- "run, test, build<br/>[CLI]" --> alang
-    dev -- "Compiles the generated C99" --> cc
-    alang -- "Benchmark prompts<br/>[HTTPS]" --> claude
-
-    classDef person fill:#08427b,stroke:#052e56,color:#fff
-    classDef system fill:#1168bd,stroke:#0b4884,color:#fff
-    classDef external fill:#999999,stroke:#6b6b6b,color:#fff
-    class agent,dev person
-    class alang system
-    class host,claude,cc external
-```
-
-The toolchain never reaches out: no network, processes, clock, environment or randomness. It reads the
-source file and the files it imports (and stdin, for `call -` and for a `fn main` that takes input) and
-writes stdout, stderr and the `-o` file of `build`. Only the benchmark talks to the Claude API, and the C
-compiler is the user's.
-
-## Level 2: Containers
+## Containers
 
 ```mermaid
 flowchart TB
@@ -78,18 +43,16 @@ flowchart TB
     style sys fill:none,stroke:#888,stroke-dasharray:6 4
 ```
 
-- `bin/alang` runs `mvn package` when `target/alang.jar` is missing or older than `pom.xml`, `grammar/`
-  or `src/main`, and starts the jar under `LC_ALL=C.UTF-8`, so arguments decode the same on every host.
-- The jar shades in the ANTLR runtime. A compiled program is one C99 file, the program plus the runtime
-  [prelude](../src/main/resources/alang/cgen/prelude.c); it writes with `write(2)`, `_write` in binary mode on
-  Windows, or `AL_WRITE` on freestanding targets.
-- The [benchmark](../bench/README.md) runs the jar directly, runs Python solutions in separate
-  processes, and writes `bench/results/*.jsonl`.
+The toolchain never reaches out: no network, processes, clock, environment or randomness. It reads the
+source and its imports (and stdin for `call -` and `fn main(input)`), and writes stdout, stderr and
+`build -o`. `bin/alang` rebuilds the jar when sources are newer and runs it under `LC_ALL=C.UTF-8`. A
+compiled program is one C99 file: the program plus the [prelude](../src/main/resources/alang/cgen/prelude.c),
+writing with `write(2)` (`_write` on Windows, `AL_WRITE` freestanding). Only the
+[benchmark](../bench/README.md) talks to the Claude API.
 
-## Level 3: Components of the toolchain
+## Components of the toolchain
 
-One component per Java package; the generated parser is built from
-[`grammar/ALang.g4`](../grammar/ALang.g4) on every build.
+One component per Java package; the parser is generated from [`grammar/ALang.g4`](../grammar/ALang.g4).
 
 ```mermaid
 flowchart TB
@@ -133,32 +96,24 @@ flowchart TB
     style jar fill:none,stroke:#888,stroke-dasharray:6 4
 ```
 
-Most arrows into the bottom two components are left out: every component reports through Diagnostics,
-and any may use JSON. The rules behind the arrows, from
+Every component reports through Diagnostics and may use JSON. The rules, from
 [`ArchitectureTest`](../src/test/java/alang/ArchitectureTest.java):
 
-- **Layers**, bottom-up: JSON, Diagnostics, the Model (`alang.ast` and `alang.types` refer to each
-  other), then Parser, Interpreter, Checker and C backend, then the CLI, with the embedding API on top.
-  Only the API uses the CLI, so that a host's call runs exactly as `alang call` runs it; nothing uses the
-  API. Its public methods take and return only JDK and `alang.api` types, so every other package can change
-  without breaking a host.
-- **One value per constant**: the checker evaluates constants with `Interpreter.evalConst`, and the C
-  backend turns those values into C initializers; the two do not depend on each other.
-- **ANTLR stays in the parser**, and **the AST is written once**: only the parser and the checker set its
-  fields, so a checked program can be run, tested and compiled any number of times.
-- **I/O at the edge**: only the CLI and the embedding API touch files, and only the CLI stdin or `System.exit`. No component reads a clock,
-  randomness or the environment, starts threads, reflects or logs, and no text depends on the host
-  locale or charset. The one exception is at the edge too: `alang serve` runs tool calls on threads of
-  their own, a watchdog thread stops one that runs past `--timeout`, and with `--watch` a timer thread polls
-  the program's files and swaps in each version that compiles. `serve --http` adds the JDK's HTTP server,
-  whose class alone reads the clock (for its log and metrics), draws random session ids and registers a
-  shutdown hook. Each call is still one run of one version on one thread, which another thread can only
-  stop, through its `Meter`.
+- **Layers**, bottom-up: JSON, Diagnostics, Model, then Parser, Interpreter, Checker and C backend, then
+  the CLI, with the API on top. Only the API uses the CLI, so a host's call runs exactly as `alang call`;
+  its public methods use only JDK and `alang.api` types.
+- **One value per constant**: the checker evaluates constants with `Interpreter.evalConst`; the C backend
+  turns those values into C initializers.
+- **ANTLR stays in the parser**; **the AST is written once**, by the parser and the checker.
+- **I/O at the edge**: only the CLI and API touch files, only the CLI stdin or `System.exit`. Nothing reads
+  a clock, randomness or the environment, reflects, logs or depends on the locale. The exceptions are in
+  `serve`: call threads, a `--timeout` watchdog, the `--watch` poller, and `HttpTransport` (clock for logs
+  and metrics, random session ids, a shutdown hook). Each call is still one run on one thread, which
+  another can only stop through its `Meter`.
 
-## Dynamic view: a tool call
+## A tool call
 
-`alang call prog.al word_counts '{"text": "a b a"}'`, step by step. `run` and `test` take the same path
-to the interpreter; `build` hands the checked program to the C backend instead.
+`run` and `test` take the same path to the interpreter; `build` hands the checked program to the C backend.
 
 ```mermaid
 sequenceDiagram
@@ -185,6 +140,3 @@ sequenceDiagram
     Interp-->>CLI: JSON value, or bad_result (NaN, infinity)
     CLI-->>Host: {"ok": true, "result": [...], "stdout": "", "steps": 45}
 ```
-
-Every step is deterministic: the same program and arguments give the same bytes, step count and trap on
-every run, machine and locale.

@@ -635,9 +635,8 @@ typed `let`/`var`, a constant, an assignment with `=`, or a `return`, or for `sp
 `words` check each piece in turn, first that the list has room for it, then that it fits a `str[K]`;
 `join` and `replace` check the whole length first.
 
-**Text that may not fit.** Input is untrusted, and one overlong line should not stop a program. A loop
-over the pieces never traps on their size or number, so it can skip or report what does not fit, and it
-builds no list, so it scales to an input of any size the program accepts:
+**Text that may not fit.** A loop over the pieces never traps on their size or number and builds no list,
+so it scales to any input the program accepts:
 
 ```alang
 /// Sums the integers on the lines of `text`; lines too long or not integers are counted as bad.
@@ -694,33 +693,6 @@ the type's range, traps (R0009). `is_int(s)` says whether `i64(s)` succeeds; for
 to `i64` and check the range. `f64(s)` reads a decimal number such as `19.99` (§6), and `is_float(s)`
 says whether it succeeds. `parse_i64(s)` and `parse_f64(s)` do both at once: an `Option`, `Option.None` for
 text the conversion would trap on.
-
-```alang
-/// Sums the integers in a comma-separated list, skipping empty items; -1 if an item is not an integer.
-tool fn sum_csv(line: str[256]) -> i64 {
-    var total: i64 = 0;
-    for item in split(line, ',') {
-        let t: str[256] = trim(item);
-        if len(t) == 0 {
-            continue;
-        }
-        if not is_int(t) {
-            return -1;
-        }
-        total += i64(t);
-    }
-    return total;
-}
-
-fn main() {
-    print(sum_csv("1, 2,, 40 "));
-}
-
-test "empty items are skipped and bad ones reported" {
-    assert sum_csv("1, 2,, 40 ") == 43;
-    assert sum_csv("1, two") == -1;
-}
-```
 
 Text is bytes, and these read and write it as UTF-8:
 
@@ -806,53 +778,36 @@ E0216. Their arguments are evaluated and checked before any of the text is writt
 
 ## 10. Tools: calling ALang from an agent
 
-A `tool fn` can be called with JSON; only those of the file given on the command line are tools, not
-those of the files it imports (§3.1). `alang tools file.al` prints Anthropic-style tool definitions
-(`name`, `description` from the `///` comment, `input_schema`). The doc comments of its parameters, and
-of the structs, enums, fields and variants they use, become the `description`s in `input_schema`; a
-documented variant without a payload is listed as a `{"const": "Variant"}` alternative of its own, so it
-can carry one.
+The `tool fn`s of the file given on the command line (not of its imports, §3.1) can be called with JSON.
+`alang tools file.al` prints Anthropic-style definitions: `name`, `description` (the `///` comment) and
+`input_schema`, whose `description`s come from the doc comments of the parameters and of the structs,
+enums, fields and variants they use (a documented payload-less variant is a `{"const": "Variant"}`
+alternative of its own).
 
-The description also lists every `requires` clause, the return type and every `ensures` clause, each on a
-line of its own. A `requires` clause that compares a parameter, a field of one, or the `len` of either with
-a constant expression also narrows the schema, so the model sees the limit before it calls:
-`requires people > 0 and people <= 16` gives `"minimum": 1, "maximum": 16`. A bound on the `len` of a
-list sets `minItems`/`maxItems`; on a `str`, whose `len` counts bytes while JSON Schema counts
-characters, an upper bound sets `maxLength` and a lower one only `"minLength": 1`. Other clauses are only
-described. The schema never rejects a call the contract accepts, and the call still checks every clause
-(R0006).
+The description also lists each `requires` clause, the return type and each `ensures` clause, one per line.
+A `requires` that compares a parameter, a field of one, or the `len` of either with a constant expression
+also narrows the schema: `requires people > 0 and people <= 16` gives `"minimum": 1, "maximum": 16`; a
+list `len` bound sets `minItems`/`maxItems`; on a `str` (bytes vs. JSON characters) an upper bound sets
+`maxLength` and a lower one only `"minLength": 1`. The schema never rejects a call the contract accepts,
+and the call still checks every clause (R0006). `input_examples` holds up to three distinct argument
+objects from calls of the tool in `test` blocks with all-constant arguments, in order, each run first
+(within `--max-steps`) and kept only if its result is JSON-representable.
 
-`input_examples` shows the model up to three distinct argument objects, taken from the calls of the tool
-in `test` blocks whose arguments are all constant expressions, in the order the tests make them. Each call
-is run first (within `--max-steps`), and only one that returns a result JSON can represent becomes an
-example, so every example passes the contract and therefore fits the schema. A tool that no test calls
-that way has no `input_examples`.
+`alang call file.al name '{"arg": ...}'` prints `{"ok": true, "result": ..., "stdout": "...", "steps": N}`
+or `{"ok": false, "error": {...}}`. `-` reads the arguments from stdin (UTF-8 only); none means `{}`.
+`stdout` keeps the first 1 MiB, then adds `"stdout_truncated": true` and `"stdout_bytes"`. `steps` is the
+deterministic cost (§8), reported also for a trap or `bad_result`, not for a call refused before running.
+`--timeout SECONDS` (60; 0 for none) is a machine-dependent backstop, not a trap:
+`{"ok": false, "error": {"code": "timeout", ...}, "stdout": "...", "steps": N}`.
 
-`alang call file.al name '{"arg": ...}'`
-runs one call and prints `{"ok": true, "result": ..., "stdout": "...", "steps": N}` or
-`{"ok": false, "error": {...}}`. With `-` in place of the JSON the arguments are read from stdin (as
-UTF-8; other bytes are an error); with nothing they are `{}`. `stdout` keeps the first 1 MiB of output;
-past that, `"stdout_truncated": true` and `"stdout_bytes"` (the full length) are added. `steps` is the
-call's cost (§8): the statements it ran and the data they went through, the same on every run; a call that
-ran into a trap or `bad_result` reports it too, one refused before it ran does not.
-
-`--timeout SECONDS` (default 60; 0 for none) stops a call that runs longer, as a backstop to the step
-budget for a host that must answer in time: the report is then
-`{"ok": false, "error": {"code": "timeout", "message": "..."}, "stdout": "...", "steps": N}`. It is the one
-limit that depends on the machine, so it is not a trap, and where it stops a call can differ from run to
-run; within the default step budget a call ends long before it.
-
-`alang fuzz file.al` calls every tool, and a `fn main(input: str[N])` with its input, with arguments at
-the limits of the schema: the plainest arguments (those of the first `input_examples`, if any), then one
-parameter at a time over values of its type within its bounds: the smallest and largest numbers, `0`, `1`
-and `-1`; empty and full strs of many shapes (one long word, words that all differ separated by spaces,
-commas, semicolons, tabs or lines, "name number" and "key: value" lines, rows of 1 to 6 fields, numbers,
-separators alone); empty, one-element and full lists and arrays, sets and maps, full ones also of the largest
-and of the smallest numbers; every enum variant; each struct field in
-turn. It reports each distinct trap, by code and place, with the first arguments that hit it, and exits
-with 1 if there is one. A failed `requires` of the tool itself is the caller's fault and is left out; one
-of a function it calls is not. The calls are the same on every run, at most 200 per tool, each within
-`--max-steps`.
+`alang fuzz file.al` calls every tool, and a `fn main(input: str[N])`, with the first `input_examples` (if
+any), then varies one parameter at a time within its bounds: extreme numbers, `0`, `1`, `-1`; empty and
+full strs of many shapes (one long word, distinct words with various separators, "name number" and
+"key: value" lines, rows of 1 to 6 fields, numbers, separators alone); empty, one-element and full
+collections, full ones also of extreme numbers; every enum variant; each struct field. It reports each
+distinct trap (code and place) with the first arguments that hit it, exiting 1 if any. A failed `requires`
+of the tool itself is left out; one of a function it calls is not. At most 200 calls per tool, the same
+on every run, each within `--max-steps`.
 
 | ALang type | JSON |
 |------------|------|
@@ -869,68 +824,50 @@ of a function it calls is not. The calls are the same on every run, at most 200 
 | `set[T; N]` | array of at most N distinct items, in any order |
 | enum | `"Variant"` without payload, `{"Variant": [v1, v2]}` with |
 
-Arguments must be strict JSON (RFC 8259: ASCII digits, no leading zeros, escaped control characters,
-paired surrogates) and are validated against the parameter types before the call; unknown, missing or
-duplicate keys are errors. A parameter with a default value (§5) is optional: the schema leaves it out of
-`required` and shows the value as its `"default"` (unless JSON cannot write it, as for a NaN), a call that
-leaves it out gets the default, and an example from a test call that leaves it out leaves it out too. With no I/O, no heap and bounded loops, a tool written by an agent is safe to
-run: it cannot touch the host, cannot exhaust memory, and terminates.
+Arguments must be strict JSON (RFC 8259) and are validated against the parameter types before the call;
+unknown, missing or duplicate keys are errors. A parameter with a default (§5) is optional: left out of
+`required`, shown as `"default"` (unless JSON cannot write it), and supplied when absent.
 
-`alang serve file.al` serves the same tools over the Model Context Protocol's stdio transport: JSON-RPC
-2.0 messages, one per line, on stdin and stdout, until stdin ends. It answers `initialize` (protocol
-revisions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05; a client asking for another gets the
-newest), `ping`, `tools/list` and `tools/call`, and ignores notifications. A tool's `inputSchema` and
-description are those of `alang tools`; a tool that returns a value also has an `outputSchema`,
-`{"result": <schema of the return type>}`, and every tool is annotated read-only, not destructive,
-idempotent and closed-world. The text of a call's result is the JSON `alang call` prints; a successful
-call of a tool that returns a value also gives `{"result": value}` as `structuredContent`; and a call that
-fails, from `bad_arguments` to a trap or `timeout`, is a result with `"isError": true`; `"arguments"` may be
-left out or `null` for none. Only a name that is not a `tool fn` is a JSON-RPC error (-32602), and so is a
-request whose id is that of a call not yet answered (-32600), as MCP forbids reusing an id. The program is
-checked once, at start: one with errors starts no server, and its diagnostics, like any warning, go to
-stderr, which is the only other output.
+`alang serve file.al` serves the tools over MCP's stdio transport (JSON-RPC 2.0, one message per line,
+until stdin ends). It answers `initialize` (revisions 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05;
+otherwise the newest), `ping`, `tools/list` and `tools/call`, and ignores notifications. Tools carry the
+`alang tools` schema and description, an `outputSchema` `{"result": <return type schema>}` when they return
+a value, and the annotations read-only, not destructive, idempotent, closed-world. A call's text is what
+`alang call` prints; a successful value is also `structuredContent` `{"result": value}`; any failure is a
+result with `"isError": true`. `"arguments"` may be absent or `null`. JSON-RPC errors: an unknown tool
+(-32602) and a reused id of a pending call (-32600). A program with errors starts no server; diagnostics
+go to stderr, the only other output.
 
-`alang serve file.al --watch` also polls the program's files, the main one and each it imports (an
-import that does not exist yet included), and serves the version they hold once two polls 0.3 s apart
-find the same text and it compiles; each request is handled with the program current when it is read, so
-a call runs one version from start to end. `initialize` then reports `"listChanged": true`, and when a
-new version changes the tool definitions (not when only a body changes) the server sends
-`notifications/tools/list_changed`, once the client has sent `notifications/initialized`. A version with
-errors is reported on stderr, and the one before it stays served. Each reload is logged there too.
+`--watch` polls the program's files (imports included, even missing ones) and serves a new version once
+two polls 0.3 s apart agree and it compiles; each request uses the version current when read.
+`initialize` reports `"listChanged": true`, and a change to the tool definitions sends
+`notifications/tools/list_changed` after `notifications/initialized`. A version with errors is reported on
+stderr and the previous one stays; each reload is logged.
 
-Calls run at the same time, up to `--workers` (4 by default), each on a thread of its own and each still
-one deterministic run; more wait their turn, up to `--max-queued` (256 by default), and a call beyond that
-is refused at once with the JSON-RPC error -32001 (server busy). So a long call holds up neither the others nor the answers to `ping`, `tools/list`
-and the rest, which come at once; a call's arguments are checked before it waits, so `bad_arguments` comes
-at once too. A call's answer is written when it ends, so answers can come in another order than the
-requests, as JSON-RPC allows. Each call gets `--max-steps` and `--timeout` (60 s by default).
-`notifications/cancelled` stops a call that is running or waiting, which then gets no answer, as MCP asks;
-a numeric `requestId` names the call with the same value (`7.0` is `7`), and one for a call that has ended
-is ignored. When stdin ends, the server finishes the calls it has
-started, writes their answers, and exits.
+Up to `--workers` (4) calls run at once, each on its own thread and still deterministic; up to
+`--max-queued` (256) wait, and more are refused with -32001 (server busy). Other requests, and
+`bad_arguments`, are answered at once; answers may come out of order. Each call gets `--max-steps` and
+`--timeout`. `notifications/cancelled` stops a running or waiting call, which gets no answer (a numeric
+`requestId` matches by value; one for an ended call is ignored). When stdin ends, the server finishes its
+calls and exits.
 
-`alang serve file.al --http [HOST:]PORT` serves the same messages over MCP's Streamable HTTP transport
-instead, at `http://HOST:PORT/mcp` (HOST is 127.0.0.1 unless given). Each `POST /mcp` carries one
-JSON-RPC message: a request is answered with one `application/json` response, once its call ends; a
-notification or a response gets 202 and no body. `initialize` starts a session and returns its id in the
-`Mcp-Session-Id` header, which every later message must carry (400 without it, 404 for one that has ended);
-request ids, the rule against reusing one, and `notifications/cancelled` are per session, and a cancelled
-request is answered with the error -32800. `DELETE /mcp` ends a session and stops its calls; a session
-unused for an hour ends on its own, and at most 1024 are open. The server sends no messages of its own, so
-`GET /mcp` is 405 and `listChanged` is false, also with `--watch`: a client lists the tools again. A request
-with an unsupported `MCP-Protocol-Version` header is 400, and a body over 4 MiB is 413.
+`--http [HOST:]PORT` serves MCP's Streamable HTTP transport at `http://HOST:PORT/mcp` (HOST defaults to
+127.0.0.1). Each `POST /mcp` carries one message: a request gets one `application/json` response when its
+call ends; a notification or response gets 202. `initialize` returns an `Mcp-Session-Id` that later
+messages must carry (400 without, 404 once ended); ids and cancellations are per session, and a cancelled
+request gets -32800. `DELETE /mcp` ends a session and its calls; sessions idle for an hour end, at most
+1024 are open. The server sends nothing of its own: `GET /mcp` is 405 and `listChanged` false. An
+unsupported `MCP-Protocol-Version` is 400; a body over 4 MiB is 413.
 
-`--token-file FILE` makes every request but `GET /health` need `Authorization: Bearer TOKEN`, where TOKEN
-is the file's first line (at least 16 characters), compared in constant time; without it the server
-refuses to listen on any address but a loopback one. A request with an `Origin` header is refused (403)
-unless `--allow-origin` names that origin, or it is on this machine while the server listens only there.
-`GET /health` returns `{"status": "ok", "version": ..., "tools": n}`, and `GET /metrics` counters in the
-Prometheus text format: `alang_tool_calls_total{tool, outcome}` (outcome `ok` or the error code),
-`alang_tool_call_steps_total`, `alang_tool_call_seconds_sum` and `_count`, `alang_tool_calls_in_flight`,
-`alang_sessions` and `alang_http_requests_total{status}`. Each request and each call is logged on stderr
-as one line of JSON (`"event": "request"` or `"call"`, with the time, session, tool, outcome, steps and
-milliseconds). SIGINT or SIGTERM stops the server: it takes no more requests and finishes the calls it has
-started.
+`--token-file FILE` requires `Authorization: Bearer TOKEN` on every request but `GET /health` (TOKEN: the
+file's first line, at least 16 characters, compared in constant time); without it the server listens only
+on loopback. A request with an `Origin` is refused (403) unless `--allow-origin` names it, or it is local
+and the server listens only locally. `GET /health` returns `{"status": "ok", "version": ..., "tools": n}`;
+`GET /metrics` gives Prometheus counters `alang_tool_calls_total{tool, outcome}`,
+`alang_tool_call_steps_total`, `alang_tool_call_seconds_sum`/`_count`, `alang_tool_calls_in_flight`,
+`alang_sessions`, `alang_http_requests_total{status}`. Each request and call is logged on stderr as a JSON
+line (`"event": "request"` or `"call"`). SIGINT or SIGTERM stops accepting requests and finishes the calls
+under way.
 
 ## 11. Runtime errors (traps)
 
@@ -985,25 +922,19 @@ breakpoints before the first command.
 | `help` | `h` | The commands. |
 | `quit` | `q` | Ends the session, and the program with it. |
 
-A stop is before a statement runs. A line breakpoint stops where the run reaches its line anew: at a statement
-that starts on the line, unless the statement before it in the same frame started on that line too, further
-left. So `a; b;` and `if c { a; }` on one line stop once, a loop body on lines of its own stops once per
-iteration, and `for i in 0..3 { n += i; }` on one line stops as the loop starts and then each time it goes
-back round.
+A stop is before a statement runs. A line breakpoint stops where the run reaches its line anew: at a
+statement starting on the line, unless the previous statement of the frame started on it too. So `a; b;`
+on one line stops once, a loop body on its own lines once per iteration, and a one-line
+`for i in 0..3 { n += i; }` as the loop starts and each time round.
 
-An expression of `print` or of a condition is checked as if it were written at the statement the frame is
-at, with the variables in scope there, the constants and the functions of the program; it is then evaluated
-on a copy of the frame, with a budget of its own (10 million steps) that the program's steps do not include.
-A call with a `mut` argument is refused (E0215), so an expression cannot change the program; what a function
-it calls prints is shown with its value. A condition that does not check where its breakpoint is reached (a
-name not yet in scope, a value that is no bool) is reported once for that place, as `condition_skipped`,
-and does not stop there; one that traps when it is evaluated stops, and says so.
-A variable is in scope from the statement after its declaration to the end of its block; a loop's
-variables are in scope in its body, and the names a match arm binds in the arm. A trap always stops, where
-it happens and before the stack unwinds: `where`, `frame`, `locals` and `print` show the state that led to
-it, and any command that resumes then ends the program with the trap, reported as `run` reports it. Values
-are written as trap messages write them, strs in quotes; one longer than 2000 characters is cut, with the
-count of the rest.
+A `print` or condition expression is checked as if written at the frame's statement (its variables in
+scope, the program's constants and functions), then evaluated on a copy of the frame with its own budget
+of 10 million steps. A call with a `mut` argument is refused (E0215), so it cannot change the program; what
+it prints is shown with its value. A condition that does not check where it is reached is reported once
+there as `condition_skipped` and does not stop; one that traps stops and says so. A variable is in scope
+from the statement after its declaration to the end of its block; loop variables in the body, match
+bindings in the arm. A trap always stops before the stack unwinds; resuming then ends the program with the
+trap, as `run` reports it. Strs are shown in quotes; values over 2000 characters are cut.
 
 When the commands run out, as they do at once with `< /dev/null`, the program runs on: each later stop is
 shown with the variables in scope and passed, up to `--max-stops` (1000), after which it runs to its end
