@@ -1698,9 +1698,10 @@ class CliTest {
         // Files beside the code do not count; a CRLF checkout of the same code has the same hash.
         write("vendor/text/NOTES.md", "changed\n");
         write("vendor/text/fmt.al", "fn shout(s: str[32]) -> str[32] {\r\n    return to_upper(s);\r\n}\r\n");
-        assertEquals(oneLine("{\"ok\": true, \"manifest\": \"" + dir.resolve("alang.json") + "\", \"packages\": [{\"name\": \"text\", "
-                + "\"path\": \"" + dir.resolve("vendor/text") + "\", \"version\": \"1.2.0\", \"pinned\": \"" + sha.group(1) + "\", "
-                + "\"sha256\": \"" + sha.group(1) + "\", \"status\": \"ok\"}]}"),
+        // Paths are shown with / on every OS.
+        String base = dir.toString().replace(File.separatorChar, '/');
+        assertEquals(Json.write(Json.obj("ok", true, "manifest", base + "/alang.json", "packages", List.of(Json.obj("name", "text",
+                "path", base + "/vendor/text", "version", "1.2.0", "pinned", sha.group(1), "sha256", sha.group(1), "status", "ok")))) + "\n",
             run("deps", prog.toString(), "--json").out());
 
         write("vendor/text/fmt.al", "fn shout(s: str[32]) -> str[32] {\n    return to_lower(s);\n}\n");
