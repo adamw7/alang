@@ -102,6 +102,7 @@ final class AstBuilder {
             for (FieldDeclContext f : s.fieldDecl()) {
                 Field field = new Field(span(f.identifier()), f.identifier().getText(), type(f.type()));
                 field.doc = docComment(f.getStart());
+                if (f.expression() != null) field.def = expr(f.expression());
                 fields.add(field);
             }
             return new StructDecl(span(s.identifier()), s.identifier().getText(), fields, generics(s.typeParams()));
@@ -380,7 +381,8 @@ final class AstBuilder {
     }
 
     private While whileLoop(Span sp, WhileStmtContext w) {
-        return new While(sp, expr(w.expression(0)), expr(w.expression(1)), block(w.block()));
+        return new While(sp, w.pattern() == null ? null : pattern(w.pattern()), expr(w.expression(0)), expr(w.expression(1)),
+            block(w.block()));
     }
 
     /** `for [i,] x in [rev] from[..to | ..=to [step k]] { }`. */
@@ -640,21 +642,9 @@ final class AstBuilder {
             Span ts = span(l.LIST().getSymbol(), l.RBRACK().getSymbol());
             return new Resize(sp, new ListRef(ts, type(l.type()), expr(l.expression(0))), expr(l.expression(1)));
         }
-        if (ctx instanceof StructExprContext s) {
-            List<FieldInit> inits = new ArrayList<>();
-            for (FieldInitContext f : s.fieldInit()) {
-                inits.add(new FieldInit(span(f.identifier()), f.identifier().getText(), expr(f.expression())));
-            }
-            return new StructLit(sp, s.identifier().getText(), inits);
-        }
+        if (ctx instanceof StructExprContext s) return structLit(sp, null, s.identifier().getText(), s.structInit());
         if (ctx instanceof QualifiedStructExprContext s) {
-            List<FieldInit> inits = new ArrayList<>();
-            for (FieldInitContext f : s.fieldInit()) {
-                inits.add(new FieldInit(span(f.identifier()), f.identifier().getText(), expr(f.expression())));
-            }
-            StructLit lit = new StructLit(sp, s.identifier(1).getText(), inits);
-            lit.qualifier = s.identifier(0).getText();
-            return lit;
+            return structLit(sp, s.identifier(0).getText(), s.identifier(1).getText(), s.structInit());
         }
         if (ctx instanceof QualifiedVariantExprContext v) {
             VariantCall vc = new VariantCall(sp, v.identifier(1).getText(), v.identifier(2).getText(), args(v.argList()));
@@ -679,6 +669,29 @@ final class AstBuilder {
         List<Expr> elems = new ArrayList<>();
         for (ExpressionContext e : a.expression()) elems.add(expr(e));
         return new ArrayLit(sp, elems);
+    }
+
+    /**
+     * `P(x: 1, ..base)`: the fields it names, and the value the others come from. A second `..` is kept as the base
+     * expression of a field named "..", which the checker reports.
+     */
+    private StructLit structLit(Span sp, String qualifier, String name, List<StructInitContext> inits) {
+        List<FieldInit> fields = new ArrayList<>();
+        Expr base = null;
+        for (StructInitContext i : inits) {
+            FieldInitContext f = i.fieldInit();
+            if (f != null) {
+                fields.add(new FieldInit(span(f.identifier()), f.identifier().getText(), expr(f.expression())));
+            } else if (base == null) {
+                base = expr(i.expression());
+            } else {
+                fields.add(new FieldInit(span(i), "..", expr(i.expression())));
+            }
+        }
+        StructLit lit = new StructLit(sp, name, fields);
+        lit.qualifier = qualifier;
+        lit.base = base;
+        return lit;
     }
 
     private List<Arg> args(ArgListContext ctx) {

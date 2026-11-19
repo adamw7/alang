@@ -1,0 +1,7 @@
+Config(retries: 3, name: "job", verbose: false, limits: [5, 10])
+Config(retries: 9, name: "job", verbose: false, limits: [5, 10]) true
+Config(retries: 9, name: "other", verbose: true, limits: [5, 10])
+Point(x: 4, y: 0) Point(x: 0, y: 0) Point(x: 7, y: 0) Point(x: 4, y: 7)
+Point(x: 1, y: 0) Point(x: 0, y: 0)
+Wrap(inner: Point(x: 4, y: 0), label: "w") Wrap(inner: Point(x: 4, y: 0), label: "z") Wrap(inner: Point(x: 4, y: 1), label: "z")
+Pair(first: 1, second: true, tag: 112) Pair(first: 1, second: false, tag: 112) Pair(first: 1, second: false, tag: 113)

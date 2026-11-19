@@ -75,18 +75,25 @@ all copy, so two variables never share storage (except through a `mut` parameter
 **Assignability.** A value of type `A` can be stored where `B` is expected only if `A` and `B` are the
 same type, or both are `str[M]`/`str[N]`, or both are `list[T; M]`/`list[T; N]`, with `M <= N`
 (widening). Everything else needs an explicit conversion: `str[N](s)` and `list[T; N](xs)` give a str or
-list of capacity N, larger or smaller, and trap (R0004) when the value does not fit (§6). Arrays never
+list of capacity N, larger or smaller, and trap (R0004) when the value does not fit (§6). `str[N](x)` of a
+number or bool is its text, as `print` writes it: `str[8](42)` is `"42"` (R0004 if it is longer than N). Arrays never
 convert to lists, but an array **literal** `[a, b, c]` (or `[v; n]`) can initialize a list with enough
 capacity, and `[]` is the empty list.
 
-**Structs** are built with named arguments, every field exactly once, in any order:
-`Point(x: 1.0, y: 2.0)`; fields are read and written with `p.x`. A struct cannot contain itself,
-directly or indirectly (E0403): store linked items in a list and refer to them by index.
+**Structs** are built with named arguments, each field at most once, in any order:
+`Point(x: 1.0, y: 2.0)`; fields are read and written with `p.x`. A field may have a default value, a
+constant of its type (`retries: i64 = 3`, E0209 otherwise), which a struct value that leaves the field out
+takes; every other field must be given (E0213). `Config()` builds a struct whose fields all have defaults.
+`Point(..p, y: 0.0)` takes the fields it does not name from `p`, a variable, a constant or a field of one
+(E0213 for anything else, which is read once per field: store it first), of the same struct type; the `..`
+may come anywhere among the fields. A field whose type mentions a type parameter has no default (E0218). A
+struct cannot contain itself, directly or indirectly (E0403): store linked items in a list and refer to them
+by index.
 
 ```
 struct Point {
     x: f64,
-    y: f64,
+    y: f64 = 0.0,
 }
 
 enum Shape {
@@ -267,7 +274,7 @@ package itself: its manifest is part of its hash.
 | binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;`, `let Point(x: px, y: _): Point = p;` (a pattern that always matches) |
 | assignment | `place = expr;` and `+= -= *= /= %=` |
 | condition | `if c { } else if c { } else { }`; any condition may be `let Pattern = expr` (`if let Option.Some(v) = m { }`) |
-| loops | `while c limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`; `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
+| loops | `while c limit n { }`, `while let Pattern = expr limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`; `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
 | labels | `outer: for ... { }` or `outer: while ... { }`, then `break outer;` or `continue outer;` from a loop inside it |
 | match | `match e { Pattern => { } ... }` (and as a value: `match e { Pattern => value, ... }`, §6) |
 | jumps | `break;` `continue;` `return;` `return expr;` |
@@ -281,6 +288,11 @@ package itself: its manifest is part of its hash.
 - `while c limit n`: `n` (any integer type) is evaluated once, before the first test of `c`. The program
   traps (R0008) when the body is about to run for the `n + 1`-th time. The limit is a promise about the
   algorithm, e.g. `limit 64` for a binary search over a 64-bit range.
+- `while let P = e limit n`: before each iteration `e` is evaluated and matched against `P`; the loop ends
+  when it does not match, and otherwise the body runs with the names `P` binds, as an arm of a `match` would.
+  The test that ends the loop is not an iteration: `while let Option.Some(x) = next(xs) limit 4` over four
+  values runs four times. The pattern need not cover every value. `e` may be a call with `mut` arguments, which
+  then runs before each iteration: `while let Option.Some(x) = next(mut queue) limit 64 { }`.
 - `for i in a..b`: `a` and `b` are evaluated once and are integers of the same type, which `i` has
   (`i64` for literals). `a..=b` includes `b`. `step k` (`k` of the same type, evaluated once after the bounds)
   counts by `k`: `0..10 step 3` is 0, 3, 6, 9; a step that is not positive traps (R0013), and a literal one is
@@ -355,7 +367,8 @@ fn shift(p: mut Point, dx: f64) {               // p refers to the caller's vari
   `swap(mut xs[i], mut xs[j])`, since `i` and `j` may be equal; copy first. A read-only number or bool
   is a copy made before the call, so `remove(mut xs, len(xs) - 1)` is fine.
 - **Mutating calls are statements (E0215):** a call with a `mut` argument is a statement of its own or the
-  whole right-hand side of `let`/`var`/assignment/`return`, so every mutation is at a visible point.
+  whole right-hand side of `let`/`var`/assignment/`return` or of `while let P =`, so every mutation is at a
+  visible point.
 - **No recursion (E0401):** the call graph, contracts included, must be acyclic. Use a loop and a
   fixed-capacity work list.
 
@@ -620,6 +633,9 @@ them all.
 | `rem_euclid(a, m) -> T` | Same-type integers; the remainder of `a / m` that is never negative, `0 <= r < abs(m)`: `rem_euclid(-1, 5)` is `4`, where `-1 % 5` is `-1`. Wraps an index around: `xs[rem_euclid(i + k, n)]`. Traps (R0002) if `m` is 0. |
 | `div_euclid(a, m) -> T` | The quotient that goes with it, `a == div_euclid(a, m) * m + rem_euclid(a, m)`: `div_euclid(-7, 2)` is `-4`, where `-7 / 2` is `-3`. Traps (R0002) if `m` is 0, and (R0001) where `/` overflows. |
 | `mul_mod(a, b, m) -> T` | Same-type integers; `(a * b) mod m` computed exactly however large `a * b` is, from 0 to `m - 1` (`a` and `b` reduced as `rem_euclid` reduces them). Traps (R0013) unless `m > 0`. |
+| `count_ones(x) -> i64` | The number of 1 bits of an integer over the bits of its type (two's complement for a signed one): `count_ones(i8(-1))` is 8. |
+| `leading_zeros(x) -> i64`, `trailing_zeros(x) -> i64` | The 0 bits above the highest 1 bit, or below the lowest, over the bits of the type: `leading_zeros(u8(1))` is 7, `trailing_zeros(u8(8))` is 3; the number of bits for 0. |
+| `rotl(x, n) -> T`, `rotr(x, n) -> T` | The bits of the integer `x` rotated left or right by `n` (any integer), the bits that leave at one end coming back at the other: `rotl(u8(0x81), 1)` is `0x03`. `n` is taken as `rem_euclid(n, bits)`, so a negative `n` rotates the other way. Never trap. |
 | `sqrt(x)`, `floor(x)`, `ceil(x)` | On `f32`/`f64`, correctly rounded. |
 | `round(x)`, `trunc(x)` | On `f32`/`f64`, exact: `round` halves away from zero (`round(2.5)` is `3.0`, `round(-0.5)` is `-1.0`); `trunc` drops the fraction (`trunc(-2.7)` is `-2.0`). |
 | `exp(x)`, `log(x)`, `log2(x)`, `log10(x)` | On `f32`/`f64`: e^x and the logarithms; `log` of 0 is `-inf` and of a negative number NaN. `log2` of a power of two and `log10` of a power of ten are exact. |
@@ -632,7 +648,7 @@ same bits everywhere: ALang computes them itself (`exp`, `log`, `log10`, `sin`, 
 `atan2` as fdlibm does, see THIRD-PARTY-NOTICES), and an `f32` result is the `f64` one rounded once.
 
 A literal argument takes the type of the other arguments or, for `min`, `max`, `clamp`, `pow`, `gcd`,
-`lcm`, `rem_euclid`, `div_euclid`, `mul_mod` and the wrapping and saturating functions, of the variable the result is
+`lcm`, `rem_euclid`, `div_euclid`, `mul_mod`, `rotl`, `rotr` and the wrapping and saturating functions, of the variable the result is
 stored in: `let b: u8 = pow(2, 7);`.
 
 ### 9.3 Characters
@@ -671,6 +687,8 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `is_int(s) -> bool` | Whether `i64(s)` would succeed: decimal text that fits an `i64`. |
 | `is_float(s) -> bool` | Whether `f64(s)` would succeed: decimal text that converts exactly (§6). |
 | `parse_i64(s) -> Option<i64>` | `Option.Some(i64(s))` when `is_int(s)`, else `Option.None`: never traps. Strict, as `i64(s)` is: `trim` first. |
+| `parse_i64(s, base) -> Option<i64>` | The same in a base from 2 to 36 (any integer type; R0013 otherwise): an optional `+` or `-`, then at least one digit, `0`-`9` then `a`-`z` or `A`-`Z`, with no prefix such as `0x`. `parse_i64("ff", 16)` is `Option.Some(255)`, `parse_i64("-101", 2)` is `Option.Some(-5)`. |
+| `hash(s) -> u64` | The 64-bit FNV-1a hash of the bytes of a str, or of an array or list of `u8`: the same number on every run and machine; `hash("")` is 14695981039346656037. Not for secrets. |
 | `parse_f64(s) -> Option<f64>` | `Option.Some(f64(s))` when `is_float(s)`, else `Option.None`: never traps. |
 | `fixed(x, n)`, `pad_left(v, w, fill)`, `pad_right(v, w, fill)` | Formatted text (§9.6). |
 
@@ -774,6 +792,8 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 | `insert(mut m, k, v)`, `insert(mut s, x)` | Sets `k` to `v` in a map (as `m[k] = v`), or adds `x` to a set; a key or value already there is kept once. Traps (R0004) when a new one does not fit. |
 | `remove(mut m, k) -> bool`, `remove(mut s, x) -> bool` | Removes a key (with its value) or a value; whether it was there. |
 | `get_or(m, k, d) -> V` | The value of `k` in the map `m`, or `d` when there is none. |
+| `keys(m) -> list[K; N]`, `values(m) -> list[V; N]` | The keys of the map `m` in order, or its values in the order of their keys, as a list of the map's capacity. |
+| `variants(E) -> [E; K]` | Every variant of the enum named `E` (or `ns.E`), in declaration order: `for c in variants(Color) { }`. The variants carry no values and `E` has no type parameters (E0203). It is a constant: `const ALL: [Color; 3] = variants(Color);`. |
 
 | `compare(a, b) -> i64` | -1, 0 or 1 as `a` comes before, equals or comes after `b` in the order below; two values of any one type, so it orders the values of a type parameter. |
 
@@ -809,16 +829,17 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
 - a `u8` (a character literal too) as a number: add a character to a string with `push(mut s, 'a')`;
   `append(mut s, 'a')` appends `97` (warning W0303).
 
-Three functions format text with a width or a number of decimals:
+Four functions format text with a width, a number of decimals or a base:
 
 | Function | Text |
 |----------|------|
 | `fixed(x, n)` | The f32 or f64 `x` with exactly `n` digits after the point, 0 to 20 (otherwise R0013), and no point for 0: its exact binary value rounded half to even, as above. `fixed(3.14159, 2)` is `3.14`, `fixed(2.5, 0)` is `2`, `fixed(2.675, 2)` is `2.67` (2.675 is stored as 2.67499...); `nan`, `inf`, `-inf`. |
 | `pad_left(v, w, fill)` | The text of the number, bool, str or `fixed(...)` `v`, as `print` writes it, with the `u8` byte `fill` in front up to `w` bytes; longer text is kept whole. `pad_left(7, 3, '0')` is `007`, `pad_left(-42, 6, '0')` is `000-42`. A width above 1 048 576 traps (R0013). |
 | `pad_right(v, w, fill)` | The same with the fill after the text: `pad_right("ab", 4, '.')` is `ab..`. |
+| `to_base(n, base)` | The integer `n` in a base from 2 to 36 (otherwise R0013), with the digits `0`-`9` then `a`-`z`, no prefix, and a `-` before a negative `n`: `to_base(255, 16)` is `ff`, `to_base(-5, 2)` is `-101`. `pad_left(to_base(b, 16), 2, '0')` gives two hex digits. |
 
 They build no str when they are an argument of `print` or `append`, or the value `pad_left` or
-`pad_right` pads: the text is written straight out, `append(mut s, "$", c / 100, ".", pad_left(c % 100, 2, '0'))`.
+`pad_right` pads (`to_base` too): the text is written straight out, `append(mut s, "$", c / 100, ".", pad_left(c % 100, 2, '0'))`.
 Anywhere else they take the type of a typed str they are stored in, as `join` does (§9.4), and trap
 (R0004) when the text does not fit it: `let cell: str[8] = pad_left(n, 6, ' ');`. Elsewhere they are
 E0216. Their arguments are evaluated and checked before any of the text is written.

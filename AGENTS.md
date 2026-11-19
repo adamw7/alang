@@ -110,17 +110,20 @@ test "counts repeated words" {
    A smaller capacity widens on its own; to narrow, convert: `str[16](s)`, `list[T; 8](xs)` (traps if it
    does not fit, so check `len` first). A parameter takes any capacity with `_`: `fn total(xs: list[i64; _])`,
    `fn shout(s: mut str[_])` work on every list of i64 and every str; inside, `cap(s)` is the caller's.
-4. **Structs use named arguments**: `Point(x: 1, y: 2)`. Never `Point { x: 1 }`.
+4. **Structs use named arguments**: `Point(x: 1, y: 2)`. Never `Point { x: 1 }`. A field may have a constant
+   default, `retries: i64 = 3`, which a value leaving it out takes (`Config()` when every field has one);
+   `Point(..p, y: 0)` copies the other fields from the variable `p`.
 5. **Enum variants are qualified with a dot**: `Color.Red`, `Shape.Circle(2.0)`. Never `Color::Red`.
 6. **Logic uses words**: `and`, `or`, `not`. `&&`, `||`, `!x` are errors (`!=` is fine).
 7. **No precedence guessing**: `* / %` bind tighter than `+ -`; everything else needs parentheses when mixed: `(a and b) or c`, `(flags & 4) != 0`, `(x << 2) + 1`. Comparisons do not chain: `0 < x and x < 10`.
-8. **`while` needs a limit**: `while lo < hi limit 64 { }`. Exceeding it traps. Prefer `for i in 0..n` or `for x in xs` when you can:
+8. **`while` needs a limit**: `while lo < hi limit 64 { }`, `while let Option.Some(x) = next(q) limit 64 { }`.
+   Exceeding it traps. Prefer `for i in 0..n` or `for x in xs` when you can:
    ranges also go `0..=n`, `step 2` and `rev 0..n` (backwards), and `for i, x in xs` gives each index.
 9. **No recursion.** Use a loop with an explicit work list (`list[T; N]` as a stack or queue).
 10. **`mut` is explicit on both sides**: `fn grow(xs: mut list[i32; 8])` and `grow(mut xs)`. Plain parameters are read-only copies.
     So is every variable: `var it: Item = items[0]; it.qty += 1;` changes the copy, not the list (warning
     W0305); write `items[0].qty += 1;`.
-11. **A call with a `mut` argument is its own statement** or the whole right side of `let`/assignment/`return`: `let top: i32 = pop(mut stack);` then use `top`.
+11. **A call with a `mut` argument is its own statement** or the whole right side of `let`/assignment/`return` (or of `while let P =`): `let top: i32 = pop(mut stack);` then use `top`.
 12. **A `mut` variable cannot appear twice in one call**: `append(mut s, s)` and `swap(mut xs[i], mut xs[j])` are errors. Numbers passed without `mut` are copied first, so `remove(mut xs, len(xs) - 1)` is fine.
 13. **No shadowing.** Pick a new name instead of redeclaring one in an inner block.
 14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings. Patterns nest:
@@ -153,6 +156,9 @@ test "counts repeated words" {
 | `int`, `usize`, `String`, `Vec<T>` | `i32`/`i64`, `i64`, `str[N]`, `list[T; N]` |
 | `dict`, `HashMap<K, V>`, `set()`, `HashSet<T>` | `map[str[16], i64; 64]`, `set[i64; 32]`: a capacity, keys always in order; `var m: map[str[8], i64; 16] = [];` then `m[k] = v;` |
 | `d.get(k, 0)`, `d[k] = d.get(k, 0) + 1`, `for k, v in d.items()` | `get_or(m, k, 0)`, `m[k] = get_or(m, k, 0) + 1;`, `for k, v in m { }` |
+| `list(d.keys())`, `d.values()`, `m.keys().collect()` | `keys(m)`, `values(m)`: lists of the map's capacity, in key order |
+| `list(Color)`, `Color::iter()`, `Color.values()` | `for c in variants(Color) { }`: an array of every variant (of an enum whose variants carry no values) |
+| `while let Some(x) = it.next()`, `while (m = re.exec(s))` | `while let Option.Some(x) = next(mut it) limit 1000 { }`: the failing test is not an iteration |
 | `return a, b`, `(a, b) = f()`, `let (q, r) = divmod(a, b)` | `return (a, b);` with `-> (i64, i64)`, then `let (q, r): (i64, i64) = divmod(a, b);` and `p.0`, `p.1` |
 | `for i in range(0, n + 1, 2)`, `(0..=n).step_by(2)` | `for i in 0..=n step 2 { }` |
 | `for i in range(n - 1, -1, -1)`, `(0..n).rev()`, `reversed(xs)` | `for i in rev 0..n { }`, `for x in rev xs { }` |
@@ -167,6 +173,11 @@ test "counts repeated words" {
 | the same on input that may not fit | `var parts: list[str[16]; 8] = []; let ok: bool = try_split(mut parts, s, ",");` |
 | `s.count(",")`, `xs.count(x)` | `count(s, ',')`, `count(xs, x)` |
 | `int(s)`, `s.parse::<i64>()` | `parse_i64(trim(s))`: `Option.Some(n)`, or `Option.None` for bad text; or `i64(trim(s))` after checking `is_int(trim(s))`, as bad text traps |
+| `int(s, 16)`, `i64::from_str_radix(s, 2)` | `parse_i64(s, 16)`, `parse_i64(s, 2)`: digits only, no `0x` prefix |
+| `str(n)`, `n.to_string()`, `String.valueOf(b)` | `let s: str[24] = str[24](n);`: the text of a number or bool, as `print` writes it |
+| `hex(n)`, `format!("{:x}", n)`, `n.toString(2)`, `f"{b:02x}"` | `to_base(n, 16)`, `to_base(n, 2)`, `pad_left(to_base(b, 16), 2, '0')`, in `print`/`append` or a typed str |
+| `x.count_ones()`, `Integer.bitCount(x)`, `x.leading_zeros()`, `x.rotate_left(3)` | `count_ones(x)`, `leading_zeros(x)`, `trailing_zeros(x)`, `rotl(x, 3)`, `rotr(x, 3)` |
+| `hash(s)`, `s.hashCode()` | `hash(s)`: 64-bit FNV-1a of the bytes, the same on every run |
 | `float(s)`, `s.parse::<f64>()` | `parse_f64(trim(s))`, or `f64(trim(s))` after checking `is_float(trim(s))`: an optional sign, digits and at most one `.` (`3.`, `.25` count), and an optional exponent (`1e5`, `2.5E-3`) |
 | `a % m` in Python (never negative), `a.rem_euclid(m)`, `Math.floorMod(a, m)` | `rem_euclid(a, m)`: `rem_euclid(-1, 5)` is 4, where `-1 % 5` is -1; `a // m` is `div_euclid(a, m)` |
 | `(a * b) % m` with big numbers, `pow(a, b, m)` | `mul_mod(a, b, m)`: exact however large `a * b` is (for `pow(a, b, m)`, square and multiply with it) |
@@ -192,6 +203,8 @@ test "counts repeated words" {
 | `const N = 10;` inside a function | `let n: i64 = 10;`; `const` is for the top level of the file |
 | `c ? a : b`, `a if c else b`, `if c { a } else { b }` as a value | `if c then a else b` |
 | `let Point { x, y } = p;`, `const { x, y } = p` | `let Point(x: px, y: py): Point = p;` |
+| `Point { y: 0, ..p }`, `{...p, y: 0}`, `dataclasses.replace(p, y=0)` | `Point(..p, y: 0)`, with `p` a variable |
+| `@dataclass` field `= 3`, `#[derive(Default)]`, `Config::default()` | `struct Config { retries: i64 = 3, }` then `Config()` or `Config(retries: 5)` |
 
 ## The standard library
 
@@ -200,10 +213,10 @@ adds tested helpers (pseudo-random numbers, an insertion-ordered map).
 
 | Area | Functions |
 |------|-----------|
-| Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` (an `Option`) `rem_euclid` `div_euclid` `mul_mod(a, b, m)` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
+| Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` (an `Option`) `rem_euclid` `div_euclid` `mul_mod(a, b, m)` `count_ones` `leading_zeros` `trailing_zeros` `rotl(x, n)` `rotr(x, n)` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `parse_i64` `parse_f64` (an `Option`) `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
-| Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `binary_search(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `retain(mut xs, keep)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear` |
+| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `parse_i64(s)` `parse_i64(s, base)` `parse_f64` (an `Option`) `str[N](n)` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` `to_base(n, base)` `hash(s)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
+| Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `binary_search(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `retain(mut xs, keep)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `keys(m)`, `values(m)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear`; enums: `variants(E)` |
 
 - `split`, `words`, `join`, `replace` take their type from the typed `let`/`var`/assignment/`return` they
   are the whole right side of: `let parts: list[str[16]; 8] = split(line, ",");`. Pieces that do not fit

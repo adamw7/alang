@@ -1,0 +1,7 @@
+error[E0213]: the value after `..` must be a variable, a constant or a field of one
+  --> tests/errors/E0213_struct_base_call.al:12:28
+   |
+12 |     let p: Point = Point(..origin(), y: 2);
+   |                            ^^^^^^^^
+  = hint: store it first: let base: Point = origin(); then Point(..base, ...)
+

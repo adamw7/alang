@@ -76,8 +76,18 @@ public final class JsonValues {
                 Map<String, Object> props = new LinkedHashMap<>();
                 List<Object> required = new ArrayList<>();
                 for (Field f : st.decl().fields) {
-                    props.put(f.name, describe(schema(f.type), f.doc));
-                    required.add(f.name);
+                    Map<String, Object> fs = new LinkedHashMap<>(describe(schema(f.type), f.doc));
+                    if (f.defConst == null || f.defConst.value == null) {
+                        required.add(f.name);
+                    } else {
+                        // Optional: an object that leaves it out gets the default. One JSON cannot write is not shown.
+                        try {
+                            fs.put("default", toJson(f.defConst.value, f.type));
+                        } catch (EncodeException notJson) {
+                            // left out
+                        }
+                    }
+                    props.put(f.name, fs);
                 }
                 yield describe(Json.obj("type", "object", "properties", props, "required", required,
                     "additionalProperties", false), st.decl().doc);
@@ -353,7 +363,11 @@ public final class JsonValues {
                 Object[] fields = new Object[st.decl().fields.size()];
                 int i = 0;
                 for (Field f : st.decl().fields) {
-                    if (!m.containsKey(f.name)) throw fail(path, "missing field \"" + f.name + "\"");
+                    if (!m.containsKey(f.name)) {
+                        if (f.defConst == null || f.defConst.value == null) throw fail(path, "missing field \"" + f.name + "\"");
+                        fields[i++] = Values.copy(f.defConst.value, new Meter(0));
+                        continue;
+                    }
                     fields[i++] = fromJson(m.get(f.name), f.type, path + "." + f.name);
                 }
                 return new StructV(fields);

@@ -97,6 +97,29 @@ final class Stdlib {
         return r.longValue();
     }
 
+    /** count_ones, leading_zeros and trailing_zeros of a value of k, over its k.bits bits. */
+    static long bits(Builtin b, PrimKind k, long a) {
+        long mask = k.bits == 64 ? -1L : (1L << k.bits) - 1;
+        long u = a & mask;
+        return switch (b) {
+            case COUNT_ONES -> Long.bitCount(u);
+            case LEADING_ZEROS -> Long.numberOfLeadingZeros(u) - (64 - k.bits);
+            default -> u == 0 ? k.bits : Long.numberOfTrailingZeros(u);
+        };
+    }
+
+    /** rotl (left) or rotr of a value of k by n bits, n taken modulo k.bits. */
+    static long rotate(boolean left, PrimKind k, long a, PrimKind nk, long n) {
+        int bits = k.bits;
+        long r = IntOps.toBig(nk, n).mod(BigInteger.valueOf(bits)).longValue();
+        int s = (int) (left ? r : (bits - r) % bits);
+        long mask = bits == 64 ? -1L : (1L << bits) - 1;
+        long u = a & mask;
+        long out = s == 0 ? u : ((u << s) | (u >>> (bits - s))) & mask;
+        if (bits == 64 || !k.signed) return out;
+        return (out << (64 - bits)) >> (64 - bits);
+    }
+
     /**
      * checked_add/sub/mul: the exact result if it is a value of k, else null (Option.None). Values of u64 are carried
      * as their bit pattern, as everywhere.
@@ -670,6 +693,24 @@ final class Stdlib {
     }
 
     /** parse_i64(s): its value, or null for text that i64(s) would trap on. */
+    /** parse_i64(s, base): an optional sign, then at least one digit of the base (0-9, a-z, A-Z), as an i64; else null. */
+    static Long parseIntOrNull(StrV s, int base, Meter cost) {
+        cost.bytes(s.len);
+        int i = s.len > 0 && (s.b[0] == '+' || s.b[0] == '-') ? 1 : 0;
+        if (i == s.len) return null;
+        BigInteger v = BigInteger.ZERO;
+        BigInteger r = BigInteger.valueOf(base);
+        for (int j = i; j < s.len; j++) {
+            int c = s.b[j] & 0xff;
+            int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'z' ? c - 'a' + 10 : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : 99;
+            if (d >= base) return null;
+            v = v.multiply(r).add(BigInteger.valueOf(d));
+            if (v.bitLength() > 64) v = BEYOND_64_BITS;
+        }
+        if (s.b[0] == '-') v = v.negate();
+        return PrimKind.I64.fits(v) ? v.longValue() : null;
+    }
+
     static Long parseIntOrNull(StrV s, Meter cost) {
         BigInteger v = decimal(s, cost);
         return v != null && PrimKind.I64.fits(v) ? v.longValue() : null;

@@ -168,6 +168,36 @@
     "description": "(a * b) mod m, computed exactly however large a * b is, for three integers of the same type: rem_euclid(a, m) * rem_euclid(b, m) reduced mod m, so 0 <= result < m. Traps (R0013) unless m > 0."
   },
   {
+    "name": "count_ones",
+    "group": "math",
+    "signature": "count_ones(x) -> i64",
+    "description": "The number of 1 bits in the integer x, over the bits of its type (two's complement for a signed one): count_ones(u8(7)) is 3, count_ones(i8(-1)) is 8."
+  },
+  {
+    "name": "leading_zeros",
+    "group": "math",
+    "signature": "leading_zeros(x) -> i64",
+    "description": "The number of 0 bits above the highest 1 bit of the integer x, over the bits of its type: leading_zeros(u8(1)) is 7; the number of bits if x is 0."
+  },
+  {
+    "name": "trailing_zeros",
+    "group": "math",
+    "signature": "trailing_zeros(x) -> i64",
+    "description": "The number of 0 bits below the lowest 1 bit of the integer x: trailing_zeros(u8(8)) is 3; the number of bits of its type if x is 0."
+  },
+  {
+    "name": "rotl",
+    "group": "math",
+    "signature": "rotl(x, n) -> T",
+    "description": "The bits of the integer x shifted left by n (any integer), those that leave at the top coming back at the bottom: rotl(u8(0x81), 1) is 0x03. n is taken modulo the number of bits, rem_euclid(n, bits), so a negative n rotates right. Never traps."
+  },
+  {
+    "name": "rotr",
+    "group": "math",
+    "signature": "rotr(x, n) -> T",
+    "description": "The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps."
+  },
+  {
     "name": "sqrt",
     "group": "math",
     "signature": "sqrt(x) -> f",
@@ -440,14 +470,26 @@
   {
     "name": "parse_i64",
     "group": "text",
-    "signature": "parse_i64(s) -> Option<i64>",
-    "description": "The str as an i64, Option.Some(n), when is_int(s) holds (an optional + or -, then digits, within the i64 range); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike i64(s)."
+    "signature": "parse_i64(s, base = 10) -> Option<i64>",
+    "description": "The str as an i64, Option.Some(n), when is_int(s) holds (an optional + or -, then digits, within the i64 range); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike i64(s). With a base, 2 to 36 (traps (R0013) otherwise), the digits are 0-9 then a-z or A-Z, without a prefix: parse_i64(\"ff\", 16) is Option.Some(255), parse_i64(\"-101\", 2) is Option.Some(-5)."
+  },
+  {
+    "name": "to_base",
+    "group": "text",
+    "signature": "to_base(n, base) -> str[N]",
+    "description": "The text of the integer n in the base 2 to 36 (traps (R0013) otherwise), with the digits 0-9 then a-z, no prefix and a - before a negative n: to_base(255, 16) is \"ff\", to_base(5, 2) is \"101\", to_base(-255, 16) is \"-ff\". pad_left(to_base(n, 16), 2, '0') gives two hex digits. Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
   },
   {
     "name": "parse_f64",
     "group": "text",
     "signature": "parse_f64(s) -> Option<f64>",
     "description": "The str as an f64, Option.Some(x), when is_float(s) holds (19.99, -0.5, 3, .25, 2.5e3); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike f64(s)."
+  },
+  {
+    "name": "hash",
+    "group": "text",
+    "signature": "hash(s) -> u64",
+    "description": "The 64-bit FNV-1a hash of the bytes of a str, or of an array or list of u8: the same number on every run and machine. hash(\"\") is 14695981039346656037. Not for secrets: it is easy to find two inputs with the same hash."
   },
   {
     "name": "is_utf8",
@@ -556,6 +598,24 @@
     "group": "collections",
     "signature": "compare(a, b) -> i64",
     "description": "-1, 0 or 1 as a comes before b, is equal to it, or comes after it in the order of sort: two values of the same type, any type. For a type parameter, compare(a, b) < 0 is a < b."
+  },
+  {
+    "name": "keys",
+    "group": "collections",
+    "signature": "keys(m) -> list[K; N]",
+    "description": "The keys of the map m, in order, as a list of the map's capacity: keys(m) of a map[str[8], i64; 16] is a list[str[8]; 16]."
+  },
+  {
+    "name": "values",
+    "group": "collections",
+    "signature": "values(m) -> list[V; N]",
+    "description": "The values of the map m, in the order of their keys, as a list of the map's capacity."
+  },
+  {
+    "name": "variants",
+    "group": "collections",
+    "signature": "variants(E) -> [E; K]",
+    "description": "Every variant of the enum named E, in the order they are declared, as an array: for c in variants(Color) { }. The enum's variants carry no values, and it has no type parameters."
   },
   {
     "name": "get_or",

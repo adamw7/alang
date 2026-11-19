@@ -1,0 +1,6 @@
+error[E0203]: variants() needs the name of an enum, as in variants(Color), found a value of type i64
+ --> tests/errors/E0203_variants_value.al:4:20
+  |
+4 |     print(variants(n));
+  |                    ^
+

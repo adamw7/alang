@@ -1,0 +1,8 @@
+["apple", "fig", "pear"] [5, 1, 3, 10] 3 9
+[] 0
+0 Color.Red
+1 Color.Green
+2 Color.Blue
+[Color.Red, Color.Green, Color.Blue] 3 true
+14695981039346656037 12638187200555641996 9625390261332436968
+true true 623243905660212082

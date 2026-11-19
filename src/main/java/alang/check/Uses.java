@@ -127,6 +127,7 @@ final class Uses {
                     if (i.elseBlock != null) block(i.elseBlock);
                 }
                 case While w -> {
+                    if (w.pattern != null) patterns.add(w.pattern);
                     read(w.cond);
                     read(w.limit);
                     block(w.body);
@@ -180,6 +181,7 @@ final class Uses {
                     read(i.target);
                     read(i.index);
                 }
+                case Call c when c.asStruct != null -> read(c.asStruct);
                 case Call c -> {
                     // A user function may read what it is given as `mut`, and so do pop and remove, which
                     // return part of it; the other builtins that take `mut` only change it.

@@ -341,6 +341,29 @@ public final class Checker {
         unusedTypeParams(s, s.fields.stream().map(f -> f.type).toList(), "field");
         ctx = saved;
         s.state = State.DONE;
+        fieldDefaults(s);
+    }
+
+    /**
+     * The default values of a struct's fields, `retries: i64 = 3`: each a constant of the field's type, which a struct
+     * value that leaves the field out takes. A field whose type mentions a type parameter has none.
+     */
+    private void fieldDefaults(StructDecl s) {
+        for (Field f : s.fields) {
+            if (f.def == null) continue;
+            if (Type.hasTypeVar(f.type)) {
+                diags.error(Code.E0218, f.def.span, "field `" + f.name + "` has a type that each use of `" + s.name
+                    + "` fixes (" + f.type + "), so it has no default value", "remove ` = " + exprText(f.def) + "`");
+                continue;
+            }
+            ConstDecl c = new ConstDecl(f.def.span, f.name, f.typeRef, f.def);
+            c.fieldOf = s;
+            c.scope = s.scope;
+            if (Type.isError(f.type)) c.state = State.DONE;
+            else ensureConst(c);
+            f.defConst = c;
+            defaultValues.add(c);
+        }
     }
 
     private void ensureEnum(EnumDecl e) {
@@ -422,6 +445,8 @@ public final class Checker {
             for (Field f : sd.fields) {
                 Field c = new Field(f.span, f.name, f.typeRef);
                 c.doc = f.doc;
+                c.def = f.def;
+                c.defConst = f.defConst;
                 c.type = Type.substituteTypes(f.type, sd, types);
                 fields.add(c);
             }
@@ -522,9 +547,10 @@ public final class Checker {
         // where it went wrong; skip evaluation without piling on another diagnostic.
         if (diags.errorCount() == before && !Type.isError(t)) {
             if (!isConst(c.init)) {
-                diags.error(Code.E0209, c.init.span, (c.defaultOf == null ? "the value of " : "") + constLabel(c)
+                boolean isDefault = c.defaultOf != null || c.fieldOf != null;
+                diags.error(Code.E0209, c.init.span, (isDefault ? "" : "the value of ") + constLabel(c)
                         + " is not a constant expression",
-                    (c.defaultOf == null ? "constants" : "a default value is a constant: it")
+                    (isDefault ? "a default value is a constant: it" : "constants")
                         + " may use literals, other constants, operators, conversions and the builtins that only compute "
                         + "(such as len, pow or split), but not other function calls"
                         + (c.defaultOf == null ? "" : " or parameters"));
@@ -972,6 +998,7 @@ public final class Checker {
 
     /** How messages name a constant: `N`, or the default value of a parameter. */
     private static String constLabel(ConstDecl c) {
+        if (c.fieldOf != null) return "the default value of field `" + c.name + "` of `" + c.fieldOf.name + "`";
         return c.defaultOf == null ? "constant `" + c.name + "`"
             : "the default value of parameter `" + c.name + "` of `" + c.defaultOf.name + "`";
     }
@@ -1242,12 +1269,24 @@ public final class Checker {
                 yield (i.elseBlock == null || block(i.elseBlock)) && all;
             }
             case While w -> {
-                condition(w.cond, "while");
                 Type lt = expr(w.limit, Type.I64);
                 if (!Type.isInt(lt) && !Type.isError(lt)) {
                     diags.error(Code.E0201, w.limit.span, "loop limit must be an integer, found " + lt);
                 }
+                if (w.pattern == null) {
+                    condition(w.cond, "while");
+                    loop(w, w.body);
+                    yield false;
+                }
+                // while let P = e: e is matched before each iteration, and the body sees the names P binds. A call
+                // with `mut` arguments may be the whole of e, as of the right-hand side of a let: next(mut it).
+                ctx.mutCallAllowed = w.cond;
+                Type t = matchSubject(w.cond, List.of(w.pattern));
+                ctx.mutCallAllowed = null;
+                ctx.scopes.push(new HashMap<>());
+                pattern(w.pattern, t, this::matchBinding);
                 loop(w, w.body);
+                ctx.scopes.pop();
                 yield false;
             }
             case For f -> {
@@ -2279,6 +2318,13 @@ public final class Checker {
                 FnDecl bound = boundFunction(fv);
                 return bound != null ? callFunction(c, bound) : callFnParam(c, fv, ft);
             }
+            if (structs.containsKey(c.name) && c.args.isEmpty() && fv == null) {
+                // P() of a struct whose fields all have default values.
+                StructLit lit = c.asStruct != null ? c.asStruct : new StructLit(c.span, c.name, new ArrayList<>());
+                c.asStruct = lit;
+                Type t = expr(lit, null);
+                return t;
+            }
             for (Arg a : c.args) expr(a.expr(), null);
             if (structs.containsKey(c.name)) {
                 diags.error(Code.E0213, c.span, "struct values need named fields",
@@ -2659,8 +2705,12 @@ public final class Checker {
             case "println", "printf", "printLn", "puts", "console_log", "echo" -> "use print(values...)";
             case "length", "size", "strlen" -> "use len(x)";
             case "capacity" -> "use cap(x)";
-            case "format", "sprintf", "concat", "str_cat", "strcat", "to_string", "str", "string" ->
+            case "to_string", "str", "string", "toString", "itoa", "String" ->
+                "convert a number or bool to text with the str type: let s: str[24] = str[24](n);";
+            case "format", "sprintf", "concat", "str_cat", "strcat" ->
                 "build strings with append(mut s, values...) into a str[N] variable";
+            case "hex", "to_hex", "toHex", "bin", "to_bin", "oct", "radix", "to_radix", "format_int", "toString_radix" ->
+                "use to_base(n, base): to_base(255, 16) is \"ff\"; pad_left(to_base(n, 16), 2, '0') pads it";
             case "add", "append_item", "push_back" -> "use push(mut xs, value)";
             case "insert_at", "add_at" -> "use insert(mut xs, i, value)";
             case "remove_at", "delete", "erase", "pop_at" -> "use remove(mut xs, i), which returns the element";
@@ -2738,7 +2788,14 @@ public final class Checker {
             case "chr" -> "push(mut s, u8(n)) adds the byte n to a str";
             case "dict", "HashMap", "hashmap", "Map", "Set", "HashSet", "BTreeMap", "TreeMap" -> Hints.COLLECTIONS;
             case "get", "getOrDefault", "get_or_default" -> "use get_or(m, key, default), or m[key], which traps (R0003) when the key is missing";
-            case "keys", "values", "items", "entries" -> "go through a map in key order: for k, v in m { }";
+            case "items", "entries" -> "go through a map in key order: for k, v in m { }; keys(m) and values(m) are lists";
+            case "popcount", "bit_count", "bitCount", "countOnes", "count_bits", "popcnt" -> "use count_ones(x)";
+            case "clz", "countLeadingZeros", "numberOfLeadingZeros" -> "use leading_zeros(x)";
+            case "ctz", "countTrailingZeros", "numberOfTrailingZeros" -> "use trailing_zeros(x)";
+            case "rotate_left", "rol", "rotateLeft", "rotate_bits_left" -> "rotate the bits of an integer with rotl(x, n)";
+            case "rotate_right", "ror", "rotateRight", "rotate_bits_right" -> "rotate the bits of an integer with rotr(x, n)";
+            case "hashCode", "hash_code", "fnv", "fnv1a", "crc32", "digest" -> "use hash(s): the 64-bit FNV-1a hash of a str's bytes";
+            case "enum_values", "all_variants", "variant_list", "iter_variants" -> "use variants(E): every variant of the enum E, in order";
             case "input", "read", "read_line", "readline", "readLine", "scanf", "gets", "getline", "open", "fopen",
                  "read_file", "readFile", "write_file", "writeFile", "fetch", "get_env", "getenv", "env" ->
                 "there is no input, file, network or environment access; a program's only inputs are its tool "
@@ -3224,6 +3281,32 @@ public final class Checker {
                 Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isInt(expected) ? expected : null);
                 return twoInts(c, b, ts) ? ts[0] : Type.ERROR;
             }
+            case COUNT_ONES, LEADING_ZEROS, TRAILING_ZEROS -> {
+                if (!arity(c, 1)) return Type.I64;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                if (!Type.isInt(t) && !Type.isError(t)) {
+                    diags.error(Code.E0203, args.get(0).span(), b.name + "() needs an integer, found " + t);
+                }
+                return Type.I64;
+            }
+            case ROTL, ROTR -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0));
+                noMut(args.get(1));
+                Type t = expr(args.get(0).expr(), Type.isInt(expected) ? expected : null);
+                Type n = expr(args.get(1).expr(), Type.I64);
+                if (Type.isError(t) || Type.isError(n)) return Type.ERROR;
+                if (!Type.isInt(t)) {
+                    diags.error(Code.E0203, args.get(0).span(), b.name + "() needs an integer to rotate, found " + t);
+                    return Type.ERROR;
+                }
+                if (!Type.isInt(n)) {
+                    diags.error(Code.E0203, args.get(1).span(), b.name + "() needs an integer number of bits, found " + n);
+                    return Type.ERROR;
+                }
+                return t;
+            }
             case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
                 if (!arity(c, 1)) return Type.BOOL;
                 noMut(args.get(0));
@@ -3332,6 +3415,11 @@ public final class Checker {
             }
             case PARSE_I64, PARSE_F64 -> {
                 Type ret = optionOf(b == Builtin.PARSE_I64 ? Type.I64 : Type.F64);
+                if (b == Builtin.PARSE_I64 && args.size() == 2) {
+                    textArg(b, args.get(0));
+                    intArg(b, args.get(1), "the base");
+                    return ret;
+                }
                 if (!arity(c, 1)) return ret;
                 textArg(b, args.get(0));
                 return ret;
@@ -3562,6 +3650,36 @@ public final class Checker {
                 }
                 return Type.I64;
             }
+            case KEYS, VALUES -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                readInPlace(args.get(0).expr());
+                if (t instanceof Type.MapT mt) return new Type.ListT(b == Builtin.KEYS ? mt.key() : mt.value(), mt.cap());
+                if (!Type.isError(t)) {
+                    diags.error(Code.E0203, args.get(0).span(), b.name + "() needs a map, found " + t,
+                        t instanceof Type.SetT ? "a set is already its keys: for x in s { }, or list[T; N](...) is not needed"
+                            : null);
+                }
+                return Type.ERROR;
+            }
+            case HASH -> {
+                if (!arity(c, 1)) return Type.U64;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                readInPlace(args.get(0).expr());
+                boolean bytes = t instanceof Type.Str
+                    || (t instanceof Type.ListT || t instanceof Type.ArrayT) && Type.U8.equals(Type.elementOf(t));
+                if (!bytes && !Type.isError(t)) {
+                    diags.error(Code.E0203, args.get(0).span(), "hash() needs a str or an array or list of u8, found " + t,
+                        Type.isInt(t) ? "hash its text: var s: str[24] = \"\"; append(mut s, " + exprText(args.get(0).expr())
+                            + "); then hash(s)" : null);
+                }
+                return Type.U64;
+            }
+            case VARIANTS -> {
+                return variantsOf(c);
+            }
             case GET_OR -> {
                 if (!arity(c, 3)) return Type.ERROR;
                 noMut(args.get(0));
@@ -3589,6 +3707,19 @@ public final class Checker {
                             + exprText(args.get(1).expr()) + "), or pad an integer with pad_left(n, width, '0')" : null);
                 }
                 intArg(b, args.get(1), "the number of decimals");
+                return formatted(c, b, expected, asText);
+            }
+            case TO_BASE -> {
+                boolean asText = ctx.text == c;
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0));
+                Type n = expr(args.get(0).expr(), Type.I64);
+                if (!Type.isInt(n) && !Type.isError(n)) {
+                    diags.error(Code.E0201, args.get(0).span(), "to_base() needs an integer, found " + n,
+                        Type.isFloat(n) ? "convert it: to_base(i64(" + exprText(args.get(0).expr()) + "), "
+                            + exprText(args.get(1).expr()) + ")" : null);
+                }
+                intArg(b, args.get(1), "the base");
                 return formatted(c, b, expected, asText);
             }
             case PAD_LEFT, PAD_RIGHT -> {
@@ -3686,6 +3817,57 @@ public final class Checker {
             ctx.routine.fnValues.add(f);
             ctx.routine.callees.add(f);
         }
+    }
+
+    /**
+     * variants(E): replaces the argument, the name of the enum E, with E.A, E.B, ... (once: a function checked again
+     * keeps them), and types them as an array.
+     */
+    private Type variantsOf(Call c) {
+        if (c.variantsOf == null) {
+            if (!arity(c, 1)) return Type.ERROR;
+            Arg a = c.args.get(0);
+            EnumDecl d = null;
+            String qual = null;
+            if (a.expr() instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name)) {
+                d = enums.get(n.name);
+            } else if (a.expr() instanceof FieldAccess f && f.target instanceof Name q && lookupLocal(q.name) == null
+                && !consts.containsKey(q.name) && aliasScope(q.name) != null) {
+                d = enums.in(aliasScope(q.name), f.name);
+                qual = q.name;
+            }
+            if (d == null) {
+                Type t = a.mut() ? Type.ERROR : expr(a.expr(), null);
+                if (!Type.isError(t) || a.mut()) {
+                    diags.error(Code.E0203, a.span(), "variants() needs the name of an enum, as in variants(Color)"
+                        + (Type.isError(t) ? "" : ", found a value of type " + t));
+                }
+                return Type.ERROR;
+            }
+            if (!d.generics.params.isEmpty()) {
+                diags.error(Code.E0203, a.span(), "variants() needs an enum without type parameters, found `" + d.name + "`");
+                return Type.ERROR;
+            }
+            for (Variant v : d.variants) {
+                if (!v.payloadRefs.isEmpty()) {
+                    diags.error(Code.E0203, a.span(), "variants() needs an enum whose variants carry no values, but `"
+                        + d.name + "." + v.name + "` carries " + v.payloadRefs.size(),
+                        "list them yourself: [" + d.name + "." + v.name + "(...), ...]");
+                    return Type.ERROR;
+                }
+            }
+            Span sp = a.span();
+            c.args.clear();
+            for (Variant v : d.variants) {
+                Expr target = qual == null ? new Name(sp, d.name) : new FieldAccess(sp, new Name(sp, qual), d.name, sp);
+                c.args.add(new Arg(sp, false, new FieldAccess(sp, target, v.name, sp)));
+            }
+            c.variantsOf = d;
+        }
+        Type elem = Type.ERROR;
+        for (Arg a : c.args) elem = expr(a.expr(), null);
+        if (Type.isError(elem)) return Type.ERROR;
+        return new Type.ArrayT(elem, c.args.size());
     }
 
     private boolean arity(Call c, int n) {
@@ -3796,7 +3978,7 @@ public final class Checker {
             case WORDS -> "let ws: list[str[32]; 16] = ";
             case CHARS -> "let cs: list[u32; 64] = ";
             case JOIN -> "let line: str[256] = ";
-            case FIXED, PAD_LEFT, PAD_RIGHT -> "let text: str[32] = ";
+            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE -> "let text: str[32] = ";
             default -> "let text: str[256] = ";
         } + exprText(c) + ";";
         if (b.formats() && (ctx.stored != c || expected == null)) {
@@ -4180,9 +4362,31 @@ public final class Checker {
             return Type.ERROR;
         }
         boolean checked = false;
+        Type baseType = null;
+        if (s.base != null) {
+            // P(..base, x: 1): base is read once per field it gives, so it is a variable, a constant or a field of one.
+            if (!plainPlace(s.base)) {
+                expr(s.base, null);
+                diags.error(Code.E0213, s.base.span, "the value after `..` must be a variable, a constant or a field of one",
+                    "store it first: let base: " + d.name + " = " + exprText(s.base) + "; then " + d.name + "(..base, ...)");
+                for (FieldInit f : s.fields) expr(f.value(), null);
+                return Type.ERROR;
+            }
+            baseType = expr(s.base, expected instanceof Type.StructT et && Ast.origin(et.decl()) == d ? expected : null);
+            if (Type.isError(baseType)) {
+                for (FieldInit f : s.fields) expr(f.value(), null);
+                return Type.ERROR;
+            }
+            if (!(baseType instanceof Type.StructT bt && Ast.origin(bt.decl()) == d)) {
+                diags.error(Code.E0201, s.base.span, "the value after `..` must be a " + d.name + ", found " + baseType);
+                for (FieldInit f : s.fields) expr(f.value(), null);
+                return Type.ERROR;
+            }
+        }
         if (d.generics.generic()) {
             // Pair(first: 1, second: x): the instance the expected type names, else the one the fields' types make.
             StructDecl inst = expected instanceof Type.StructT et && Ast.origin(et.decl()) == d && ownTypeVarsOnly(expected) ? et.decl() : null;
+            if (inst == null && baseType instanceof Type.StructT bt) inst = bt.decl();
             if (inst == null) {
                 List<Expr> values = new ArrayList<>();
                 List<Type> declared = new ArrayList<>();
@@ -4212,6 +4416,11 @@ public final class Checker {
         java.util.Arrays.fill(order, -1);
         for (int i = 0; i < s.fields.size(); i++) {
             FieldInit fi = s.fields.get(i);
+            if (fi.name().equals("..")) {
+                diags.error(Code.E0213, fi.span(), "a struct value takes its other fields from one value: `..` is given twice");
+                expr(fi.value(), null);
+                continue;
+            }
             int idx = d.fieldIndex(fi.name());
             if (idx < 0) {
                 diags.error(Code.E0106, fi.span(), "struct `" + d.name + "` has no field `" + fi.name() + "`",
@@ -4231,14 +4440,39 @@ public final class Checker {
         }
         List<String> missing = new ArrayList<>();
         for (int i = 0; i < order.length; i++) {
-            if (order[i] < 0) missing.add(d.fields.get(i).name);
+            if (order[i] >= 0) continue;
+            Field f = d.fields.get(i);
+            Expr value;
+            if (s.base != null) {
+                // The field of the base: added once, so a struct value checked again finds it given.
+                FieldAccess fa = new FieldAccess(s.base.span, s.base, f.name, s.base.span);
+                value = fa;
+            } else if (f.defConst != null) {
+                Name n = new Name(s.span, f.defConst.name);
+                n.constant = f.defConst;
+                n.type = f.defConst.type;
+                value = n;
+            } else {
+                missing.add(f.name);
+                continue;
+            }
+            s.fields.add(new FieldInit(value.span, f.name, value));
+            order[i] = s.fields.size() - 1;
+            Type vt = value instanceof Name ? value.type : expr(value, f.type);
+            requireAssignable(value, vt, f.type);
         }
         if (!missing.isEmpty()) {
             diags.error(Code.E0213, s.span, "missing field(s) " + String.join(", ", missing) + " in " + d.name + "(...)",
-                "every field must be given: " + String.join(": ..., ", missing) + ": ...");
+                "every field without a default value must be given: " + String.join(": ..., ", missing) + ": ..."
+                    + ", or take the rest from another " + d.name + ": " + d.name + "(..other, ...)");
         }
         s.order = order;
         return new Type.StructT(d);
+    }
+
+    /** A variable or constant, or a field of one: what `..` of a struct value may name. */
+    private static boolean plainPlace(Expr e) {
+        return e instanceof Name || e instanceof FieldAccess f && f.variant == null && plainPlace(f.target);
     }
 
     private Type convert(Convert c) {
@@ -4284,10 +4518,11 @@ public final class Checker {
         Type t = expr(r.arg, Type.isError(target) ? null : target);
         if (Type.isError(target) || Type.isError(t)) return target;
         if (target instanceof Type.Str) {
-            if (!(t instanceof Type.Str)) {
+            // str[N](42), str[N](x), str[N](true): the text print writes for a number or bool.
+            if (!(t instanceof Type.Str) && !Type.isNumeric(t) && !Type.isBool(t)) {
                 diags.error(Code.E0214, r.span, "cannot convert " + t + " to " + target,
-                    target + "(s) changes the capacity of a str; to turn a value into text, append it: var s: " + target
-                        + " = \"\"; append(mut s, " + exprText(r.arg) + ");");
+                    target + "(x) changes the capacity of a str, or makes the text of a number or bool; to turn another "
+                        + "value into text, append it: var s: " + target + " = \"\"; append(mut s, " + exprText(r.arg) + ");");
             }
             return target;
         }
@@ -4907,6 +5142,7 @@ public final class Checker {
             case Name n -> n.constant != null && n.constant.value != null;
             case FieldAccess f -> f.constant != null ? f.constant.value != null : f.variant != null || isConst(f.target);
             case Index i -> isConst(i.target) && isConst(i.index);
+            case Call c when c.asStruct != null -> isConst(c.asStruct);
             case Call c -> c.builtin != null && c.builtin.pure && c.args.stream().allMatch(a -> isConst(a.expr()));
             case VariantCall v -> v.asCall == null && v.args.stream().allMatch(a -> isConst(a.expr()));
             case StructLit s -> s.fields.stream().allMatch(f -> isConst(f.value()));

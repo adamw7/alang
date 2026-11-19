@@ -1,0 +1,7 @@
+error[E0203]: variants() needs an enum whose variants carry no values, but `Shape.Circle` carries 1
+ --> tests/errors/E0203_variants_payload.al:8:23
+  |
+8 |     for s in variants(Shape) {
+  |                       ^^^^^
+  = hint: list them yourself: [Shape.Circle(...), ...]
+

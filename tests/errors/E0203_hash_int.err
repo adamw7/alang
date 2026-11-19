@@ -1,0 +1,7 @@
+error[E0203]: hash() needs a str or an array or list of u8, found i64
+ --> tests/errors/E0203_hash_int.al:3:16
+  |
+3 |     print(hash(42));
+  |                ^^
+  = hint: hash its text: var s: str[24] = ""; append(mut s, 42); then hash(s)
+

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Highlighting, hovers and completion know the new builtins (`count_ones`, `leading_zeros`, `trailing_zeros`,
+  `rotl`, `rotr`, `keys`, `values`, `variants`, `hash`, `to_base`).
 - *Apply every ALang fix* now runs from `"editor.codeActionsOnSave": {"source.fixAll.alang": "explicit"}`:
   a request for exactly that kind got no action before.
 - A file's diagnostics no longer depend on which check finished last: saving re-checks every open file, and

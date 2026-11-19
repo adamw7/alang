@@ -68,6 +68,22 @@ public enum Builtin {
     MUL_MOD(Group.MATH, true, "mul_mod", "mul_mod(a, b, m) -> T",
         "(a * b) mod m, computed exactly however large a * b is, for three integers of the same type: "
             + "rem_euclid(a, m) * rem_euclid(b, m) reduced mod m, so 0 <= result < m. Traps (R0013) unless m > 0."),
+    COUNT_ONES(Group.MATH, true, "count_ones", "count_ones(x) -> i64",
+        "The number of 1 bits in the integer x, over the bits of its type (two's complement for a signed one): "
+            + "count_ones(u8(7)) is 3, count_ones(i8(-1)) is 8."),
+    LEADING_ZEROS(Group.MATH, true, "leading_zeros", "leading_zeros(x) -> i64",
+        "The number of 0 bits above the highest 1 bit of the integer x, over the bits of its type: leading_zeros(u8(1)) "
+            + "is 7; the number of bits if x is 0."),
+    TRAILING_ZEROS(Group.MATH, true, "trailing_zeros", "trailing_zeros(x) -> i64",
+        "The number of 0 bits below the lowest 1 bit of the integer x: trailing_zeros(u8(8)) is 3; the number of bits "
+            + "of its type if x is 0."),
+    ROTL(Group.MATH, true, "rotl", "rotl(x, n) -> T",
+        "The bits of the integer x shifted left by n (any integer), those that leave at the top coming back at the "
+            + "bottom: rotl(u8(0x81), 1) is 0x03. n is taken modulo the number of bits, rem_euclid(n, bits), so a "
+            + "negative n rotates right. Never traps."),
+    ROTR(Group.MATH, true, "rotr", "rotr(x, n) -> T",
+        "The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: "
+            + "rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps."),
     SQRT(Group.MATH, true, "sqrt", "sqrt(x) -> f", "Square root of an f32/f64."),
     FLOOR(Group.MATH, true, "floor", "floor(x) -> f", "Largest integral value not greater than x (f32/f64)."),
     CEIL(Group.MATH, true, "ceil", "ceil(x) -> f", "Smallest integral value not less than x (f32/f64)."),
@@ -157,13 +173,22 @@ public enum Builtin {
             + "left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. An exponent may follow: "
             + "1e5, 2.5E-3."),
 
-    PARSE_I64(Group.TEXT, true, "parse_i64", "parse_i64(s) -> Option<i64>",
+    PARSE_I64(Group.TEXT, true, "parse_i64", "parse_i64(s, base = 10) -> Option<i64>",
         "The str as an i64, Option.Some(n), when is_int(s) holds (an optional + or -, then digits, within the i64 range); "
-            + "otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike i64(s)."),
+            + "otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike i64(s). With a base, 2 to 36 "
+            + "(traps (R0013) otherwise), the digits are 0-9 then a-z or A-Z, without a prefix: parse_i64(\"ff\", 16) is "
+            + "Option.Some(255), parse_i64(\"-101\", 2) is Option.Some(-5)."),
+    TO_BASE(Group.TEXT, true, "to_base", "to_base(n, base) -> str[N]",
+        "The text of the integer n in the base 2 to 36 (traps (R0013) otherwise), with the digits 0-9 then a-z, no "
+            + "prefix and a - before a negative n: to_base(255, 16) is \"ff\", to_base(5, 2) is \"101\", to_base(-255, 16) "
+            + "is \"-ff\". pad_left(to_base(n, 16), 2, '0') gives two hex digits. " + Builtin.TEXT_USE),
     PARSE_F64(Group.TEXT, true, "parse_f64", "parse_f64(s) -> Option<f64>",
         "The str as an f64, Option.Some(x), when is_float(s) holds (19.99, -0.5, 3, .25, 2.5e3); otherwise Option.None. "
             + "Strict: no spaces, so trim(s) first. Never traps, unlike f64(s)."),
 
+    HASH(Group.TEXT, true, "hash", "hash(s) -> u64",
+        "The 64-bit FNV-1a hash of the bytes of a str, or of an array or list of u8: the same number on every run and "
+            + "machine. hash(\"\") is 14695981039346656037. Not for secrets: it is easy to find two inputs with the same hash."),
     IS_UTF8(Group.TEXT, true, "is_utf8", "is_utf8(s) -> bool",
         "Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or "
             + "cut-off sequences."),
@@ -222,6 +247,14 @@ public enum Builtin {
     COMPARE(Group.COLLECTIONS, true, "compare", "compare(a, b) -> i64",
         "-1, 0 or 1 as a comes before b, is equal to it, or comes after it in the order of sort: two values of the same "
             + "type, any type. For a type parameter, compare(a, b) < 0 is a < b."),
+    KEYS(Group.COLLECTIONS, true, "keys", "keys(m) -> list[K; N]",
+        "The keys of the map m, in order, as a list of the map's capacity: keys(m) of a map[str[8], i64; 16] is a "
+            + "list[str[8]; 16]."),
+    VALUES(Group.COLLECTIONS, true, "values", "values(m) -> list[V; N]",
+        "The values of the map m, in the order of their keys, as a list of the map's capacity."),
+    VARIANTS(Group.COLLECTIONS, true, "variants", "variants(E) -> [E; K]",
+        "Every variant of the enum named E, in the order they are declared, as an array: for c in variants(Color) { }. "
+            + "The enum's variants carry no values, and it has no type parameters."),
     GET_OR(Group.COLLECTIONS, true, "get_or", "get_or(m, key, default) -> V",
         "The value of key in the map m, or default when m has no such key; m[key] traps (R0003) instead.");
 
@@ -277,9 +310,9 @@ public enum Builtin {
         return this == SPLIT || this == WORDS || this == CHARS || this == JOIN || this == REPLACE || formats();
     }
 
-    /** Whether it formats a value as text: fixed, pad_left and pad_right, which print and append write out directly. */
+    /** Whether it formats a value as text: fixed, pad_left, pad_right and to_base, which print and append write out directly. */
     public boolean formats() {
-        return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT;
+        return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT || this == TO_BASE;
     }
 
     /** Whether the first argument is modified, and so passed as `mut`. */

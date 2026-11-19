@@ -1,0 +1,7 @@
+error[E0213]: missing field(s) name in Job(...)
+ --> tests/errors/E0213_struct_missing_no_default.al:8:18
+  |
+8 |     let j: Job = Job(retries: 1);
+  |                  ^^^^^^^^^^^^^^^
+  = hint: every field without a default value must be given: name: ..., or take the rest from another Job: Job(..other, ...)
+
