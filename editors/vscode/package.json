@@ -1,0 +1,218 @@
+{
+  "name": "alang",
+  "displayName": "ALang",
+  "description": "ALang language support: highlighting, diagnostics with quick fixes, formatting, hovers, and running tests, tools and programs.",
+  "version": "0.1.0",
+  "publisher": "adamw7",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adamw7/alang",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters",
+    "Snippets"
+  ],
+  "keywords": [
+    "alang",
+    "agents",
+    "mcp",
+    "heap-free"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.al"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "alang",
+        "aliases": [
+          "ALang",
+          "alang"
+        ],
+        "extensions": [
+          ".al"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "alang",
+        "scopeName": "source.alang",
+        "path": "./syntaxes/alang.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.alang.codeblock",
+        "path": "./syntaxes/alang.markdown.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.alang": "alang"
+        }
+      }
+    ],
+    "snippets": [
+      {
+        "language": "alang",
+        "path": "./snippets/alang.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "alang.check",
+        "title": "Check File",
+        "category": "ALang"
+      },
+      {
+        "command": "alang.run",
+        "title": "Run fn main",
+        "category": "ALang",
+        "icon": "$(play)"
+      },
+      {
+        "command": "alang.runWithInput",
+        "title": "Run fn main with an Input File…",
+        "category": "ALang"
+      },
+      {
+        "command": "alang.test",
+        "title": "Run Tests in File",
+        "category": "ALang",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "alang.fuzz",
+        "title": "Fuzz Tools and fn main",
+        "category": "ALang"
+      },
+      {
+        "command": "alang.call",
+        "title": "Call a Tool…",
+        "category": "ALang"
+      },
+      {
+        "command": "alang.tools",
+        "title": "Show Tool Definitions (JSON)",
+        "category": "ALang"
+      },
+      {
+        "command": "alang.memory",
+        "title": "Show Worst-Case Stack per Function",
+        "category": "ALang"
+      },
+      {
+        "command": "alang.build",
+        "title": "Compile to C…",
+        "category": "ALang"
+      },
+      {
+        "command": "alang.explain",
+        "title": "Explain a Diagnostic Code…",
+        "category": "ALang"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "alang.run",
+          "when": "resourceLangId == alang",
+          "group": "navigation@1"
+        },
+        {
+          "command": "alang.test",
+          "when": "resourceLangId == alang",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "alang.check",
+          "when": "editorLangId == alang"
+        },
+        {
+          "command": "alang.run",
+          "when": "editorLangId == alang"
+        },
+        {
+          "command": "alang.runWithInput",
+          "when": "editorLangId == alang"
+        },
+        {
+          "command": "alang.test",
+          "when": "editorLangId == alang"
+        },
+        {
+          "command": "alang.fuzz",
+          "when": "editorLangId == alang"
+        },
+        {
+          "command": "alang.call",
+          "when": "editorLangId == alang"
+        },
+        {
+          "command": "alang.tools",
+          "when": "editorLangId == alang"
+        },
+        {
+          "command": "alang.memory",
+          "when": "editorLangId == alang"
+        },
+        {
+          "command": "alang.build",
+          "when": "editorLangId == alang"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ALang",
+      "properties": {
+        "alang.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The `alang` command (e.g. `/opt/alang/bin/alang`). Empty: `bin/alang` when the workspace is the ALang repository, else `alang` on the `PATH`.",
+          "scope": "machine-overridable"
+        },
+        "alang.checkOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run `alang check` when an ALang file is opened."
+        },
+        "alang.checkOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run `alang check` on every open ALang file when one is saved."
+        },
+        "alang.codeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Run, Run test, Debug, Call and Fuzz above fn main, tests and tool fns."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[alang]": {
+        "editor.defaultFormatter": "adamw7.alang",
+        "editor.insertSpaces": true,
+        "editor.tabSize": 4
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "builtins": "node scripts/gen-builtins.js",
+    "package": "npx --yes @vscode/vsce@3.2.1 package --no-dependencies"
+  },
+  "devDependencies": {
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.2.0"
+  }
+}

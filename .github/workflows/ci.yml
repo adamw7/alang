@@ -424,3 +424,37 @@ jobs:
         timeout-minutes: 5
         run: mvn -B -ntp test -Dtest=FuzzTest -Dalang.fuzz=3000
 
+
+  vscode:
+    name: VS Code extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Build the toolchain the extension runs
+        working-directory: .
+        run: mvn -B -ntp -q -DskipTests package
+
+      - name: Test the grammar and the extension
+        run: |
+          npm ci
+          npm test
+
+      - name: Package
+        run: npm run package

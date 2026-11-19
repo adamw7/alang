@@ -1,0 +1,566 @@
+[
+  {
+    "name": "print",
+    "group": "core",
+    "signature": "print(values...)",
+    "description": "Prints the values (no separator) followed by a newline."
+  },
+  {
+    "name": "len",
+    "group": "core",
+    "signature": "len(x) -> i64",
+    "description": "Number of elements in an array/list, or bytes in a str."
+  },
+  {
+    "name": "cap",
+    "group": "core",
+    "signature": "cap(x) -> i64",
+    "description": "Capacity of a list or str (the N in list[T; N] / str[N])."
+  },
+  {
+    "name": "push",
+    "group": "core",
+    "signature": "push(mut xs, value)",
+    "description": "Appends one element to a list (or one u8 byte to a str). Traps if full."
+  },
+  {
+    "name": "pop",
+    "group": "core",
+    "signature": "pop(mut xs) -> T",
+    "description": "Removes and returns the last element of a list (or last byte of a str). Traps if empty."
+  },
+  {
+    "name": "clear",
+    "group": "core",
+    "signature": "clear(mut xs)",
+    "description": "Removes all elements of a list or str."
+  },
+  {
+    "name": "append",
+    "group": "core",
+    "signature": "append(mut s, values...)",
+    "description": "Appends the text form of each value to a str (same format as print). Traps if full."
+  },
+  {
+    "name": "panic",
+    "group": "core",
+    "signature": "panic(message)",
+    "description": "Stops the program with an error message. Never returns."
+  },
+  {
+    "name": "abs",
+    "group": "math",
+    "signature": "abs(x) -> T",
+    "description": "Absolute value of a signed integer or float. Traps on overflow (abs of the minimum integer)."
+  },
+  {
+    "name": "min",
+    "group": "math",
+    "signature": "min(a, b) -> T",
+    "description": "Smaller of two numbers of the same type. min(xs), with one array or list of numbers, is its smallest element; traps (R0013) if it is empty."
+  },
+  {
+    "name": "max",
+    "group": "math",
+    "signature": "max(a, b) -> T",
+    "description": "Larger of two numbers of the same type. max(xs), with one array or list of numbers, is its largest element; traps (R0013) if it is empty."
+  },
+  {
+    "name": "sum",
+    "group": "math",
+    "signature": "sum(xs) -> T",
+    "description": "The total of an array or list of numbers, added left to right; 0 if it is empty. Traps (R0001) if an integer total does not fit its type, as + does."
+  },
+  {
+    "name": "clamp",
+    "group": "math",
+    "signature": "clamp(x, lo, hi) -> T",
+    "description": "x limited to lo..hi (numbers of the same type). Traps (R0013) unless lo <= hi."
+  },
+  {
+    "name": "pow",
+    "group": "math",
+    "signature": "pow(x, n) -> T",
+    "description": "x to the power n. For integers: n >= 0, pow(0, 0) is 1, traps on overflow, and (R0013) if n < 0. For an f32/f64 x, n is a float of the same type: pow(2.0, 0.5); never traps (pow(-8.0, 0.5) is NaN), with the special cases of C99."
+  },
+  {
+    "name": "gcd",
+    "group": "math",
+    "signature": "gcd(a, b) -> T",
+    "description": "Greatest common divisor of two integers of the same type, never negative; gcd(0, 0) is 0. Traps if it does not fit."
+  },
+  {
+    "name": "lcm",
+    "group": "math",
+    "signature": "lcm(a, b) -> T",
+    "description": "Least common multiple of two integers of the same type, never negative; 0 if either is 0. Traps on overflow."
+  },
+  {
+    "name": "wrapping_add",
+    "group": "math",
+    "signature": "wrapping_add(a, b) -> T",
+    "description": "a + b for two integers of the same type, wrapped around to fit (modulo 2^bits): wrapping_add(u8(250), 10) is 4. Never traps; for hashes and checksums."
+  },
+  {
+    "name": "wrapping_sub",
+    "group": "math",
+    "signature": "wrapping_sub(a, b) -> T",
+    "description": "a - b for two integers of the same type, wrapped around to fit: wrapping_sub(u8(0), 1) is 255. Never traps."
+  },
+  {
+    "name": "wrapping_mul",
+    "group": "math",
+    "signature": "wrapping_mul(a, b) -> T",
+    "description": "a * b for two integers of the same type, wrapped around to fit: the low bits of the product, as FNV and other hashes need. Never traps."
+  },
+  {
+    "name": "saturating_add",
+    "group": "math",
+    "signature": "saturating_add(a, b) -> T",
+    "description": "a + b for two integers of the same type, or the type's largest or smallest value if it does not fit: saturating_add(u8(250), 10) is 255. Never traps."
+  },
+  {
+    "name": "saturating_sub",
+    "group": "math",
+    "signature": "saturating_sub(a, b) -> T",
+    "description": "a - b for two integers of the same type, held to the type's range: saturating_sub(u8(3), 5) is 0. Never traps."
+  },
+  {
+    "name": "saturating_mul",
+    "group": "math",
+    "signature": "saturating_mul(a, b) -> T",
+    "description": "a * b for two integers of the same type, held to the type's range. Never traps."
+  },
+  {
+    "name": "checked_add",
+    "group": "math",
+    "signature": "checked_add(a, b) -> Option<T>",
+    "description": "a + b for two integers of the same type as Option.Some, or Option.None if it does not fit. Never traps."
+  },
+  {
+    "name": "checked_sub",
+    "group": "math",
+    "signature": "checked_sub(a, b) -> Option<T>",
+    "description": "a - b for two integers of the same type as Option.Some, or Option.None if it does not fit: checked_sub(u8(3), 5) is Option.None. Never traps."
+  },
+  {
+    "name": "checked_mul",
+    "group": "math",
+    "signature": "checked_mul(a, b) -> Option<T>",
+    "description": "a * b for two integers of the same type as Option.Some, or Option.None if it does not fit. Never traps."
+  },
+  {
+    "name": "rem_euclid",
+    "group": "math",
+    "signature": "rem_euclid(a, m) -> T",
+    "description": "The remainder of a / m that is never negative, for two integers of the same type: 0 <= r < abs(m). rem_euclid(-1, 5) is 4, where -1 % 5 is -1; use it to wrap an index around: xs[rem_euclid(i + k, n)]. Traps (R0002) if m is 0."
+  },
+  {
+    "name": "div_euclid",
+    "group": "math",
+    "signature": "div_euclid(a, m) -> T",
+    "description": "The quotient that goes with rem_euclid: a == div_euclid(a, m) * m + rem_euclid(a, m). div_euclid(-7, 2) is -4, where -7 / 2 is -3. Traps (R0002) if m is 0, and (R0001) where / overflows."
+  },
+  {
+    "name": "mul_mod",
+    "group": "math",
+    "signature": "mul_mod(a, b, m) -> T",
+    "description": "(a * b) mod m, computed exactly however large a * b is, for three integers of the same type: rem_euclid(a, m) * rem_euclid(b, m) reduced mod m, so 0 <= result < m. Traps (R0013) unless m > 0."
+  },
+  {
+    "name": "sqrt",
+    "group": "math",
+    "signature": "sqrt(x) -> f",
+    "description": "Square root of an f32/f64."
+  },
+  {
+    "name": "floor",
+    "group": "math",
+    "signature": "floor(x) -> f",
+    "description": "Largest integral value not greater than x (f32/f64)."
+  },
+  {
+    "name": "ceil",
+    "group": "math",
+    "signature": "ceil(x) -> f",
+    "description": "Smallest integral value not less than x (f32/f64)."
+  },
+  {
+    "name": "round",
+    "group": "math",
+    "signature": "round(x) -> f",
+    "description": "Nearest integral value, halves away from zero: round(2.5) is 3.0 (f32/f64)."
+  },
+  {
+    "name": "trunc",
+    "group": "math",
+    "signature": "trunc(x) -> f",
+    "description": "x without its fraction, rounded toward zero: trunc(-2.7) is -2.0 (f32/f64)."
+  },
+  {
+    "name": "exp",
+    "group": "math",
+    "signature": "exp(x) -> f",
+    "description": "e to the power x (f32/f64)."
+  },
+  {
+    "name": "log",
+    "group": "math",
+    "signature": "log(x) -> f",
+    "description": "Natural logarithm of x (f32/f64): -inf for 0, NaN below 0."
+  },
+  {
+    "name": "log2",
+    "group": "math",
+    "signature": "log2(x) -> f",
+    "description": "Base-2 logarithm of x (f32/f64); exact for powers of two."
+  },
+  {
+    "name": "log10",
+    "group": "math",
+    "signature": "log10(x) -> f",
+    "description": "Base-10 logarithm of x (f32/f64)."
+  },
+  {
+    "name": "sin",
+    "group": "math",
+    "signature": "sin(x) -> f",
+    "description": "Sine of x radians (f32/f64)."
+  },
+  {
+    "name": "cos",
+    "group": "math",
+    "signature": "cos(x) -> f",
+    "description": "Cosine of x radians (f32/f64)."
+  },
+  {
+    "name": "tan",
+    "group": "math",
+    "signature": "tan(x) -> f",
+    "description": "Tangent of x radians (f32/f64)."
+  },
+  {
+    "name": "asin",
+    "group": "math",
+    "signature": "asin(x) -> f",
+    "description": "Arc sine, in radians from -pi/2 to pi/2 (f32/f64); NaN outside -1..1."
+  },
+  {
+    "name": "acos",
+    "group": "math",
+    "signature": "acos(x) -> f",
+    "description": "Arc cosine, in radians from 0 to pi (f32/f64); NaN outside -1..1."
+  },
+  {
+    "name": "atan",
+    "group": "math",
+    "signature": "atan(x) -> f",
+    "description": "Arc tangent, in radians from -pi/2 to pi/2 (f32/f64)."
+  },
+  {
+    "name": "atan2",
+    "group": "math",
+    "signature": "atan2(y, x) -> f",
+    "description": "The angle of the point (x, y) from the positive x axis, in radians from -pi to pi (two floats of the same type)."
+  },
+  {
+    "name": "is_nan",
+    "group": "math",
+    "signature": "is_nan(x) -> bool",
+    "description": "Whether an f32/f64 is NaN."
+  },
+  {
+    "name": "is_finite",
+    "group": "math",
+    "signature": "is_finite(x) -> bool",
+    "description": "Whether an f32/f64 is neither NaN nor infinite."
+  },
+  {
+    "name": "is_digit",
+    "group": "chars",
+    "signature": "is_digit(c) -> bool",
+    "description": "Whether the u8 byte c is an ASCII digit 0-9."
+  },
+  {
+    "name": "is_alpha",
+    "group": "chars",
+    "signature": "is_alpha(c) -> bool",
+    "description": "Whether the u8 byte c is an ASCII letter a-z or A-Z."
+  },
+  {
+    "name": "is_alnum",
+    "group": "chars",
+    "signature": "is_alnum(c) -> bool",
+    "description": "Whether the u8 byte c is an ASCII letter or digit."
+  },
+  {
+    "name": "is_space",
+    "group": "chars",
+    "signature": "is_space(c) -> bool",
+    "description": "Whether the u8 byte c is ASCII whitespace: space, \\t, \\n, \\r, \\x0b or \\x0c."
+  },
+  {
+    "name": "is_upper",
+    "group": "chars",
+    "signature": "is_upper(c) -> bool",
+    "description": "Whether the u8 byte c is an ASCII uppercase letter A-Z."
+  },
+  {
+    "name": "is_lower",
+    "group": "chars",
+    "signature": "is_lower(c) -> bool",
+    "description": "Whether the u8 byte c is an ASCII lowercase letter a-z."
+  },
+  {
+    "name": "to_upper",
+    "group": "chars",
+    "signature": "to_upper(x) -> T",
+    "description": "A u8 byte or a str[N] with ASCII a-z changed to A-Z; other bytes are kept."
+  },
+  {
+    "name": "to_lower",
+    "group": "chars",
+    "signature": "to_lower(x) -> T",
+    "description": "A u8 byte or a str[N] with ASCII A-Z changed to a-z; other bytes are kept."
+  },
+  {
+    "name": "contains",
+    "group": "text",
+    "signature": "contains(xs, x) -> bool",
+    "description": "Whether a str contains a str or u8 byte, or an array/list contains an element equal to x."
+  },
+  {
+    "name": "index_of",
+    "group": "text",
+    "signature": "index_of(xs, x) -> i64",
+    "description": "Position of the first occurrence of x (as for contains), or -1 if there is none."
+  },
+  {
+    "name": "last_index_of",
+    "group": "text",
+    "signature": "last_index_of(xs, x) -> i64",
+    "description": "Position of the last occurrence of x (as for contains), or -1 if there is none; for the empty str, len(xs)."
+  },
+  {
+    "name": "starts_with",
+    "group": "text",
+    "signature": "starts_with(s, prefix) -> bool",
+    "description": "Whether a str begins with a str or u8 byte."
+  },
+  {
+    "name": "ends_with",
+    "group": "text",
+    "signature": "ends_with(s, suffix) -> bool",
+    "description": "Whether a str ends with a str or u8 byte."
+  },
+  {
+    "name": "slice",
+    "group": "text",
+    "signature": "slice(xs, from, to) -> T",
+    "description": "A copy of the elements from..to (half-open) of a str, list or array, of the same type (a list for an array). Traps (R0003) unless 0 <= from <= to <= len(xs)."
+  },
+  {
+    "name": "trim",
+    "group": "text",
+    "signature": "trim(s) -> str[N]",
+    "description": "s without the ASCII whitespace at its start and end."
+  },
+  {
+    "name": "split",
+    "group": "text",
+    "signature": "split(s, sep) -> list[str[K]; M]",
+    "description": "The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. Its type is that of the variable it is stored in. Traps if a piece or the count does not fit; for p in split(s, sep) goes through the pieces one at a time instead, each a str of the capacity of s, and never traps on their size or number."
+  },
+  {
+    "name": "words",
+    "group": "text",
+    "signature": "words(s) -> list[str[K]; M]",
+    "description": "The pieces of s between runs of ASCII whitespace, never empty. Its type is that of the variable it is stored in. Traps if a word or the count does not fit; for w in words(s) goes through the words one at a time instead, and never traps on their size or number."
+  },
+  {
+    "name": "try_split",
+    "group": "text",
+    "signature": "try_split(mut parts, s, sep) -> bool",
+    "description": "split(s, sep) into the list parts, replacing what it held: true if every piece fits, otherwise false with parts left empty, never a trap. For text that may not fit, such as input: var parts: list[str[16]; 4] = []; let ok: bool = try_split(mut parts, line, ',');"
+  },
+  {
+    "name": "try_words",
+    "group": "text",
+    "signature": "try_words(mut parts, s) -> bool",
+    "description": "words(s) into the list parts, replacing what it held: true if every word fits, otherwise false with parts left empty, never a trap."
+  },
+  {
+    "name": "join",
+    "group": "text",
+    "signature": "join(parts, sep) -> str[N]",
+    "description": "The strs of an array or list with sep (a str or u8 byte) between them. Its type is that of the variable it is stored in. Traps if the result does not fit."
+  },
+  {
+    "name": "replace",
+    "group": "text",
+    "signature": "replace(s, from, to) -> str[N]",
+    "description": "s with every occurrence of from (a non-empty str or a u8 byte) replaced by to, left to right. Its type is that of the variable it is stored in. Traps if the result does not fit."
+  },
+  {
+    "name": "fixed",
+    "group": "text",
+    "signature": "fixed(x, decimals) -> str[N]",
+    "description": "The text of the f32/f64 x with exactly `decimals` digits after the point, 0 to 20 (traps (R0013) otherwise), rounded half to even on its exact value as print rounds: fixed(3.14159, 2) is \"3.14\", fixed(2.5, 0) is \"2\", fixed(0.125, 2) is \"0.12\". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
+  },
+  {
+    "name": "pad_left",
+    "group": "text",
+    "signature": "pad_left(value, width, fill) -> str[N]",
+    "description": "The text of a number, bool, str or fixed(...) as print writes it, with the u8 byte fill added in front until it is width bytes long: pad_left(7, 3, '0') is \"007\", pad_left(\"ab\", 4, ' ') is \"  ab\". Longer text is kept whole; a width above 1048576 traps (R0013). Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
+  },
+  {
+    "name": "pad_right",
+    "group": "text",
+    "signature": "pad_right(value, width, fill) -> str[N]",
+    "description": "As pad_left, with the fill added after the text: pad_right(\"ab\", 4, '.') is \"ab..\". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
+  },
+  {
+    "name": "count",
+    "group": "text",
+    "signature": "count(xs, x) -> i64",
+    "description": "How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right (traps (R0013) if the str is empty); in an array or list, the elements equal to x."
+  },
+  {
+    "name": "is_int",
+    "group": "text",
+    "signature": "is_int(s) -> bool",
+    "description": "Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it."
+  },
+  {
+    "name": "is_float",
+    "group": "text",
+    "signature": "is_float(s) -> bool",
+    "description": "Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. An exponent may follow: 1e5, 2.5E-3."
+  },
+  {
+    "name": "parse_i64",
+    "group": "text",
+    "signature": "parse_i64(s) -> Option<i64>",
+    "description": "The str as an i64, Option.Some(n), when is_int(s) holds (an optional + or -, then digits, within the i64 range); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike i64(s)."
+  },
+  {
+    "name": "parse_f64",
+    "group": "text",
+    "signature": "parse_f64(s) -> Option<f64>",
+    "description": "The str as an f64, Option.Some(x), when is_float(s) holds (19.99, -0.5, 3, .25, 2.5e3); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike f64(s)."
+  },
+  {
+    "name": "is_utf8",
+    "group": "text",
+    "signature": "is_utf8(s) -> bool",
+    "description": "Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or cut-off sequences."
+  },
+  {
+    "name": "char_count",
+    "group": "text",
+    "signature": "char_count(s) -> i64",
+    "description": "The number of Unicode code points in a str (len(s) counts bytes). Each byte that does not start a well-formed UTF-8 sequence counts as one."
+  },
+  {
+    "name": "chars",
+    "group": "text",
+    "signature": "chars(s) -> list[u32; N]",
+    "description": "The Unicode code points of a str, decoding UTF-8; a byte that does not start a well-formed sequence gives U+FFFD (65533). Its type is that of the variable it is stored in; traps (R0004) if they do not fit. for c in chars(s) goes through them one at a time instead, each a u32, and never traps."
+  },
+  {
+    "name": "push_char",
+    "group": "text",
+    "signature": "push_char(mut s, c)",
+    "description": "Appends the UTF-8 encoding (1 to 4 bytes) of the code point c, an integer, to a str. Traps (R0013) unless c is 0 to 0x10FFFF and not a surrogate, and (R0004) if it does not fit."
+  },
+  {
+    "name": "slice_chars",
+    "group": "text",
+    "signature": "slice_chars(s, from, to) -> str[N]",
+    "description": "The code points from..to (half-open, counted as char_count counts them) of a str, as a str of the same capacity. Traps (R0003) unless 0 <= from <= to <= char_count(s)."
+  },
+  {
+    "name": "sort",
+    "group": "collections",
+    "signature": "sort(mut xs)",
+    "description": "Sorts a list, array or str in place, ascending. Every type is ordered: numbers by value (-0.0 before 0.0, NaN last), false before true, strs and lists element by element (a prefix first), structs field by field, enums by variant, then payload."
+  },
+  {
+    "name": "reverse",
+    "group": "collections",
+    "signature": "reverse(mut xs)",
+    "description": "Reverses a list, array or str in place."
+  },
+  {
+    "name": "dedup",
+    "group": "collections",
+    "signature": "dedup(mut xs)",
+    "description": "Removes each element of a list (byte of a str) equal to the one before it, keeping the first of each run. After sort(mut xs), every value is left once."
+  },
+  {
+    "name": "sort_by",
+    "group": "collections",
+    "signature": "sort_by(mut xs, before)",
+    "description": "Sorts a list or array in place into the order that before, a function fn(T, T) -> bool passed by name, gives: before(a, b) is true when a must come before b. Stable: elements neither comes before keep their order, so sorting by one key and then by another sorts by both. A binary insertion sort: about n log2(n) calls of before."
+  },
+  {
+    "name": "any",
+    "group": "collections",
+    "signature": "any(xs, f) -> bool",
+    "description": "Whether f(x) is true for some element x of an array or list, f being a function fn(T) -> bool passed by name: any(xs, is_even). Calls f from the first element on, and stops at the first true; false if xs is empty."
+  },
+  {
+    "name": "all",
+    "group": "collections",
+    "signature": "all(xs, f) -> bool",
+    "description": "Whether f(x) is true for every element x of an array or list (as for any); stops at the first false; true if xs is empty."
+  },
+  {
+    "name": "count_if",
+    "group": "collections",
+    "signature": "count_if(xs, f) -> i64",
+    "description": "How many elements x of an array or list have f(x) true, f being a function fn(T) -> bool passed by name."
+  },
+  {
+    "name": "find_index",
+    "group": "collections",
+    "signature": "find_index(xs, f) -> i64",
+    "description": "The position of the first element x of an array or list with f(x) true (as for any), or -1 if there is none."
+  },
+  {
+    "name": "retain",
+    "group": "collections",
+    "signature": "retain(mut xs, keep)",
+    "description": "Keeps the elements x of a list for which keep(x) is true, in their order, and removes the rest; keep is a function fn(T) -> bool passed by name, called once per element, first to last."
+  },
+  {
+    "name": "binary_search",
+    "group": "collections",
+    "signature": "binary_search(xs, x) -> i64",
+    "description": "In an array or list sorted as sort sorts it, the position of the first element e with compare(e, x) == 0, or -1 if there is none. Looks at about log2(len(xs)) elements; on a list that is not sorted, it may miss an equal element, but never traps and gives the same answer on every run."
+  },
+  {
+    "name": "insert",
+    "group": "collections",
+    "signature": "insert(mut xs, i, value)",
+    "description": "Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and insert(mut s, x) adds x to a set; both trap (R0004) when a new key does not fit."
+  },
+  {
+    "name": "remove",
+    "group": "collections",
+    "signature": "remove(mut xs, i) -> T",
+    "description": "Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether it was there."
+  },
+  {
+    "name": "compare",
+    "group": "collections",
+    "signature": "compare(a, b) -> i64",
+    "description": "-1, 0 or 1 as a comes before b, is equal to it, or comes after it in the order of sort: two values of the same type, any type. For a type parameter, compare(a, b) < 0 is a < b."
+  },
+  {
+    "name": "get_or",
+    "group": "collections",
+    "signature": "get_or(m, key, default) -> V",
+    "description": "The value of key in the map m, or default when m has no such key; m[key] traps (R0003) instead."
+  }
+]
