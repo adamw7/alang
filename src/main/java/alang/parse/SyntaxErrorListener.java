@@ -6,6 +6,7 @@ import java.util.*;
 import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.InputMismatchException;
 import org.antlr.v4.runtime.Parser;
+import org.antlr.v4.runtime.misc.Interval;
 import org.antlr.v4.runtime.misc.IntervalSet;
 
 /**
@@ -347,6 +348,37 @@ final class SyntaxErrorListener extends BaseErrorListener {
         return false;
     }
 
+    /**
+     * The first escape that is not one in the string or character literal that the quote {@code tok} opens, up to
+     * its closing quote or the end of the line, or null when every escape there is valid.
+     */
+    private static String badEscape(Token tok, char quote) {
+        CharStream cs = tok.getInputStream();
+        if (cs == null) return null;
+        int end = cs.size();
+        for (int i = tok.getStartIndex() + 1; i < end; i++) {
+            int c = cs.getText(Interval.of(i, i)).charAt(0);
+            if (c == quote || c == '\n' || c == '\r') return null;
+            if (c != '\\') continue;
+            if (i + 1 >= end) return "\\";
+            char e = cs.getText(Interval.of(i + 1, i + 1)).charAt(0);
+            if ("ntr0\\\"'".indexOf(e) >= 0) {
+                i++;
+                continue;
+            }
+            if (e == 'x') {
+                String hex = cs.getText(Interval.of(i + 2, Math.min(i + 3, end - 1)));
+                if (hex.length() == 2 && hex.chars().allMatch(h -> Character.digit(h, 16) >= 0)) {
+                    i += 3;
+                    continue;
+                }
+                return "\\x" + (hex.isEmpty() || Character.digit(hex.charAt(0), 16) < 0 ? "" : hex.substring(0, 1));
+            }
+            return e == '\n' || e == '\r' ? "\\" : "\\" + e;
+        }
+        return null;
+    }
+
     private static Token previous(TokenStream ts, Token tok) {
         for (int i = tok.getTokenIndex() - 1; i >= 0; i--) {
             Token t = ts.get(i);
@@ -425,6 +457,13 @@ final class SyntaxErrorListener extends BaseErrorListener {
             String s = tok.getText();
             if (s.equals("#")) return "comments start with //";
             if (s.equals("`")) return FORMAT_STRINGS;
+            if (s.equals("\"") || s.equals("'")) {
+                String escape = badEscape(tok, s.charAt(0));
+                if (escape != null) {
+                    return "`" + escape + "` is not an escape; the escapes are \\n \\t \\r \\0 \\\\ \\\" \\' and \\xHH (two hex digits), "
+                        + "and a character beyond ASCII is written as itself in UTF-8";
+                }
+            }
             if (s.equals("\"")) return "unterminated string literal; strings must close on the same line (use \\n for newlines)";
             if (s.equals("'")) return "strings use double quotes \"...\"; single quotes are for one-byte character literals like 'a'";
             if (s.equals("﻿") && tok.getStartIndex() == 0) {

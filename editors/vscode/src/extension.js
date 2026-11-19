@@ -403,7 +403,9 @@ function blockEnd(doc, from) {
   let depth = 0;
   let opened = false;
   for (let i = from; i < doc.lineCount && i < from + 5000; i++) {
-    const text = doc.lineAt(i).text.replace(/\/\/.*$/, '').replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
+    // Strings and comments in one pass, left to right: a `//` inside "http://..." does not start a comment.
+    const text = doc.lineAt(i).text
+      .replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\/\/.*$/g, (m) => (m.startsWith('/') ? '' : '""'));
     for (const c of text) {
       if (c === '{') { depth++; opened = true; }
       if (c === '}') depth--;
