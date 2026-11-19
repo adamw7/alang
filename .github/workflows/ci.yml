@@ -428,7 +428,7 @@ jobs:
   vscode:
     name: VS Code extension
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: editors/vscode
@@ -455,6 +455,15 @@ jobs:
         run: |
           npm ci
           npm test
+
+      # The extension inside a real VS Code: the latest stable, and the oldest that engines.vscode allows.
+      - name: End-to-end in VS Code (stable)
+        run: xvfb-run -a npm run test:e2e
+
+      - name: End-to-end in VS Code (1.80.0)
+        run: xvfb-run -a npm run test:e2e
+        env:
+          ALANG_VSCODE_VERSION: 1.80.0
 
       - name: Package
         run: npm run package

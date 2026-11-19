@@ -50,6 +50,7 @@ class Kind {
   constructor(value) { this.value = value; }
   append(part) { return new Kind(`${this.value}.${part}`); }
   contains(other) { return other.value === this.value || other.value.startsWith(this.value + '.'); }
+  intersects(other) { return this.contains(other) || other.contains(this); }
 }
 class WorkspaceEdit {
   constructor() { this.edits = new Map(); }
@@ -239,6 +240,14 @@ test('the extension against the real toolchain', { skip: !canRun && 'bin/alang c
   const fixAll = state.providers.actions.provideCodeActions(doc2, missing.range,
     { diagnostics: [], only: vscode.CodeActionKind.SourceFixAll });
   assert.match(apply(doc2, fixAll[0].edit.edits.get(mainFile)), /let x: i64 = 1;/);
+  // The Source Action menu asks for any source action, and codeActionsOnSave for exactly ours; a quick
+  // fix request gets no fix-all.
+  for (const only of [new Kind('source'), vscode.CodeActionKind.SourceFixAll.append('alang')]) {
+    const found = state.providers.actions.provideCodeActions(doc2, missing.range, { diagnostics: [], only });
+    assert.ok(found.some((a) => a.title === 'Apply every ALang fix'), only.value);
+  }
+  assert.ok(!state.providers.actions.provideCodeActions(doc2, missing.range,
+    { diagnostics: [], only: vscode.CodeActionKind.QuickFix }).some((a) => a.title === 'Apply every ALang fix'));
   if (!state.diagnostics.has(path.join(dir, 'lib.al'))) {
     // The checker stops at the first file with errors; lib.al shows once main.al is clean.
     const clean = apply(doc2, fixAll[0].edit.edits.get(mainFile));

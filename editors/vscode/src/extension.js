@@ -190,7 +190,9 @@ class FixProvider {
         actions.push(explain);
       }
     }
-    if (context.only && context.only.contains(vscode.CodeActionKind.SourceFixAll)) {
+    // `only` may be wider (source, from the Source Action menu) or exactly ours (source.fixAll.alang,
+    // from "editor.codeActionsOnSave"); either way it asks for this action.
+    if (context.only && context.only.intersects(vscode.CodeActionKind.SourceFixAll.append(LANG))) {
       const all = this.fixAll(doc);
       if (all) actions.push(all);
     }

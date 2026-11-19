@@ -51,6 +51,8 @@ Diagnostics follow the file on disk: `alang check` resolves imports from it, so 
 cd editors/vscode
 npm install
 npm test                 # grammar, unit tests, and the extension against ../../bin/alang
+npm run test:e2e         # the extension inside a real VS Code (downloaded to .vscode-test/); on Linux
+                         # without a display: xvfb-run -a npm run test:e2e; ALANG_VSCODE_VERSION=1.80.0 for another
 npm run builtins         # regenerate src/builtins.json after builtins change in Builtin.java
 npm run package          # alang-0.1.0.vsix; install with: code --install-extension alang-0.1.0.vsix
 ```
