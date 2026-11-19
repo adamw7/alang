@@ -56,7 +56,7 @@ async function until(f, what, ms = 60000) {
   for (;;) {
     const v = await f();
     if (v) return v;
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > end) throw new Error(`timed out waiting for ${typeof what === 'function' ? what() : what}`);
     await sleep(100);
   }
 }
@@ -178,7 +178,9 @@ test('fixing the imported file clears its diagnostics', async () => {
   edit.replace(lib.uri, new vscode.Range(0, 0, lib.lineCount, 0), 'fn helper() -> i64 { return 1; }\n');
   assert.ok(await vscode.workspace.applyEdit(edit));
   await lib.save();
-  await until(() => alangDiagnostics('lib.al').length === 0, 'lib.al to be clean');
+  await until(() => alangDiagnostics('lib.al').length === 0,
+    () => `lib.al to be clean: ${JSON.stringify(alangDiagnostics('lib.al').map((d) => d.message))}\n`
+      + toolchainCalls().slice(-6).map((c) => `#${c.n} ${c.args}\n${c.out}`).join('\n'));
   assert.deepStrictEqual(alangDiagnostics('main.al').map((d) => d.message), []);
 });
 
