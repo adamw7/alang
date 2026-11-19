@@ -1,0 +1,7 @@
+{
+  "name": "conformance",
+  "dependencies": {
+    "text": {"path": "pkg/text", "sha256": "0096f11df990d38344207513bc499a318545fbf9740369bd9ea09a275351f5f1"},
+    "geo": {"path": "pkg/geo", "sha256": "135b82caa79a73b8bd1936b7d683d8707586d2a17f2b7b23030ab82c68290513"}
+  }
+}

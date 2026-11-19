@@ -1,0 +1,7 @@
+error[E0706]: package `loose` is not pinned in tests/errors/alang.json
+ --> tests/errors/package_unpinned.al:2:8
+  |
+2 | import "@loose/loose.al";
+  |        ^^^^^^^^^^^^^^^^^
+  = hint: run: alang deps tests/errors/package_unpinned.al --lock (or add "sha256": "2933772842e20365f679e21f24918dce8e4e80bd32cb94efbc962b2d24bb21a7" to it), so that the program builds from these files only
+

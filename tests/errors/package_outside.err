@@ -1,0 +1,7 @@
+error[E0702]: `tests/errors/pkg/outside.al` is outside package `escape`, in tests/errors/pkg/escape
+ --> tests/errors/pkg/escape/main.al:1:8
+  |
+1 | import "../outside.al";
+  |        ^^^^^^^^^^^^^^^
+  = hint: a package imports its own files by their relative paths, and other packages with import "@name/file.al";
+

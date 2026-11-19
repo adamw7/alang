@@ -213,6 +213,53 @@ a file, before any declaration (E0001), and:
   report names that file once), and a call in an imported file is shown as `called at lib/text.al:12:5`.
   Diagnostics are sorted by file, the main file first, then by position.
 
+### 3.2 Packages
+
+A package is a directory of `.al` files that a program uses as a unit: it is declared once, with its
+directory and a hash of its files, and imported by name: `import "@text/fmt.al";`, or `import "@text/fmt.al"
+as text;`. After the `@` come the package's name and the path of a file in it; the rules of §3.1 apply to the
+import as to any other.
+
+The packages are declared in `alang.json`, the **manifest**, a JSON object:
+
+```json
+{
+  "name": "report",
+  "version": "1.0.0",
+  "dependencies": {
+    "text": {"path": "vendor/text", "sha256": "0096f11df990d38344207513bc499a318545fbf9740369bd9ea09a275351f5f1"}
+  }
+}
+```
+
+- `"name"` and `"version"` describe the directory's own package, when it is one; both are optional, and
+  `alang deps` shows the version of each dependency. A package name is lowercase letters, digits and `_`,
+  starting with a letter.
+- Each dependency has a `"path"`: its directory, relative to `alang.json`, with `/` (E0705 if it is not, or
+  does not exist). **The toolchain never downloads anything**: a package is vendored there, by copying it or
+  as a git submodule, and is part of the program's tree.
+- The manifest that counts for an import is the **nearest**: the one in the importing file's directory, or
+  the closest directory above it. For a file of a package it is that package's own `alang.json`, at the top of
+  its directory, never one above it, so a package means the same wherever it is vendored. A name no manifest
+  declares is E0704.
+- **Each package is pinned** by its `"sha256"`: the SHA-256 of each `.al` file and `alang.json` in its
+  directory and below, in the order of their paths relative to it (with `/`), each as the path, a NUL byte,
+  its length in decimal, a NUL byte and its bytes, with CRLF read as LF. A package that is not pinned, or whose
+  files no longer match their pin, is E0706, with its hash in the hint. `alang deps prog.al --lock` writes the
+  pins.
+- **One copy of each package.** A package may vendor its own dependencies. Copies with the same name and the
+  same hash, wherever they are, are one package, read once; two copies with different hashes in one program
+  are E0706.
+- **A package is closed.** Its files import each other by relative paths that stay inside its directory, and
+  other packages with `@` (E0702 otherwise), so its hash covers all the code it can reach. A package file
+  shared by files of different scopes is imported with `as` in each, as in §3.1.
+
+`alang deps prog.al` lists the dependencies of the program's manifest, with each one's directory, version
+and state: `ok`, `unpinned`, `changed` or `missing` (`--json`: one object with `"ok"`, `"manifest"` and
+`"packages"`); it exits with 1 unless each is `ok`. `--lock` pins each one that is unpinned or changed to its
+files as they are now, rewriting `alang.json`. Pin a package's own dependencies, in its manifest, before the
+package itself: its manifest is part of its hash.
+
 ## 4. Statements
 
 | Statement | Form |

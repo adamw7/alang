@@ -1,0 +1,7 @@
+{
+  "name": "geo",
+  "version": "0.3.0",
+  "dependencies": {
+    "text": {"path": "vendor/text", "sha256": "0096f11df990d38344207513bc499a318545fbf9740369bd9ea09a275351f5f1"}
+  }
+}

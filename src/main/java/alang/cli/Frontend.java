@@ -53,13 +53,31 @@ public final class Frontend {
     private static final class Pending {
         final Parser.Parsed parsed;
         final String key;
+        /** The package the file belongs to, or null for a file of the program itself. */
+        final Pkg pkg;
         final Map<String, Import> imported = new HashMap<>();
         int next;
 
-        Pending(Parser.Parsed parsed, String key) {
+        Pending(Parser.Parsed parsed, String key, Pkg pkg) {
             this.parsed = parsed;
             this.key = key;
+            this.pkg = pkg;
         }
+    }
+
+    /** A package in use: its name, its directory as messages show it and as a real path, and its hash. */
+    private record Pkg(String name, String dir, String dirKey, String hash) {
+        boolean holds(String fileKey) {
+            return fileKey.startsWith(dirKey + File.separator);
+        }
+    }
+
+    /** The packages of one program being loaded: their manifests and hashes, each looked at once. */
+    private static final class PackageSet {
+        final Map<String, Optional<Packages.Manifest>> manifests = new HashMap<>();
+        final Map<String, String> hashes = new HashMap<>();
+        /** Each package name in use, with the copy of it that the program uses. */
+        final Map<String, Pkg> byName = new HashMap<>();
     }
 
     /** Parses {@code root} and the files it imports; returns the joined program, or null on errors. */
@@ -71,7 +89,8 @@ public final class Frontend {
         String rootKey = key(root.path);
         read.put(rootKey, root);
         Deque<Pending> path = new ArrayDeque<>();
-        path.push(new Pending(first, rootKey));
+        path.push(new Pending(first, rootKey, null));
+        PackageSet packages = new PackageSet();
         boolean failed = false;
         // The scope of each file: 0 for the main file and the files that join it without `as`; a file imported with
         // `as` has one of its own, which the files it imports without `as` join.
@@ -89,15 +108,32 @@ public final class Frontend {
             }
             Import imp = imports.get(at.next++);
             Source from = at.parsed.program.source;
-            String problem = invalidPath(imp.path());
-            if (problem != null) {
-                diags.error(Code.E0702, imp.span(), "invalid import path \"" + imp.path() + "\": " + problem,
-                    "import a file by its path relative to this one, with / between directories: import \"lib/text.al\";");
+            Pkg pkg = at.pkg;
+            String file;
+            if (imp.path().startsWith("@")) {
+                pkg = findPackage(imp, at, root, packages, diags, imported);
+                if (pkg == null) {
+                    failed = true;
+                    continue;
+                }
+                file = resolve(pkg.dir() + "/" + Packages.MANIFEST, imp.path().substring(imp.path().indexOf('/') + 1));
+            } else {
+                String problem = invalidPath(imp.path());
+                if (problem != null) {
+                    diags.error(Code.E0702, imp.span(), "invalid import path \"" + imp.path() + "\": " + problem,
+                        "import a file by its path relative to this one, with / between directories: import \"lib/text.al\";");
+                    failed = true;
+                    continue;
+                }
+                file = resolve(from.path, imp.path());
+            }
+            String key = key(file);
+            if (pkg != null && !pkg.holds(key)) {
+                diags.error(Code.E0702, imp.span(), "`" + file + "` is outside package `" + pkg.name() + "`, in " + pkg.dir(),
+                    "a package imports its own files by their relative paths, and other packages with import \"@name/file.al\";");
                 failed = true;
                 continue;
             }
-            String file = resolve(from.path, imp.path());
-            String key = key(file);
             int want = imp.alias() == null ? scopeOf.get(at.key) : ownScope.computeIfAbsent(key, k -> ownScope.size() + 1);
             if (imp.alias() != null) {
                 Map<String, Integer> mine = aliases.computeIfAbsent(from, k -> new HashMap<>());
@@ -152,7 +188,7 @@ public final class Frontend {
             }
             parsed.add(p);
             fileScopes.put(src, want);
-            path.push(new Pending(p, key));
+            path.push(new Pending(p, key, pkg));
         }
         if (failed || !Parser.checkChains(parsed, diags)) return null;
         if (parsed.size() == 1) return first.program;
@@ -166,6 +202,94 @@ public final class Frontend {
         }
         items.addAll(first.program.items);
         return new Program(root, items, first.program.imports, files, aliases, fileScopes);
+    }
+
+    /**
+     * The package an import "@name/file.al" names, found in the manifest nearest to the importing file (for a
+     * file of a package, that package's own), checked against its pinned hash; or null, reported, when it
+     * cannot be used.
+     */
+    private static Pkg findPackage(Import imp, Pending at, Source root, PackageSet set, Diagnostics diags,
+                                   Map<String, String> imported) {
+        String spec = imp.path();
+        int slash = spec.indexOf('/');
+        String name = slash < 0 ? spec.substring(1) : spec.substring(1, slash);
+        String rest = slash < 0 ? "" : spec.substring(slash + 1);
+        String problem = !Packages.NAME.matcher(name).matches()
+            ? "`" + name + "` is not a package name: lowercase letters, digits and _, starting with a letter"
+            : rest.isEmpty() ? "name a file of the package after its name" : invalidPath(rest);
+        if (problem == null && (rest.equals("..") || resolve("", rest).startsWith("../"))) problem = "the path leaves the package";
+        if (problem != null) {
+            diags.error(Code.E0702, imp.span(), "invalid import path \"" + spec + "\": " + problem,
+                "import a file of a package by the package's name and the file's path in it: import \"@text/fmt.al\";");
+            return null;
+        }
+        String from = at.parsed.program.source.path;
+        String stopAt = at.pkg == null ? null : at.pkg.dir();
+        Packages.Manifest m = set.manifests.computeIfAbsent(from.substring(0, Math.max(0, from.lastIndexOf('/') + 1)) + "|" + stopAt,
+            k -> Optional.ofNullable(Packages.nearest(from, stopAt))).orElse(null);
+        if (m == null) {
+            diags.error(Code.E0704, imp.span(), "no " + Packages.MANIFEST + " declares package `" + name + "`"
+                    + (at.pkg == null ? "" : ": package `" + at.pkg.name() + "` has no " + Packages.MANIFEST),
+                "declare it in " + Packages.MANIFEST + " beside the program, or a directory above it: "
+                    + "{\"dependencies\": {\"" + name + "\": {\"path\": \"vendor/" + name + "\"}}}");
+            return null;
+        }
+        if (imported != null) imported.put(m.file(), m.text());
+        if (m.error() != null) {
+            diags.error(Code.E0705, imp.span(), "invalid " + m.file() + ": " + m.error(), "see `alang explain E0705` for the format");
+            return null;
+        }
+        Packages.Dependency d = m.deps().get(name);
+        if (d == null) {
+            diags.error(Code.E0704, imp.span(), m.file() + " declares no package `" + name + "`",
+                m.deps().isEmpty() ? "add it to \"dependencies\": \"" + name + "\": {\"path\": \"vendor/" + name + "\"}"
+                    : "it declares " + String.join(", ", m.deps().keySet().stream().map(n -> "`" + n + "`").toList())
+                        + "; add `" + name + "` to its \"dependencies\" or fix the name");
+            return null;
+        }
+        String dir = m.dirOf(d);
+        if (dir.isEmpty()) dir = ".";
+        if (!Files.isDirectory(Path.of(dir))) {
+            diags.error(Code.E0705, imp.span(), "package `" + name + "`: " + m.file() + " gives the directory `" + dir
+                    + "`, which does not exist",
+                "vendor the package there (copy it, or add it as a git submodule), or fix its \"path\"; the toolchain never downloads");
+            return null;
+        }
+        String dirKey = key(dir);
+        String hash = set.hashes.get(dirKey);
+        if (hash == null) {
+            try {
+                hash = Packages.hash(dir);
+            } catch (IOException | UncheckedIOException | SecurityException e) {
+                diags.error(Code.E0705, imp.span(), "package `" + name + "`: cannot read " + dir + ": " + e.getMessage(), null);
+                return null;
+            }
+            set.hashes.put(dirKey, hash);
+        }
+        String lock = "run: alang deps " + root.path + " --lock";
+        if (d.sha256() == null) {
+            diags.error(Code.E0706, imp.span(), "package `" + name + "` is not pinned in " + m.file(),
+                lock + " (or add \"sha256\": \"" + hash + "\" to it), so that the program builds from these files only");
+            return null;
+        }
+        if (!d.sha256().equals(hash)) {
+            diags.error(Code.E0706, imp.span(), "package `" + name + "` in " + dir + " is not the one pinned in " + m.file()
+                    + ": its files have changed",
+                "restore its files, or, if the change is wanted, " + lock + " (its sha256 is now " + hash + ")");
+            return null;
+        }
+        Pkg seen = set.byName.get(name);
+        if (seen != null && !seen.hash().equals(hash)) {
+            diags.error(Code.E0706, imp.span(), "two different copies of package `" + name + "`: " + seen.dir() + " and " + dir,
+                "a program uses one copy of each package; vendor the same version of `" + name + "` in both places");
+            return null;
+        }
+        // Identical copies, vendored by two packages, are one package: its files are read once.
+        if (seen != null) return seen;
+        Pkg pkg = new Pkg(name, dir, dirKey, hash);
+        set.byName.put(name, pkg);
+        return pkg;
     }
 
     /** Why an import path is not one, or null if it is: relative, with '/' between names, naming a .al file. */

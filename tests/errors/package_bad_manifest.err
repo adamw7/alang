@@ -1,0 +1,7 @@
+error[E0705]: invalid tests/errors/pkg/broken/alang.json: the path of dependency "text": it must be relative to alang.json, so that the program works wherever it is
+ --> tests/errors/pkg/broken/b.al:1:8
+  |
+1 | import "@text/fmt.al";
+  |        ^^^^^^^^^^^^^^
+  = hint: see `alang explain E0705` for the format
+

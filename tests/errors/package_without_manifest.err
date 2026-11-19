@@ -1,0 +1,7 @@
+error[E0704]: no alang.json declares package `text`: package `bare` has no alang.json
+ --> tests/errors/pkg/bare/bare.al:1:8
+  |
+1 | import "@text/fmt.al";
+  |        ^^^^^^^^^^^^^^
+  = hint: declare it in alang.json beside the program, or a directory above it: {"dependencies": {"text": {"path": "vendor/text"}}}
+

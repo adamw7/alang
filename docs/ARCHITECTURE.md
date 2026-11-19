@@ -44,8 +44,8 @@ flowchart TB
 ```
 
 The toolchain never reaches out: no network, processes, clock, environment or randomness. It reads the
-source and its imports (and stdin for `call -` and `fn main(input)`), and writes stdout, stderr and
-`build -o`. `bin/alang` rebuilds the jar when sources are newer and runs it under `LC_ALL=C.UTF-8`. A
+source, its imports and the `alang.json` manifests of the packages they use (and stdin for `call -` and
+`fn main(input)`), and writes stdout, stderr, `build -o` and, for `deps --lock`, `alang.json`. `bin/alang` rebuilds the jar when sources are newer and runs it under `LC_ALL=C.UTF-8`. A
 compiled program is one C99 file: the program plus the [prelude](../src/main/resources/alang/cgen/prelude.c),
 writing with `write(2)` (`_write` on Windows, `AL_WRITE` freestanding). Only the
 [benchmark](../bench/README.md) talks to the Claude API.

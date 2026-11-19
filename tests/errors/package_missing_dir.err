@@ -1,0 +1,7 @@
+error[E0705]: package `gone`: tests/errors/alang.json gives the directory `tests/errors/pkg/gone`, which does not exist
+ --> tests/errors/package_missing_dir.al:2:8
+  |
+2 | import "@gone/gone.al";
+  |        ^^^^^^^^^^^^^^^
+  = hint: vendor the package there (copy it, or add it as a git submodule), or fix its "path"; the toolchain never downloads
+
