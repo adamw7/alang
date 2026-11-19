@@ -443,9 +443,9 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '26'
 
       - name: Build the toolchain the extension runs
         working-directory: .
