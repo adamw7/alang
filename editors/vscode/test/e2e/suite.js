@@ -172,16 +172,22 @@ test('Apply every ALang fix, then errors in an imported file show on that file',
   await until(() => alangDiagnostics('main.al').length === 0, 'main.al to be clean');
 });
 
-test('fixing the imported file clears its diagnostics', async () => {
+test('fixing the imported file clears its errors, whichever check finishes last', async () => {
   const lib = await open('lib.al');
   const edit = new vscode.WorkspaceEdit();
   edit.replace(lib.uri, new vscode.Range(0, 0, lib.lineCount, 0), 'fn helper() -> i64 { return 1; }\n');
   assert.ok(await vscode.workspace.applyEdit(edit));
+  const since = nextCall();
   await lib.save();
-  await until(() => alangDiagnostics('lib.al').length === 0,
-    () => `lib.al to be clean: ${JSON.stringify(alangDiagnostics('lib.al').map((d) => d.message))}\n`
-      + toolchainCalls().slice(-6).map((c) => `#${c.n} ${c.args}\n${c.out}`).join('\n'));
-  assert.deepStrictEqual(alangDiagnostics('main.al').map((d) => d.message), []);
+  // Saving re-checks main.al and lib.al at once. Checked on its own, lib.al has a warning (helper is
+  // never called there) that checking main.al does not report; it must stay, whichever finishes last.
+  const show = () => JSON.stringify([alangDiagnostics('lib.al').map((d) => codeOf(d)), alangDiagnostics('main.al').map((d) => codeOf(d))]);
+  await finishedCall(since, 'check main.al --json');
+  await finishedCall(since, 'check lib.al --json');
+  await until(() => show() === JSON.stringify([['W0306'], []]), () => `lib.al: [W0306], main.al: []; got ${show()}`, 5000);
+  await sleep(500);
+  assert.strictEqual(show(), JSON.stringify([['W0306'], []]));
+  assert.strictEqual(alangDiagnostics('lib.al')[0].severity, vscode.DiagnosticSeverity.Warning);
 });
 
 test('Format Document lays the file out; a file that does not parse is left alone', async () => {

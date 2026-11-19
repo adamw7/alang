@@ -24,7 +24,11 @@ let diagnostics;
 let output;
 /** The fix edits of each diagnostic, as the toolchain gave them. */
 const fixes = new WeakMap();
-/** The files whose diagnostics came from checking each file, so a re-check can clear them. */
+/**
+ * What checking each file reported, by the file it is in: checked file -> (file -> diagnostics). Checking
+ * main.al reports errors in the lib.al it imports, and checking lib.al reports on lib.al too, so a file
+ * shows the union of every check's latest report on it, whichever check finished last.
+ */
 const reported = new Map();
 /** The running check of each file, so a newer one can replace it. */
 const running = new Map();
@@ -152,14 +156,33 @@ async function check(doc) {
     output.appendLine(`alang check ${file} gave no JSON (exit ${result.code}):\n${result.stderr}${result.stdout}`);
     return;
   }
-  for (const stale of reported.get(file) || []) diagnostics.delete(vscode.Uri.file(stale));
-  const files = [];
+  const byTarget = new Map();
   for (const [target, list] of lib.groupDiagnostics(report, file, cwd)) {
     const lines = target === file ? doc : linesOf(target);
-    diagnostics.set(vscode.Uri.file(target), list.map((d) => toDiagnostic(lines, d)));
-    files.push(target);
+    byTarget.set(target, list.map((d) => toDiagnostic(lines, d)));
   }
-  reported.set(file, files);
+  const before = reported.get(file);
+  reported.set(file, byTarget);
+  publish([...(before ? before.keys() : []), ...byTarget.keys()]);
+}
+
+/** Shows on each of these files what every check last reported on it, each diagnostic once. */
+function publish(targets) {
+  for (const target of new Set(targets)) {
+    const merged = [];
+    const seen = new Set();
+    for (const byTarget of reported.values()) {
+      for (const d of byTarget.get(target) || []) {
+        const r = d.range;
+        const key = `${d.severity}|${d.code && d.code.value}|${r.start.line}:${r.start.character}-${r.end.line}:${r.end.character}|${d.message}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(d);
+      }
+    }
+    if (merged.length > 0) diagnostics.set(vscode.Uri.file(target), merged);
+    else diagnostics.delete(vscode.Uri.file(target));
+  }
 }
 
 // ---------------------------------------------------------------- quick fixes
@@ -528,8 +551,10 @@ function activate(context) {
     }),
     vscode.workspace.onDidCloseTextDocument((doc) => {
       if (!isAlangFile(doc)) return;
-      for (const f of reported.get(doc.uri.fsPath) || []) diagnostics.delete(vscode.Uri.file(f));
+      const byTarget = reported.get(doc.uri.fsPath);
+      if (!byTarget) return;
       reported.delete(doc.uri.fsPath);
+      publish(byTarget.keys());
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('alang.path')) warnedMissing = false;
