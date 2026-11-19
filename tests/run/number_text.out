@@ -1,0 +1,9 @@
+-9223372036854775808 2.5 false 255 42 7 4
+n=12! 0.1 18446744073709551615
+ff 101 -ff 0 beef
+-1000000000000000000000000000000000000000000000000000000000000000 3w5e11264sgsf -80
+0a z [....11111111]
+Option.Some(255) Option.Some(255) Option.Some(-5) Option.Some(35) Option.Some(12)
+Option.Some(9223372036854775807) Option.Some(-9223372036854775808) Option.None
+Option.None Option.None Option.None Option.None Option.None
+Option.None Option.Some(1)

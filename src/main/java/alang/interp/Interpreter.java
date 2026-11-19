@@ -445,7 +445,7 @@ public final class Interpreter {
         Object lim = eval(w.limit, slots);
         PrimKind lk = Type.kind(w.limit.type);
         long count = 0;
-        while ((Boolean) eval(w.cond, slots)) {
+        while (w.pattern == null ? (Boolean) eval(w.cond, slots) : matches(w.pattern, eval(w.cond, slots), slots)) {
             boolean exceeded = lk == PrimKind.U64 ? Long.compareUnsigned(count, (Long) lim) >= 0 : count >= (Long) lim;
             if (exceeded) {
                 throw new Trap(Code.R0008, w.span, "while loop exceeded its limit of " + IntOps.toString(lk, (Long) lim)
@@ -812,6 +812,7 @@ public final class Interpreter {
                 long i = (Long) eval(ix.index, slots);
                 yield elementRef(container, i, Type.kind(ix.index.type), ix.span).get();
             }
+            case Call c when c.asStruct != null -> eval(c.asStruct, slots);
             case Call c -> c.builtin != null ? builtin(c, slots) : callUser(c, slots);
             case VariantCall v -> {
                 Object[] payload = new Object[v.args.size()];
@@ -943,6 +944,15 @@ public final class Interpreter {
      * The text fixed, pad_left or pad_right made: as it is when it is written out (see {@link Call#asText}),
      * otherwise a str of the capacity of where it is stored, which it must fit.
      */
+    /** The base of to_base or parse_i64, 2 to 36; traps (R0013) otherwise. */
+    private static int radix(Call c, Type t, long base) {
+        PrimKind k = Type.kind(t);
+        if (!inRange(k, base, 36) || base < 2) {
+            throw new Trap(Code.R0013, c.span, c.name + "() needs a base of 2 to 36, found " + IntOps.toString(k, base));
+        }
+        return (int) base;
+    }
+
     private StrV text(Call c, byte[] bytes) {
         meter.bytes(bytes.length);
         if (c.asText) return new StrV(bytes, bytes.length);
@@ -1011,6 +1021,19 @@ public final class Interpreter {
      * elements, or R0004 if v is longer. Only what v holds is copied, not the rest of its capacity.
      */
     private Object resize(Resize r, Object v) {
+        if (!(v instanceof StrV) && !(v instanceof ListV)) {
+            // str[N](x) of a number or bool: its text, as print writes it.
+            int cap = Type.capacity(r.type);
+            meter.bytes(cap);
+            StrV s = new StrV(new byte[cap], 0);
+            StrSink part = new StrSink(s.b, 0);
+            Format.format(part, v, r.arg.type, false, meter);
+            if (part.count > cap) {
+                throw new Trap(Code.R0004, r.span, "a str of " + part.count + " bytes does not fit in " + r.type);
+            }
+            s.len = (int) part.count;
+            return s;
+        }
         int n = length(v);
         int cap = Type.capacity(r.type);
         if (n > cap) {
@@ -1239,6 +1262,15 @@ public final class Interpreter {
                 long b = (Long) eval(args.get(1).expr(), slots);
                 return Stdlib.wrapOrSaturate(c.builtin, Type.kind(c.type), a, b);
             }
+            case COUNT_ONES, LEADING_ZEROS, TRAILING_ZEROS -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                return Stdlib.bits(c.builtin, Type.kind(args.get(0).expr().type), a);
+            }
+            case ROTL, ROTR -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                long n = (Long) eval(args.get(1).expr(), slots);
+                return Stdlib.rotate(c.builtin == Builtin.ROTL, Type.kind(c.type), a, Type.kind(args.get(1).expr().type), n);
+            }
             case CHECKED_ADD, CHECKED_SUB, CHECKED_MUL -> {
                 long a = (Long) eval(args.get(0).expr(), slots);
                 long b = (Long) eval(args.get(1).expr(), slots);
@@ -1258,7 +1290,11 @@ public final class Interpreter {
                 return Stdlib.mulMod(Type.kind(c.type), a, b, m, c.span);
             }
             case PARSE_I64 -> {
-                return option(Stdlib.parseIntOrNull((StrV) eval(args.get(0).expr(), slots), meter));
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                if (args.size() == 1) return option(Stdlib.parseIntOrNull(s, meter));
+                long base = (Long) eval(args.get(1).expr(), slots);
+                int radix = radix(c, args.get(1).expr().type, base);
+                return option(Stdlib.parseIntOrNull(s, radix, meter));
             }
             case PARSE_F64 -> {
                 return option(Stdlib.parseFloatOrNull((StrV) eval(args.get(0).expr(), slots), meter));
@@ -1421,6 +1457,13 @@ public final class Interpreter {
                 meter.units(Meter.floatText(x));
                 return text(c, Format.formatFixed(x, (int) d).getBytes(StandardCharsets.US_ASCII));
             }
+            case TO_BASE -> {
+                long n = (Long) eval(args.get(0).expr(), slots);
+                long base = (Long) eval(args.get(1).expr(), slots);
+                int radix = radix(c, args.get(1).expr().type, base);
+                String t = IntOps.toBig(Type.kind(args.get(0).expr().type), n).toString(radix);
+                return text(c, t.getBytes(StandardCharsets.US_ASCII));
+            }
             case PAD_LEFT, PAD_RIGHT -> {
                 Expr value = args.get(0).expr();
                 ByteArrayOutputStream text = new ByteArrayOutputStream();
@@ -1517,6 +1560,35 @@ public final class Interpreter {
                 Object a = eval(args.get(0).expr(), slots);
                 Object b = eval(args.get(1).expr(), slots);
                 return (long) Integer.signum(Stdlib.compare(a, b, args.get(0).expr().type, meter));
+            }
+            case KEYS, VALUES -> {
+                Type.MapT mt = (Type.MapT) args.get(0).expr().type;
+                MapV m = (MapV) eval(args.get(0).expr(), slots);
+                Object[] from = c.builtin == Builtin.KEYS ? m.keys : m.vals;
+                meter.slots(mt.cap());
+                Object[] out = new Object[mt.cap()];
+                for (int i = 0; i < m.len; i++) out[i] = Values.copy(from[i], meter);
+                return new ListV(out, m.len);
+            }
+            case HASH -> {
+                Object v = eval(args.get(0).expr(), slots);
+                long h = 0xcbf29ce484222325L;
+                if (v instanceof StrV s) {
+                    meter.bytes(s.len);
+                    for (int i = 0; i < s.len; i++) h = (h ^ (s.b[i] & 0xff)) * 0x100000001b3L;
+                } else {
+                    Object[] items = v instanceof ListV l ? l.items : ((ArrV) v).items;
+                    int n = v instanceof ListV l ? l.len : items.length;
+                    meter.bytes(n);
+                    for (int i = 0; i < n; i++) h = (h ^ ((Long) items[i] & 0xff)) * 0x100000001b3L;
+                }
+                return h;
+            }
+            case VARIANTS -> {
+                Object[] vals = new Object[args.size()];
+                for (int i = 0; i < vals.length; i++) vals[i] = eval(args.get(i).expr(), slots);
+                meter.slots(vals.length);
+                return new ArrV(vals);
             }
             case GET_OR -> {
                 Type.MapT mt = (Type.MapT) args.get(0).expr().type;

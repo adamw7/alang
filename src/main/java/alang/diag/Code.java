@@ -77,13 +77,15 @@ public enum Code {
         "Only arrays, lists and strings can be indexed, and the index must be an integer.",
         "let p: Point = ...;\nlet v: i32 = p[0];  // error"),
     E0213("bad struct literal",
-        "A struct literal must name every field exactly once: Point(x: 1, y: 2).",
+        "A struct literal names each field at most once and gives every field that has no default value: Point(x: 1, y: 2). "
+            + "Point(..p, y: 0) takes the fields it does not name from p, which is a variable, a constant or a field of "
+            + "one; P() builds a struct whose fields all have defaults.",
         "let p: Point = Point(x: 1);  // error: missing field `y`"),
     E0214("invalid conversion",
-        "Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers; a str converts to integers and to f64 (i64(\"42\"), f64(\"2.5\")). Nothing converts to bool: compare instead (x != 0). str[N](s) and list[T; N](xs) change only the capacity of a str or of a list of T.",
+        "Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers; a str converts to integers and to f64 (i64(\"42\"), f64(\"2.5\")). Nothing converts to bool: compare instead (x != 0). str[N](s) and list[T; N](xs) change only the capacity of a str or of a list of T; str[N](x) of a number or bool is its text, as print writes it.",
         "let b: bool = bool(1);  // error: write 1 != 0"),
     E0215("mut call not allowed here",
-        "A call that passes a `mut` argument must be a statement on its own, or the whole right-hand side of a let/var/assignment. This keeps evaluation order obvious.",
+        "A call that passes a `mut` argument must be a statement on its own, or the whole right-hand side of a let/var/assignment/return or of `while let P =`. This keeps evaluation order obvious.",
         "print(pop(mut xs));          // error\nlet top: i32 = pop(mut xs);  // ok\nprint(top);"),
     E0216("type cannot be inferred",
         "The expression needs a type annotation from context, e.g. an empty array literal `[]` must be assigned to a typed list. "
@@ -102,7 +104,9 @@ public enum Code {
         "A parameter's default value, `n: i64 = 3`, is a constant that a call leaving the argument out passes instead. "
             + "A call leaves out arguments from the end only, so every parameter after one with a default needs one too. "
             + "A `mut` parameter refers to the caller's variable, so it has none, and neither has a parameter whose type "
-            + "is not fixed (a `_` capacity, a type parameter or a function type) nor the input of `main`.",
+            + "is not fixed (a `_` capacity, a type parameter or a function type) nor the input of `main`. A field's default "
+            + "value, `retries: i64 = 3` in a struct, is a constant that a struct value leaving the field out takes; a field "
+            + "whose type mentions a type parameter has none.",
         "fn greet(name: str[16], times: i64 = 1) { ... }  // ok: greet(\"ann\") passes times = 1\n"
             + "fn bad(times: i64 = 1, name: str[16]) { ... }  // error: name needs a default too"),
     E0219("missing type",
@@ -246,7 +250,7 @@ public enum Code {
         "let a: [i32; 3] = [1, 2, 3];\nlet x: i32 = a[3];  // trap"),
     R0004("capacity exceeded",
         "A push/append does not fit in the list or string capacity, a str[N](s) or list[T; N](xs) conversion gets "
-            + "more than N bytes or elements, or the standard input is longer than the `str[N]` parameter of fn main. "
+            + "more than N bytes or elements, the text of str[N](x) for a number or bool is longer than N bytes, or the standard input is longer than the `str[N]` parameter of fn main. "
             + "Capacities are part of the type: list[T; N], str[N].",
         "var s: str[4] = \"abc\";\nappend(mut s, \"de\");  // trap"),
     R0005("assertion failed",
@@ -281,7 +285,8 @@ public enum Code {
     R0013("invalid argument",
         "A standard library function received an argument outside its domain: a negative exponent for pow, bounds "
             + "with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or "
-            + "max(xs), a modulus that is not above 0 for mul_mod, or a number that is not a Unicode code point for push_char.",
+            + "max(xs), a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, or a "
+            + "base outside 2 to 36 for to_base or parse_i64.",
         "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap");
 
     public final String title;

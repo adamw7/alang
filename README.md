@@ -257,8 +257,9 @@ then attaches the jar, archives, native binaries, AGENTS.md and `SHA256SUMS`, an
 ## Status
 
 Version 0.6: imports, vendored packages pinned by hash, generics, `Option`/`Result`, function values, tuples, maps, sets, slices, labelled
-loops, nested patterns with guards, `if let`, `match` and `if` expressions, default parameters, UTF-8 text,
-wrapping/saturating arithmetic and bit-identical float functions.
+loops, nested patterns with guards, `if let`, `while let`, `match` and `if` expressions, default parameters and
+struct fields, struct update (`P(..p, x: 1)`), UTF-8 text, base-N text (`to_base`, `parse_i64(s, 16)`), bit
+functions, wrapping/saturating arithmetic and bit-identical float functions.
 
 ## License
 

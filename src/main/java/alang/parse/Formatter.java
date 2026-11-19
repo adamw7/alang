@@ -106,6 +106,8 @@ public final class Formatter {
             || y == ALangLexer.DOT || y == ALangLexer.COLON) {
             return false;
         }
+        // P(x: 1, ..base): after a comma, the `..` of a struct value is spaced like an argument.
+        if (x == ALangLexer.COMMA && y == ALangLexer.DOTDOT) return true;
         if (x == ALangLexer.DOTDOT || x == ALangLexer.DOTDOTEQ || y == ALangLexer.DOTDOT || y == ALangLexer.DOTDOTEQ) return false;
         if (y == ALangLexer.LPAREN || y == ALangLexer.LBRACK) {
             // A call, conversion, index or type's brackets touch what they follow; after a keyword or operator, a

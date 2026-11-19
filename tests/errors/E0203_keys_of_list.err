@@ -1,0 +1,6 @@
+error[E0203]: keys() needs a map, found list[i64; 4]
+ --> tests/errors/E0203_keys_of_list.al:4:16
+  |
+4 |     print(keys(xs));
+  |                ^^
+

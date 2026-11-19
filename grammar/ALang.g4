@@ -64,8 +64,9 @@ structDecl
     : STRUCT identifier typeParams? LBRACE fieldDecl (COMMA fieldDecl)* COMMA? RBRACE
     ;
 
+// `retries: i64 = 3` has a default: a constant that a struct value leaving the field out takes.
 fieldDecl
-    : identifier COLON type
+    : identifier COLON type (ASSIGN expression)?
     ;
 
 // enum Shape { Circle(f64), Rect(f64, f64), Empty }
@@ -203,8 +204,9 @@ condition
     ;
 
 // The limit is evaluated once; exceeding it is a runtime trap.
+// while let Option.Some(x) = next(xs) limit 64 { }: runs while the pattern matches, with its names bound.
 whileStmt
-    : WHILE expression LIMIT expression block
+    : WHILE (LET pattern ASSIGN)? expression LIMIT expression block
     ;
 
 // for i in 0..n { }            (half-open integer range)
@@ -347,8 +349,8 @@ primary
     // str[16](s), list[i64; 8](xs): the same text or elements with another capacity; traps if too long.
     | STR LBRACK expression RBRACK LPAREN expression RPAREN               # strResizeExpr
     | LIST LBRACK type SEMI expression RBRACK LPAREN expression RPAREN    # listResizeExpr
-    | identifier LPAREN fieldInit (COMMA fieldInit)* COMMA? RPAREN      # structExpr
-    | identifier DOT identifier LPAREN fieldInit (COMMA fieldInit)* COMMA? RPAREN   # qualifiedStructExpr
+    | identifier LPAREN structInit (COMMA structInit)* COMMA? RPAREN      # structExpr
+    | identifier DOT identifier LPAREN structInit (COMMA structInit)* COMMA? RPAREN   # qualifiedStructExpr
     | identifier DOT identifier DOT identifier LPAREN argList? RPAREN    # qualifiedVariantExpr
     | identifier DOT identifier LPAREN argList? RPAREN                  # variantExpr
     | identifier LPAREN argList? RPAREN                                 # callExpr
@@ -357,6 +359,12 @@ primary
     | LPAREN expression (COMMA expression)+ COMMA? RPAREN               # tupleExpr
     | LBRACK expression SEMI expression RBRACK                          # repeatExpr
     | LBRACK (expression (COMMA expression)* COMMA?)? RBRACK            # arrayExpr
+    ;
+
+// Point(..p, y: 0): the fields it does not name are those of p.
+structInit
+    : fieldInit
+    | DOTDOT expression
     ;
 
 fieldInit

@@ -1,0 +1,6 @@
+error[E0201]: type mismatch: expected i64, found str[5]
+ --> tests/errors/E0201_field_default_type.al:3:20
+  |
+3 |     retries: i64 = "three",
+  |                    ^^^^^^^
+

@@ -113,6 +113,7 @@ final class Temporaries {
             case Name n -> 0;
             case FieldAccess f -> f.variant != null || f.constant != null ? 0 : expr(f.target);
             case Index i -> Layout.add(expr(i.target), expr(i.index));
+            case Call c when c.asStruct != null -> inner(c.asStruct);
             case Call c -> call(c);
             case VariantCall v when v.asCall != null -> call(v.asCall);
             case VariantCall v -> {

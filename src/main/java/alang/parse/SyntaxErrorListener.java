@@ -333,6 +333,16 @@ final class SyntaxErrorListener extends BaseErrorListener {
     }
 
     /** Whether the brackets that {@code close} ends hold a `..` of their own: they slice. */
+    /** Whether the `{` at tok ends the head of a `while let` that has no `limit`. */
+    private static boolean whileLetWithoutLimit(TokenStream ts, Token tok) {
+        for (int i = tok.getTokenIndex() - 1; i >= 1; i--) {
+            int t = ts.get(i).getType();
+            if (t == ALangLexer.LIMIT || t == ALangLexer.SEMI || t == ALangLexer.LBRACE || t == ALangLexer.RBRACE) return false;
+            if (t == ALangLexer.LET) return ts.get(i - 1).getType() == ALangLexer.WHILE;
+        }
+        return false;
+    }
+
     private static boolean slicedBefore(TokenStream ts, Token close) {
         int depth = 0;
         for (int i = close.getTokenIndex() - 1; i >= 0; i--) {
@@ -485,6 +495,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
         }
         if (t == ALangLexer.LBRACE && p == ALangLexer.IDENT && Character.isUpperCase(prev.getText().charAt(0))) {
             return "struct values are built with named arguments: " + prev.getText() + "(field: value, ...)";
+        }
+        if (t == ALangLexer.LBRACE && whileLetWithoutLimit(ts, tok)) {
+            return "while loops must state an iteration limit: while let Option.Some(x) = next(xs) limit 1000 { ... }";
         }
         // `limit` is also a name, so it is expected where an expression starts too: not a `while` there.
         if (expected != null && expected.contains(ALangLexer.LIMIT) && t == ALangLexer.LBRACE
@@ -656,14 +669,10 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 + "for i in rev 0..10 { } goes 9, 8, ..., 0";
         }
         if (t == ALangLexer.ASSIGN && expected.contains(ALangLexer.COMMA) && expected.contains(ALangLexer.RBRACE)) {
-            // `=` in a struct's fields or an enum's variants.
+            // `=` in an enum's variants.
             Token open = opener(ts, tok);
             Token name = open == null ? null : previous(ts, open);
             Token keyword = name == null ? null : previous(ts, name);
-            if (keyword != null && keyword.getType() == ALangLexer.STRUCT) {
-                return "struct fields have no default values; give every field when building the value: "
-                    + name.getText() + "(field: value, ...)";
-            }
             if (keyword != null && keyword.getType() == ALangLexer.ENUM) {
                 return "enum variants have no numeric values; when you need a number, map each variant to it with a match";
             }

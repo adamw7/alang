@@ -286,6 +286,10 @@ public final class CGen {
      * its length, then the parameter's, so that no two can be the same.
      */
     static String constRef(ConstDecl c) {
+        if (c.fieldOf != null) {
+            String sname = scoped(c.fieldOf);
+            return "al_fd_" + sname.length() + sname + "_" + c.name;
+        }
         if (c.defaultOf == null) return "al_c_" + scoped(c);
         String f = scoped(c.defaultOf);
         return "al_d_" + f.length() + f + "_" + c.name;
@@ -1050,8 +1054,17 @@ public final class CGen {
         String count = "t" + ++tmpCount;
         emit(carrier + " " + count + " = 0;");
         open("for (;;) {");
-        String c = lower(w.cond);
-        emit("if (!(" + c + ")) break;");
+        Map<LocalVar, String> binds = new LinkedHashMap<>();
+        if (w.pattern == null) {
+            String c = lower(w.cond);
+            emit("if (!(" + c + ")) break;");
+        } else {
+            // while let P = e: e is read once per iteration, as a match reads its subject.
+            Type t = w.cond.type;
+            String s = Type.isAggregate(t) ? lower(w.cond) : tmp(t, lower(w.cond));
+            String c = patternCond(w.pattern, s, t, binds);
+            if (c != null) emit("if (!(" + c + ")) break;");
+        }
         open("if (" + count + " >= " + lim + ") {");
         emit("al_out al_e = al_trap_begin(\"R0008\");");
         emit("AL_PUTS(&al_e, \"while loop exceeded its limit of \");");
@@ -1060,6 +1073,7 @@ public final class CGen {
         emit("al_trap_end(&al_e, " + loc(w.span) + ");");
         close("}");
         emit(count + "++;");
+        bind(binds);
         // The body goes straight into the loop: a block of its own made each while loop three brackets
         // deep in C, so loops nested within the nesting limit went past the 256 that clang accepts.
         loopBody(w, w.body);
@@ -1413,6 +1427,7 @@ public final class CGen {
                 yield t;
             }
             case Index ix -> index(ix);
+            case Call c when c.asStruct != null -> lower(c.asStruct);
             case Call c -> c.builtin != null ? builtin(c) : call(c);
             case VariantCall v -> {
                 List<String> vals = new ArrayList<>();
@@ -1658,6 +1673,15 @@ public final class CGen {
                 "fixed() needs 0 to " + Format.MAX_DECIMALS + " decimals, found ", dt, d, at);
             return sink -> emit("al_fmt_fixed(" + sink + ", " + x + ", (int64_t)(" + d + "));");
         }
+        if (c.builtin == Builtin.TO_BASE) {
+            Type nt = args.get(0).expr().type;
+            String n = tmp(nt, lower(args.get(0).expr()));
+            String base = radix(c, args.get(1).expr());
+            boolean signed = Type.kind(nt).signed;
+            String mag = signed ? "al_mag((int64_t)" + n + ")" : "(uint64_t)" + n;
+            String neg = signed ? "(" + n + " < 0)" : "0";
+            return sink -> emit("al_fmt_base(" + sink + ", " + mag + ", " + neg + ", (int)" + base + ");");
+        }
         Consumer<String> value = text(args.get(0).expr());
         Type wt = args.get(1).expr().type;
         String w = tmp(wt, lower(args.get(1).expr()));
@@ -1680,6 +1704,16 @@ public final class CGen {
             if (!left) emit(pad);
             close("}");
         };
+    }
+
+    /** The base of to_base or parse_i64 in a temporary, trapping (R0013) unless it is 2 to 36. */
+    private String radix(Call c, Expr e) {
+        Type bt = e.type;
+        String b = tmp(bt, lower(e));
+        boolean signed = Type.kind(bt).signed;
+        rangeTrap("(" + b + ") < 2" + (signed ? "" : "u") + " || (" + b + ") > 36" + (signed ? "" : "u"),
+            c.name + "() needs a base of 2 to 36, found ", bt, b, loc(c.span));
+        return b;
     }
 
     /** Traps (R0013) when {@code cond} holds, with {@code message} and then the value {@code v} of type {@code t}. */
@@ -1805,6 +1839,20 @@ public final class CGen {
 
     /** `str[N](s)` or `list[T; N](xs)`: R0004 if the value is longer than N, else a copy with capacity N. */
     private String resize(Resize r) {
+        if (!(r.arg.type instanceof Type.Str) && !(r.arg.type instanceof Type.ListT)) {
+            // str[N](x) of a number or bool: its text, as print writes it, which must fit.
+            Consumer<String> w = text(r.arg);
+            int cap = ((Type.Str) r.type).cap();
+            String t = tmp(r.type, "{0}");
+            open("{");
+            emit("al_out al_o = {0, " + t + ".b, " + cap + "u, 0u};");
+            w.accept("&al_o");
+            emit("if (al_o.len > " + cap + "u) al_resize_trap(1, al_o.len, " + cString(utf8(r.type.toString())) + ", "
+                + loc(r.span) + ");");
+            emit(t + ".len = al_o.len;");
+            close("}");
+            return t;
+        }
         String v = lowerLvalue(r.arg);
         boolean str = r.type instanceof Type.Str;
         int cap = str ? ((Type.Str) r.type).cap() : ((Type.ListT) r.type).cap();
@@ -1862,7 +1910,11 @@ public final class CGen {
             case LEN -> {
                 Type t = args.get(0).expr().type;
                 String v = lower(args.get(0).expr());
-                if (t instanceof Type.ArrayT a) return "INT64_C(" + a.len() + ")";
+                if (t instanceof Type.ArrayT a) {
+                    // Used once, so that an array built only for its length is not an unused variable.
+                    emit("(void)(" + v + ");");
+                    return "INT64_C(" + a.len() + ")";
+                }
                 return "((int64_t)(" + v + ").len)";
             }
             case CAP -> {
@@ -1968,9 +2020,12 @@ public final class CGen {
             case PARSE_I64, PARSE_F64 -> {
                 String v = lowerLvalue(args.get(0).expr());
                 boolean i64 = c.builtin == Builtin.PARSE_I64;
+                String base = args.size() == 2 ? radix(c, args.get(1).expr()) : null;
                 String r = "t" + ++tmpCount;
                 emit((i64 ? "int64_t " : "double ") + r + " = 0;");
-                String fits = tmp(Type.BOOL, (i64 ? "al_parse_i64_opt((" : "al_parse_f64_opt((") + v + ").b, (" + v + ").len, &" + r + ")");
+                String fits = tmp(Type.BOOL, base != null
+                    ? "al_parse_i64_base_opt((" + v + ").b, (" + v + ").len, (int)" + base + ", &" + r + ")"
+                    : (i64 ? "al_parse_i64_opt((" : "al_parse_f64_opt((") + v + ").b, (" + v + ").len, &" + r + ")");
                 return optionValue(c.type, fits, r);
             }
             case ANY, ALL, COUNT_IF, FIND_INDEX -> {
@@ -2146,6 +2201,24 @@ public final class CGen {
                 return tmp(c.type, "(" + cPrim(k) + ")al_" + c.builtin.name + "(" + ma + ", " + mb + ", " + hi + ", \""
                     + k.name + "\", " + at + ")");
             }
+            case COUNT_ONES, LEADING_ZEROS, TRAILING_ZEROS -> {
+                PrimKind k = Type.kind(args.get(0).expr().type);
+                String a = tmp(args.get(0).expr().type, lower(args.get(0).expr()));
+                int op = c.builtin == Builtin.COUNT_ONES ? 0 : c.builtin == Builtin.LEADING_ZEROS ? 1 : 2;
+                return tmp(Type.I64, "al_bits((uint64_t)" + (k.signed ? "(int64_t)" : "") + a + ", " + k.bits + ", " + op + ")");
+            }
+            case ROTL, ROTR -> {
+                PrimKind k = Type.kind(c.type);
+                PrimKind nk = Type.kind(args.get(1).expr().type);
+                String a = tmp(c.type, lower(args.get(0).expr()));
+                String n = tmp(args.get(1).expr().type, lower(args.get(1).expr()));
+                String mod = nk.signed ? "(uint64_t)((((int64_t)" + n + " % " + k.bits + ") + " + k.bits + ") % " + k.bits + ")"
+                    : "((uint64_t)" + n + " % " + k.bits + ")";
+                String s = tmp(Type.U64, mod);
+                if (c.builtin == Builtin.ROTR) emit(s + " = (" + k.bits + " - " + s + ") % " + k.bits + ";");
+                String r = "al_rotl((uint64_t)" + (k.signed ? "(int64_t)" : "") + a + ", " + k.bits + ", " + s + ")";
+                return tmp(c.type, k.signed ? "al_wrap_" + k.name + "((uint" + k.bits + "_t)" + r + ")" : "(" + cPrim(k) + ")" + r);
+            }
             case WRAPPING_ADD, WRAPPING_SUB, WRAPPING_MUL, SATURATING_ADD, SATURATING_SUB, SATURATING_MUL -> {
                 PrimKind k = Type.kind(c.type);
                 String a = tmp(c.type, lower(args.get(0).expr()));
@@ -2305,7 +2378,7 @@ public final class CGen {
                 emit(r + ".len = al_trim_into(" + r + ".b, (" + v + ").b, (" + v + ").len);");
                 return r;
             }
-            case FIXED, PAD_LEFT, PAD_RIGHT -> {
+            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE -> {
                 // Stored in a str: the text is written into it, and must fit.
                 String target = into;
                 into = null;
@@ -2499,6 +2572,31 @@ public final class CGen {
                 String b = lowerLvalue(args.get(1).expr());
                 String cmp = tmp(Type.I32, "(int32_t)(" + cmpExpr(t, a, b) + ")");
                 return tmp(Type.I64, "(int64_t)((" + cmp + " > 0) - (" + cmp + " < 0))");
+            }
+            case KEYS, VALUES -> {
+                String m = lowerLvalue(args.get(0).expr());
+                String r = tmp(c.type, "{0}");
+                String from = c.builtin == Builtin.KEYS ? "k" : "v";
+                open("{");
+                emit("uint32_t al_i;");
+                emit(r + ".len = (" + m + ").len;");
+                emit("for (al_i = 0; al_i < (" + m + ").len; al_i++) " + r + ".v[al_i] = (" + m + ")." + from + "[al_i];");
+                close("}");
+                return r;
+            }
+            case HASH -> {
+                Expr x = args.get(0).expr();
+                String v = lowerLvalue(x);
+                String data = x.type instanceof Type.Str ? "(" + v + ").b" : "(" + v + ").v";
+                String n = x.type instanceof Type.ArrayT a ? a.len() + "u" : "(" + v + ").len";
+                return tmp(Type.U64, "al_fnv1a(" + data + ", " + n + ")");
+            }
+            case VARIANTS -> {
+                List<String> vals = new ArrayList<>();
+                for (Arg a : args) vals.add(lower(a.expr()));
+                String r = tmp(c.type, "{0}");
+                for (int i = 0; i < vals.size(); i++) emit(r + ".v[" + i + "] = " + vals.get(i) + ";");
+                return r;
             }
             case GET_OR -> {
                 Type.MapT mt = (Type.MapT) args.get(0).expr().type;

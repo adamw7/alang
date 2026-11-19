@@ -171,6 +171,20 @@ static void al_fmt_u64(al_out *o, uint64_t v) {
     al_put(o, d + 20 - n, n);
 }
 
+/* to_base(): the magnitude mag in the base 2 to 36, digits 0-9 then a-z, after a - if neg. */
+static void al_fmt_base(al_out *o, uint64_t mag, int neg, int base) {
+    uint8_t d[64];
+    uint32_t n = 0;
+    if (neg) AL_PUTS(o, "-");
+    do {
+        uint64_t r = mag % (uint64_t)base;
+        d[63 - n] = (uint8_t)(r < 10 ? '0' + r : 'a' + (r - 10));
+        mag /= (uint64_t)base;
+        n++;
+    } while (mag != 0);
+    al_put(o, d + 64 - n, n);
+}
+
 static void al_fmt_i64(al_out *o, int64_t v) {
     if (v < 0) {
         AL_PUTS(o, "-");
@@ -716,6 +730,42 @@ static uint64_t al_lcm(uint64_t a, uint64_t b, uint64_t hi, const char *type, in
  */
 static uint64_t al_wrapping(uint64_t a, uint64_t b, int op) {
     return op == 0 ? a + b : op == 1 ? a - b : a * b;
+}
+
+/* hash(): the 64-bit FNV-1a hash of n bytes. */
+static uint64_t al_fnv1a(const uint8_t *b, uint32_t n) {
+    uint64_t h = UINT64_C(14695981039346656037);
+    uint32_t i;
+    for (i = 0; i < n; i++) h = (h ^ b[i]) * UINT64_C(1099511628211);
+    return h;
+}
+
+/* count_ones (op 0), leading_zeros (op 1) and trailing_zeros (op 2) of the low `bits` bits of u. */
+static int64_t al_bits(uint64_t u, int bits, int op) {
+    int64_t n = 0;
+    int i;
+    if (bits < 64) u &= ((uint64_t)1 << bits) - 1;
+    if (op == 0) {
+        while (u != 0) {
+            n += (int64_t)(u & 1);
+            u >>= 1;
+        }
+        return n;
+    }
+    if (op == 1) {
+        for (i = bits - 1; i >= 0 && ((u >> i) & 1) == 0; i--) n++;
+        return n;
+    }
+    for (i = 0; i < bits && ((u >> i) & 1) == 0; i++) n++;
+    return n;
+}
+
+/* The low `bits` bits of u rotated left by s, 0 <= s < bits. */
+static uint64_t al_rotl(uint64_t u, int bits, uint64_t s) {
+    uint64_t mask = bits == 64 ? ~(uint64_t)0 : ((uint64_t)1 << bits) - 1;
+    u &= mask;
+    if (s == 0) return u;
+    return ((u << s) | (u >> (bits - (int)s))) & mask;
 }
 
 /*
@@ -2015,6 +2065,32 @@ static bool al_parse_i64_opt(const uint8_t *b, uint32_t n, int64_t *out) {
     uint64_t mag;
     if (!al_is_int(b, n)) return false;
     al_parse_dec(b, n, &neg, &mag, &big);
+    *out = !neg ? (int64_t)mag : mag == 0 ? 0 : -(int64_t)(mag - 1u) - 1;
+    return true;
+}
+
+/*
+ * parse_i64(s, base): an optional sign, then at least one digit of the base (0-9, a-z, A-Z); whether that is an
+ * i64, and then its value in *out.
+ */
+static bool al_parse_i64_base_opt(const uint8_t *b, uint32_t n, int base, int64_t *out) {
+    uint32_t i = 0;
+    int neg = 0;
+    uint64_t mag = 0;
+    uint64_t limit;
+    if (n > 0 && (b[0] == '+' || b[0] == '-')) {
+        neg = b[0] == '-';
+        i = 1;
+    }
+    if (i == n) return false;
+    limit = neg ? (uint64_t)1 << 63 : ((uint64_t)1 << 63) - 1u;
+    for (; i < n; i++) {
+        int c = b[i];
+        int d = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'z' ? c - 'a' + 10 : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : 99;
+        if (d >= base) return false;
+        if (mag > (limit - (uint64_t)d) / (uint64_t)base) return false;
+        mag = mag * (uint64_t)base + (uint64_t)d;
+    }
     *out = !neg ? (int64_t)mag : mag == 0 ? 0 : -(int64_t)(mag - 1u) - 1;
     return true;
 }

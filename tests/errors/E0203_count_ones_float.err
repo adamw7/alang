@@ -1,0 +1,6 @@
+error[E0203]: count_ones() needs an integer, found f64
+ --> tests/errors/E0203_count_ones_float.al:3:22
+  |
+3 |     print(count_ones(1.5));
+  |                      ^^^
+

@@ -1,0 +1,6 @@
+error[E0201]: the value after `..` must be a Point, found Size
+  --> tests/errors/E0201_struct_base_type.al:14:28
+   |
+14 |     let p: Point = Point(..s, y: 2);
+   |                            ^
+

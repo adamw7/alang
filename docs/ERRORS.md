@@ -267,7 +267,7 @@ let v: i32 = p[0];  // error
 
 ## E0213
 
-**bad struct literal**: A struct literal must name every field exactly once: Point(x: 1, y: 2).
+**bad struct literal**: A struct literal names each field at most once and gives every field that has no default value: Point(x: 1, y: 2). Point(..p, y: 0) takes the fields it does not name from p, which is a variable, a constant or a field of one; P() builds a struct whose fields all have defaults.
 
 ```
 let p: Point = Point(x: 1);  // error: missing field `y`
@@ -275,7 +275,7 @@ let p: Point = Point(x: 1);  // error: missing field `y`
 
 ## E0214
 
-**invalid conversion**: Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers; a str converts to integers and to f64 (i64("42"), f64("2.5")). Nothing converts to bool: compare instead (x != 0). str[N](s) and list[T; N](xs) change only the capacity of a str or of a list of T.
+**invalid conversion**: Conversions are written as a call to a primitive type, e.g. i32(x), f64(n), u8(c). Numeric types convert to each other; bool converts to integers; a str converts to integers and to f64 (i64("42"), f64("2.5")). Nothing converts to bool: compare instead (x != 0). str[N](s) and list[T; N](xs) change only the capacity of a str or of a list of T; str[N](x) of a number or bool is its text, as print writes it.
 
 ```
 let b: bool = bool(1);  // error: write 1 != 0
@@ -283,7 +283,7 @@ let b: bool = bool(1);  // error: write 1 != 0
 
 ## E0215
 
-**mut call not allowed here**: A call that passes a `mut` argument must be a statement on its own, or the whole right-hand side of a let/var/assignment. This keeps evaluation order obvious.
+**mut call not allowed here**: A call that passes a `mut` argument must be a statement on its own, or the whole right-hand side of a let/var/assignment/return or of `while let P =`. This keeps evaluation order obvious.
 
 ```
 print(pop(mut xs));          // error
@@ -312,7 +312,7 @@ let s: str[_] = "a";                 // error: write str[64]
 
 ## E0218
 
-**misplaced default value**: A parameter's default value, `n: i64 = 3`, is a constant that a call leaving the argument out passes instead. A call leaves out arguments from the end only, so every parameter after one with a default needs one too. A `mut` parameter refers to the caller's variable, so it has none, and neither has a parameter whose type is not fixed (a `_` capacity, a type parameter or a function type) nor the input of `main`.
+**misplaced default value**: A parameter's default value, `n: i64 = 3`, is a constant that a call leaving the argument out passes instead. A call leaves out arguments from the end only, so every parameter after one with a default needs one too. A `mut` parameter refers to the caller's variable, so it has none, and neither has a parameter whose type is not fixed (a `_` capacity, a type parameter or a function type) nor the input of `main`. A field's default value, `retries: i64 = 3` in a struct, is a constant that a struct value leaving the field out takes; a field whose type mentions a type parameter has none.
 
 ```
 fn greet(name: str[16], times: i64 = 1) { ... }  // ok: greet("ann") passes times = 1
@@ -602,7 +602,7 @@ let x: i32 = a[3];  // trap
 
 ## R0004
 
-**capacity exceeded**: A push/append does not fit in the list or string capacity, a str[N](s) or list[T; N](xs) conversion gets more than N bytes or elements, or the standard input is longer than the `str[N]` parameter of fn main. Capacities are part of the type: list[T; N], str[N].
+**capacity exceeded**: A push/append does not fit in the list or string capacity, a str[N](s) or list[T; N](xs) conversion gets more than N bytes or elements, the text of str[N](x) for a number or bool is longer than N bytes, or the standard input is longer than the `str[N]` parameter of fn main. Capacities are part of the type: list[T; N], str[N].
 
 ```
 var s: str[4] = "abc";
@@ -678,7 +678,7 @@ let x: u32 = 1 << 32;  // trap
 
 ## R0013
 
-**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or max(xs), a modulus that is not above 0 for mul_mod, or a number that is not a Unicode code point for push_char.
+**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or max(xs), a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, or a base outside 2 to 36 for to_base or parse_i64.
 
 ```
 let p: i64 = pow(2, -1);  // trap
@@ -726,6 +726,11 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `rem_euclid(a, m) -> T` | The remainder of a / m that is never negative, for two integers of the same type: 0 <= r < abs(m). rem_euclid(-1, 5) is 4, where -1 % 5 is -1; use it to wrap an index around: xs[rem_euclid(i + k, n)]. Traps (R0002) if m is 0. |
 | `div_euclid(a, m) -> T` | The quotient that goes with rem_euclid: a == div_euclid(a, m) * m + rem_euclid(a, m). div_euclid(-7, 2) is -4, where -7 / 2 is -3. Traps (R0002) if m is 0, and (R0001) where / overflows. |
 | `mul_mod(a, b, m) -> T` | (a * b) mod m, computed exactly however large a * b is, for three integers of the same type: rem_euclid(a, m) * rem_euclid(b, m) reduced mod m, so 0 <= result < m. Traps (R0013) unless m > 0. |
+| `count_ones(x) -> i64` | The number of 1 bits in the integer x, over the bits of its type (two's complement for a signed one): count_ones(u8(7)) is 3, count_ones(i8(-1)) is 8. |
+| `leading_zeros(x) -> i64` | The number of 0 bits above the highest 1 bit of the integer x, over the bits of its type: leading_zeros(u8(1)) is 7; the number of bits if x is 0. |
+| `trailing_zeros(x) -> i64` | The number of 0 bits below the lowest 1 bit of the integer x: trailing_zeros(u8(8)) is 3; the number of bits of its type if x is 0. |
+| `rotl(x, n) -> T` | The bits of the integer x shifted left by n (any integer), those that leave at the top coming back at the bottom: rotl(u8(0x81), 1) is 0x03. n is taken modulo the number of bits, rem_euclid(n, bits), so a negative n rotates right. Never traps. |
+| `rotr(x, n) -> T` | The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps. |
 | `sqrt(x) -> f` | Square root of an f32/f64. |
 | `floor(x) -> f` | Largest integral value not greater than x (f32/f64). |
 | `ceil(x) -> f` | Smallest integral value not less than x (f32/f64). |
@@ -781,8 +786,10 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `count(xs, x) -> i64` | How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right (traps (R0013) if the str is empty); in an array or list, the elements equal to x. |
 | `is_int(s) -> bool` | Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it. |
 | `is_float(s) -> bool` | Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. An exponent may follow: 1e5, 2.5E-3. |
-| `parse_i64(s) -> Option<i64>` | The str as an i64, Option.Some(n), when is_int(s) holds (an optional + or -, then digits, within the i64 range); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike i64(s). |
+| `parse_i64(s, base = 10) -> Option<i64>` | The str as an i64, Option.Some(n), when is_int(s) holds (an optional + or -, then digits, within the i64 range); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike i64(s). With a base, 2 to 36 (traps (R0013) otherwise), the digits are 0-9 then a-z or A-Z, without a prefix: parse_i64("ff", 16) is Option.Some(255), parse_i64("-101", 2) is Option.Some(-5). |
+| `to_base(n, base) -> str[N]` | The text of the integer n in the base 2 to 36 (traps (R0013) otherwise), with the digits 0-9 then a-z, no prefix and a - before a negative n: to_base(255, 16) is "ff", to_base(5, 2) is "101", to_base(-255, 16) is "-ff". pad_left(to_base(n, 16), 2, '0') gives two hex digits. Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
 | `parse_f64(s) -> Option<f64>` | The str as an f64, Option.Some(x), when is_float(s) holds (19.99, -0.5, 3, .25, 2.5e3); otherwise Option.None. Strict: no spaces, so trim(s) first. Never traps, unlike f64(s). |
+| `hash(s) -> u64` | The 64-bit FNV-1a hash of the bytes of a str, or of an array or list of u8: the same number on every run and machine. hash("") is 14695981039346656037. Not for secrets: it is easy to find two inputs with the same hash. |
 | `is_utf8(s) -> bool` | Whether the bytes of a str are well-formed UTF-8: no overlong forms, surrogates, code points past U+10FFFF or cut-off sequences. |
 | `char_count(s) -> i64` | The number of Unicode code points in a str (len(s) counts bytes). Each byte that does not start a well-formed UTF-8 sequence counts as one. |
 | `chars(s) -> list[u32; N]` | The Unicode code points of a str, decoding UTF-8; a byte that does not start a well-formed sequence gives U+FFFD (65533). Its type is that of the variable it is stored in; traps (R0004) if they do not fit. for c in chars(s) goes through them one at a time instead, each a u32, and never traps. |
@@ -806,4 +813,7 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `insert(mut xs, i, value)` | Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and insert(mut s, x) adds x to a set; both trap (R0004) when a new key does not fit. |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether it was there. |
 | `compare(a, b) -> i64` | -1, 0 or 1 as a comes before b, is equal to it, or comes after it in the order of sort: two values of the same type, any type. For a type parameter, compare(a, b) < 0 is a < b. |
+| `keys(m) -> list[K; N]` | The keys of the map m, in order, as a list of the map's capacity: keys(m) of a map[str[8], i64; 16] is a list[str[8]; 16]. |
+| `values(m) -> list[V; N]` | The values of the map m, in the order of their keys, as a list of the map's capacity. |
+| `variants(E) -> [E; K]` | Every variant of the enum named E, in the order they are declared, as an array: for c in variants(Color) { }. The enum's variants carry no values, and it has no type parameters. |
 | `get_or(m, key, default) -> V` | The value of key in the map m, or default when m has no such key; m[key] traps (R0003) instead. |

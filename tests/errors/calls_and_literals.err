@@ -54,7 +54,7 @@ error[E0213]: missing field(s) y in Point(...)
    |
 31 |     let r: Point = Point(x: 1, z: 2);
    |                    ^^^^^^^^^^^^^^^^^
-  = hint: every field must be given: y: ...
+  = hint: every field without a default value must be given: y: ..., or take the rest from another Point: Point(..other, ...)
 
 error[E0106]: struct `Point` has no field `z`
   --> tests/errors/calls_and_literals.al:31:32

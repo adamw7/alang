@@ -140,6 +140,8 @@ public final class Ast {
          * parameter, cannot be named in code, and is what a call that leaves the argument out passes.
          */
         public FnDecl defaultOf;
+        /** For the default value of a field, `struct P { n: i64 = 3 }`: the struct; the constant is named after the field. */
+        public StructDecl fieldOf;
 
         public ConstDecl(Span span, String name, TypeRef typeRef, Expr init) {
             super(span, name);
@@ -180,6 +182,10 @@ public final class Ast {
         public Type type = Type.ERROR;
         /** Text of the `///` doc comment directly above the field, or "". */
         public String doc = "";
+        /** The default value as written, `retries: i64 = 3`, or null. */
+        public Expr def;
+        /** Set by the checker: the constant that holds the default value, or null. */
+        public ConstDecl defConst;
 
         public Field(Span span, String name, TypeRef typeRef) {
             this.span = span;
@@ -483,13 +489,24 @@ public final class Ast {
         }
     }
 
+    /**
+     * `while cond limit n { }`, or `while let P = cond limit n { }`: with a pattern, cond is the value it is matched
+     * against before each iteration, which runs with the pattern's names bound while it matches.
+     */
     public static final class While extends Loop {
         public final Expr cond;
         public final Expr limit;
         public final Block body;
+        /** The pattern of `while let`, or null. */
+        public final Pattern pattern;
 
         public While(Span span, Expr cond, Expr limit, Block body) {
+            this(span, null, cond, limit, body);
+        }
+
+        public While(Span span, Pattern pattern, Expr cond, Expr limit, Block body) {
             super(span);
+            this.pattern = pattern;
             this.cond = cond;
             this.limit = limit;
             this.body = body;
@@ -1011,6 +1028,10 @@ public final class Ast {
          * out to {@link #args}; -1 before.
          */
         public int given = -1;
+        /** `P()` of a struct whose fields all have default values: the struct value it builds. */
+        public StructLit asStruct;
+        /** variants(E): the enum E, once the checker has replaced the argument with its variants, E.A, E.B, ... */
+        public EnumDecl variantsOf;
 
         public Call(Span span, String name, Span nameSpan, List<Arg> args) {
             super(span);
@@ -1053,6 +1074,8 @@ public final class Ast {
         public final String name;
         public final List<FieldInit> fields;
         public StructDecl decl;
+        /** `P(..base, x: 1)`: the value whose fields the literal does not name come from, or null. */
+        public Expr base;
         /** For each field of the struct (declaration order), the index into {@link #fields}. */
         public int[] order;
 

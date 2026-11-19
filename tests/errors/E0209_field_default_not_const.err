@@ -1,0 +1,7 @@
+error[E0209]: the default value of field `retries` of `Job` is not a constant expression
+ --> tests/errors/E0209_field_default_not_const.al:7:20
+  |
+7 |     retries: i64 = three(),
+  |                    ^^^^^^^
+  = hint: a default value is a constant: it may use literals, other constants, operators, conversions and the builtins that only compute (such as len, pow or split), but not other function calls
+

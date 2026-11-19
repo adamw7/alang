@@ -1,0 +1,7 @@
+error[E0001]: unexpected '{', expected one of ')', ',', an operator
+ --> tests/errors/E0001_while_let_limit.al:4:53
+  |
+4 |     while let Option.Some(x) = Option.Some(len(xs)) {
+  |                                                     ^
+  = hint: while loops must state an iteration limit: while let Option.Some(x) = next(xs) limit 1000 { ... }
+
