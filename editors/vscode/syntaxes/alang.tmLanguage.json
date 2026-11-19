@@ -1,0 +1,149 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ALang",
+  "scopeName": "source.alang",
+  "fileTypes": ["al"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#declarations" },
+    { "include": "#strings" },
+    { "include": "#chars" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#calls" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.documentation.alang", "match": "///.*$" },
+        { "name": "comment.line.double-slash.alang", "match": "//.*$" }
+      ]
+    },
+    "escapes": {
+      "patterns": [
+        { "name": "constant.character.escape.alang", "match": "\\\\(?:[ntr0\\\\\"']|x[0-9a-fA-F]{2})" },
+        { "name": "invalid.illegal.escape.alang", "match": "\\\\." }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.alang",
+      "begin": "\"",
+      "end": "\"|$",
+      "patterns": [{ "include": "#escapes" }]
+    },
+    "chars": {
+      "name": "string.quoted.single.alang",
+      "match": "'(?:\\\\(?:[ntr0\\\\\"']|x[0-9a-fA-F]{2})|[^'\\\\])'",
+      "captures": { "0": { "patterns": [{ "include": "#escapes" }] } }
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.alang", "match": "\\b0x[0-9a-fA-F](?:_?[0-9a-fA-F])*\\b" },
+        { "name": "constant.numeric.binary.alang", "match": "\\b0b[01](?:_?[01])*\\b" },
+        { "name": "constant.numeric.float.alang", "match": "\\b[0-9](?:_?[0-9])*(?:\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?|[eE][+-]?[0-9](?:_?[0-9])*)\\b" },
+        { "name": "constant.numeric.integer.alang", "match": "\\b[0-9](?:_?[0-9])*\\b" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(?:(tool)\\s+)?(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.modifier.tool.alang" },
+            "2": { "name": "keyword.declaration.function.alang storage.type.function.alang" },
+            "3": { "name": "entity.name.function.alang" }
+          }
+        },
+        {
+          "match": "\\b(struct|enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.alang storage.type.alang" },
+            "2": { "name": "entity.name.type.alang" }
+          }
+        },
+        {
+          "match": "\\b(const)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.modifier.const.alang" },
+            "2": { "name": "variable.other.constant.alang" }
+          }
+        },
+        {
+          "match": "\\b(test)\\s+(?=\")",
+          "captures": { "1": { "name": "keyword.other.test.alang" } }
+        },
+        {
+          "match": "\\b(traps)\\s+([A-Z][0-9]{4})\\b",
+          "captures": {
+            "1": { "name": "keyword.other.traps.alang" },
+            "2": { "name": "constant.other.error-code.alang" }
+          }
+        },
+        {
+          "match": "\\b(import)\\b",
+          "captures": { "1": { "name": "keyword.control.import.alang" } }
+        },
+        {
+          "match": "\\b(as)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.import.alang" },
+            "2": { "name": "entity.name.namespace.alang" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.alang", "match": "\\b(?:if|then|else|for|in|while|limit|step|rev|match|return|break|continue)\\b" },
+        { "name": "keyword.other.contract.alang", "match": "\\b(?:requires|ensures|assert)\\b" },
+        { "name": "keyword.operator.logical.alang", "match": "\\b(?:and|or|not)\\b" },
+        { "name": "storage.type.binding.alang", "match": "\\b(?:let|var)\\b" },
+        { "name": "storage.modifier.mut.alang", "match": "\\bmut\\b" },
+        { "name": "constant.language.boolean.alang", "match": "\\b(?:true|false)\\b" },
+        { "name": "variable.language.result.alang", "match": "\\bresult\\b" },
+        { "name": "keyword.other.alang", "match": "\\b(?:fn|struct|enum|const|test|tool|traps|import|as)\\b" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        { "name": "storage.type.primitive.alang", "match": "\\b(?:bool|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64)\\b" },
+        { "name": "storage.type.collection.alang", "match": "\\b(?:str|list|map|set)(?=\\s*\\[)" },
+        { "name": "support.type.builtin.alang", "match": "\\b(?:Option|Result)\\b" },
+        { "name": "entity.name.type.alang", "match": "\\b[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*\\b" },
+        { "name": "variable.other.constant.alang", "match": "\\b[A-Z][A-Z0-9_]*\\b" }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        { "name": "support.function.builtin.alang", "match": "\\b(?:print|len|cap|push|pop|clear|append|panic|abs|min|max|sum|clamp|pow|gcd|lcm|wrapping_add|wrapping_sub|wrapping_mul|saturating_add|saturating_sub|saturating_mul|checked_add|checked_sub|checked_mul|rem_euclid|div_euclid|mul_mod|sqrt|floor|ceil|round|trunc|exp|log|log2|log10|sin|cos|tan|asin|acos|atan|atan2|is_nan|is_finite|is_digit|is_alpha|is_alnum|is_space|is_upper|is_lower|to_upper|to_lower|contains|index_of|last_index_of|starts_with|ends_with|slice|trim|split|words|try_split|try_words|join|replace|fixed|pad_left|pad_right|count|is_int|is_float|parse_i64|parse_f64|is_utf8|char_count|chars|push_char|slice_chars|sort|reverse|dedup|sort_by|any|all|count_if|find_index|retain|binary_search|insert|remove|compare|get_or)(?=\\s*\\()" },
+        { "name": "entity.name.function.call.alang", "match": "\\b[a-z_][A-Za-z0-9_]*(?=\\s*\\()" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.alang", "match": "->|=>" },
+        { "name": "keyword.operator.range.alang", "match": "\\.\\.=?" },
+        { "name": "invalid.illegal.operator.alang", "match": "&&|\\|\\||\\+\\+" },
+        { "name": "keyword.operator.comparison.alang", "match": "==|!=|<=|>=" },
+        { "name": "keyword.operator.assignment.compound.alang", "match": "(?:\\+|-|\\*|/|%|&|\\||\\^|<<|>>)=" },
+        { "name": "keyword.operator.bitwise.shift.alang", "match": "<<|>>" },
+        { "name": "keyword.operator.comparison.alang", "match": "<|>" },
+        { "name": "keyword.operator.assignment.alang", "match": "=" },
+        { "name": "keyword.operator.arithmetic.alang", "match": "[-+*/%]" },
+        { "name": "keyword.operator.bitwise.alang", "match": "[&|^~]" },
+        { "name": "invalid.illegal.operator.alang", "match": "!" }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.terminator.statement.alang", "match": ";" },
+        { "name": "punctuation.separator.comma.alang", "match": "," },
+        { "name": "punctuation.separator.colon.alang", "match": ":" },
+        { "name": "punctuation.accessor.dot.alang", "match": "\\." }
+      ]
+    }
+  }
+}

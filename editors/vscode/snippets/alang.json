@@ -1,0 +1,64 @@
+{
+  "main": { "prefix": "main", "body": ["fn main() {", "\t$0", "}"], "description": "fn main()" },
+  "main reading stdin": {
+    "prefix": "maininput",
+    "body": ["fn main(input: str[${1:4096}]) {", "\tfor line in split(input, '\\n') {", "\t\t$0", "\t}", "}"],
+    "description": "fn main that reads all of stdin, a line at a time"
+  },
+  "fn": {
+    "prefix": "fn",
+    "body": ["fn ${1:name}(${2:x}: ${3:i64}) -> ${4:i64} {", "\t$0", "}"],
+    "description": "Function"
+  },
+  "tool fn": {
+    "prefix": "tool",
+    "body": ["/// ${1:What the tool does, for the calling model.}", "tool fn ${2:name}(${3:x}: ${4:i64}) -> ${5:i64}", "\trequires ${6:x >= 0}", "{", "\t$0", "}"],
+    "description": "Tool function, documented and with a contract"
+  },
+  "struct": {
+    "prefix": "struct",
+    "body": ["struct ${1:Name} {", "\t${2:field}: ${3:i64},", "}"],
+    "description": "Struct"
+  },
+  "enum": {
+    "prefix": "enum",
+    "body": ["enum ${1:Name} {", "\t${2:First},", "\t${3:Second}(${4:i64}),", "}"],
+    "description": "Enum"
+  },
+  "test": {
+    "prefix": "test",
+    "body": ["test \"${1:what it checks}\" {", "\t$0", "}"],
+    "description": "Test block"
+  },
+  "test traps": {
+    "prefix": "testtraps",
+    "body": ["test \"${1:what it refuses}\" traps ${2:R0006} {", "\t$0", "}"],
+    "description": "Test that must stop with a trap"
+  },
+  "for range": { "prefix": "for", "body": ["for ${1:i} in ${2:0}..${3:n} {", "\t$0", "}"], "description": "for over a range" },
+  "for each": { "prefix": "foreach", "body": ["for ${1:x} in ${2:xs} {", "\t$0", "}"], "description": "for over a collection" },
+  "while": {
+    "prefix": "while",
+    "body": ["while ${1:condition} limit ${2:1000} {", "\t$0", "}"],
+    "description": "while with its iteration limit"
+  },
+  "match": {
+    "prefix": "match",
+    "body": ["match ${1:value} {", "\t${2:pattern} => { $3 }", "\t_ => { $0 }", "}"],
+    "description": "match"
+  },
+  "match option": {
+    "prefix": "matchopt",
+    "body": ["match ${1:value} {", "\tOption.Some(${2:v}) => { $3 }", "\tOption.None => { $0 }", "}"],
+    "description": "match on an Option"
+  },
+  "match result": {
+    "prefix": "matchres",
+    "body": ["match ${1:value} {", "\tResult.Ok(${2:v}) => { $3 }", "\tResult.Err(${4:why}) => { $0 }", "}"],
+    "description": "match on a Result"
+  },
+  "if let": { "prefix": "iflet", "body": ["if let ${1:Option.Some(v)} = ${2:value} {", "\t$0", "}"], "description": "if let" },
+  "let": { "prefix": "let", "body": ["let ${1:name}: ${2:i64} = ${0:0};"], "description": "Immutable variable" },
+  "var": { "prefix": "var", "body": ["var ${1:name}: ${2:i64} = ${0:0};"], "description": "Mutable variable" },
+  "import": { "prefix": "import", "body": ["import \"${1:lib.al}\";"], "description": "Import a file" }
+}

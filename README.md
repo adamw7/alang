@@ -81,6 +81,9 @@ native binaries (`alang-{linux-x64,linux-arm64,macos-arm64}.tar.gz`, `alang-wind
 and AGENTS.md at <https://github.com/adamw7/alang/releases/latest/download/AGENTS.md>. For JVM hosts the jar is
 in GitHub Packages as `io.github.adamw7:alang`.
 
+For VS Code, [editors/vscode](editors/vscode) adds highlighting, `alang check` diagnostics with quick fixes,
+formatting, builtin hovers, and Run / Run test / Debug lenses.
+
 ## Quick start
 
 In a clone, `bin/alang` builds the jar itself (JDK 21+ and Maven). A C compiler is needed only for `build`.
