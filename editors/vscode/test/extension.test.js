@@ -292,4 +292,9 @@ test('the extension against the real toolchain', { skip: !canRun && 'bin/alang c
   const symbols = state.providers.symbols.provideDocumentSymbols(doc2);
   assert.deepStrictEqual(symbols.map((s) => [s.name, s.range.start.line, s.range.end.line]),
     [['main', 1, 4], ['test "one"', 5, 7]]);
+  // A `//` inside a string does not start a comment that hides the rest of the line.
+  const url = makeDocument(path.join(dir, 'u.al'),
+    'fn site() -> str[32] {\n    let u: str[32] = "https://x"; if len(u) > 0 {\n        return u;\n    }\n    return "";\n}\n');
+  assert.deepStrictEqual(state.providers.symbols.provideDocumentSymbols(url).map((s) => [s.range.start.line, s.range.end.line]),
+    [[0, 5]]);
 });
