@@ -97,7 +97,8 @@ class FloatParseTest {
         for (String s : new String[] {"123456789012345", "0.123456789012345", "1234567.89012345", "-999999999999999",
             "1e0".replace("e0", ""), "0.0000000000000000000001", "1" + "0".repeat(22), "123456789012345" + "0".repeat(22),
             "9007199254740992", "3.", ".5", "-0", "0.000", "+19.99", "1e5", "1E5", "2.5e-3", "-6.02e+23", "0e999999999", "1e22",
-            "123456789012345e22", "1e-22", ".5E1"}) {
+            "123456789012345e22", "1e-22", ".5E1", "1" + "0".repeat(1_000_000) + "e-1000000",
+            "0." + "0".repeat(1_000_000) + "5e1000001"}) {
             Values.StrV v = str(s);
             assertTrue(Stdlib.isFloat(v, new Meter(0)), s);
             assertEquals(Double.doubleToRawLongBits(Double.parseDouble(s)), Double.doubleToRawLongBits(Stdlib.parseFloat(v, null, new Meter(0))), s);
@@ -108,7 +109,10 @@ class FloatParseTest {
     void otherTextIsRejected() {
         for (String s : new String[] {"", ".", "-", "+", "1e", "1e+", "1E-", "e5", ".e5", "1e5.0", "1e5e2", "1e 5", "1e-23",
             "1e39", "1e9999999999999999999", "1.2.3", " 1", "1 ", "0x10", "inf", "nan", "1_000",
-            "9007199254740993", "12345678901234567", "0.00000000000000000000001", "1" + "0".repeat(39), "--1", "1-"}) {
+            "9007199254740993", "12345678901234567", "0.00000000000000000000001", "1" + "0".repeat(39), "--1", "1-",
+            // A million digits cannot make up for an exponent the parser caps.
+            "0." + "0".repeat(1_000_000) + "1e10000000", "1" + "0".repeat(1_000_000) + "e-10000000",
+            "0." + "0".repeat(1_048_000) + "1e999999999999"}) {
             assertFalse(Stdlib.isFloat(str(s), new Meter(0)), s);
         }
     }

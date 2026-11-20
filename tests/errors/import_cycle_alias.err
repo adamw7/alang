@@ -1,0 +1,7 @@
+error[E0703]: import cycle: tests/errors/import_cycle_alias.al imports tests/errors/lib/cycle_alias.al, which imports tests/errors/import_cycle_alias.al
+ --> tests/errors/lib/cycle_alias.al:2:8
+  |
+2 | import "../import_cycle_alias.al" as first;
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = hint: files cannot import each other; move what they share into a file that both import
+

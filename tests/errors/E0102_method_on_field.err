@@ -1,0 +1,31 @@
+error[E0102]: there are no methods: `b.xs.push(...)` is not valid
+  --> tests/errors/E0102_method_on_field.al:13:5
+   |
+13 |     b.xs.push(3);
+   |     ^^^^^^^^^^^^
+  = hint: pass the value as the first argument: push(mut b.xs, ...)
+  = fix: replace `b.xs.push(3)` with `push(mut b.xs, 3)`
+
+error[E0102]: there are no methods: `b.xs.len(...)` is not valid
+  --> tests/errors/E0102_method_on_field.al:14:18
+   |
+14 |     let n: i64 = b.xs.len() + 1;
+   |                  ^^^^^^^^^^
+  = hint: pass the value as the first argument: len(b.xs)
+  = fix: replace `b.xs.len()` with `len(b.xs)`
+
+error[E0102]: there are no methods: `ORIGIN.name.length(...)` is not valid
+  --> tests/errors/E0102_method_on_field.al:15:18
+   |
+15 |     let k: i64 = ORIGIN.name.length();
+   |                  ^^^^^^^^^^^^^^^^^^^^
+  = hint: pass the value as the first argument: length(ORIGIN.name)
+  = fix: replace `ORIGIN.name.length()` with `len(ORIGIN.name)`
+
+error[E0106]: struct `Box` has no field `nope`
+  --> tests/errors/E0102_method_on_field.al:16:18
+   |
+16 |     let z: i64 = b.nope.len();
+   |                  ^^^^^^
+  = hint: did you mean `name`?
+

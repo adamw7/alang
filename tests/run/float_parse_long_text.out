@@ -1,0 +1,3 @@
+false Option.None
+false Option.None
+true Option.Some(1.0)

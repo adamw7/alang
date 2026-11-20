@@ -626,8 +626,9 @@ final class Stdlib {
             if (k == s.len) return NOT_DECIMAL;
             for (; k < s.len; k++) {
                 if (!isDigit(s.b[k])) return NOT_DECIMAL;
-                // Far beyond any f64, and still far from overflowing a long.
-                if (exponent < 1_000_000) exponent = exponent * 10 + (s.b[k] - '0');
+                // Capped far beyond any f64, and beyond what the up to 1 048 576 digits before it can make up
+                // for, so that a capped exponent is still rejected; and still far from overflowing a long.
+                if (exponent < 1_000_000_000) exponent = exponent * 10 + (s.b[k] - '0');
             }
             if (minus) exponent = -exponent;
             break;

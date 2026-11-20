@@ -2048,7 +2048,8 @@ static int al_parse_f64(const uint8_t *b, uint32_t n, double *out) {
         if (p == n) return 0;
         for (; p < n; p++) {
             if (b[p] < '0' || b[p] > '9') return 0;
-            if (x < 1000000) x = x * 10 + (b[p] - '0');
+            /* Capped beyond what the digits before it can make up for: see Stdlib.decimalFloat. */
+            if (x < 1000000000) x = x * 10 + (b[p] - '0');
         }
         if (minus) x = -x;
         break;

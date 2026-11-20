@@ -145,6 +145,14 @@ public final class Frontend {
                 }
                 mine.put(imp.alias(), want);
             }
+            // Before the scopes: a file that imports one of its importers is a cycle, however each imports.
+            Pending cycle = onPath(path, key);
+            if (cycle != null) {
+                diags.error(Code.E0703, imp.span(), "import cycle: " + cycle(path, cycle, file),
+                    "files cannot import each other; move what they share into a file that both import");
+                failed = true;
+                continue;
+            }
             Integer had = scopeOf.get(key);
             if (had != null && had != want) {
                 diags.error(Code.E0702, imp.span(), "`" + file + "` is imported " + (imp.alias() == null ? "without" : "with")
@@ -158,13 +166,6 @@ public final class Frontend {
             if (before != null) {
                 diags.error(Code.E0702, imp.span(), "`" + file + "` is already imported on line " + before.span().line(),
                     "remove this import");
-                failed = true;
-                continue;
-            }
-            Pending cycle = onPath(path, key);
-            if (cycle != null) {
-                diags.error(Code.E0703, imp.span(), "import cycle: " + cycle(path, cycle, file),
-                    "files cannot import each other; move what they share into a file that both import");
                 failed = true;
                 continue;
             }
