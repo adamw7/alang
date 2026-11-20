@@ -1,0 +1,14 @@
+error[E0201]: type mismatch: expected Option<(str[64], str[64])>, found Option<(str[4096], str[4096])>
+ --> tests/errors/E0201_nested_capacity.al:4:49
+  |
+4 |         let parts: Option<(str[64], str[64])> = split_once(line, ',');
+  |                                                 ^^^^^^^^^^^^^^^^^^^^^
+  = hint: `line` is a str[4096], so the result holds a str[4096] where str[64] is wanted; narrow it first, let line_short: str[64] = str[64](line);, and pass that (it traps (R0004) if `line` is longer than 64 bytes, so check len(line) first), or declare the target as Option<(str[4096], str[4096])>
+
+error[E0201]: type mismatch: expected Result<str[4], str[8]>, found Result<str[8], str[8]>
+ --> tests/errors/E0201_nested_capacity.al:8:37
+  |
+8 |     let q: Result<str[4], str[8]> = r;
+  |                                     ^
+  = hint: the two differ only in capacity: Result<str[8], str[8]> holds a str[8] where str[4] is wanted; narrow the value it is made from first, or declare the target as Result<str[8], str[8]>
+
