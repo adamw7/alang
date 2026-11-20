@@ -24,6 +24,7 @@ agent can call with JSON. CI type-checks every example, runs its tests, compares
 | [sorting.al](sorting.al) | Merge sort and quicksort without recursion, sortedness as a contract, a seeded pseudo-random generator |
 | [helpers.al](helpers.al) | Helpers the standard library leaves out, to import or copy: pseudo-random numbers, a list of entries as a map in insertion order; their parameters take any capacity (`list[Entry; _]`, `str[_]`) |
 | [tally.al](tally.al) | `import "helpers.al";` instead of copying, `parse_i64`, and a `fn main(input: str[N])` that reads the standard input ([tally.in](tally.in)) |
+| [expenses.al](expenses.al) | A data job: a CSV on the standard input ([expenses.in](expenses.in)) summed per category in exact cents, bad rows counted instead of fatal; the same `tool fn` over `alang call` and `alang serve` |
 
 ## Try them
 
@@ -33,6 +34,7 @@ bin/alang test examples/sorting.al
 bin/alang tools examples/vending_machine.al
 bin/alang check examples/game_of_life.al --memory
 bin/alang run examples/tally.al < examples/tally.in
+bin/alang run examples/expenses.al < examples/expenses.in
 
 bin/alang call examples/primes.al factorize '{"n": 600851475143}'
 # {"ok": true, "result": [71, 839, 1471, 6857], "stdout": "", "steps": 4920}

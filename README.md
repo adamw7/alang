@@ -49,7 +49,19 @@ $ bin/alang call bill.al split_bill '{"total_cents": 1000, "people": 3}'
 {"ok": true, "result": [334, 333, 333], "stdout": "", "steps": 16}
 ```
 
-Install it (below), then give your agent [AGENTS.md](AGENTS.md).
+## Get started
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/adamw7/alang/main/install.sh | sh   # Linux, macOS; details below
+cd ~/.alang/examples
+alang run hello.al
+alang run expenses.al < expenses.in      # sum a CSV per category
+alang test expenses.al
+alang call expenses.al summarize '{"csv": "date,category,amount\n2026-01-02,food,12.50"}'
+```
+
+Then hand your agent [AGENTS.md](AGENTS.md) (installed as `~/.alang/AGENTS.md`) and ask it for a tool; serve
+what it writes to any MCP client with `alang serve prog.al` ([how](#tools-in-an-agent-host)).
 
 ## Why
 

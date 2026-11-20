@@ -5272,12 +5272,116 @@ public final class Checker {
             hint = "lists convert only to lists of the same element type";
         } else if (from instanceof Type.ArrayT && to instanceof Type.ListT) {
             hint = "arrays and lists are different types; only array literals like [1, 2] can initialize a list";
+        } else if (capacityOnly(from, to) instanceof Type[] pair) {
+            hint = nestedCapacityHint(e, from, pair[0], pair[1]);
         }
         List<Edit> fix = List.of();
         String text = Type.isNumeric(from) && Type.isNumeric(to) && lossless(Type.kind(from), Type.kind(to)) ? wholeText(e) : null;
         if (text != null) fix = List.of(new Edit(e.span, to + "(" + text + ")"));
         if (charFix != null) fix = List.of(new Edit(e.span, charFix));
         diags.fixable(Code.E0201, e.span, "type mismatch: expected " + to + ", found " + from, hint, fix);
+    }
+
+    /**
+     * The hint for two types that differ only in the capacity of a str, list, map or set inside them, as
+     * Option<(str[65536], str[65536])> and Option<(str[256], str[256])>: {@code inner} is the first such part of
+     * {@code from}, {@code want} that of the target. When the value is a call with an argument of that part's
+     * capacity, as split_once(line, ',') with a long line, it names the argument to narrow.
+     */
+    private String nestedCapacityHint(Expr e, Type from, Type inner, Type want) {
+        String declare = "or declare the target as " + from;
+        if (e instanceof Call c) {
+            for (Arg a : c.args) {
+                if (!a.mut() && a.expr() instanceof Name n && n.local != null && sameKind(n.local.type, inner)
+                        && Type.capacity(n.local.type) == Type.capacity(inner)) {
+                    String unit = inner instanceof Type.Str ? "longer than " + Type.capacity(want) + " bytes"
+                        : "has more than " + Type.capacity(want) + " elements";
+                    Type narrowed = n.local.type instanceof Type.Str ? new Type.Str(Type.capacity(want)) : withCapacity(n.local.type, Type.capacity(want));
+                    return "`" + n.name + "` is a " + n.local.type + ", so the result holds a " + inner + " where " + want
+                        + " is wanted; narrow it first, let " + n.name + "_short: " + narrowed + " = " + narrowed + "(" + n.name
+                        + ");, and pass that (it traps (R0004) if `" + n.name + "` is " + unit + ", so check len(" + n.name
+                        + ") first), " + declare;
+                }
+            }
+        }
+        return "the two differ only in capacity: " + from + " holds a " + inner + " where " + want + " is wanted; narrow the"
+            + " value it is made from first, " + declare;
+    }
+
+    private static boolean sameKind(Type a, Type b) {
+        return a instanceof Type.Str && b instanceof Type.Str
+            || a instanceof Type.ListT la && b instanceof Type.ListT lb && la.elem().equals(lb.elem());
+    }
+
+    private static Type withCapacity(Type t, int cap) {
+        return t instanceof Type.ListT l ? new Type.ListT(l.elem(), cap) : t;
+    }
+
+    /**
+     * When {@code from} and {@code to} differ only in the capacity of strs, lists, maps or sets somewhere inside
+     * an Option, Result, tuple or other type with type arguments, the first such pair: {from part, to part}.
+     * Null when they differ in anything else, or at the top level (which {@link #mismatch} explains on its own).
+     */
+    private static Type[] capacityOnly(Type from, Type to) {
+        if (from instanceof Type.Str || from instanceof Type.ListT || from instanceof Type.MapT || from instanceof Type.SetT) return null;
+        Type[] found = nestedCapacity(from, to);
+        return found != null && found.length == 2 ? found : null;
+    }
+
+    /** {} when equal, {from part, to part} for the first differing capacity, null when they differ otherwise. */
+    private static Type[] nestedCapacity(Type from, Type to) {
+        if (from.equals(to)) return new Type[0];
+        List<Type> fs;
+        List<Type> ts;
+        switch (from) {
+            case Type.Str a when to instanceof Type.Str b -> {
+                return a.cap() >= 0 && b.cap() >= 0 ? new Type[] {a, b} : null;
+            }
+            case Type.ListT a when to instanceof Type.ListT b -> {
+                if (a.cap() != b.cap()) return a.elem().equals(b.elem()) && a.cap() >= 0 && b.cap() >= 0 ? new Type[] {a, b} : null;
+                fs = List.of(a.elem());
+                ts = List.of(b.elem());
+            }
+            case Type.SetT a when to instanceof Type.SetT b -> {
+                if (a.cap() != b.cap()) return a.elem().equals(b.elem()) && a.cap() >= 0 && b.cap() >= 0 ? new Type[] {a, b} : null;
+                fs = List.of(a.elem());
+                ts = List.of(b.elem());
+            }
+            case Type.MapT a when to instanceof Type.MapT b -> {
+                if (a.cap() != b.cap()) {
+                    return a.key().equals(b.key()) && a.value().equals(b.value()) && a.cap() >= 0 && b.cap() >= 0 ? new Type[] {a, b} : null;
+                }
+                fs = List.of(a.key(), a.value());
+                ts = List.of(b.key(), b.value());
+            }
+            case Type.ArrayT a when to instanceof Type.ArrayT b && a.len() == b.len() -> {
+                fs = List.of(a.elem());
+                ts = List.of(b.elem());
+            }
+            case Type.TupleT a when to instanceof Type.TupleT b -> {
+                fs = a.elems();
+                ts = b.elems();
+            }
+            case Type.StructT a when to instanceof Type.StructT b && Ast.origin(a.decl()) == Ast.origin(b.decl()) -> {
+                fs = Type.typeArgs(a);
+                ts = Type.typeArgs(b);
+            }
+            case Type.EnumT a when to instanceof Type.EnumT b && Ast.origin(a.decl()) == Ast.origin(b.decl()) -> {
+                fs = Type.typeArgs(a);
+                ts = Type.typeArgs(b);
+            }
+            default -> {
+                return null;
+            }
+        }
+        if (fs.isEmpty() || fs.size() != ts.size()) return null;
+        Type[] first = null;
+        for (int i = 0; i < fs.size(); i++) {
+            Type[] r = nestedCapacity(fs.get(i), ts.get(i));
+            if (r == null) return null;
+            if (first == null && r.length == 2) first = r;
+        }
+        return first == null ? new Type[0] : first;
     }
 
     /** Whether every value of {@code from} converts to {@code to} exactly: a wider integer, or a float with enough bits. */
