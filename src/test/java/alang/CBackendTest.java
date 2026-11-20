@@ -143,6 +143,15 @@ class CBackendTest {
     }
 
     private static Path buildEachAndCompare(Frontend.Result r, byte[] input, List<String[]> ccs) throws IOException, InterruptedException {
+        return buildEachAndCompare(r, input, ccs, 0);
+    }
+
+    /**
+     * As above; a {@code stack} above 0 is the stack, in bytes, that the program is linked with on Windows, whose
+     * default of 1 MB is less than the checker allows (elsewhere the default, usually 8 MB, is enough).
+     */
+    private static Path buildEachAndCompare(Frontend.Result r, byte[] input, List<String[]> ccs, long stack)
+            throws IOException, InterruptedException {
         Harness.Run expected = Harness.runMain(r, input);
         Path dir = Files.createTempDirectory("alang-c");
         Path c = dir.resolve("prog.c");
@@ -150,6 +159,7 @@ class CBackendTest {
         for (String[] cc : ccs) {
             List<String> cmd = new ArrayList<>(List.of(cc));
             cmd.addAll(List.of("-o", PROG, "prog.c"));
+            if (WINDOWS && stack > 0) cmd.add((msvc(cc[0]) ? "-Wl,/STACK:" : "-Wl,--stack,") + stack);
             cmd.addAll(libm(cc[0]));
             Proc build = exec(dir, cmd.toArray(new String[0]));
             assertEquals(0, build.exit(), () -> String.join(" ", cc) + ":\n" + build.stderr());
@@ -236,6 +246,43 @@ class CBackendTest {
                 Frontend.Result deeper = Frontend.compile(new Source(t[0], nestedLoops(128)), Checker.DEFAULT_MAX_STACK);
                 assertTrue(deeper.diags().renderText().startsWith("error[E0404]: "), deeper.diags().renderText());
             }
+        }));
+    }
+
+    /**
+     * f64(s) caps the exponent it reads, but a str holds up to 1 048 576 digits, which once made up for the cap:
+     * text of about 10^8999998 converted to 0.1, the same on both backends. Not in tests/run, where FuzzTest
+     * would run a thousand mutations of a program that copies a megabyte at each step.
+     */
+    @TestFactory
+    Stream<DynamicTest> floatTextOfAMillionDigits() {
+        String program = """
+            fn main() {
+                // 0.000...01e10000000, about 10^8999998: too large for an f64.
+                var huge: str[1000016] = "0.";
+                append(mut huge, repeat('0', 1000000));
+                append(mut huge, "1e10000000");
+                // 1000...0e-10000000, 10^-9000000: too small.
+                var tiny: str[1000016] = "1";
+                append(mut tiny, repeat('0', 1000000));
+                append(mut tiny, "e-10000000");
+                // 1000...0e-1000000 is exactly 1.
+                var one: str[1000016] = "1";
+                append(mut one, repeat('0', 1000000));
+                append(mut one, "e-1000000");
+                print(is_float(huge), " ", parse_f64(huge));
+                print(is_float(tiny), " ", parse_f64(tiny));
+                print(is_float(one), " ", parse_f64(one));
+            }
+            """;
+        return Stream.of(Harness.dynamicTest("float_text_of_a_million_digits.al", COMPILE_AND_RUN_TIMEOUT, () -> {
+            Frontend.Result r = Frontend.compile(new Source("float_text_of_a_million_digits.al", program), Checker.DEFAULT_MAX_STACK);
+            assertTrue(r.ok(), () -> r.diags().renderText());
+            assertEquals("false Option.None\nfalse Option.None\ntrue Option.Some(1.0)\n", Harness.runMain(r, new byte[0]).stdout());
+            List<String[]> ccs = compilers();
+            assumeTrue(!ccs.isEmpty(), "no C compiler available");
+            // Three strs of a megabyte each: more than the 1 MB a Windows program gets unless it asks for more.
+            buildEachAndCompare(r, new byte[0], ccs, r.check().memory().maxStack() + STACK_SLACK_KB * 1024);
         }));
     }
 

@@ -4640,6 +4640,16 @@ public final class Checker {
 
     private Type variantCall(VariantCall v, Type expected) {
         EnumDecl d;
+        if (v.qualifier != null && aliasScope(v.qualifier) == null
+            && (lookupLocal(v.qualifier) != null || consts.containsKey(v.qualifier))) {
+            // p.xs.len(), a method called on a field of a variable, reads as ns.Enum.Variant(...) with p as ns.
+            String receiver = v.qualifier + "." + v.enumName;
+            Span at = exprText(v).startsWith(receiver) ? new Span(v.span.line(), v.span.col(), receiver.length(), v.span.file()) : v.span;
+            Type t = expr(new FieldAccess(at, new Name(at, v.qualifier), v.enumName, at), null);
+            for (Arg a : v.args) expr(a.expr(), null);
+            if (!Type.isError(t)) noMethods(v, receiver, t);
+            return Type.ERROR;
+        }
         if (v.qualifier != null) {
             Integer s = qualifierScope(v.qualifier, v.span);
             d = s == null ? null : enums.in(s, v.enumName);
@@ -4668,10 +4678,8 @@ public final class Checker {
         if (d == null) {
             for (Arg a : v.args) expr(a.expr(), null);
             if (lookupLocal(v.enumName) != null || consts.containsKey(v.enumName)) {
-                String args = v.args.isEmpty() ? "" : ", ...";
-                String mut = modifiesFirstArgument(v.variantName) ? "mut " : "";
-                diags.fixable(Code.E0102, v.span, "there are no methods: `" + v.enumName + "." + v.variantName + "(...)` is not valid",
-                    "pass the value as the first argument: " + v.variantName + "(" + mut + v.enumName + args + ")", methodFix(v));
+                LocalVar target = lookupLocal(v.enumName);
+                noMethods(v, v.enumName, target == null ? null : target.type);
             } else {
                 diags.error(Code.E0103, v.span, "unknown enum `" + v.enumName + "`",
                     didYouMean(v.enumName, new ArrayList<>(enums.keySet())));
@@ -5712,23 +5720,31 @@ public final class Checker {
         };
     }
 
+    /** E0102 for `receiver.method(...)`, with the call it means as the hint and the fix. */
+    private void noMethods(VariantCall v, String receiver, Type receiverType) {
+        String args = v.args.isEmpty() ? "" : ", ...";
+        String mut = modifiesFirstArgument(v.variantName) ? "mut " : "";
+        diags.fixable(Code.E0102, v.span, "there are no methods: `" + receiver + "." + v.variantName + "(...)` is not valid",
+            "pass the value as the first argument: " + v.variantName + "(" + mut + receiver + args + ")",
+            methodFix(v, receiver, receiverType));
+    }
+
     /**
      * `xs.push(1)`, which has no methods to call, as the call it means: push(mut xs, 1). The method's name stays, or
      * becomes the builtin another language's name stands for (xs.length() is len(xs)); only a function that exists.
      */
-    private List<Edit> methodFix(VariantCall v) {
+    private List<Edit> methodFix(VariantCall v, String receiver, Type receiverType) {
         String text = exprText(v);
-        if (!text.startsWith(v.enumName + ".") || !text.endsWith(")") || !balanced(text)) return List.of();
+        if (!text.startsWith(receiver + ".") || !text.endsWith(")") || !balanced(text)) return List.of();
         String name = v.variantName;
-        LocalVar target = lookupLocal(v.enumName);
-        boolean list = target != null && target.type instanceof Type.ListT;
+        boolean list = receiverType instanceof Type.ListT;
         if (v.args.isEmpty() && (name.equals("length") || name.equals("size"))) name = "len";
         else if (v.args.isEmpty() && name.equals("capacity")) name = "cap";
         else if (list && v.args.size() == 1 && (name.equals("append") || name.equals("push_back") || name.equals("add"))) name = "push";
         if (Builtin.byName(name) == null && !fns.containsKey(name)) return List.of();
         StringBuilder sb = new StringBuilder(name).append('(');
         if (modifiesFirstArgument(name)) sb.append("mut ");
-        sb.append(v.enumName);
+        sb.append(receiver);
         for (Arg a : v.args) {
             String arg = exprText(a.expr());
             if (a.span().line() != v.span.line()) return List.of();
