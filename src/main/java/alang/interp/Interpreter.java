@@ -490,9 +490,7 @@ public final class Interpreter {
         }
         while (true) {
             step(f.span);
-            slots[f.var.slot] = i;
-            bound(f.var);
-            int r = body(f, f.body, slots);
+            int r = iteration(f, slots, null, i);
             if (r != GO) return r;
             if (f.rev) {
                 if (Long.compareUnsigned(i - from, step) < 0) break;
@@ -504,6 +502,15 @@ public final class Interpreter {
             }
         }
         return NORMAL;
+    }
+
+    /** One pass of a for loop's body with its variables set: {@code index} is for `for i, x in ...` only. */
+    private int iteration(For f, Object[] slots, Object index, Object value) {
+        if (f.indexVar != null) slots[f.indexVar.slot] = index;
+        slots[f.var.slot] = value;
+        bound(f.indexVar);
+        bound(f.var);
+        return body(f, f.body, slots);
     }
 
     private int eachLoop(For f, Object[] slots) {
@@ -518,16 +525,8 @@ public final class Interpreter {
         for (int k = 0; k < n; k++) {
             int i = f.rev ? n - 1 - k : k;
             step(f.span);
-            if (m != null) {
-                if (f.indexVar != null) slots[f.indexVar.slot] = m.keys[i];
-                slots[f.var.slot] = f.indexVar != null ? m.vals[i] : m.keys[i];
-            } else {
-                if (f.indexVar != null) slots[f.indexVar.slot] = (long) i;
-                slots[f.var.slot] = items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF);
-            }
-            bound(f.indexVar);
-            bound(f.var);
-            int r = body(f, f.body, slots);
+            int r = m != null ? iteration(f, slots, m.keys[i], f.indexVar != null ? m.vals[i] : m.keys[i])
+                : iteration(f, slots, (long) i, items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF));
             if (r != GO) return r;
         }
         return NORMAL;
@@ -547,11 +546,7 @@ public final class Interpreter {
                 long d = Stdlib.utf8Next(s.b, s.len, pos);
                 pos += (int) (d & 7);
                 step(f.span);
-                if (f.indexVar != null) slots[f.indexVar.slot] = index++;
-                slots[f.var.slot] = d >>> 8;
-                bound(f.indexVar);
-                bound(f.var);
-                int r = body(f, f.body, slots);
+                int r = iteration(f, slots, index++, d >>> 8);
                 if (r != GO) return r;
             }
             return NORMAL;
@@ -587,11 +582,7 @@ public final class Interpreter {
             piece.len = end - start;
             System.arraycopy(s.b, start, piece.b, 0, piece.len);
             if (before > piece.len) Arrays.fill(piece.b, piece.len, before, (byte) 0);
-            if (f.indexVar != null) slots[f.indexVar.slot] = index++;
-            slots[f.var.slot] = piece;
-            bound(f.indexVar);
-            bound(f.var);
-            int r = body(f, f.body, slots);
+            int r = iteration(f, slots, index++, piece);
             if (r != GO) return r;
             if (pos < 0) break;
         }

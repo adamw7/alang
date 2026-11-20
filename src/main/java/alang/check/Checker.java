@@ -850,11 +850,7 @@ public final class Checker {
     private void signature(FnDecl f) {
         if (!signed.add(f)) return;
         Ctx saved = ctx;
-        ctx = new Ctx();
-        enterScope(f);
-        ctx.routine = f;
-        ctx.fn = f;
-        ctx.typeParams = typeParamsOf(f);
+        enterFn(f);
         if (f.origin == null) checkTypeParams(f);
         f.ret = f.retRef == null ? Type.VOID : resolveType(f.retRef);
         Set<String> names = new HashSet<>();
@@ -1042,12 +1038,16 @@ public final class Checker {
         }
     }
 
-    private void body(FnDecl f) {
+    private void enterFn(FnDecl f) {
         ctx = new Ctx();
         enterScope(f);
         ctx.routine = f;
         ctx.fn = f;
         ctx.typeParams = typeParamsOf(f);
+    }
+
+    private void body(FnDecl f) {
+        enterFn(f);
         Map<String, LocalVar> params = new HashMap<>();
         for (LocalVar v : f.paramVars) params.putIfAbsent(v.name, v);
         ctx.scopes.push(params);
@@ -1078,8 +1078,7 @@ public final class Checker {
         Map<FnDecl, Integer> state = new HashMap<>();
         boolean found = false;
         for (FnDecl f : fns.values()) {
-            List<FnDecl> path = new ArrayList<>();
-            List<FnDecl> cycle = findCycle(f, state, path);
+            List<FnDecl> cycle = findCycle(f, state, new ArrayList<>(), true);
             if (cycle != null) {
                 found = true;
                 diags.error(Code.E0401, cycle.get(0).nameSpan,
@@ -1102,7 +1101,7 @@ public final class Checker {
             else nodes.add(f);
         }
         for (FnDecl f : nodes) {
-            List<FnDecl> cycle = findConcreteCycle(f, state, new ArrayList<>());
+            List<FnDecl> cycle = findCycle(f, state, new ArrayList<>(), false);
             if (cycle != null) {
                 FnDecl first = cycle.get(0).origin != null ? cycle.get(0).origin : cycle.get(0);
                 diags.error(Code.E0401, first.nameSpan,
@@ -1115,7 +1114,11 @@ public final class Checker {
         return false;
     }
 
-    private List<FnDecl> findConcreteCycle(FnDecl f, Map<FnDecl, Integer> state, List<FnDecl> path) {
+    /**
+     * DFS that returns a cycle (first element repeated at the end) or null. {@code asWritten}: an instance stands
+     * for the function it copies, as recursion is a property of the functions as written.
+     */
+    private List<FnDecl> findCycle(FnDecl f, Map<FnDecl, Integer> state, List<FnDecl> path, boolean asWritten) {
         Integer st = state.get(f);
         if (st != null && st == 2) return null;
         if (st != null && st == 1) {
@@ -1125,31 +1128,9 @@ public final class Checker {
         }
         state.put(f, 1);
         path.add(f);
-        for (FnDecl c : f.callees) {
-            List<FnDecl> cycle = findConcreteCycle(c, state, path);
-            if (cycle != null) return cycle;
-        }
-        path.remove(path.size() - 1);
-        state.put(f, 2);
-        return null;
-    }
-
-    /** DFS that returns a cycle (first element repeated at the end) or null. */
-    private List<FnDecl> findCycle(FnDecl f, Map<FnDecl, Integer> state, List<FnDecl> path) {
-        Integer st = state.get(f);
-        if (st != null && st == 2) return null;
-        if (st != null && st == 1) {
-            int i = path.indexOf(f);
-            List<FnDecl> cycle = new ArrayList<>(path.subList(i, path.size()));
-            cycle.add(f);
-            return cycle;
-        }
-        state.put(f, 1);
-        path.add(f);
         for (FnDecl callee : f.callees) {
-            // Recursion is a property of the functions as written: an instance stands for the function it copies.
-            FnDecl c = callee.origin != null ? callee.origin : callee;
-            List<FnDecl> cycle = findCycle(c, state, path);
+            FnDecl c = asWritten && callee.origin != null ? callee.origin : callee;
+            List<FnDecl> cycle = findCycle(c, state, path, asWritten);
             if (cycle != null) {
                 // Mark the rest as done so the same cycle is reported once.
                 for (FnDecl p : path) state.put(p, 2);
@@ -3151,8 +3132,7 @@ public final class Checker {
             case LEN, CAP -> {
                 if (!arity(c, 1)) return Type.I64;
                 Arg a = args.get(0);
-                noMut(a);
-                Type t = expr(a.expr(), null);
+                Type t = value(a, null);
                 readInPlace(a.expr());
                 boolean keyed = t instanceof Type.MapT || t instanceof Type.SetT;
                 boolean ok = keyed || (b == Builtin.LEN ? Type.elementOf(t) != null : (t instanceof Type.ListT || t instanceof Type.Str));
@@ -3206,8 +3186,7 @@ public final class Checker {
             }
             case ABS -> {
                 if (!arity(c, 1)) return Type.ERROR;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
+                Type t = value(args.get(0), null);
                 if (Type.isError(t)) return t;
                 if (!Type.isNumeric(t) || !Type.kind(t).signed) {
                     diags.error(Code.E0203, args.get(0).span(), "abs() needs a signed integer or float, found " + t);
@@ -3217,8 +3196,7 @@ public final class Checker {
             }
             case MIN, MAX -> {
                 if (args.size() == 1) {
-                    noMut(args.get(0));
-                    Type t = expr(args.get(0).expr(), null);
+                    Type t = value(args.get(0), null);
                     if (t instanceof Type.ArrayT || t instanceof Type.ListT) return numbersOf(b, args.get(0), t);
                     if (!Type.isError(t)) {
                         diags.error(Code.E0204, c.span, b.name + "() takes 2 argument(s) but 1 were given",
@@ -3227,8 +3205,7 @@ public final class Checker {
                     return Type.ERROR;
                 }
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                noMut(args.get(1));
+                noMut(args.get(0), args.get(1));
                 Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isNumeric(expected) ? expected : null);
                 if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
                 if (!Type.isNumeric(ts[0]) || !ts[0].equals(ts[1])) {
@@ -3244,8 +3221,7 @@ public final class Checker {
             }
             case SQRT, FLOOR, CEIL, ROUND, TRUNC, EXP, LOG, LOG2, LOG10, SIN, COS, TAN, ASIN, ACOS, ATAN -> {
                 if (!arity(c, 1)) return Type.ERROR;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), Type.F64);
+                Type t = value(args.get(0), Type.F64);
                 if (Type.isError(t)) return t;
                 if (!Type.isFloat(t)) {
                     diags.error(Code.E0201, args.get(0).span(), b.name + "() needs f32 or f64, found " + t,
@@ -3256,8 +3232,7 @@ public final class Checker {
             }
             case ATAN2 -> {
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                noMut(args.get(1));
+                noMut(args.get(0), args.get(1));
                 Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isFloat(expected) ? expected : Type.F64);
                 if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
                 if (!Type.isFloat(ts[0]) || !ts[0].equals(ts[1])) {
@@ -3269,8 +3244,7 @@ public final class Checker {
             }
             case IS_NAN, IS_FINITE -> {
                 if (!arity(c, 1)) return Type.BOOL;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), Type.F64);
+                Type t = value(args.get(0), Type.F64);
                 if (!Type.isFloat(t) && !Type.isError(t)) {
                     diags.error(Code.E0201, args.get(0).span(), b.name + "() needs f32 or f64, found " + t,
                         Type.isInt(t) ? "an integer is always finite and never NaN" : null);
@@ -3279,8 +3253,7 @@ public final class Checker {
             }
             case CHECKED_ADD, CHECKED_SUB, CHECKED_MUL -> {
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                noMut(args.get(1));
+                noMut(args.get(0), args.get(1));
                 Type hint = expected instanceof Type.EnumT et && Ast.origin(et.decl()) == enums.get("Option")
                     && Type.isInt(et.decl().variants.get(1).payload.get(0)) ? et.decl().variants.get(1).payload.get(0) : null;
                 Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), hint);
@@ -3316,8 +3289,7 @@ public final class Checker {
             }
             case POW -> {
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                noMut(args.get(1));
+                noMut(args.get(0), args.get(1));
                 Expr base = args.get(0).expr();
                 Expr power = args.get(1).expr();
                 // pow(2, 0.5) is a float pow, as 2 + 0.5 is a float sum.
@@ -3350,15 +3322,13 @@ public final class Checker {
             case GCD, LCM, WRAPPING_ADD, WRAPPING_SUB, WRAPPING_MUL, SATURATING_ADD, SATURATING_SUB, SATURATING_MUL,
                  REM_EUCLID, DIV_EUCLID -> {
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                noMut(args.get(1));
+                noMut(args.get(0), args.get(1));
                 Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isInt(expected) ? expected : null);
                 return twoInts(c, b, ts) ? ts[0] : Type.ERROR;
             }
             case COUNT_ONES, LEADING_ZEROS, TRAILING_ZEROS -> {
                 if (!arity(c, 1)) return Type.I64;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
+                Type t = value(args.get(0), null);
                 if (!Type.isInt(t) && !Type.isError(t)) {
                     diags.error(Code.E0203, args.get(0).span(), b.name + "() needs an integer, found " + t);
                 }
@@ -3366,8 +3336,7 @@ public final class Checker {
             }
             case ROTL, ROTR -> {
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                noMut(args.get(1));
+                noMut(args.get(0), args.get(1));
                 Type t = expr(args.get(0).expr(), Type.isInt(expected) ? expected : null);
                 Type n = expr(args.get(1).expr(), Type.I64);
                 if (Type.isError(t) || Type.isError(n)) return Type.ERROR;
@@ -3383,8 +3352,7 @@ public final class Checker {
             }
             case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
                 if (!arity(c, 1)) return Type.BOOL;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), Type.U8);
+                Type t = value(args.get(0), Type.U8);
                 if (!t.equals(Type.U8) && !Type.isError(t)) {
                     diags.error(Code.E0201, args.get(0).span(), b.name + "() needs a u8 byte, found " + t,
                         Type.isInt(t) ? "convert it: " + b.name + "(u8(" + exprText(args.get(0).expr()) + "))"
@@ -3407,9 +3375,7 @@ public final class Checker {
             case CONTAINS, INDEX_OF, LAST_INDEX_OF -> {
                 Type ret = b == Builtin.CONTAINS ? Type.BOOL : Type.I64;
                 if (!arity(c, 2)) return ret;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
-                readInPlace(args.get(0).expr());
+                Type t = readArg(args.get(0));
                 if (b == Builtin.CONTAINS && (t instanceof Type.MapT || t instanceof Type.SetT)) {
                     keyArg(b, args.get(1), t instanceof Type.MapT mt ? mt.key() : ((Type.SetT) t).elem());
                     return ret;
@@ -3441,9 +3407,7 @@ public final class Checker {
                     return Type.I64;
                 }
                 if (!arity(c, 2)) return Type.I64;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
-                readInPlace(args.get(0).expr());
+                Type t = readArg(args.get(0));
                 if (t instanceof Type.Str) {
                     textPattern(b, args.get(1), "what it counts");
                 } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
@@ -3469,8 +3433,7 @@ public final class Checker {
             }
             case SLICE -> {
                 if (!arity(c, 3)) return Type.ERROR;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
+                Type t = value(args.get(0), null);
                 for (int i = 1; i < 3; i++) indexArg(b, args.get(i));
                 if (Type.isError(t)) return t;
                 if (t instanceof Type.ArrayT a) return new Type.ListT(a.elem(), a.len());
@@ -3553,8 +3516,7 @@ public final class Checker {
                     }
                 }
                 Arg v = args.get(1);
-                noMut(v);
-                Type vt = expr(v.expr(), Type.U32);
+                Type vt = value(v, Type.U32);
                 if (!Type.isInt(vt) && !Type.isError(vt)) {
                     diags.error(Code.E0201, v.span(), "push_char() needs a code point, an integer, found " + vt,
                         vt instanceof Type.Str ? "to add text, use append(mut s, " + exprText(v.expr()) + ")" : null);
@@ -3589,8 +3551,7 @@ public final class Checker {
             }
             case JOIN -> {
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
+                Type t = value(args.get(0), null);
                 if (!Type.isError(t) && !((t instanceof Type.ArrayT || t instanceof Type.ListT) && Type.elementOf(t) instanceof Type.Str)) {
                     diags.error(Code.E0203, args.get(0).span(), "join() needs an array or list of str, found " + t);
                 }
@@ -3613,8 +3574,7 @@ public final class Checker {
                 Type ret = b == Builtin.ANY || b == Builtin.ALL ? Type.BOOL : Type.I64;
                 if (!arity(c, 2)) return ret;
                 Arg xs = args.get(0);
-                noMut(xs);
-                Type t = expr(xs.expr(), null);
+                Type t = value(xs, null);
                 readInPlace(xs.expr());
                 if (!(t instanceof Type.ArrayT) && !(t instanceof Type.ListT)) {
                     if (!Type.isError(t)) {
@@ -3657,9 +3617,7 @@ public final class Checker {
             }
             case BINARY_SEARCH -> {
                 if (!arity(c, 2)) return Type.I64;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
-                readInPlace(args.get(0).expr());
+                Type t = readArg(args.get(0));
                 noMut(args.get(1));
                 if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
                     Type elem = Type.elementOf(t);
@@ -3716,8 +3674,7 @@ public final class Checker {
             }
             case COMPARE -> {
                 if (!arity(c, 2)) return Type.I64;
-                noMut(args.get(0));
-                noMut(args.get(1));
+                noMut(args.get(0), args.get(1));
                 Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), null);
                 if (!Type.isError(ts[0]) && !Type.isError(ts[1]) && !ts[0].equals(ts[1])) {
                     diags.error(Code.E0201, c.span, "compare() needs two values of the same type, found " + ts[0] + " and " + ts[1]);
@@ -3726,9 +3683,7 @@ public final class Checker {
             }
             case KEYS, VALUES -> {
                 if (!arity(c, 1)) return Type.ERROR;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
-                readInPlace(args.get(0).expr());
+                Type t = readArg(args.get(0));
                 if (t instanceof Type.MapT mt) return new Type.ListT(b == Builtin.KEYS ? mt.key() : mt.value(), mt.cap());
                 if (!Type.isError(t)) {
                     diags.error(Code.E0203, args.get(0).span(), b.name + "() needs a map, found " + t,
@@ -3739,9 +3694,7 @@ public final class Checker {
             }
             case HASH -> {
                 if (!arity(c, 1)) return Type.U64;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
-                readInPlace(args.get(0).expr());
+                Type t = readArg(args.get(0));
                 boolean bytes = t instanceof Type.Str
                     || (t instanceof Type.ListT || t instanceof Type.ArrayT) && Type.U8.equals(Type.elementOf(t));
                 if (!bytes && !Type.isError(t)) {
@@ -3756,8 +3709,7 @@ public final class Checker {
             }
             case GET_OR -> {
                 if (!arity(c, 3)) return Type.ERROR;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
+                Type t = value(args.get(0), null);
                 if (!(t instanceof Type.MapT mt)) {
                     for (int i = 1; i < 3; i++) expr(args.get(i).expr(), null);
                     if (!Type.isError(t)) {
@@ -3773,8 +3725,7 @@ public final class Checker {
             case FIXED -> {
                 boolean asText = ctx.text == c;
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                Type x = expr(args.get(0).expr(), Type.F64);
+                Type x = value(args.get(0), Type.F64);
                 if (!Type.isFloat(x) && !Type.isError(x)) {
                     diags.error(Code.E0201, args.get(0).span(), "fixed() needs an f32 or f64, found " + x,
                         Type.isInt(x) ? "convert it: fixed(f64(" + exprText(args.get(0).expr()) + "), "
@@ -3786,8 +3737,7 @@ public final class Checker {
             case TO_BASE -> {
                 boolean asText = ctx.text == c;
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                Type n = expr(args.get(0).expr(), Type.I64);
+                Type n = value(args.get(0), Type.I64);
                 if (!Type.isInt(n) && !Type.isError(n)) {
                     diags.error(Code.E0201, args.get(0).span(), "to_base() needs an integer, found " + n,
                         Type.isFloat(n) ? "convert it: to_base(i64(" + exprText(args.get(0).expr()) + "), "
@@ -3812,8 +3762,7 @@ public final class Checker {
                 }
                 intArg(b, args.get(1), "the width");
                 Arg fill = args.get(2);
-                noMut(fill);
-                Type ft = expr(fill.expr(), Type.U8);
+                Type ft = value(fill, Type.U8);
                 if (!ft.equals(Type.U8) && !Type.isError(ft)) {
                     diags.error(Code.E0201, fill.span(), b.name + "() fills with one u8 byte, found " + ft,
                         ft instanceof Type.Str ? "write a character: ' ' or '0'" : "convert it: u8(" + exprText(fill.expr()) + ")");
@@ -3836,8 +3785,7 @@ public final class Checker {
             }
             case UNWRAP_OR -> {
                 if (!arity(c, 2)) return Type.ERROR;
-                noMut(args.get(0));
-                noMut(args.get(1));
+                noMut(args.get(0), args.get(1));
                 Type t = expr(args.get(0).expr(), null);
                 Type inner = successType(t);
                 if (inner == null) {
@@ -3854,8 +3802,7 @@ public final class Checker {
             }
             case IS_SOME, IS_NONE, IS_OK, IS_ERR -> {
                 if (!arity(c, 1)) return Type.BOOL;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
+                Type t = value(args.get(0), null);
                 int want = b == Builtin.IS_SOME || b == Builtin.IS_NONE ? 1 : 2;
                 if (!Type.isError(t) && fallible(t) != want) {
                     String other = switch (b) {
@@ -3900,8 +3847,7 @@ public final class Checker {
             case MIN_BY, MAX_BY -> {
                 if (!arity(c, 2)) return Type.ERROR;
                 Arg xs = args.get(0);
-                noMut(xs);
-                Type t = expr(xs.expr(), null);
+                Type t = value(xs, null);
                 readInPlace(xs.expr());
                 if (!(t instanceof Type.ArrayT) && !(t instanceof Type.ListT)) {
                     expr(args.get(1).expr(), null);
@@ -3965,8 +3911,7 @@ public final class Checker {
             }
             case PANIC -> {
                 if (!arity(c, 1)) return Type.VOID;
-                noMut(args.get(0));
-                Type t = expr(args.get(0).expr(), null);
+                Type t = value(args.get(0), null);
                 if (!(t instanceof Type.Str) && !Type.isError(t)) {
                     diags.error(Code.E0201, args.get(0).span(), "panic() needs a string message, found " + t);
                 }
@@ -3996,8 +3941,7 @@ public final class Checker {
 
     /** An integer argument, such as a width or a number of decimals. */
     private void intArg(Builtin b, Arg a, String what) {
-        noMut(a);
-        Type t = expr(a.expr(), Type.I64);
+        Type t = value(a, Type.I64);
         if (!Type.isInt(t) && !Type.isError(t)) {
             diags.error(Code.E0201, a.span(), b.name + "() needs an integer for " + what + ", found " + t);
         }
@@ -4178,8 +4122,21 @@ public final class Checker {
         diags.fixable(Code.E0207, at, message, hint, fix);
     }
 
-    private void noMut(Arg a) {
-        if (a.mut()) extraMut(a, "this argument is not modified; remove `mut`", null);
+    private void noMut(Arg... as) {
+        for (Arg a : as) if (a.mut()) extraMut(a, "this argument is not modified; remove `mut`", null);
+    }
+
+    /** Checks an argument read in place, such as the collection a search goes through. */
+    private Type readArg(Arg a) {
+        Type t = value(a, null);
+        readInPlace(a.expr());
+        return t;
+    }
+
+    /** Checks an argument that is only read: no `mut`, and its expression against {@code hint}. */
+    private Type value(Arg a, Type hint) {
+        noMut(a);
+        return expr(a.expr(), hint);
     }
 
     /**
@@ -4222,8 +4179,7 @@ public final class Checker {
 
     /** A read-only str argument; returns its type, or ERROR after reporting another type. */
     private Type textArg(Builtin b, Arg a) {
-        noMut(a);
-        Type t = expr(a.expr(), null);
+        Type t = value(a, null);
         readInPlace(a.expr());
         if (Type.isError(t) || t instanceof Type.Str) return t;
         diags.error(Code.E0203, a.span(), b.name + "() needs a str, found " + t);
@@ -4232,8 +4188,7 @@ public final class Checker {
 
     /** What a text function looks for, splits on or puts in: a str or a single u8 byte (a character literal). */
     private void textPattern(Builtin b, Arg a, String what) {
-        noMut(a);
-        Type t = expr(a.expr(), isUntyped(a.expr()) ? Type.U8 : null);
+        Type t = value(a, isUntyped(a.expr()) ? Type.U8 : null);
         readInPlace(a.expr());
         if (!Type.isError(t) && !(t instanceof Type.Str) && !t.equals(Type.U8)) {
             diags.error(Code.E0201, a.span(), b.name + "() needs a str or a u8 byte for " + what + ", found " + t,
@@ -4243,8 +4198,7 @@ public final class Checker {
 
     /** A position: an integer of any type, like an index. */
     private void indexArg(Builtin b, Arg a) {
-        noMut(a);
-        Type t = expr(a.expr(), Type.I64);
+        Type t = value(a, Type.I64);
         if (!Type.isInt(t) && !Type.isError(t)) {
             diags.error(Code.E0212, a.span(), b.name + "() needs an integer position, found " + t);
         }
@@ -4376,8 +4330,7 @@ public final class Checker {
 
     /** A key, value or element of a map or set: read-only, checked against its type. */
     private void keyArg(Builtin b, Arg a, Type want) {
-        noMut(a);
-        Type t = expr(a.expr(), want);
+        Type t = value(a, want);
         if (!Type.assignable(t, want) && !Type.isError(t)) {
             diags.error(Code.E0201, a.span(), b.name + "() needs a " + want + ", found " + t);
         }

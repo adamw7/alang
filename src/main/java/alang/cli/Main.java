@@ -455,14 +455,7 @@ public final class Main {
         FnDecl main = r.program().function("main");
         if (main == null) {
             String msg = "no `fn main()` in " + src.path + "; use `alang test` for tests or `alang call` for tools";
-            if (json) {
-                j.put("ok", false);
-                j.put("error", msg);
-                line(out, Json.write(j));
-            } else {
-                line(err, "alang: " + msg);
-            }
-            return 1;
+            return fail(j, msg);
         }
         // A main that takes a str gets the standard input, all of it, as bytes. One byte past its capacity is enough
         // to know the input does not fit, which traps; reading on would hold an input of any size in memory first.
@@ -769,7 +762,7 @@ public final class Main {
             if (found.size() != 1) {
                 List<String> hits = new ArrayList<>();
                 for (TestDecl t : found) hits.add("\"" + t.name + "\"");
-                return debugError(j, found.isEmpty()
+                return fail(j, found.isEmpty()
                     ? "no test name contains \"" + debugTest + "\"; " + (names.isEmpty() ? src.path + " has no tests"
                         : "the tests are " + String.join(", ", names))
                     : "--test \"" + debugTest + "\" matches " + found.size() + " tests: " + String.join(", ", hits)
@@ -787,20 +780,20 @@ public final class Main {
                 for (FnDecl fd : p.itemsOf(FnDecl.class)) {
                     if (fd.tool) tools.add(fd.name);
                 }
-                return debugError(j, (f == null ? "no function `" + debugTool + "`" : "`" + debugTool + "` is not declared as `tool fn`")
+                return fail(j, (f == null ? "no function `" + debugTool + "`" : "`" + debugTool + "` is not declared as `tool fn`")
                     + "; available tools: " + tools);
             }
             Object[] args;
             try {
                 String text = positional.size() > 1 ? positional.get(1) : "{}";
                 if (undecodable(text)) {
-                    return debugError(j, "the JSON argument could not be decoded in this host locale; use a UTF-8 locale such as C.UTF-8");
+                    return fail(j, "the JSON argument could not be decoded in this host locale; use a UTF-8 locale such as C.UTF-8");
                 }
                 args = toolArguments(f, Json.parse(text));
             } catch (Json.ParseException e) {
-                return debugError(j, "arguments are not valid JSON: " + e.getMessage());
+                return fail(j, "arguments are not valid JSON: " + e.getMessage());
             } catch (JsonValues.DecodeException e) {
-                return debugError(j, "bad arguments: " + e.getMessage());
+                return fail(j, "bad arguments: " + e.getMessage());
             }
             target = in -> {
                 Object v = in.call(f, args, f.nameSpan);
@@ -816,7 +809,7 @@ public final class Main {
         } else {
             FnDecl main = p.function("main");
             if (main == null) {
-                return debugError(j, "no `fn main()` in " + src.path + "; debug a test with --test or a tool with --call");
+                return fail(j, "no `fn main()` in " + src.path + "; debug a test with --test or a tool with --call");
             }
             byte[] input = new byte[0];
             if (!main.paramVars.isEmpty() && inputFile != null) {
@@ -846,7 +839,8 @@ public final class Main {
         return code;
     }
 
-    private int debugError(Map<String, Object> j, String msg) {
+    /** Reports {@code msg} as the "error" of {@code j} with --json, or as text on stderr: exit status 1. */
+    private int fail(Map<String, Object> j, String msg) {
         if (json) {
             j.put("error", msg);
             line(out, Json.write(j));
