@@ -91,6 +91,8 @@ public final class Checker {
         /** The loops around the statement being checked, innermost first. */
         final Deque<Loop> loops = new ArrayDeque<>();
         boolean inEnsures;
+        /** While a requires or ensures clause is checked, where `?` cannot return. */
+        boolean inContract;
         Expr mutCallAllowed;
         /** The statement being checked: where E0215 moves a call with `mut` arguments out to. */
         Stmt stmt;
@@ -1049,10 +1051,12 @@ public final class Checker {
         Map<String, LocalVar> params = new HashMap<>();
         for (LocalVar v : f.paramVars) params.putIfAbsent(v.name, v);
         ctx.scopes.push(params);
+        ctx.inContract = true;
         for (Expr r : f.requires) condition(r, "requires");
         ctx.inEnsures = true;
         for (Expr e : f.ensures) condition(e, "ensures");
         ctx.inEnsures = false;
+        ctx.inContract = false;
         boolean jumps = block(f.body);
         if (!jumps && !(f.ret instanceof Type.Void) && !Type.isError(f.ret)) {
             diags.error(Code.E0301, f.nameSpan, "function `" + f.name + "` does not return a value on every path",
@@ -1363,7 +1367,9 @@ public final class Checker {
     private void destructure(Destructure d) {
         Type t;
         ctx.mutCallAllowed = d.init;
-        if (d.typeRef == null) {
+        if (d.loopItem) {
+            t = expr(d.init, null);
+        } else if (d.typeRef == null) {
             t = missingType(d.mutable, exprTextOf(d.pattern.span), d.pattern.span, d.init);
         } else {
             t = resolveType(d.typeRef);
@@ -1386,13 +1392,30 @@ public final class Checker {
                 t = Type.ERROR;
             }
         }
+        // The else block runs where the pattern did not match, before its names are declared.
+        if (d.elseBlock != null && !block(d.elseBlock)) {
+            diags.error(Code.E0309, d.elseBlock.span(), "the else block of a let must leave: the names of the pattern "
+                + "have no value after it", "end it with return, break, continue or panic(\"...\")");
+        }
         boolean ok = pattern(d.pattern, t, (b, bt) -> declare(b.name, b.span, bt, d.mutable));
         if (ok && !Type.isError(t)) {
             String missing = Coverage.missing(List.of(d.pattern), t);
-            if (missing != null) {
-                diags.error(Code.E0306, d.pattern.span, "the pattern of a let does not match every value of " + t + ": missing "
-                    + (missing.equals("_") ? "values other than the one it names" : missing),
-                    "a let cannot fail; use match, or if let " + exprTextOf(d.pattern.span) + " = ... { } else { }");
+            if (d.elseBlock != null) {
+                if (missing == null) {
+                    diags.error(Code.E0307, d.pattern.span, "the pattern always matches, so the else block never runs",
+                        "remove the else block" + (d.pattern instanceof BindPat ? ": let " + exprTextOf(d.pattern.span) + ": "
+                            + t + " = ...;" : ""));
+                }
+            } else if (missing != null) {
+                String what = missing.equals("_") ? "values other than the one it names" : missing;
+                if (d.loopItem) {
+                    diags.error(Code.E0306, d.pattern.span, "the pattern of a for loop does not match every element, of type "
+                        + t + ": missing " + what, "go through the elements with a name, for x in xs { }, and match x in the body");
+                } else {
+                    diags.error(Code.E0306, d.pattern.span, "the pattern of a let does not match every value of " + t + ": missing "
+                        + what, "add an else block that leaves: let " + exprTextOf(d.pattern.span) + ": " + t
+                            + " = ... else { return ...; }; or use match, or if let " + exprTextOf(d.pattern.span) + " = ... { }");
+                }
             }
         }
     }
@@ -1661,6 +1684,13 @@ public final class Checker {
             }
             if (Type.isError(t)) return false;
             diags.error(Code.E0305, e.span, "this expression has no effect", "only function calls can be used as statements");
+            return false;
+        }
+        if (e instanceof Try tr && (tr.inner instanceof Call || tr.inner instanceof VariantCall)) {
+            // `check(x)?;`: the call is made for its failure, which `?` returns; its value is not needed.
+            ctx.mutCallAllowed = tr;
+            expr(tr, null);
+            ctx.mutCallAllowed = null;
             return false;
         }
         Type t = expr(e, null);
@@ -2090,6 +2120,7 @@ public final class Checker {
             case Resize r -> resize(r);
             case Unary u -> unary(u, expected);
             case Binary b -> binary(b, expected);
+            case Try t -> tryExpr(t);
             case ArrayLit a -> arrayLit(a, expected);
             case Repeat r -> repeat(r, expected);
             case IfExpr i -> ifExpr(i, expected);
@@ -2307,7 +2338,9 @@ public final class Checker {
             c.builtin = b;
             Type t = builtin(c, b, expected);
             checkMutCallPosition(c, t);
-            checkAliasing(c.args);
+            Name swapped = b == Builtin.SWAP && !c.args.isEmpty() ? rootName(c.args.get(0).expr()) : null;
+            checkAliasing(c.args, swapped == null ? null : "to exchange two elements of one list, array or str, use swap(mut "
+                + swapped.name + ", i, j)");
             return t;
         }
         FnDecl f = fns.get(c.name);
@@ -2780,9 +2813,43 @@ public final class Checker {
             case "overflowing_add", "try_add", "add_checked", "safe_add", "overflowing_sub", "try_sub", "safe_sub",
                  "overflowing_mul", "try_mul", "safe_mul", "mul_checked" ->
                 "use checked_add(a, b), checked_sub(a, b) or checked_mul(a, b): Option.None when the result does not fit";
-            case "map", "reduce", "fold", "zip", "foreach", "for_each", "forEach" ->
-                "write the loop, or a function that takes one: fn keep<T>(xs: list[T; _], f: fn(T) -> bool, out: mut list[T; _]) "
-                    + "{ for x in xs { if f(x) { push(mut out, x); } } }";
+            case "map", "transform", "collect" ->
+                "write the loop: var out: list[U; N] = []; for x in xs { push(mut out, f(x)); }";
+            case "reduce", "fold", "foldl", "inject", "aggregate" ->
+                "write the loop: var acc: T = start; for x in xs { acc = f(acc, x); }; for a total, sum(xs)";
+            case "zip" -> "go through both by position: for i, x in xs { let y: T = ys[i]; ... }, with len(xs) <= len(ys)";
+            case "foreach", "for_each", "forEach", "each" -> "write the loop: for x in xs { f(x); }";
+            case "sign", "signum", "sgn" -> "use compare(x, 0): -1, 0 or 1";
+            case "isqrt", "int_sqrt", "integer_sqrt" ->
+                "use i64(floor(sqrt(f64(n)))), exact for n below 2^52; above that, correct it by one with a check of r * r";
+            case "char", "to_char", "from_char_code", "fromCharCode", "char_from" ->
+                "a character is a u8 byte: to make a str of it, var s: str[4] = \"\"; push(mut s, c); and push_char(mut s, c) "
+                    + "for a Unicode code point";
+            case "unwrap", "expect", "get_value", "value_or", "or_else", "unwrap_or_default", "getOrElse", "orElse" ->
+                "use unwrap_or(o, default), match it: if let Option.Some(v) = o { }, or take the value out with `o?` in a "
+                    + "function that returns an Option or Result";
+            case "isSome", "is_present", "isPresent", "has_value", "is_null", "isNone", "is_empty_option" ->
+                "use is_some(o) or is_none(o); for a Result, is_ok(r) or is_err(r)";
+            case "removeprefix", "trim_prefix", "lstrip_prefix", "remove_prefix", "strip_start" ->
+                "use strip_prefix(s, prefix), which leaves s unchanged without it";
+            case "removesuffix", "trim_suffix", "remove_suffix", "strip_end" -> "use strip_suffix(s, suffix)";
+            case "partition", "split_at_first", "split1", "cut", "splitn" ->
+                "use split_once(s, sep): Option.Some((before, after)), or Option.None without sep";
+            case "rsplit_once", "rpartition" ->
+                "find the last sep with last_index_of(s, sep), then slice: s[..i] and s[i + len(sep)..]";
+            case "times", "replicate", "repeat_str", "str_repeat", "multiply" -> "use repeat(s, n): repeat(\"ab\", 3) is \"ababab\"";
+            case "intersect", "set_union", "union_with", "intersect_with", "set_difference", "minus", "except", "subtract" ->
+                "use union(a, b), intersection(a, b) or difference(a, b) on two sets";
+            case "min_by_key", "max_by_key", "minBy", "maxBy", "argmin", "argmax" ->
+                "use min_by(xs, before) or max_by(xs, before) with fn before(a: T, b: T) -> bool, true when a comes first";
+            case "popleft", "pop_left", "shift", "dequeue", "poll", "pop_first", "remove_first" ->
+                "use pop_front(mut xs), which removes and returns the first element";
+            case "pop_back", "remove_last" -> "use pop(mut xs), which removes and returns the last element";
+            case "push_front", "unshift", "appendleft", "prepend" -> "use insert(mut xs, 0, value)";
+            case "assert_equal", "assertEquals", "assertEqual", "expect_eq", "check_eq", "assert_equals", "assert_ne" ->
+                "use assert_eq(a, b), or assert a == b; (assert a != b; for the opposite): a failure shows both values";
+            case "mem_swap", "swap_elements", "swap_items", "iter_swap" ->
+                "use swap(mut xs, i, j) for two elements of one list, or swap(mut a, mut b) for two variables";
             case "enumerate" -> "for i, x in xs { } gives each element with its index";
             case "ord" -> "a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number";
             case "chr" -> "push(mut s, u8(n)) adds the byte n to a str";
@@ -2910,6 +2977,7 @@ public final class Checker {
                 case FieldAccess f -> f.target;
                 case Convert c -> c.arg;
                 case Resize r -> r.arg;
+                case Try t -> t.inner;
                 default -> null;
             };
         }
@@ -2997,6 +3065,11 @@ public final class Checker {
      * remove(mut xs, len(xs) - 1) is fine; a `mut` one is a reference, not a copy.
      */
     private void checkAliasing(List<Arg> args) {
+        checkAliasing(args, null);
+    }
+
+    /** {@link #checkAliasing(List)}, with {@code twiceHint} (if not null) as the hint for a variable passed as `mut` twice. */
+    private void checkAliasing(List<Arg> args, String twiceHint) {
         for (int i = 0; i < args.size(); i++) {
             Arg a = args.get(i);
             if (!a.mut()) continue;
@@ -3011,7 +3084,7 @@ public final class Checker {
                 if (otherRoot != null && otherRoot.local == root.local) {
                     String place = exprText(other);
                     diags.error(Code.E0208, b.span(), "`" + root.name + "` is passed as `mut` twice in the same call",
-                        "the function could change one value through two parameters; copy one into a variable, pass "
+                        twiceHint != null ? twiceHint : "the function could change one value through two parameters; copy one into a variable, pass "
                             + "that, and store it back after the call: var copy: " + other.type + " = " + place
                             + "; pass `mut copy` instead of `mut " + place + "`; then " + place + " = copy;");
                 } else {
@@ -3063,6 +3136,7 @@ public final class Checker {
                 || mentions(a.value(), v));
             case TupleLit t -> t.elems.stream().anyMatch(x -> mentions(x, v));
             case SliceExpr s -> mentions(s.target, v) || s.from != null && mentions(s.from, v) || s.to != null && mentions(s.to, v);
+            case Try t -> mentions(t.inner, v);
             default -> false;
         };
     }
@@ -3746,6 +3820,149 @@ public final class Checker {
                 }
                 return formatted(c, b, expected, asText);
             }
+            case ASSERT_EQ -> {
+                // assert_eq(a, b); on its own is an assert statement (AstBuilder); anything else gets here.
+                if (!arity(c, 2)) return Type.VOID;
+                for (Arg a : args) {
+                    noMut(a);
+                    expr(a.expr(), null);
+                }
+                if (!args.get(0).mut() && !args.get(1).mut()) {
+                    diags.error(Code.E0201, c.span, "assert_eq() is a statement of its own and has no value",
+                        "write it on its own line: assert_eq(" + exprText(args.get(0).expr()) + ", "
+                            + exprText(args.get(1).expr()) + ");");
+                }
+                return Type.ERROR;
+            }
+            case UNWRAP_OR -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0));
+                noMut(args.get(1));
+                Type t = expr(args.get(0).expr(), null);
+                Type inner = successType(t);
+                if (inner == null) {
+                    expr(args.get(1).expr(), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, args.get(0).span(), "unwrap_or() needs an Option or a Result, found " + t,
+                            "for a map, use get_or(m, key, default)");
+                    }
+                    return Type.ERROR;
+                }
+                Type d = expr(args.get(1).expr(), inner);
+                if (!Type.isError(d)) requireAssignable(args.get(1).expr(), d, inner);
+                return inner;
+            }
+            case IS_SOME, IS_NONE, IS_OK, IS_ERR -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                noMut(args.get(0));
+                Type t = expr(args.get(0).expr(), null);
+                int want = b == Builtin.IS_SOME || b == Builtin.IS_NONE ? 1 : 2;
+                if (!Type.isError(t) && fallible(t) != want) {
+                    String other = switch (b) {
+                        case IS_SOME -> "is_ok";
+                        case IS_NONE -> "is_err";
+                        case IS_OK -> "is_some";
+                        default -> "is_none";
+                    };
+                    diags.error(Code.E0203, args.get(0).span(), b.name + "() needs " + (want == 1 ? "an Option" : "a Result")
+                        + ", found " + t, fallible(t) != 0 ? "for " + (want == 1 ? "a Result" : "an Option") + ", use " + other + "()"
+                            : null);
+                }
+                return Type.BOOL;
+            }
+            case STRIP_PREFIX, STRIP_SUFFIX -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                Type t = textArg(b, args.get(0));
+                textPattern(b, args.get(1), b == Builtin.STRIP_PREFIX ? "the prefix" : "the suffix");
+                return t;
+            }
+            case SPLIT_ONCE -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                Type t = textArg(b, args.get(0));
+                textPattern(b, args.get(1), "the separator");
+                if (Type.isError(t)) return Type.ERROR;
+                // Stored as an Option of two wider strs, the pieces are made with those capacities: an Option's payload
+                // does not widen on its own.
+                Type want = successType(expected);
+                if (fallible(expected) == 1 && want instanceof Type.TupleT tt && tt.elems().size() == 2
+                    && tt.elems().stream().allMatch(e -> e instanceof Type.Str st && st.cap() >= ((Type.Str) t).cap())) {
+                    return expected;
+                }
+                return optionOf(new Type.TupleT(List.of(t, t)));
+            }
+            case REPEAT -> {
+                boolean asText = ctx.text == c;
+                if (!arity(c, 2)) return Type.ERROR;
+                textPattern(b, args.get(0), "what it repeats");
+                intArg(b, args.get(1), "the count");
+                return formatted(c, b, expected, asText);
+            }
+            case MIN_BY, MAX_BY -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                Arg xs = args.get(0);
+                noMut(xs);
+                Type t = expr(xs.expr(), null);
+                readInPlace(xs.expr());
+                if (!(t instanceof Type.ArrayT) && !(t instanceof Type.ListT)) {
+                    expr(args.get(1).expr(), null);
+                    if (!Type.isError(t)) diags.error(Code.E0203, xs.span(), b.name + "() needs an array or list, found " + t);
+                    return Type.ERROR;
+                }
+                Type elem = Type.elementOf(t);
+                fnArg(c, args.get(1), new Type.FnT(List.of(elem, elem), Type.BOOL));
+                return elem;
+            }
+            case POP_FRONT -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                Type t = collectionArg(c, args.get(0));
+                return Type.isError(t) ? Type.ERROR : Type.elementOf(t);
+            }
+            case SWAP -> {
+                if (args.size() == 2 && (args.get(1).mut() || !args.get(0).mut())) {
+                    Type[] ts = new Type[2];
+                    for (int i = 0; i < 2; i++) {
+                        Arg a = args.get(i);
+                        if (!a.mut()) {
+                            ts[i] = expr(a.expr(), null);
+                            missingMut(a, "swap() modifies both of its arguments", "write swap(mut "
+                                + exprText(args.get(0).expr()) + ", mut " + exprText(args.get(1).expr()) + ")");
+                        } else {
+                            ts[i] = mutPlace(a.expr());
+                        }
+                    }
+                    if (!Type.isError(ts[0]) && !Type.isError(ts[1]) && !ts[0].equals(ts[1])) {
+                        diags.error(Code.E0201, c.span, "swap() needs two values of the same type, found " + ts[0] + " and " + ts[1]);
+                    }
+                    return Type.VOID;
+                }
+                if (!arity(c, 3)) return Type.VOID;
+                sequenceArg(c, args.get(0));
+                indexArg(b, args.get(1));
+                indexArg(b, args.get(2));
+                return Type.VOID;
+            }
+            case UNION, INTERSECTION, DIFFERENCE -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                Type[] ts = new Type[2];
+                for (int i = 0; i < 2; i++) {
+                    noMut(args.get(i));
+                    ts[i] = expr(args.get(i).expr(), i == 1 && ts[0] instanceof Type.SetT ? ts[0] : null);
+                    readInPlace(args.get(i).expr());
+                    if (!(ts[i] instanceof Type.SetT) && !Type.isError(ts[i])) {
+                        diags.error(Code.E0203, args.get(i).span(), b.name + "() needs two sets, found " + ts[i],
+                            ts[i] instanceof Type.MapT ? "for the keys of a map, build a set: insert(mut s, k) for each key" : null);
+                        ts[i] = Type.ERROR;
+                    }
+                }
+                if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
+                Type.SetT a = (Type.SetT) ts[0];
+                Type.SetT bt = (Type.SetT) ts[1];
+                if (!a.elem().equals(bt.elem())) {
+                    diags.error(Code.E0201, c.span, b.name + "() needs two sets of the same element type, found " + a + " and " + bt);
+                    return Type.ERROR;
+                }
+                return a;
+            }
             case PANIC -> {
                 if (!arity(c, 1)) return Type.VOID;
                 noMut(args.get(0));
@@ -3796,6 +4013,72 @@ public final class Checker {
             return new Type.Str(0);
         }
         return storedType(c, b, expected);
+    }
+
+    /**
+     * `e?`: the value in e, an Option or a Result, which returns its Option.None or Result.Err from the function: one that
+     * returns an Option for an Option, or a Result whose error type takes e's for a Result.
+     */
+    private Type tryExpr(Try t) {
+        // `let v: T = f(mut xs)?;`: the call is the whole of what is stored, as far as `mut` goes.
+        if (ctx.mutCallAllowed == t) ctx.mutCallAllowed = t.inner;
+        Type it = expr(t.inner, null);
+        if (Type.isError(it)) return Type.ERROR;
+        int k = fallible(it);
+        if (k == 0) {
+            diags.error(Code.E0310, t.span, "`?` needs an Option or a Result, found " + it,
+                "`?` takes the value out of an Option.Some or a Result.Ok, and returns an Option.None or Result.Err");
+            return Type.ERROR;
+        }
+        Type inner = successType(it);
+        String kind = k == 1 ? "an Option" : "a Result";
+        FnDecl f = ctx.fn;
+        String where = f == null || ctx.routine instanceof TestDecl ? "a test" : ctx.inContract ? "a requires or ensures clause"
+            : ctx.defaultOf != null ? "a default value" : null;
+        if (where != null) {
+            diags.error(Code.E0310, t.span, "`?` cannot be used in " + where + ": there is no function to return from",
+                k == 1 ? "match it: if let Option.Some(v) = " + exprText(t.inner) + " { }, or unwrap_or(" + exprText(t.inner) + ", default)"
+                    : "match it: match " + exprText(t.inner) + " { Result.Ok(v) => { } Result.Err(e) => { } }");
+            return inner;
+        }
+        int rk = fallible(f.ret);
+        if (Type.isError(f.ret)) return inner;
+        if (rk != k) {
+            String handle = k == 1 ? "handle the None: unwrap_or(" + exprText(t.inner) + ", default), or "
+                + "if let Option.Some(v) = " + exprText(t.inner) + " { }" : "match the Result here: match " + exprText(t.inner)
+                + " { Result.Ok(v) => { } Result.Err(e) => { } }";
+            boolean main = f.name.equals("main") && f.origin == null;
+            diags.error(Code.E0310, t.span, "`?` on " + kind + " returns its " + (k == 1 ? "Option.None" : "Result.Err")
+                + ", but `" + f.name + "` returns " + (f.ret instanceof Type.Void ? "nothing" : f.ret),
+                main ? handle : "make `" + f.name + "` return " + kind + ", or " + handle);
+            return inner;
+        }
+        if (k == 2) {
+            Type err = ((Type.EnumT) it).decl().variants.get(1).payload.get(0);
+            Type want = ((Type.EnumT) f.ret).decl().variants.get(1).payload.get(0);
+            if (!Type.assignable(err, want)) {
+                diags.error(Code.E0310, t.span, "`?` returns the error, a " + err + ", but `" + f.name + "` returns errors of type "
+                    + want, "convert it with a match: match " + exprText(t.inner) + " { Result.Ok(v) => { ... } Result.Err(e) => { "
+                    + "return Result.Err(...); } }");
+                return inner;
+            }
+        }
+        t.ret = f.ret;
+        return inner;
+    }
+
+    /** 1 if t is an Option, 2 if it is a Result, otherwise 0. */
+    private int fallible(Type t) {
+        if (!(t instanceof Type.EnumT et)) return 0;
+        Item o = Ast.origin(et.decl());
+        return o == enums.get("Option") ? 1 : o == enums.get("Result") ? 2 : 0;
+    }
+
+    /** The T of an Option<T> or a Result<T, E>: what Option.Some or Result.Ok holds; null for any other type. */
+    private Type successType(Type t) {
+        int k = fallible(t);
+        if (k == 0) return null;
+        return ((Type.EnumT) t).decl().variants.get(k == 1 ? 1 : 0).payload.get(0);
     }
 
     /** Option<t>: the instance of the built-in Option for t. */
@@ -3978,7 +4261,7 @@ public final class Checker {
             case WORDS -> "let ws: list[str[32]; 16] = ";
             case CHARS -> "let cs: list[u32; 64] = ";
             case JOIN -> "let line: str[256] = ";
-            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE -> "let text: str[32] = ";
+            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE, REPEAT -> "let text: str[32] = ";
             default -> "let text: str[256] = ";
         } + exprText(c) + ";";
         if (b.formats() && (ctx.stored != c || expected == null)) {
@@ -5155,6 +5438,8 @@ public final class Checker {
             case IfExpr i -> isConst(i.cond) && isConst(i.then) && isConst(i.otherwise);
             // Its arms bind names, which need a frame.
             case MatchExpr m -> false;
+            // It returns from a function.
+            case Try t -> false;
             case TupleLit t -> t.elems.stream().allMatch(Checker::isConst);
             case SliceExpr s -> isConst(s.target) && (s.from == null || isConst(s.from)) && (s.to == null || isConst(s.to));
         };

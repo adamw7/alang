@@ -81,7 +81,7 @@ public final class Formatter {
         if (k == ALangLexer.IDENT) return false;
         return switch (k) {
             case ALangLexer.INT_LIT, ALangLexer.FLOAT_LIT, ALangLexer.STRING_LIT, ALangLexer.CHAR_LIT, ALangLexer.TRUE,
-                 ALangLexer.FALSE, ALangLexer.RPAREN, ALangLexer.RBRACK -> false;
+                 ALangLexer.FALSE, ALangLexer.RPAREN, ALangLexer.RBRACK, ALangLexer.QUESTION -> false;
             default -> true;
         };
     }
@@ -103,7 +103,7 @@ public final class Formatter {
         if (touching) return false;
         if (x == ALangLexer.LPAREN || x == ALangLexer.LBRACK || x == ALangLexer.DOT) return false;
         if (y == ALangLexer.RPAREN || y == ALangLexer.RBRACK || y == ALangLexer.COMMA || y == ALangLexer.SEMI
-            || y == ALangLexer.DOT || y == ALangLexer.COLON) {
+            || y == ALangLexer.DOT || y == ALangLexer.COLON || y == ALangLexer.QUESTION) {
             return false;
         }
         // P(x: 1, ..base): after a comma, the `..` of a struct value is spaced like an argument.

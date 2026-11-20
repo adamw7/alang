@@ -291,9 +291,12 @@ final class AstBuilder {
         if (ctx.letStmt() != null) {
             LetStmtContext l = ctx.letStmt();
             boolean mutable = l.kind.getType() == ALangLexer.VAR;
-            if (l.identifier() == null) {
-                return new Destructure(sp, mutable, pattern(l.pattern()), l.type() == null ? null : type(l.type()),
-                    expr(l.expression()));
+            Block elseBlock = l.block() == null ? null : block(l.block());
+            if (l.identifier() == null || elseBlock != null) {
+                // `let x: T = e else { }` too, whose pattern is a name that always matches: the checker says so.
+                Pattern p = l.identifier() != null ? new BindPat(span(l.identifier()), l.identifier().getText()) : pattern(l.pattern());
+                return new Destructure(sp, mutable, p, l.type() == null ? null : type(l.type()), expr(l.expression()),
+                    elseBlock, false);
             }
             return new Let(sp, mutable, l.identifier().getText(), span(l.identifier()),
                 l.type() == null ? null : type(l.type()), expr(l.expression()));
@@ -351,7 +354,12 @@ final class AstBuilder {
             byte[] msg = a.STRING_LIT() == null ? null : unescape(a.STRING_LIT().getSymbol());
             return new Assert(sp, expr(a.expression()), msg);
         }
-        return new ExprStmt(sp, expr(ctx.exprStmt().expression()));
+        Expr e = expr(ctx.exprStmt().expression());
+        // assert_eq(a, b); is assert a == b;, whose failure shows both values.
+        if (e instanceof Call c && c.name.equals("assert_eq") && c.args.size() == 2 && !c.hasMutArg()) {
+            return new Assert(sp, new Binary(c.span, BinOp.EQ, c.args.get(0).expr(), c.args.get(1).expr()), null);
+        }
+        return new ExprStmt(sp, e);
     }
 
     /**
@@ -385,17 +393,35 @@ final class AstBuilder {
             block(w.block()));
     }
 
-    /** `for [i,] x in [rev] from[..to | ..=to [step k]] { }`. */
+    /**
+     * `for [i,] x in [rev] from[..to | ..=to [step k]] { }`. `for [i,] P in xs { body }`, with a pattern P, is
+     * `for [i,] $x in xs { let P = $x; body }`: a hidden loop variable, which a pattern that always matches takes apart.
+     */
     private For forLoop(Span sp, ForStmtContext f) {
-        List<IdentifierContext> names = f.identifier();
-        IdentifierContext name = names.get(names.size() - 1);
-        IdentifierContext index = names.size() > 1 ? names.get(0) : null;
+        IdentifierContext index = f.index;
+        IdentifierContext name = f.identifier().stream().filter(n -> n != index).findFirst().orElse(null);
         List<ExpressionContext> es = f.expression();
         Expr to = es.size() > 1 ? expr(es.get(1)) : null;
         Expr step = es.size() > 2 ? expr(es.get(2)) : null;
         boolean inclusive = f.range != null && f.range.getType() == ALangLexer.DOTDOTEQ;
-        return new For(sp, name.getText(), span(name), index == null ? null : index.getText(), index == null ? null : span(index),
-            expr(es.get(0)), to, inclusive, step, f.REV() != null, block(f.block()));
+        Block body = block(f.block());
+        String loopName;
+        Span loopSpan;
+        if (name != null) {
+            loopName = name.getText();
+            loopSpan = span(name);
+        } else {
+            Pattern p = pattern(f.pattern());
+            loopSpan = p.span;
+            // `$` cannot start a name in the source, so the hidden variable clashes with none.
+            loopName = "$item" + loopSpan.line() + "_" + loopSpan.col();
+            List<Stmt> stmts = new ArrayList<>();
+            stmts.add(new Destructure(p.span, false, p, null, new Name(p.span, loopName), null, true));
+            stmts.addAll(body.stmts());
+            body = new Block(body.span(), stmts);
+        }
+        return new For(sp, loopName, loopSpan, index == null ? null : index.getText(), index == null ? null : span(index),
+            expr(es.get(0)), to, inclusive, step, f.REV() != null, body);
     }
 
     private Expr place(PlaceContext ctx) {
@@ -601,6 +627,8 @@ final class AstBuilder {
                 e = new FieldAccess(sp, e, f.identifier().getText(), span(f.identifier()));
             } else if (op instanceof TupleAccessContext t) {
                 e = tupleAccess(sp, e, t.getStop());
+            } else if (op instanceof TryAccessContext) {
+                e = new Try(sp, e);
             } else if (op instanceof SliceAccessContext sl) {
                 e = new SliceExpr(sp, e, sl.from == null ? null : expr(sl.from), sl.to == null ? null : expr(sl.to));
             } else {

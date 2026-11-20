@@ -42,9 +42,27 @@ public final class Parser {
         SyntaxErrorListener listener = new SyntaxErrorListener(diags, file);
         parser.addErrorListener(listener);
         parser.getInterpreter().setPredictionMode(PredictionMode.LL);
+        parser.setErrorHandler(new LetElseStrategy());
         ALangParser.ProgramContext tree = parser.program();
         if (listener.hasError()) return null;
         return new Parsed(AstBuilder.build(diags, file, tokens, tree, imported), nesting);
+    }
+
+    /**
+     * The default error strategy, but for the check that the token after the value of a let may start its else block:
+     * that would report an unexpected token there as "expected 'else' or ';'", where without the else block, a
+     * statement that goes on wrong, `let x: i64 = a or b and c;`, is reported inside its value, with the operators
+     * that may follow it. A token other than `else` is left to the `;` that must then come.
+     */
+    private static final class LetElseStrategy extends DefaultErrorStrategy {
+        @Override
+        public void sync(org.antlr.v4.runtime.Parser recognizer) {
+            if (recognizer.getContext() instanceof ALangParser.LetStmtContext l && l.expression() != null
+                && recognizer.getInputStream().LA(1) != ALangLexer.ELSE) {
+                return;
+            }
+            super.sync(recognizer);
+        }
     }
 
     /** The declarations every program has: the types an optional value and a result that can fail are. */

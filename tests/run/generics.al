@@ -32,14 +32,14 @@ fn parse(s: str[_]) -> Result<i64, str[32]> {
     return Result.Err(why);
 }
 
-fn unwrap_or<T>(m: Option<T>, d: T) -> T {
+fn or_default<T>(m: Option<T>, d: T) -> T {
     return match m {
         Option.Some(v) => v,
         Option.None => d,
     };
 }
 
-fn swap<A, B>(p: Pair<A, B>) -> Pair<B, A> {
+fn flipped<A, B>(p: Pair<A, B>) -> Pair<B, A> {
     return Pair(first: p.second, second: p.first);
 }
 
@@ -52,8 +52,8 @@ fn push_all<T>(s: mut Stack<T>, xs: list[T; _]) {
 fn main() {
     let xs: list[i64; 8] = [4, 5, 6];
     print(find(xs, 5), " ", find(xs, 9));
-    print(unwrap_or(find(xs, 6), -1), " ", unwrap_or(find(xs, 7), -1));
-    print(unwrap_or(Option.None, "none"), " ", unwrap_or(Option.Some(2.5), 0.0));
+    print(or_default(find(xs, 6), -1), " ", or_default(find(xs, 7), -1));
+    print(or_default(Option.None, "none"), " ", or_default(Option.Some(2.5), 0.0));
     print(parse(" 42 "), " ", parse("x"));
     match parse("17") {
         Result.Ok(n) if n > 10 => { print("big ", n); }
@@ -61,7 +61,7 @@ fn main() {
         Result.Err(e) => { print(e); }
     }
     let p: Pair<i64, str[4]> = Pair(first: 1, second: "one");
-    print(p, " ", swap(p));
+    print(p, " ", flipped(p));
     let q: Pair<Option<i64>, bool> = Pair(first: Option.None, second: true);
     print(q);
     let nested: Option<Option<i64>> = Option.Some(Option.Some(3));
@@ -91,7 +91,7 @@ test "a value takes its type arguments from where it goes" {
 
 test "instances of one declaration are different types" {
     let a: Pair<i64, bool> = Pair(first: 1, second: true);
-    let b: Pair<bool, i64> = swap(a);
+    let b: Pair<bool, i64> = flipped(a);
     assert b.first and b.second == 1;
 }
 

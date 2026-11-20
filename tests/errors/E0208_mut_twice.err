@@ -1,8 +1,8 @@
 error[E0208]: `xs` is passed as `mut` twice in the same call
-  --> tests/errors/E0208_mut_twice.al:23:21
+  --> tests/errors/E0208_mut_twice.al:23:25
    |
-23 |     swap(mut xs[i], mut xs[j]);
-   |                     ^^^^^^^^^
+23 |     exchange(mut xs[i], mut xs[j]);
+   |                         ^^^^^^^^^
   = hint: the function could change one value through two parameters; copy one into a variable, pass that, and store it back after the call: var copy: i64 = xs[j]; pass `mut copy` instead of `mut xs[j]`; then xs[j] = copy;
 
 error[E0208]: `n` is passed as `mut` twice in the same call

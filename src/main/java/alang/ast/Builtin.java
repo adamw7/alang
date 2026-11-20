@@ -15,6 +15,16 @@ public enum Builtin {
     CLEAR(Group.CORE, false, "clear", "clear(mut xs)", "Removes all elements of a list or str."),
     APPEND(Group.CORE, false, "append", "append(mut s, values...)", "Appends the text form of each value to a str (same format as print). Traps if full."),
     PANIC(Group.CORE, false, "panic", "panic(message)", "Stops the program with an error message. Never returns."),
+    ASSERT_EQ(Group.CORE, false, "assert_eq", "assert_eq(a, b)",
+        "A statement: the same as assert a == b; for two values of a type that == compares. When they differ it traps "
+            + "(R0005) and shows both: assertion failed: assert_eq(total, 10) (left: 9, right: 10)."),
+    UNWRAP_OR(Group.CORE, true, "unwrap_or", "unwrap_or(o, default) -> T",
+        "The value in an Option<T> (Option.Some(v)) or a Result<T, E> (Result.Ok(v)), or default, a T, when it is "
+            + "Option.None or Result.Err: unwrap_or(parse_i64(s), 0)."),
+    IS_SOME(Group.CORE, true, "is_some", "is_some(o) -> bool", "Whether an Option is Option.Some."),
+    IS_NONE(Group.CORE, true, "is_none", "is_none(o) -> bool", "Whether an Option is Option.None."),
+    IS_OK(Group.CORE, true, "is_ok", "is_ok(r) -> bool", "Whether a Result is Result.Ok."),
+    IS_ERR(Group.CORE, true, "is_err", "is_err(r) -> bool", "Whether a Result is Result.Err."),
 
     // ---- math
     ABS(Group.MATH, true, "abs", "abs(x) -> T", "Absolute value of a signed integer or float. Traps on overflow (abs of the minimum integer)."),
@@ -130,6 +140,19 @@ public enum Builtin {
         "A copy of the elements from..to (half-open) of a str, list or array, of the same type (a list for an array). "
             + "Traps (R0003) unless 0 <= from <= to <= len(xs)."),
     TRIM(Group.TEXT, true, "trim", "trim(s) -> str[N]", "s without the ASCII whitespace at its start and end."),
+    STRIP_PREFIX(Group.TEXT, true, "strip_prefix", "strip_prefix(s, prefix) -> str[N]",
+        "s without prefix (a str or u8 byte) at its start, or s unchanged if it does not start with it, as a str of the "
+            + "capacity of s: strip_prefix(\"v1.2\", 'v') is \"1.2\". starts_with(s, prefix) tells which."),
+    STRIP_SUFFIX(Group.TEXT, true, "strip_suffix", "strip_suffix(s, suffix) -> str[N]",
+        "s without suffix (a str or u8 byte) at its end, or s unchanged if it does not end with it: "
+            + "strip_suffix(\"a.txt\", \".txt\") is \"a\"."),
+    SPLIT_ONCE(Group.TEXT, true, "split_once", "split_once(s, sep) -> Option<(str[N], str[N])>",
+        "The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the "
+            + "capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once(\"k=v=w\", '=') is Option.Some((\"k\", \"v=w\")). "
+            + "Traps (R0013) if sep is empty."),
+    REPEAT(Group.TEXT, true, "repeat", "repeat(s, n) -> str[N]",
+        "The str or u8 byte s, n times over: repeat(\"ab\", 3) is \"ababab\", repeat('-', 10) a rule of dashes. Its type is "
+            + "that of the variable it is stored in. Traps (R0013) if n < 0, and (R0004) if the result does not fit."),
     SPLIT(Group.TEXT, true, "split", "split(s, sep) -> list[str[K]; M]",
         "The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. "
             + "Its type is that of the variable it is stored in. Traps if a piece or the count does not fit; "
@@ -232,6 +255,26 @@ public enum Builtin {
     RETAIN(Group.COLLECTIONS, false, "retain", "retain(mut xs, keep)",
         "Keeps the elements x of a list for which keep(x) is true, in their order, and removes the rest; keep is a "
             + "function fn(T) -> bool passed by name, called once per element, first to last."),
+    MIN_BY(Group.COLLECTIONS, false, "min_by", "min_by(xs, before) -> T",
+        "The first element of an array or list that no other comes before, in the order that before, a function "
+            + "fn(T, T) -> bool passed by name, gives (as for sort_by): the smallest by any key. Traps (R0013) if xs is empty."),
+    MAX_BY(Group.COLLECTIONS, false, "max_by", "max_by(xs, before) -> T",
+        "The first element of an array or list that comes before no other, in the order of before (as for min_by): the "
+            + "largest by any key. Traps (R0013) if xs is empty."),
+    SWAP(Group.COLLECTIONS, false, "swap", "swap(mut xs, i, j)",
+        "Exchanges the elements at positions i and j of a list or array (bytes of a str); traps (R0003) unless both are "
+            + "below len(xs). swap(mut a, mut b) exchanges two variables (or fields, or elements of different variables) "
+            + "of the same type."),
+    POP_FRONT(Group.COLLECTIONS, false, "pop_front", "pop_front(mut xs) -> T",
+        "Removes and returns the first element of a list (first byte of a str), shifting the rest down: a queue with "
+            + "push(mut q, x) at the back. Traps (R0012) if it is empty."),
+    UNION(Group.COLLECTIONS, true, "union", "union(a, b) -> set[T; N]",
+        "The values in either of two sets of the same element type, as a set of the type of a. Traps (R0004) if they do "
+            + "not fit in its capacity."),
+    INTERSECTION(Group.COLLECTIONS, true, "intersection", "intersection(a, b) -> set[T; N]",
+        "The values in both of two sets of the same element type, as a set of the type of a."),
+    DIFFERENCE(Group.COLLECTIONS, true, "difference", "difference(a, b) -> set[T; N]",
+        "The values of the set a that are not in the set b (of the same element type), as a set of the type of a."),
     BINARY_SEARCH(Group.COLLECTIONS, true, "binary_search", "binary_search(xs, x) -> i64",
         "In an array or list sorted as sort sorts it, the position of the first element e with compare(e, x) == 0, or -1 if "
             + "there is none. "
@@ -310,15 +353,18 @@ public enum Builtin {
         return this == SPLIT || this == WORDS || this == CHARS || this == JOIN || this == REPLACE || formats();
     }
 
-    /** Whether it formats a value as text: fixed, pad_left, pad_right and to_base, which print and append write out directly. */
+    /**
+     * Whether it makes text: fixed, pad_left, pad_right, to_base and repeat, which print and append write out directly.
+     */
     public boolean formats() {
-        return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT || this == TO_BASE;
+        return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT || this == TO_BASE || this == REPEAT;
     }
 
     /** Whether the first argument is modified, and so passed as `mut`. */
     public boolean modifiesFirst() {
         return switch (this) {
-            case PUSH, POP, CLEAR, APPEND, PUSH_CHAR, SORT, SORT_BY, RETAIN, REVERSE, DEDUP, INSERT, REMOVE, TRY_SPLIT, TRY_WORDS -> true;
+            case PUSH, POP, POP_FRONT, CLEAR, APPEND, PUSH_CHAR, SORT, SORT_BY, RETAIN, REVERSE, DEDUP, INSERT, REMOVE, SWAP,
+                 TRY_SPLIT, TRY_WORDS -> true;
             default -> false;
         };
     }

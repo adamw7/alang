@@ -46,6 +46,8 @@ Codes are never reused for a different meaning.
 | [E0306](#e0306) | non-exhaustive match |
 | [E0307](#e0307) | unreachable or duplicate match arm |
 | [E0308](#e0308) | pattern mismatch |
+| [E0309](#e0309) | let else does not leave |
+| [E0310](#e0310) | misplaced `?` |
 | [E0401](#e0401) | recursion is not allowed |
 | [E0402](#e0402) | stack bound exceeded |
 | [E0403](#e0403) | recursive type |
@@ -384,6 +386,22 @@ match n { _ => { } 1 => { } }  // error
 match shape { Shape.Circle => { } }  // error: write Shape.Circle(r) or Shape.Circle(_)
 ```
 
+## E0309
+
+**let else does not leave**: The else block of `let P: T = e else { ... };` runs when the pattern does not match, and then the names of the pattern have no value; so it must not reach its end: it returns, breaks, continues or panics.
+
+```
+let Option.Some(n): Option<i64> = parse_i64(s) else { print("bad"); };  // error: add return
+```
+
+## E0310
+
+**misplaced `?`**: `e?` takes the value out of e, an Option or a Result, and when there is none returns the Option.None or Result.Err from the function at once. So e must be an Option or a Result, and the function must return the same kind: an Option for an Option; for a Result, a Result whose error type can hold e's. Tests, contracts and default values have nothing to return from.
+
+```
+fn first_digit(s: str[8]) -> i64 { let n: i64 = parse_i64(s)?; return n; }  // error: return Option<i64>
+```
+
 ## E0401
 
 **recursion is not allowed**: ALang forbids recursion (direct or indirect) so that every program has a stack bound known at compile time and always terminates. Rewrite the algorithm with a loop and an explicit, fixed-capacity work list.
@@ -602,7 +620,7 @@ let x: i32 = a[3];  // trap
 
 ## R0004
 
-**capacity exceeded**: A push/append does not fit in the list or string capacity, a str[N](s) or list[T; N](xs) conversion gets more than N bytes or elements, the text of str[N](x) for a number or bool is longer than N bytes, or the standard input is longer than the `str[N]` parameter of fn main. Capacities are part of the type: list[T; N], str[N].
+**capacity exceeded**: A push/append does not fit in the list or string capacity, a union of sets does not fit in the capacity of the first, a str[N](s) or list[T; N](xs) conversion gets more than N bytes or elements, the text of str[N](x) for a number or bool is longer than N bytes, or the standard input is longer than the `str[N]` parameter of fn main. Capacities are part of the type: list[T; N], str[N].
 
 ```
 var s: str[4] = "abc";
@@ -670,7 +688,7 @@ alang run long.al --max-steps 1000000000
 
 ## R0012
 
-**invalid shift or empty pop**: A shift amount is negative or not smaller than the bit width, or pop() was called on an empty list/string.
+**invalid shift or empty pop**: A shift amount is negative or not smaller than the bit width, or pop() or pop_front() was called on an empty list/string.
 
 ```
 let x: u32 = 1 << 32;  // trap
@@ -678,7 +696,7 @@ let x: u32 = 1 << 32;  // trap
 
 ## R0013
 
-**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or max(xs), a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, or a base outside 2 to 36 for to_base or parse_i64.
+**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, an empty separator or pattern for split, split_once or replace, an empty list for min(xs), max(xs), min_by or max_by, a count below 0 or text over 1048576 bytes for repeat, a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, or a base outside 2 to 36 for to_base or parse_i64.
 
 ```
 let p: i64 = pow(2, -1);  // trap
@@ -701,6 +719,12 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `clear(mut xs)` | Removes all elements of a list or str. |
 | `append(mut s, values...)` | Appends the text form of each value to a str (same format as print). Traps if full. |
 | `panic(message)` | Stops the program with an error message. Never returns. |
+| `assert_eq(a, b)` | A statement: the same as assert a == b; for two values of a type that == compares. When they differ it traps (R0005) and shows both: assertion failed: assert_eq(total, 10) (left: 9, right: 10). |
+| `unwrap_or(o, default) -> T` | The value in an Option<T> (Option.Some(v)) or a Result<T, E> (Result.Ok(v)), or default, a T, when it is Option.None or Result.Err: unwrap_or(parse_i64(s), 0). |
+| `is_some(o) -> bool` | Whether an Option is Option.Some. |
+| `is_none(o) -> bool` | Whether an Option is Option.None. |
+| `is_ok(r) -> bool` | Whether a Result is Result.Ok. |
+| `is_err(r) -> bool` | Whether a Result is Result.Err. |
 
 ### Math
 
@@ -774,6 +798,10 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `ends_with(s, suffix) -> bool` | Whether a str ends with a str or u8 byte. |
 | `slice(xs, from, to) -> T` | A copy of the elements from..to (half-open) of a str, list or array, of the same type (a list for an array). Traps (R0003) unless 0 <= from <= to <= len(xs). |
 | `trim(s) -> str[N]` | s without the ASCII whitespace at its start and end. |
+| `strip_prefix(s, prefix) -> str[N]` | s without prefix (a str or u8 byte) at its start, or s unchanged if it does not start with it, as a str of the capacity of s: strip_prefix("v1.2", 'v') is "1.2". starts_with(s, prefix) tells which. |
+| `strip_suffix(s, suffix) -> str[N]` | s without suffix (a str or u8 byte) at its end, or s unchanged if it does not end with it: strip_suffix("a.txt", ".txt") is "a". |
+| `split_once(s, sep) -> Option<(str[N], str[N])>` | The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once("k=v=w", '=') is Option.Some(("k", "v=w")). Traps (R0013) if sep is empty. |
+| `repeat(s, n) -> str[N]` | The str or u8 byte s, n times over: repeat("ab", 3) is "ababab", repeat('-', 10) a rule of dashes. Its type is that of the variable it is stored in. Traps (R0013) if n < 0, and (R0004) if the result does not fit. |
 | `split(s, sep) -> list[str[K]; M]` | The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. Its type is that of the variable it is stored in. Traps if a piece or the count does not fit; for p in split(s, sep) goes through the pieces one at a time instead, each a str of the capacity of s, and never traps on their size or number. |
 | `words(s) -> list[str[K]; M]` | The pieces of s between runs of ASCII whitespace, never empty. Its type is that of the variable it is stored in. Traps if a word or the count does not fit; for w in words(s) goes through the words one at a time instead, and never traps on their size or number. |
 | `try_split(mut parts, s, sep) -> bool` | split(s, sep) into the list parts, replacing what it held: true if every piece fits, otherwise false with parts left empty, never a trap. For text that may not fit, such as input: var parts: list[str[16]; 4] = []; let ok: bool = try_split(mut parts, line, ','); |
@@ -809,6 +837,13 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `count_if(xs, f) -> i64` | How many elements x of an array or list have f(x) true, f being a function fn(T) -> bool passed by name. |
 | `find_index(xs, f) -> i64` | The position of the first element x of an array or list with f(x) true (as for any), or -1 if there is none. |
 | `retain(mut xs, keep)` | Keeps the elements x of a list for which keep(x) is true, in their order, and removes the rest; keep is a function fn(T) -> bool passed by name, called once per element, first to last. |
+| `min_by(xs, before) -> T` | The first element of an array or list that no other comes before, in the order that before, a function fn(T, T) -> bool passed by name, gives (as for sort_by): the smallest by any key. Traps (R0013) if xs is empty. |
+| `max_by(xs, before) -> T` | The first element of an array or list that comes before no other, in the order of before (as for min_by): the largest by any key. Traps (R0013) if xs is empty. |
+| `swap(mut xs, i, j)` | Exchanges the elements at positions i and j of a list or array (bytes of a str); traps (R0003) unless both are below len(xs). swap(mut a, mut b) exchanges two variables (or fields, or elements of different variables) of the same type. |
+| `pop_front(mut xs) -> T` | Removes and returns the first element of a list (first byte of a str), shifting the rest down: a queue with push(mut q, x) at the back. Traps (R0012) if it is empty. |
+| `union(a, b) -> set[T; N]` | The values in either of two sets of the same element type, as a set of the type of a. Traps (R0004) if they do not fit in its capacity. |
+| `intersection(a, b) -> set[T; N]` | The values in both of two sets of the same element type, as a set of the type of a. |
+| `difference(a, b) -> set[T; N]` | The values of the set a that are not in the set b (of the same element type), as a set of the type of a. |
 | `binary_search(xs, x) -> i64` | In an array or list sorted as sort sorts it, the position of the first element e with compare(e, x) == 0, or -1 if there is none. Looks at about log2(len(xs)) elements; on a list that is not sorted, it may miss an equal element, but never traps and gives the same answer on every run. |
 | `insert(mut xs, i, value)` | Inserts an element into a list (a u8 byte into a str) at position i, shifting the rest up. Traps unless 0 <= i <= len(xs), or if full. insert(mut m, key, value) sets key to value in a map, and insert(mut s, x) adds x to a set; both trap (R0004) when a new key does not fit. |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position i of a list (a byte of a str), shifting the rest down. Traps unless 0 <= i < len(xs). On a map or set, remove(mut m, key) removes the key and returns whether it was there. |

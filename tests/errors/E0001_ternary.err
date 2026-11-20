@@ -1,0 +1,7 @@
+error[E0001]: unexpected '1', expected ';'
+ --> tests/errors/E0001_ternary.al:4:26
+  |
+4 |     let y: i64 = x > 2 ? 1 : 0;
+  |                          ^
+  = hint: there is no `c ? a : b`; write `if c then a else b`. A `?` after an Option or Result, as in `parse_i64(s)?`, takes its value out, or returns its Option.None or Result.Err
+

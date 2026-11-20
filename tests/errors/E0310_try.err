@@ -1,0 +1,49 @@
+error[E0310]: `?` needs an Option or a Result, found i64
+ --> tests/errors/E0310_try.al:4:18
+  |
+4 |     let v: i64 = n?;
+  |                  ^^
+  = hint: `?` takes the value out of an Option.Some or a Result.Ok, and returns an Option.None or Result.Err
+
+error[E0310]: `?` on an Option returns its Option.None, but `plain` returns i64
+ --> tests/errors/E0310_try.al:9:12
+  |
+9 |     return parse_i64(s)?;
+  |            ^^^^^^^^^^^^^
+  = hint: make `plain` return an Option, or handle the None: unwrap_or(parse_i64(s), default), or if let Option.Some(v) = parse_i64(s) { }
+
+error[E0310]: `?` on an Option returns its Option.None, but `checked` returns Result<i64, str[8]>
+  --> tests/errors/E0310_try.al:13:18
+   |
+13 |     let n: i64 = parse_i64(s)?;
+   |                  ^^^^^^^^^^^^^
+  = hint: make `checked` return an Option, or handle the None: unwrap_or(parse_i64(s), default), or if let Option.Some(v) = parse_i64(s) { }
+
+error[E0310]: `?` returns the error, a str[32], but `narrow` returns errors of type str[8]
+  --> tests/errors/E0310_try.al:18:22
+   |
+18 |     return Result.Ok(r?);
+   |                      ^^
+  = hint: convert it with a match: match r { Result.Ok(v) => { ... } Result.Err(e) => { return Result.Err(...); } }
+
+error[E0310]: `?` cannot be used in a requires or ensures clause: there is no function to return from
+  --> tests/errors/E0310_try.al:22:14
+   |
+22 |     requires parse_i64(s)? > 0
+   |              ^^^^^^^^^^^^^
+  = hint: match it: if let Option.Some(v) = parse_i64(s) { }, or unwrap_or(parse_i64(s), default)
+
+error[E0310]: `?` on an Option returns its Option.None, but `main` returns nothing
+  --> tests/errors/E0310_try.al:28:18
+   |
+28 |     let n: i64 = parse_i64("1")?;
+   |                  ^^^^^^^^^^^^^^^
+  = hint: handle the None: unwrap_or(parse_i64("1"), default), or if let Option.Some(v) = parse_i64("1") { }
+
+error[E0310]: `?` cannot be used in a test: there is no function to return from
+  --> tests/errors/E0310_try.al:33:12
+   |
+33 |     assert parse_i64("1")? == 1;
+   |            ^^^^^^^^^^^^^^^
+  = hint: match it: if let Option.Some(v) = parse_i64("1") { }, or unwrap_or(parse_i64("1"), default)
+

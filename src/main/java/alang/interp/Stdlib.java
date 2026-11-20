@@ -1143,6 +1143,60 @@ final class Stdlib {
         s.len++;
     }
 
+    /**
+     * swap(mut xs, i, j): exchanges two elements of a list or array, or bytes of a str; traps (R0003) unless both
+     * positions are below its length, i first.
+     */
+    static void swap(Object xs, long i, PrimKind ik, long j, PrimKind jk, Span at, Meter cost) {
+        int len = xs instanceof StrV s ? s.len : xs instanceof ListV l ? l.len : ((ArrV) xs).items.length;
+        if (!within(i, len) || i == len) {
+            throw new Trap(Code.R0003, at, "index " + IntOps.toString(ik, i) + " is out of bounds for length " + len);
+        }
+        if (!within(j, len) || j == len) {
+            throw new Trap(Code.R0003, at, "index " + IntOps.toString(jk, j) + " is out of bounds for length " + len);
+        }
+        cost.elements(1);
+        if (xs instanceof StrV s) {
+            byte t = s.b[(int) i];
+            s.b[(int) i] = s.b[(int) j];
+            s.b[(int) j] = t;
+            return;
+        }
+        Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+        Object t = items[(int) i];
+        items[(int) i] = items[(int) j];
+        items[(int) j] = t;
+    }
+
+    /**
+     * union, intersection or difference of two sets of the same element type, merged in order into a new set of
+     * the type st (that of a). Every value is a copy. Traps (R0004) when a union does not fit.
+     */
+    static ListV setOp(Builtin op, ListV a, ListV b, Type.SetT st, Span at, Meter cost) {
+        Type t = st.elem();
+        cost.slots(st.cap());
+        Object[] out = new Object[st.cap()];
+        int n = 0;
+        int i = 0;
+        int j = 0;
+        while (i < a.len || op == Builtin.UNION && j < b.len) {
+            cost.elements(1);
+            int c = i == a.len ? 1 : j == b.len ? -1 : compare(a.items[i], b.items[j], t, cost);
+            Object x = c <= 0 ? a.items[i] : b.items[j];
+            boolean keep = switch (op) {
+                case UNION -> true;
+                case INTERSECTION -> c == 0;
+                default -> c < 0;
+            };
+            if (c <= 0) i++;
+            if (c >= 0) j++;
+            if (!keep) continue;
+            if (n == out.length) throw new Trap(Code.R0004, at, "union exceeds set capacity " + st.cap());
+            out[n++] = Values.copy(x, cost);
+        }
+        return new ListV(out, n);
+    }
+
     static boolean setRemove(ListV s, Object x, Type t, Meter cost) {
         int i = find(s.items, s.len, x, t, cost);
         if (i < 0) return false;

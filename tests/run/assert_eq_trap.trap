@@ -1,0 +1,2 @@
+R0005 5:5
+assertion failed: assert_eq(words, ["a", "c"]) (left: ["a", "b"], right: ["a", "c"])

@@ -18,12 +18,6 @@ fn is_sorted(xs: list[i64; N]) -> bool {
     return true;
 }
 
-fn swap(xs: mut list[i64; N], i: i64, j: i64) {
-    let t: i64 = xs[i];
-    xs[i] = xs[j];
-    xs[j] = t;
-}
-
 /// Sorts up to 32 integers in ascending order (a stable merge sort).
 tool fn merge_sort(input: list[i64; N]) -> list[i64; N]
     ensures len(result) == len(input)

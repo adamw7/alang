@@ -44,7 +44,7 @@ final class Temporaries {
         return switch (s) {
             case Let l -> l.builtInPlace() ? inner(l.init) : Layout.add(expr(l.init), stored(l.init, l.var.type));
             // The tuple is taken apart where it is: each variable copies its element.
-            case Destructure d -> expr(d.init);
+            case Destructure d -> Layout.add(expr(d.init), d.elseBlock == null ? 0 : block(d.elseBlock, r));
             case Assign a -> {
                 long t = Layout.add(expr(a.target), expr(a.value));
                 yield a.op == null ? Layout.add(t, stored(a.value, a.target.type)) : t;
@@ -136,6 +136,8 @@ final class Temporaries {
             case Resize z -> expr(z.arg);
             case Unary u -> expr(u.operand);
             case Binary b -> Layout.add(expr(b.left), expr(b.right));
+            // The Option.None or Result.Err it may return is built as the function's return type.
+            case Try t -> Layout.add(expr(t.inner), t.ret == null ? 0 : Layout.size(t.ret));
             case ArrayLit a -> {
                 // A map literal's entries are (key, value) tuples.
                 Type elem = a.type instanceof Type.MapT mt ? new Type.TupleT(List.of(mt.key(), mt.value()))
