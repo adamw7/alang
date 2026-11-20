@@ -1629,7 +1629,7 @@ class CliTest {
             }
 
             /// Multiplies the numbers.
-            tool fn product(xs: list[i8; 2]) -> i8 {
+            tool fn multiplied(xs: list[i8; 2]) -> i8 {
                 var t: i8 = 1;
                 for x in xs {
                     t *= x;

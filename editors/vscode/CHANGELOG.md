@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Highlighting, hovers and completion know the new list, map and set builtins (`extend`, `fill`, `rotate`,
+  `is_sorted`, `product`, `min_index`, `max_index`, `lower_bound`, `upper_bound`, `fold`, `transform`, `zip`,
+  `get`, `first_key`, `last_key`, `floor_key`, `ceil_key`, `is_subset`, `symmetric_difference`).
 - Highlighting, hovers and completion know the new builtins (`unwrap_or`, `is_some`, `is_none`, `is_ok`,
   `is_err`, `assert_eq`, `strip_prefix`, `strip_suffix`, `split_once`, `repeat`, `min_by`, `max_by`, `swap`,
   `pop_front`, `union`, `intersection`, `difference`), and the `?` that takes the value out of an Option or Result.

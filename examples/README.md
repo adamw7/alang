@@ -37,7 +37,7 @@ bin/alang run examples/tally.al < examples/tally.in
 bin/alang run examples/expenses.al < examples/expenses.in
 
 bin/alang call examples/primes.al factorize '{"n": 600851475143}'
-# {"ok": true, "result": [71, 839, 1471, 6857], "stdout": "", "steps": 4920}
+# {"ok": true, "result": [71, 839, 1471, 6857], "stdout": "", "steps": 4909}
 bin/alang call examples/vending_machine.al simulate '{"events": [{"Coin": [200]}, {"Select": ["A2"]}, "Cancel"]}'
 # {"ok": true, "result": [{"Credit": [200]}, {"Vended": ["Juice", 25]}, {"Refunded": [0]}], "stdout": "", "steps": 44}
 bin/alang call examples/task_scheduler.al schedule '{"tasks": [{"name": "test", "deps": ["build"]}, {"name": "build", "deps": []}]}'

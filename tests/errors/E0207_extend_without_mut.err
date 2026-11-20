@@ -1,0 +1,24 @@
+error[E0207]: extend() modifies its first argument
+ --> tests/errors/E0207_extend_without_mut.al:4:12
+  |
+4 |     extend(xs, [2]);
+  |            ^^
+  = hint: write extend(mut xs, [2])
+  = fix: insert `mut `
+
+error[E0207]: fill() modifies its argument
+ --> tests/errors/E0207_extend_without_mut.al:5:10
+  |
+5 |     fill(xs, 0);
+  |          ^^
+  = hint: write fill(mut xs, 0)
+  = fix: insert `mut `
+
+error[E0207]: rotate() modifies its argument
+ --> tests/errors/E0207_extend_without_mut.al:6:12
+  |
+6 |     rotate(xs, 1);
+  |            ^^
+  = hint: write rotate(mut xs, 1)
+  = fix: insert `mut `
+

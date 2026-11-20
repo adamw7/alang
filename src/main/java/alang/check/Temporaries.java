@@ -181,7 +181,10 @@ final class Temporaries {
                 Type given = c.args.get(i).expr().type;
                 if (!p.byRef && Type.isAggregate(p.type) && !given.equals(p.type)) t = Layout.add(t, Layout.size(p.type));
             }
-        } else if (c.builtin == Builtin.PUSH || c.builtin == Builtin.INSERT) {
+        } else if (c.builtin != null) {
+            t = Layout.add(t, builtin(c));
+        }
+        if (c.builtin == Builtin.PUSH || c.builtin == Builtin.INSERT) {
             // What is stored is copied in: an element of a list or str, a value of a set, a key and value of a map.
             Type into = c.args.get(0).expr().type;
             Expr v = c.args.get(c.args.size() - 1).expr();
@@ -192,6 +195,44 @@ final class Temporaries {
             }
         }
         return t;
+    }
+
+    /** What the C backend of some builtins keeps besides their arguments and result, all of it on the stack at once. */
+    private static long builtin(Call c) {
+        List<Arg> args = c.args;
+        return switch (c.builtin) {
+            // The value, widened, and the copy every element is set to.
+            case FILL -> {
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                Expr v = args.get(1).expr();
+                yield Type.isAggregate(elem) ? Layout.add(stored(v, elem), Layout.size(elem)) : 0;
+            }
+            // Each element widened as it is added.
+            case EXTEND -> {
+                Type to = Type.elementOf(args.get(0).expr().type);
+                Type from = Type.elementOf(args.get(1).expr().type);
+                yield Type.isAggregate(to) && !to.equals(from) ? Layout.size(to) : 0;
+            }
+            // The element on its way to its new place.
+            case ROTATE -> {
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                yield Type.isAggregate(elem) ? Layout.size(elem) : 0;
+            }
+            // The next accumulator, before it replaces the last, and the start value widened to its type.
+            case FOLD -> {
+                Expr init = args.get(1).expr();
+                long next = Type.isAggregate(c.type) ? Layout.size(c.type) : 0;
+                yield Layout.add(next, init.type.equals(c.type) ? 0 : stored(init, c.type));
+            }
+            // The element or key looked for, widened to the type it is compared with.
+            case LOWER_BOUND, UPPER_BOUND, GET, FLOOR_KEY, CEIL_KEY -> {
+                Type t = args.get(0).expr().type;
+                Type kt = t instanceof Type.MapT mt ? mt.key() : t instanceof Type.SetT st ? st.elem() : Type.elementOf(t);
+                Expr k = args.get(1).expr();
+                yield kt instanceof Type.Str && !(t instanceof Type.MapT || t instanceof Type.SetT) ? 0 : stored(k, kt);
+            }
+            default -> 0;
+        };
     }
 
     /**

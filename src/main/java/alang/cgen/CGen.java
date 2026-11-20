@@ -2749,7 +2749,7 @@ public final class CGen {
                 close("}");
                 return null;
             }
-            case UNION, INTERSECTION, DIFFERENCE -> {
+            case UNION, INTERSECTION, DIFFERENCE, SYMMETRIC_DIFFERENCE -> {
                 Type.SetT st = (Type.SetT) c.type;
                 String a = lowerLvalue(args.get(0).expr());
                 String b = lowerLvalue(args.get(1).expr());
@@ -2758,21 +2758,283 @@ public final class CGen {
                 String j = "t" + ++tmpCount;
                 String o = "t" + ++tmpCount;
                 boolean union = c.builtin == Builtin.UNION;
+                boolean both = union || c.builtin == Builtin.SYMMETRIC_DIFFERENCE;
                 String x = "(" + a + ").v[" + i + "]";
                 String y = "(" + b + ").v[" + j + "]";
                 open("{");
                 emit("uint32_t " + i + " = 0, " + j + " = 0;");
                 emit("int " + o + ";");
-                open("while (" + i + " < (" + a + ").len" + (union ? " || " + j + " < (" + b + ").len" : "") + ") {");
+                open("while (" + i + " < (" + a + ").len" + (both ? " || " + j + " < (" + b + ").len" : "") + ") {");
                 emit(o + " = " + i + " == (" + a + ").len ? 1 : " + j + " == (" + b + ").len ? -1 : (" + cmpExpr(st.elem(), x, y) + ");");
                 if (union) {
                     emit("if (" + r + ".len >= " + st.cap() + "u) AL_TRAP(\"R0004\", \"union exceeds set capacity " + st.cap() + "\", " + at + ");");
                     emit(r + ".v[" + r + ".len++] = " + o + " <= 0 ? " + x + " : " + y + ";");
+                } else if (both) {
+                    open("if (" + o + " != 0) {");
+                    emit("if (" + r + ".len >= " + st.cap() + "u) AL_TRAP(\"R0004\", \"symmetric_difference exceeds set capacity "
+                        + st.cap() + "\", " + at + ");");
+                    emit(r + ".v[" + r + ".len++] = " + o + " < 0 ? " + x + " : " + y + ";");
+                    close("}");
                 } else {
                     emit("if (" + o + (c.builtin == Builtin.INTERSECTION ? " == 0" : " < 0") + ") " + r + ".v[" + r + ".len++] = " + x + ";");
                 }
                 emit("if (" + o + " <= 0) " + i + "++;");
                 emit("if (" + o + " >= 0) " + j + "++;");
+                close(2);
+                return r;
+            }
+            case PRODUCT -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String n = lenOf(xs.type, h);
+                PrimKind k = Type.kind(c.type);
+                String total = tmp(c.type, k.isFloat ? "1.0" : "1");
+                String i = "t" + ++tmpCount;
+                openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                emit(total + " = " + arith(BinOp.MUL, k, k, total, "(" + h + ").v[" + i + "]", c.span) + ";");
+                close(2);
+                return total;
+            }
+            case MIN_INDEX, MAX_INDEX -> {
+                // As min(xs) and max(xs): an element replaces the best only when it is smaller (larger), so a NaN stays only
+                // when it is first, and the first of equal ones is kept.
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String n = lenOf(xs.type, h);
+                String kind = xs.type instanceof Type.ArrayT ? "array" : "list";
+                emit("if (" + n + " == 0) AL_TRAP(\"R0013\", \"" + c.builtin.name + "() of an empty " + kind + "\", " + at + ");");
+                String best = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                String op = c.builtin == Builtin.MIN_INDEX ? "<" : ">";
+                emit("uint32_t " + best + " = 0;");
+                openLoop(i, "for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
+                emit("if ((" + h + ").v[" + i + "] " + op + " (" + h + ").v[" + best + "]) " + best + " = " + i + ";");
+                close(2);
+                return tmp(Type.I64, "(int64_t)" + best);
+            }
+            case IS_SORTED -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                boolean str = xs.type instanceof Type.Str;
+                String n = str ? "(" + h + ").len" : lenOf(xs.type, h);
+                String r = tmp(Type.BOOL, "true");
+                String i = "t" + ++tmpCount;
+                String prev = "(" + h + ")." + (str ? "b" : "v") + "[" + i + " - 1]";
+                String cur = "(" + h + ")." + (str ? "b" : "v") + "[" + i + "]";
+                openLoop(i, "for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
+                emit("if (" + (str ? prev + " > " + cur : cmpExpr(Type.elementOf(xs.type), prev, cur) + " > 0") + ") { " + r
+                    + " = false; break; }");
+                close(2);
+                return r;
+            }
+            case LOWER_BOUND, UPPER_BOUND -> {
+                Expr xs = args.get(0).expr();
+                Type elem = Type.elementOf(xs.type);
+                String h = lowerLvalue(xs);
+                String x = elem instanceof Type.Str ? lowerLvalue(args.get(1).expr()) : keyLvalue(args.get(1).expr(), elem);
+                String n = lenOf(xs.type, h);
+                String lo = "t" + ++tmpCount;
+                String hi = "t" + ++tmpCount;
+                String mid = "t" + ++tmpCount;
+                String r = tmp(Type.I64, "0");
+                open("{");
+                emit("uint32_t " + lo + " = 0, " + hi + " = " + n + ", " + mid + ";");
+                open("while (" + lo + " < " + hi + ") {");
+                emit(mid + " = " + lo + " + (" + hi + " - " + lo + ") / 2u;");
+                emit("if (" + cmpExpr(elem, "(" + h + ").v[" + mid + "]", x) + (c.builtin == Builtin.UPPER_BOUND ? " <= 0" : " < 0")
+                    + ") " + lo + " = " + mid + " + 1u;");
+                emit("else " + hi + " = " + mid + ";");
+                close("}");
+                emit(r + " = (int64_t)" + lo + ";");
+                close("}");
+                return r;
+            }
+            case EXTEND -> {
+                Type t = args.get(0).expr().type;
+                Type elem = Type.elementOf(t);
+                int cap = ((Type.ListT) t).cap();
+                String place = lower(args.get(0).expr());
+                Expr ys = args.get(1).expr();
+                String h = lowerLvalue(ys);
+                String n = lenOf(ys.type, h);
+                String sp = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                open("{");
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                emit("uint32_t " + i + ";");
+                open("if (" + n + " > " + cap + "u - " + sp + "->len) {");
+                emit("al_out al_e = al_trap_begin(\"R0004\");");
+                emit("AL_PUTS(&al_e, \"extend exceeds list capacity " + cap + " (length \");");
+                emit("al_fmt_u64(&al_e, " + sp + "->len);");
+                emit("AL_PUTS(&al_e, \", adding \");");
+                emit("al_fmt_u64(&al_e, " + n + ");");
+                emit("AL_PUTS(&al_e, \")\");");
+                emit("al_trap_end(&al_e, " + at + ");");
+                close("}");
+                open("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                Type from = Type.elementOf(ys.type);
+                emit(sp + "->v[" + sp + "->len++] = " + coerce("(" + h + ").v[" + i + "]", from, elem) + ";");
+                close(2);
+                return null;
+            }
+            case FILL -> {
+                Type t = args.get(0).expr().type;
+                Type elem = Type.elementOf(t);
+                String place = lower(args.get(0).expr());
+                Expr v = args.get(1).expr();
+                String val = tmp(elem, coerce(lower(v), v.type, elem));
+                String sp = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                String arr = sp + "->" + (t instanceof Type.Str ? "b" : "v");
+                String n = t instanceof Type.ArrayT a ? a.len() + "u" : sp + "->len";
+                open("{");
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                emit("uint32_t " + i + ";");
+                emit("for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) " + arr + "[" + i + "] = " + val + ";");
+                close("}");
+                return null;
+            }
+            case ROTATE -> {
+                // Three reversals: of the first r elements, of the rest, then of the whole.
+                Type t = args.get(0).expr().type;
+                Type elem = Type.elementOf(t);
+                String place = lower(args.get(0).expr());
+                Expr ke = args.get(1).expr();
+                String k = tmp(ke.type, lower(ke));
+                String sp = "t" + ++tmpCount;
+                String n = "t" + ++tmpCount;
+                String r = "t" + ++tmpCount;
+                String lo = "t" + ++tmpCount;
+                String hi = "t" + ++tmpCount;
+                String x = "t" + ++tmpCount;
+                String arr = sp + "->" + (t instanceof Type.Str ? "b" : "v");
+                open("{");
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                emit("uint32_t " + n + " = " + (t instanceof Type.ArrayT a ? a.len() + "u" : sp + "->len") + ", " + r + ", " + lo + ", "
+                    + hi + ";");
+                emit(ct(elem) + " " + x + ";");
+                open("if (" + n + " > 0) {");
+                if (Type.kind(ke.type).signed) {
+                    emit("int64_t " + k + "_m = (int64_t)" + k + " % (int64_t)" + n + ";");
+                    emit(r + " = (uint32_t)(" + k + "_m < 0 ? " + k + "_m + (int64_t)" + n + " : " + k + "_m);");
+                } else {
+                    emit(r + " = (uint32_t)((uint64_t)" + k + " % (uint64_t)" + n + ");");
+                }
+                open("if (" + r + " > 0) {");
+                for (String[] seg : new String[][] {{"0", r}, {r, n}, {"0", n}}) {
+                    emit(lo + " = " + seg[0] + ";");
+                    emit(hi + " = " + seg[1] + ";");
+                    open("while (" + lo + " + 1u < " + hi + ") {");
+                    emit(hi + "--;");
+                    emit(x + " = " + arr + "[" + lo + "];");
+                    emit(arr + "[" + lo + "] = " + arr + "[" + hi + "];");
+                    emit(arr + "[" + hi + "] = " + x + ";");
+                    emit(lo + "++;");
+                    close("}");
+                }
+                close(3);
+                return null;
+            }
+            case GET -> {
+                Type.MapT mt = (Type.MapT) args.get(0).expr().type;
+                String m = lowerLvalue(args.get(0).expr());
+                String key = keyLvalue(args.get(1).expr(), mt.key());
+                String found = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                emit("int " + found + ";");
+                emit("uint32_t " + i + " = al_find_" + keyedFns(mt) + "(&(" + m + "), &" + key + ", &" + found + ");");
+                return optionValue(c.type, found, "(" + m + ").v[" + i + "]");
+            }
+            case FIRST_KEY, LAST_KEY, FLOOR_KEY, CEIL_KEY -> {
+                Type t = args.get(0).expr().type;
+                String m = lowerLvalue(args.get(0).expr());
+                String keys = "(" + m + ")." + (t instanceof Type.MapT ? "k" : "v");
+                String len = "(" + m + ").len";
+                switch (c.builtin) {
+                    case FIRST_KEY -> {
+                        return optionValue(c.type, len + " > 0u", keys + "[0]");
+                    }
+                    case LAST_KEY -> {
+                        return optionValue(c.type, len + " > 0u", keys + "[" + len + " - 1u]");
+                    }
+                    default -> {
+                        Type kt = t instanceof Type.MapT mt ? mt.key() : ((Type.SetT) t).elem();
+                        String key = keyLvalue(args.get(1).expr(), kt);
+                        String found = "t" + ++tmpCount;
+                        String i = "t" + ++tmpCount;
+                        emit("int " + found + ";");
+                        emit("uint32_t " + i + " = al_find_" + keyedFns(t) + "(&(" + m + "), &" + key + ", &" + found + ");");
+                        // Not found, i is where the key would go: after the keys before it, before those after it.
+                        if (c.builtin == Builtin.FLOOR_KEY) {
+                            return optionValue(c.type, found + " || " + i + " > 0u", keys + "[" + found + " ? " + i + " : " + i + " - 1u]");
+                        }
+                        return optionValue(c.type, i + " < " + len, keys + "[" + i + "]");
+                    }
+                }
+            }
+            case IS_SUBSET -> {
+                Type.SetT st = (Type.SetT) args.get(0).expr().type;
+                String a = lowerLvalue(args.get(0).expr());
+                String b = lowerLvalue(args.get(1).expr());
+                String r = tmp(Type.BOOL, "true");
+                String i = "t" + ++tmpCount;
+                String j = "t" + ++tmpCount;
+                String o = "t" + ++tmpCount;
+                open("{");
+                emit("uint32_t " + i + ", " + j + " = 0;");
+                emit("int " + o + ";");
+                open("for (" + i + " = 0; " + i + " < (" + a + ").len; " + i + "++) {");
+                emit(o + " = 1;");
+                open("while (" + j + " < (" + b + ").len) {");
+                emit(o + " = " + cmpExpr(st.elem(), "(" + b + ").v[" + j + "]", "(" + a + ").v[" + i + "]") + ";");
+                emit("if (" + o + " >= 0) break;");
+                emit(j + "++;");
+                close("}");
+                emit("if (" + o + " != 0) { " + r + " = false; break; }");
+                emit(j + "++;");
+                close(2);
+                return r;
+            }
+            case FOLD -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String n = lenOf(xs.type, h);
+                Expr init = args.get(1).expr();
+                String acc = tmp(c.type, coerce(lower(init), init.type, c.type));
+                String i = "t" + ++tmpCount;
+                String next = "t" + ++tmpCount;
+                openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                // Through a temporary: the function reads the accumulator through a pointer while its result is stored.
+                emit(ct(c.type) + " " + next + " = " + fnArgCall(c, acc, "(" + h + ").v[" + i + "]") + ";");
+                emit(acc + " = " + next + ";");
+                close(2);
+                return acc;
+            }
+            case TRANSFORM -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String n = lenOf(xs.type, h);
+                String r = tmp(c.type, "{0}");
+                String i = "t" + ++tmpCount;
+                if (xs.type instanceof Type.ListT) emit(r + ".len = (" + h + ").len;");
+                openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                emit(r + ".v[" + i + "] = " + fnArgCall(c, "(" + h + ").v[" + i + "]") + ";");
+                close(2);
+                return r;
+            }
+            case ZIP -> {
+                Expr ea = args.get(0).expr();
+                Expr eb = args.get(1).expr();
+                String a = lowerLvalue(ea);
+                String b = lowerLvalue(eb);
+                String na = lenOf(ea.type, a);
+                String nb = lenOf(eb.type, b);
+                String r = tmp(c.type, "{0}");
+                String i = "t" + ++tmpCount;
+                emit(r + ".len = " + na + " < " + nb + " ? " + na + " : " + nb + ";");
+                openLoop(i, "for (" + i + " = 0; " + i + " < " + r + ".len; " + i + "++) {");
+                emit(r + ".v[" + i + "].e0 = (" + a + ").v[" + i + "];");
+                emit(r + ".v[" + i + "].e1 = (" + b + ").v[" + i + "];");
                 close(2);
                 return r;
             }

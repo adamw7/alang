@@ -45,14 +45,6 @@ fn is_prime(n: i64) -> bool
     return true;
 }
 
-fn product(xs: list[i64; MAX_FACTORS]) -> i64 {
-    var p: i64 = 1;
-    for x in xs {
-        p *= x;
-    }
-    return p;
-}
-
 fn all_prime(xs: list[i64; MAX_FACTORS]) -> bool {
     for x in xs {
         if not is_prime(x) {

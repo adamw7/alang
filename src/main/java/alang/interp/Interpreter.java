@@ -1711,6 +1711,217 @@ public final class Interpreter {
                 ListV b = (ListV) eval(args.get(1).expr(), slots);
                 return Stdlib.setOp(c.builtin, a, b, st, c.span, meter);
             }
+            case PRODUCT -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                PrimKind k = Type.kind(c.type);
+                Object total = k.isFloat ? (Object) 1.0 : (Object) 1L;
+                for (int i = 0; i < n; i++) {
+                    meter.elements(1);
+                    total = arith(BinOp.MUL, k, k, total, items[i], c.span);
+                }
+                return total;
+            }
+            case MIN_INDEX, MAX_INDEX -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                if (n == 0) {
+                    throw new Trap(Code.R0013, c.span, c.builtin.name + "() of an empty " + (xs instanceof ListV ? "list" : "array"));
+                }
+                Builtin which = c.builtin == Builtin.MIN_INDEX ? Builtin.MIN : Builtin.MAX;
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                int best = 0;
+                for (int i = 1; i < n; i++) {
+                    meter.elements(1);
+                    if (takesSecond(which, elem, items[best], items[i])) best = i;
+                }
+                return (long) best;
+            }
+            case IS_SORTED -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                if (xs instanceof StrV str) {
+                    meter.bytes(str.len);
+                    for (int i = 1; i < str.len; i++) {
+                        if ((str.b[i - 1] & 0xFF) > (str.b[i] & 0xFF)) return false;
+                    }
+                    return true;
+                }
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                for (int i = 1; i < n; i++) {
+                    meter.elements(1);
+                    if (Stdlib.compare(items[i - 1], items[i], elem, meter) > 0) return false;
+                }
+                return true;
+            }
+            case LOWER_BOUND, UPPER_BOUND -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                Object x = eval(args.get(1).expr(), slots);
+                if (!(elem instanceof Type.Str)) x = Values.coerce(x, elem, meter);
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int lo = 0;
+                int hi = xs instanceof ListV l ? l.len : items.length;
+                boolean upper = c.builtin == Builtin.UPPER_BOUND;
+                while (lo < hi) {
+                    int mid = lo + (hi - lo) / 2;
+                    meter.elements(1);
+                    int cmp = Stdlib.compare(items[mid], x, elem, meter);
+                    if (upper ? cmp <= 0 : cmp < 0) lo = mid + 1;
+                    else hi = mid;
+                }
+                return (long) lo;
+            }
+            case EXTEND -> {
+                ListV l = (ListV) ref(args.get(0).expr(), slots).get();
+                Expr ys = args.get(1).expr();
+                Object v = eval(ys, slots);
+                Object[] items = v instanceof ListV yl ? yl.items : ((ArrV) v).items;
+                int n = v instanceof ListV yl ? yl.len : items.length;
+                if (n > l.items.length - l.len) {
+                    throw new Trap(Code.R0004, c.span, "extend exceeds list capacity " + l.items.length + " (length " + l.len
+                        + ", adding " + n + ")");
+                }
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                boolean copy = stored(ys);
+                for (int i = 0; i < n; i++) {
+                    meter.elements(1);
+                    Object x = copy ? Values.copy(items[i], meter) : items[i];
+                    l.items[l.len++] = Values.coerce(x, elem, meter);
+                }
+                return null;
+            }
+            case FILL -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                Object v = Values.coerce(owned(args.get(1).expr(), slots), elem, meter);
+                if (xs instanceof StrV str) {
+                    meter.bytes(str.len);
+                    Arrays.fill(str.b, 0, str.len, (byte) (long) (Long) v);
+                    return null;
+                }
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                for (int i = 0; i < n; i++) {
+                    meter.elements(1);
+                    items[i] = i == 0 ? v : Values.copy(v, meter);
+                }
+                return null;
+            }
+            case ROTATE -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                long k = (Long) eval(args.get(1).expr(), slots);
+                PrimKind kk = Type.kind(args.get(1).expr().type);
+                int n = xs instanceof StrV str ? str.len : xs instanceof ListV l ? l.len : ((ArrV) xs).items.length;
+                if (n == 0) return null;
+                int r = (int) (kk.signed ? Math.floorMod(k, (long) n) : Long.remainderUnsigned(k, n));
+                if (r == 0) return null;
+                if (xs instanceof StrV str) {
+                    meter.bytes(n);
+                    byte[] head = Arrays.copyOfRange(str.b, 0, r);
+                    System.arraycopy(str.b, r, str.b, 0, n - r);
+                    System.arraycopy(head, 0, str.b, n - r, r);
+                    return null;
+                }
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                meter.elements(n);
+                Object[] head = Arrays.copyOfRange(items, 0, r);
+                System.arraycopy(items, r, items, 0, n - r);
+                System.arraycopy(head, 0, items, n - r, r);
+                return null;
+            }
+            case GET -> {
+                Type.MapT mt = (Type.MapT) args.get(0).expr().type;
+                MapV m = (MapV) eval(args.get(0).expr(), slots);
+                Object k = eval(args.get(1).expr(), slots);
+                int i = Stdlib.find(m.keys, m.len, k, mt.key(), meter);
+                return option(i >= 0 ? Values.copy(m.vals[i], meter) : null);
+            }
+            case FIRST_KEY, LAST_KEY, FLOOR_KEY, CEIL_KEY -> {
+                Object v = eval(args.get(0).expr(), slots);
+                Object[] keys = v instanceof MapV m ? m.keys : ((ListV) v).items;
+                int n = v instanceof MapV m ? m.len : ((ListV) v).len;
+                Type t = args.get(0).expr().type;
+                Type kt = t instanceof Type.MapT mt ? mt.key() : ((Type.SetT) t).elem();
+                int at = switch (c.builtin) {
+                    case FIRST_KEY -> n > 0 ? 0 : -1;
+                    case LAST_KEY -> n - 1;
+                    default -> {
+                        Object k = eval(args.get(1).expr(), slots);
+                        int i = Stdlib.find(keys, n, k, kt, meter);
+                        if (i >= 0) yield i;
+                        // Not there: -i - 1 is where it would go, after the keys before it and before those after it.
+                        int pos = -i - 1;
+                        yield c.builtin == Builtin.FLOOR_KEY ? pos - 1 : pos < n ? pos : -1;
+                    }
+                };
+                return option(at >= 0 ? Values.copy(keys[at], meter) : null);
+            }
+            case IS_SUBSET -> {
+                Type.SetT st = (Type.SetT) args.get(0).expr().type;
+                ListV a = (ListV) eval(args.get(0).expr(), slots);
+                ListV b = (ListV) eval(args.get(1).expr(), slots);
+                int j = 0;
+                for (int i = 0; i < a.len; i++) {
+                    int cmp = 1;
+                    while (j < b.len) {
+                        meter.elements(1);
+                        cmp = Stdlib.compare(b.items[j], a.items[i], st.elem(), meter);
+                        if (cmp >= 0) break;
+                        j++;
+                    }
+                    if (cmp != 0) return false;
+                    j++;
+                }
+                return true;
+            }
+            case SYMMETRIC_DIFFERENCE -> {
+                Type.SetT st = (Type.SetT) c.type;
+                ListV a = (ListV) eval(args.get(0).expr(), slots);
+                ListV b = (ListV) eval(args.get(1).expr(), slots);
+                return Stdlib.setOp(c.builtin, a, b, st, c.span, meter);
+            }
+            case FOLD -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object acc = Values.coerce(owned(args.get(1).expr(), slots), c.type, meter);
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                for (int i = 0; i < n; i++) {
+                    meter.elements(1);
+                    acc = apply(c, acc, items[i]);
+                }
+                return acc;
+            }
+            case TRANSFORM -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                meter.slots(items.length);
+                Object[] out = new Object[items.length];
+                for (int i = 0; i < n; i++) {
+                    meter.elements(1);
+                    out[i] = apply(c, items[i]);
+                }
+                return xs instanceof ListV ? new ListV(out, n) : new ArrV(out);
+            }
+            case ZIP -> {
+                Object a = eval(args.get(0).expr(), slots);
+                Object b = eval(args.get(1).expr(), slots);
+                Object[] xa = a instanceof ListV l ? l.items : ((ArrV) a).items;
+                Object[] xb = b instanceof ListV l ? l.items : ((ArrV) b).items;
+                int n = Math.min(a instanceof ListV l ? l.len : xa.length, b instanceof ListV l ? l.len : xb.length);
+                int cap = ((Type.ListT) c.type).cap();
+                meter.slots(cap);
+                Object[] out = new Object[cap];
+                for (int i = 0; i < n; i++) {
+                    meter.elements(1);
+                    out[i] = new StructV(new Object[] {Values.copy(xa[i], meter), Values.copy(xb[i], meter)});
+                }
+                return new ListV(out, n);
+            }
             case ASSERT_EQ -> throw new IllegalStateException("assert_eq is an assert statement");
             case PANIC -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);
@@ -1770,6 +1981,17 @@ public final class Interpreter {
         Object result = invoke(f, a, c.span);
         meter.at(caller);
         return (Boolean) result;
+    }
+
+    /** Calls the function passed to fold or transform (c.fnArg) with the given values, and returns its result. */
+    private Object apply(Call c, Object... values) {
+        FnDecl f = c.fnArg;
+        Object[] a = new Object[f.params.size()];
+        for (int i = 0; i < a.length; i++) a[i] = Values.coerce(values[i], f.paramVars.get(i).type, meter);
+        Span caller = meter.at();
+        Object result = invoke(f, a, c.span);
+        meter.at(caller);
+        return result;
     }
 
     /**

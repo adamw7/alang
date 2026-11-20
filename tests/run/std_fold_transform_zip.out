@@ -1,0 +1,12 @@
+Stats(count: 3, total: 13, longest: "banana")
+108 7 314 8
+[9, 1, 16] [1.5, 0.5, 2.0] [] [1, 4, 9]
+["FIG", "BANANA", "KIWI"] ["date", "banana", "kiwi"] ["fig", "banana", "kiwi"] Stats(count: 1, total: 6, longest: "banana")
+["3 m2", "1 m2", "4 m2"]
+fig 1.5
+banana 0.25
+kiwi 2.0
+[(3, "fig"), (1, "banana"), (4, "kiwi")] 0 [(3, true), (1, false), (4, true)]
+0: 3 fig
+1: 1 banana
+2: 4 kiwi

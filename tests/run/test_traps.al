@@ -5,7 +5,7 @@ fn half(x: i64) -> i64
     return x / 2;
 }
 
-fn fill(n: i64) -> list[i64; 3] {
+fn filled(n: i64) -> list[i64; 3] {
     var xs: list[i64; 3] = [];
     for i in 0..n {
         push(mut xs, i);
@@ -14,7 +14,7 @@ fn fill(n: i64) -> list[i64; 3] {
 }
 
 fn main() {
-    print(half(10), " ", fill(3));
+    print(half(10), " ", filled(3));
 }
 
 test "an even number halves" {
@@ -26,7 +26,7 @@ test "an odd number is refused" traps R0006 {
 }
 
 test "a fourth element does not fit" traps R0004 {
-    let xs: list[i64; 3] = fill(4);
+    let xs: list[i64; 3] = filled(4);
     print(xs);
 }
 

@@ -9,15 +9,6 @@ struct Range {
     hi: i64,
 }
 
-fn is_sorted(xs: list[i64; N]) -> bool {
-    for i in 1..len(xs) {
-        if xs[i - 1] > xs[i] {
-            return false;
-        }
-    }
-    return true;
-}
-
 /// Sorts up to 32 integers in ascending order (a stable merge sort).
 tool fn merge_sort(input: list[i64; N]) -> list[i64; N]
     ensures len(result) == len(input)
