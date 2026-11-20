@@ -138,6 +138,16 @@ public enum Code {
     E0308("pattern mismatch",
         "The pattern does not fit the type of the matched value, or binds the wrong number of payload values.",
         "match shape { Shape.Circle => { } }  // error: write Shape.Circle(r) or Shape.Circle(_)"),
+    E0309("let else does not leave",
+        "The else block of `let P: T = e else { ... };` runs when the pattern does not match, and then the names of the "
+            + "pattern have no value; so it must not reach its end: it returns, breaks, continues or panics.",
+        "let Option.Some(n): Option<i64> = parse_i64(s) else { print(\"bad\"); };  // error: add return"),
+    E0310("misplaced `?`",
+        "`e?` takes the value out of e, an Option or a Result, and when there is none returns the Option.None or Result.Err "
+            + "from the function at once. So e must be an Option or a Result, and the function must return the same kind: "
+            + "an Option for an Option; for a Result, a Result whose error type can hold e's. Tests, contracts and default "
+            + "values have nothing to return from.",
+        "fn first_digit(s: str[8]) -> i64 { let n: i64 = parse_i64(s)?; return n; }  // error: return Option<i64>"),
 
     // ---- memory, termination ----
     E0401("recursion is not allowed",
@@ -249,8 +259,8 @@ public enum Code {
         "An index is negative or not smaller than the length of the array, list or string.",
         "let a: [i32; 3] = [1, 2, 3];\nlet x: i32 = a[3];  // trap"),
     R0004("capacity exceeded",
-        "A push/append does not fit in the list or string capacity, a str[N](s) or list[T; N](xs) conversion gets "
-            + "more than N bytes or elements, the text of str[N](x) for a number or bool is longer than N bytes, or the standard input is longer than the `str[N]` parameter of fn main. "
+        "A push/append does not fit in the list or string capacity, a union of sets does not fit in the capacity of the "
+            + "first, a str[N](s) or list[T; N](xs) conversion gets more than N bytes or elements, the text of str[N](x) for a number or bool is longer than N bytes, or the standard input is longer than the `str[N]` parameter of fn main. "
             + "Capacities are part of the type: list[T; N], str[N].",
         "var s: str[4] = \"abc\";\nappend(mut s, \"de\");  // trap"),
     R0005("assertion failed",
@@ -280,12 +290,13 @@ public enum Code {
             + "Raise the budget or reduce the work.",
         "alang run long.al --max-steps 1000000000"),
     R0012("invalid shift or empty pop",
-        "A shift amount is negative or not smaller than the bit width, or pop() was called on an empty list/string.",
+        "A shift amount is negative or not smaller than the bit width, or pop() or pop_front() was called on an empty "
+            + "list/string.",
         "let x: u32 = 1 << 32;  // trap"),
     R0013("invalid argument",
         "A standard library function received an argument outside its domain: a negative exponent for pow, bounds "
-            + "with lo > hi for clamp, an empty separator or pattern for split or replace, an empty list for min(xs) or "
-            + "max(xs), a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, or a "
+            + "with lo > hi for clamp, an empty separator or pattern for split, split_once or replace, an empty list for "
+            + "min(xs), max(xs), min_by or max_by, a count below 0 or text over 1048576 bytes for repeat, a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, or a "
             + "base outside 2 to 36 for to_base or parse_i64.",
         "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap");
 

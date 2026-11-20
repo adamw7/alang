@@ -173,8 +173,10 @@ statement
 // let (q, r): (i64, i64) = divmod(a, b);  takes a value apart with a pattern that always matches (`_` skips a part):
 // let Point(x: px, y: _): Point = p;
 // The type is required; the grammar lets it be left out only so that the checker can name the missing type (E0219).
+// let Option.Some(n): Option<i64> = parse_i64(s) else { return 0; };  a pattern that can fail, with a block that
+// runs when it does not match and must leave: return, break, continue or panic.
 letStmt
-    : kind=(LET | VAR) (identifier | pattern) (COLON type)? ASSIGN expression SEMI
+    : kind=(LET | VAR) (identifier | pattern) (COLON type)? ASSIGN expression (ELSE block)? SEMI
     ;
 
 assignStmt
@@ -214,8 +216,9 @@ whileStmt
 // for i in rev 0..n { }        (the same values, last first)
 // for item in items { }        (array, list or str; iterates over copies)
 // for i, item in items { }     (with each element's index)
+// for (k, v) in pairs { }      (each element taken apart by a pattern that always matches)
 forStmt
-    : FOR identifier (COMMA identifier)? IN REV? expression (range=(DOTDOT | DOTDOTEQ) expression (STEP expression)?)? block
+    : FOR (index=identifier COMMA)? (identifier | pattern) IN REV? expression (range=(DOTDOT | DOTDOTEQ) expression (STEP expression)?)? block
     ;
 
 // outer: for i in 0..n { ... break outer; ... }
@@ -341,6 +344,7 @@ postfixOp
     | DOT (INT_LIT | FLOAT_LIT)          # tupleAccess   // t.0, and t.0.1 (lexed as t . 0.1)
     | LBRACK expression RBRACK           # indexAccess
     | LBRACK (from=expression)? DOTDOT (to=expression)? RBRACK   # sliceAccess  // s[1..], xs[a..b]: the elements from..to
+    | QUESTION                           # tryAccess    // parse_i64(s)?: the value, or return the Option.None or Result.Err
     ;
 
 primary
@@ -510,7 +514,7 @@ PIPEPIPE   : '||' ;   // use `or`
 BANG       : '!' ;    // use `not`
 COLONCOLON : '::' ;   // use `.`  (Color.Red)
 PLUSPLUS   : '++' ;   // use `x += 1;`
-QUESTION   : '?' ;    // no ternary / try operator
+QUESTION   : '?' ;    // e?: no ternary operator
 
 // ---- literals ----
 FLOAT_LIT

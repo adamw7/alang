@@ -124,19 +124,22 @@ test "counts repeated words" {
     So is every variable: `var it: Item = items[0]; it.qty += 1;` changes the copy, not the list (warning
     W0305); write `items[0].qty += 1;`.
 11. **A call with a `mut` argument is its own statement** or the whole right side of `let`/assignment/`return` (or of `while let P =`): `let top: i32 = pop(mut stack);` then use `top`.
-12. **A `mut` variable cannot appear twice in one call**: `append(mut s, s)` and `swap(mut xs[i], mut xs[j])` are errors. Numbers passed without `mut` are copied first, so `remove(mut xs, len(xs) - 1)` is fine.
+12. **A `mut` variable cannot appear twice in one call**: `append(mut s, s)` and `swap(mut xs[i], mut xs[j])` are errors (write `swap(mut xs, i, j)`). Numbers passed without `mut` are copied first, so `remove(mut xs, len(xs) - 1)` is fine.
 13. **No shadowing.** Pick a new name instead of redeclaring one in an inner block.
 14. **`match` must be exhaustive.** Add `_ => { }` last when matching integers or strings. Patterns nest:
     `Option.Some(0)`, `(Color.Red, true)`, `Point(x: 0, y: py)`, `1..=9`, `'a'..='z'`, `6 | 7`, and a plain
     name, which binds a copy (there are no float patterns). An arm may have a guard,
     `Option.Some(v) if v > 0 => { }`; guarded arms do not count toward exhaustiveness. As a value:
-    `let s: str[8] = match n { 0 => "zero", _ => "many" };`. One case only: `if let Option.Some(v) = m { }`.
+    `let s: str[8] = match n { 0 => "zero", _ => "many" };`. One case only: `if let Option.Some(v) = m { }`, or
+    `let Option.Some(v): Option<i64> = m else { return 0; };`, whose block must leave (return, break, continue).
 15. **Functions with a return type return on every path.** Add a final `return` after loops.
 16. **No methods.** `len(xs)`, not `xs.len()`; `push(mut xs, v)`, not `xs.push(v)`; `trim(s)`, not `s.trim()`.
 17. **Strings are byte buffers**: `s[i]` is a `u8`, `'a'` is a `u8` constant. Build text with `append(mut s, "x = ", x)`; add one character with `push(mut s, 'a')`. Two strs compare with `==` and order with `<`, byte by byte. For characters beyond ASCII, `char_count(s)` counts
     code points, `for c in chars(s) { }` goes through them (each a `u32`), and `slice_chars` cuts between them.
 18. **No exceptions, no null.** Return `Option<T>` (`Option.Some(x)`, `Option.None`) for a value that may be
     absent and `Result<T, E>` (`Result.Ok(x)`, `Result.Err(why)`) for one that can fail; both are built in.
+    `let n: i64 = parse_i64(s)?;` takes the value out, or returns the `Option.None` (or `Result.Err`) from a function
+    that returns an `Option` (a `Result`); `unwrap_or(o, 0)`, `is_some(o)`, `is_ok(r)` read one without a `match`.
     `panic("...")` or `assert` for bugs. Structs and enums of your own take type parameters too:
     `struct Pair<A, B> { first: A, second: B }`, used as `Pair<i64, str[8]>`.
 19. **Input arrives whole; nothing else is read.** `fn main(input: str[4096])` gets all of stdin as bytes
@@ -163,6 +166,7 @@ test "counts repeated words" {
 | `for i in range(0, n + 1, 2)`, `(0..=n).step_by(2)` | `for i in 0..=n step 2 { }` |
 | `for i in range(n - 1, -1, -1)`, `(0..n).rev()`, `reversed(xs)` | `for i in rev 0..n { }`, `for x in rev xs { }` |
 | `for i, x in enumerate(xs)`, `xs.iter().enumerate()` | `for i, x in xs { }` |
+| `for k, v in pairs`, `for (a, b) in pairs`, `for &(a, b) in pairs.iter()` | `for (a, b) in pairs { }`, and `for i, (a, b) in pairs { }` with each index |
 | `'outer: for ...` / `break 'outer` (Rust), `break outer` (Go, Java) | `outer: for ... { }` and `break outer;`, `continue outer;` |
 | `loop { }` | `while true limit 1000 { ... break; }` |
 | `s.push_str("a")`, `format!("{} {}", a, b)` | `append(mut s, "a")`, `var s: str[64] = ""; append(mut s, a, " ", b);` |
@@ -190,6 +194,9 @@ test "counts repeated words" {
 | `xs = [x for x in xs if f(x)]`, `xs.retain(f)` | `retain(mut xs, f);` |
 | `map(f, xs)`, a callback of your own | a parameter `f: fn(T) -> U`, passed by name: `fn apply(xs: list[i64; _], f: fn(i64) -> i64)`; no closures or lambdas |
 | `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
+| `s.removeprefix("v")`, `s.strip_suffix(".txt")` | `strip_prefix(s, 'v')`, `strip_suffix(s, ".txt")`: `s` unchanged when it does not start (end) with it |
+| `k, _, v = s.partition("=")`, `s.split_once('=')` | `split_once(s, '=')`: `Option.Some((before, after))`, or `Option.None` |
+| `"-" * 20`, `"ab".repeat(3)` | `repeat('-', 20)`, `repeat("ab", 3)`, in `print`/`append` or a typed str |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
 | `s.rfind("x")`, `xs.lastIndexOf(x)` | `last_index_of(s, "x")`, `last_index_of(xs, x)` (-1 if absent) |
 | `sum(xs)`, `min(xs)`, `max(xs)`, `xs.iter().sum()` | `sum(xs)`, `min(xs)`, `max(xs)` on an array or list of numbers (`min`/`max` trap on an empty one) |
@@ -202,6 +209,14 @@ test "counts repeated words" {
 | `pub fn`, `export function`, `public` | `fn`: every top-level declaration is visible to the files that import it |
 | `const N = 10;` inside a function | `let n: i64 = 10;`; `const` is for the top level of the file |
 | `c ? a : b`, `a if c else b`, `if c { a } else { b }` as a value | `if c then a else b` |
+| `x?`, `try!(x)`, `if err != nil { return err }` | `let v: i64 = f(x)?;` in a function returning `Option`/`Result`; the error type must hold the callee's |
+| `let Some(v) = o else { return 0; };`, `guard let v = o else { return 0 }` | `let Option.Some(v): Option<i64> = o else { return 0; };` |
+| `o.unwrap_or(0)`, `o ?? 0`, `o.getOrElse(0)`, `o.is_some()`, `r.is_err()` | `unwrap_or(o, 0)`, `is_some(o)`, `is_none(o)`, `is_ok(r)`, `is_err(r)` |
+| `a, b = b, a`, `std::mem::swap(&mut a, &mut b)`, `xs.swap(i, j)` | `swap(mut a, mut b);`, `swap(mut xs, i, j);` |
+| `xs.pop(0)`, `q.popleft()`, `xs.shift()`, `VecDeque::pop_front` | `let x: T = pop_front(mut xs);` (and `push(mut xs, x)` at the back) |
+| `min(xs, key=f)`, `xs.iter().max_by_key(f)`, `minBy` | `min_by(xs, before)`, `max_by(xs, before)` with `fn before(a: T, b: T) -> bool` |
+| `a \| b`, `a & b`, `a - b` on sets, `a.union(&b)` | `union(a, b)`, `intersection(a, b)`, `difference(a, b)` |
+| `assert_eq!(a, b)`, `assertEqual(a, b)` | `assert_eq(a, b);` or `assert a == b;`: both show the two values when they differ |
 | `let Point { x, y } = p;`, `const { x, y } = p` | `let Point(x: px, y: py): Point = p;` |
 | `Point { y: 0, ..p }`, `{...p, y: 0}`, `dataclasses.replace(p, y=0)` | `Point(..p, y: 0)`, with `p` a variable |
 | `@dataclass` field `= 3`, `#[derive(Default)]`, `Config::default()` | `struct Config { retries: i64 = 3, }` then `Config()` or `Config(retries: 5)` |
@@ -215,8 +230,9 @@ adds tested helpers (pseudo-random numbers, an insertion-ordered map).
 |------|-----------|
 | Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` (an `Option`) `rem_euclid` `div_euclid` `mul_mod(a, b, m)` `count_ones` `leading_zeros` `trailing_zeros` `rotl(x, n)` `rotr(x, n)` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `split(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `is_int` `is_float` `parse_i64(s)` `parse_i64(s, base)` `parse_f64` (an `Option`) `str[N](n)` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` `to_base(n, base)` `hash(s)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
-| Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `binary_search(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `retain(mut xs, keep)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `keys(m)`, `values(m)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear`; enums: `variants(E)` |
+| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `strip_prefix` `strip_suffix` `split(s, sep)` `split_once(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `repeat(s, n)` `is_int` `is_float` `parse_i64(s)` `parse_i64(s, base)` `parse_f64` (an `Option`) `str[N](n)` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` `to_base(n, base)` `hash(s)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
+| Option, Result | `unwrap_or(o, d)` `is_some` `is_none` `is_ok` `is_err`; `e?`; `assert_eq(a, b);` |
+| Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `binary_search(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `pop_front(mut xs)` `swap(mut xs, i, j)` `swap(mut a, mut b)` `retain(mut xs, keep)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` `min_by(xs, before)` `max_by(xs, before)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `keys(m)`, `values(m)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear`, `union(a, b)`, `intersection(a, b)`, `difference(a, b)`; enums: `variants(E)` |
 
 - `split`, `words`, `join`, `replace` take their type from the typed `let`/`var`/assignment/`return` they
   are the whole right side of: `let parts: list[str[16]; 8] = split(line, ",");`. Pieces that do not fit

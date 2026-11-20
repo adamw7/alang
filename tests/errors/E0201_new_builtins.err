@@ -1,0 +1,78 @@
+error[E0203]: unwrap_or() needs an Option or a Result, found map[str[4], i64; 4]
+  --> tests/errors/E0201_new_builtins.al:15:21
+   |
+15 |     print(unwrap_or(m, 0), unwrap_or(o, "zero"), is_some(r), is_ok(o));
+   |                     ^
+  = hint: for a map, use get_or(m, key, default)
+
+error[E0201]: type mismatch: expected i64, found str[4]
+  --> tests/errors/E0201_new_builtins.al:15:41
+   |
+15 |     print(unwrap_or(m, 0), unwrap_or(o, "zero"), is_some(r), is_ok(o));
+   |                                         ^^^^^^
+
+error[E0203]: is_some() needs an Option, found Result<i64, str[8]>
+  --> tests/errors/E0201_new_builtins.al:15:58
+   |
+15 |     print(unwrap_or(m, 0), unwrap_or(o, "zero"), is_some(r), is_ok(o));
+   |                                                          ^
+  = hint: for a Result, use is_ok()
+
+error[E0203]: is_ok() needs a Result, found Option<i64>
+  --> tests/errors/E0201_new_builtins.al:15:68
+   |
+15 |     print(unwrap_or(m, 0), unwrap_or(o, "zero"), is_some(r), is_ok(o));
+   |                                                                    ^
+  = hint: for an Option, use is_some()
+
+error[E0201]: union() needs two sets of the same element type, found set[i64; 4] and set[i32; 4]
+  --> tests/errors/E0201_new_builtins.al:16:11
+   |
+16 |     print(union(a, b), intersection(a, [1, 2]), difference(m, a));
+   |           ^^^^^^^^^^^
+
+error[E0203]: difference() needs two sets, found map[str[4], i64; 4]
+  --> tests/errors/E0201_new_builtins.al:16:60
+   |
+16 |     print(union(a, b), intersection(a, [1, 2]), difference(m, a));
+   |                                                            ^
+  = hint: for the keys of a map, build a set: insert(mut s, k) for each key
+
+error[E0201]: `shorter` is fn(str[8], str[8]) -> bool, but fn(i64, i64) -> bool is expected
+  --> tests/errors/E0201_new_builtins.al:17:26
+   |
+17 |     print(min_by([1, 2], shorter), split_once(x, ','), strip_prefix(s, 1.5));
+   |                          ^^^^^^^
+
+error[E0203]: split_once() needs a str, found i64
+  --> tests/errors/E0201_new_builtins.al:17:47
+   |
+17 |     print(min_by([1, 2], shorter), split_once(x, ','), strip_prefix(s, 1.5));
+   |                                               ^
+
+error[E0201]: strip_prefix() needs a str or a u8 byte for the prefix, found f64
+  --> tests/errors/E0201_new_builtins.al:17:72
+   |
+17 |     print(min_by([1, 2], shorter), split_once(x, ','), strip_prefix(s, 1.5));
+   |                                                                        ^^^
+
+error[E0201]: swap() needs two values of the same type, found i64 and str[8]
+  --> tests/errors/E0201_new_builtins.al:18:5
+   |
+18 |     swap(mut x, mut s);
+   |     ^^^^^^^^^^^^^^^^^^
+
+error[E0201]: assert_eq() is a statement of its own and has no value
+  --> tests/errors/E0201_new_builtins.al:19:22
+   |
+19 |     let none: bool = assert_eq(x, 1);
+   |                      ^^^^^^^^^^^^^^^
+  = hint: write it on its own line: assert_eq(x, 1);
+
+error[E0201]: repeat() builds a str[N], but list[i64; 3] is expected
+  --> tests/errors/E0201_new_builtins.al:20:29
+   |
+20 |     let rep: list[i64; 3] = repeat("ab", 2);
+   |                             ^^^^^^^^^^^^^^^
+  = hint: store it in a variable of that type: let text: str[32] = repeat("ab", 2);
+

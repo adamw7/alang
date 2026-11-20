@@ -41,6 +41,13 @@ final class SyntaxErrorListener extends BaseErrorListener {
         Token prev = previous(ts, tok);
         Token prev2 = prev == null ? null : previous(ts, prev);
         expected = letExpected(ts, tok, prev, expected);
+        // `for (i = 0; i < n; i++)`: `(` starts a pattern, so the parser gets to `=` before it sees what is wrong.
+        Token paren = cStyleFor(ts, tok);
+        if (paren != null) {
+            diags.error(Code.E0001, new Span(paren.getLine(), paren.getCharPositionInLine() + 1, 1, file),
+                "unexpected '(', expected a name", FOR_LOOPS);
+            return;
+        }
 
         String text = tok.getType() == Token.EOF ? "end of file"
             : tok.getType() == ALangLexer.ERROR_CHAR ? "character " + strayCharacter(tok.getText())
@@ -292,6 +299,12 @@ final class SyntaxErrorListener extends BaseErrorListener {
      */
     private static IntervalSet letExpected(TokenStream ts, Token tok, Token prev, IntervalSet expected) {
         if (prev == null || expected == null) return expected;
+        // After the value of a let, `else` may start the block of `let P: T = e else { };`, but `;` is what is missing.
+        if (expected.contains(ALangLexer.ELSE) && expected.contains(ALangLexer.SEMI)) {
+            IntervalSet without = new IntervalSet(expected);
+            without.remove(ALangLexer.ELSE);
+            expected = without;
+        }
         if (prev.getType() == ALangLexer.LET || prev.getType() == ALangLexer.VAR) {
             return IntervalSet.of(ALangLexer.IDENT).or(IntervalSet.of(ALangLexer.LPAREN));
         }
@@ -410,7 +423,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 expr = true;
                 continue;
             }
-            if (isBinaryOperator(t) || t == ALangParser.DOT || t == ALangParser.LBRACK && expected.contains(ALangParser.PLUS)) {
+            // The `?` after an Option or Result is one of the operators that may follow a value.
+            if (isBinaryOperator(t) || t == ALangParser.DOT || t == ALangParser.QUESTION
+                || t == ALangParser.LBRACK && expected.contains(ALangParser.PLUS)) {
                 operator = true;
                 continue;
             }
@@ -441,6 +456,34 @@ final class SyntaxErrorListener extends BaseErrorListener {
         return "one of " + String.join(", ", names);
     }
 
+    private static final String FOR_LOOPS = "for loops iterate a range or a collection: for i in 0..n { ... } or for x in xs { ... }";
+
+    /**
+     * The `(` after `for` when {@code tok} is inside the parentheses it opens and no `in` came before it: a loop written
+     * as in C. Null otherwise, also for `for (a, b) in xs`, a pattern.
+     */
+    private static Token cStyleFor(TokenStream ts, Token tok) {
+        int depth = 0;
+        for (int i = tok.getTokenIndex() - 1; i >= 0; i--) {
+            Token t = ts.get(i);
+            if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+            int k = t.getType();
+            if (k == ALangLexer.RPAREN || k == ALangLexer.RBRACK) {
+                depth++;
+            } else if (k == ALangLexer.LPAREN || k == ALangLexer.LBRACK) {
+                if (depth-- > 0) continue;
+                Token before = previous(ts, t);
+                return k == ALangLexer.LPAREN && before != null && before.getType() == ALangLexer.FOR ? t : null;
+            } else if (k == ALangLexer.SEMI || k == ALangLexer.LBRACE || k == ALangLexer.RBRACE || k == ALangLexer.IN) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static final String TERNARY = "there is no `c ? a : b`; write `if c then a else b`. A `?` after an Option or "
+        + "Result, as in `parse_i64(s)?`, takes its value out, or returns its Option.None or Result.Err";
+
     private static String hint(TokenStream ts, Token tok, Token prev, Token prev2, IntervalSet expected) {
         int t = tok.getType();
         int p = prev == null ? -1 : prev.getType();
@@ -450,7 +493,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
             case ALangLexer.BANG -> "use the keyword `not` for negation (`!=` is still the inequality operator)";
             case ALangLexer.COLONCOLON -> "enum variants are accessed with a dot: Color.Red, Shape.Circle(1.0)";
             case ALangLexer.PLUSPLUS -> "there is no ++ operator; write `x += 1;`";
-            case ALangLexer.QUESTION -> "there is no `?:` or `?` operator; use if/else or match";
+            case ALangLexer.QUESTION -> TERNARY;
             case ALangLexer.IDENT -> switch (tok.getText()) {
                 case "elif", "elsif", "elseif" -> "use `else if`";
                 case "loop" -> LOOP;
@@ -460,6 +503,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
             default -> null;
         };
         if (foreign != null) return foreign;
+        // `c ? a : b` reads `c?` as the `?` of an Option or Result, and stops at `a`.
+        if (p == ALangLexer.QUESTION) return TERNARY;
         if (elseIf(ts, prev)) return "use `else if`";
         // `loop { }` reads `loop` as a name, so the error is at the `{` after it.
         if (t == ALangLexer.LBRACE && p == ALangLexer.IDENT && prev.getText().equals("loop")) return LOOP;
@@ -507,9 +552,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (t == ALangLexer.ASSIGN && p == ALangLexer.RBRACK && slicedBefore(ts, prev)) {
             return "a slice is a value, not a place; set the elements one at a time: for i in a..b { xs[i] = v; }";
         }
-        if (p == ALangLexer.FOR && t == ALangLexer.LPAREN) {
-            return "for loops iterate a range or a collection: for i in 0..n { ... } or for x in xs { ... }";
-        }
+        if (p == ALangLexer.FOR && t == ALangLexer.LPAREN) return FOR_LOOPS;
         if (expected != null && expected.contains(ALangLexer.COLON)
             && (t == ALangLexer.COMMA || t == ALangLexer.RPAREN) && p == ALangLexer.IDENT) {
             return "parameters need explicit types: fn f(x: i32, ys: mut list[i32; 8])";

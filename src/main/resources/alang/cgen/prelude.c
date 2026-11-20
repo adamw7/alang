@@ -1833,6 +1833,33 @@ static uint32_t al_trim_into(uint8_t *dst, const uint8_t *s, uint32_t n) {
     return al_copy_bytes(dst, s + start, n - start);
 }
 
+/* strip_prefix() (prefix != 0) or strip_suffix() of s into dst: s without p at that end, or all of s. */
+static uint32_t al_strip_into(uint8_t *dst, const uint8_t *s, uint32_t n, const uint8_t *p, uint32_t pn, int prefix) {
+    if (prefix) {
+        if (al_starts_with(s, n, p, pn)) return al_copy_bytes(dst, s + pn, n - pn);
+    } else if (al_ends_with(s, n, p, pn)) {
+        return al_copy_bytes(dst, s, n - pn);
+    }
+    return al_copy_bytes(dst, s, n);
+}
+
+/* repeat(): traps (R0013) when n copies of pn bytes, n already at most 1048576, would make more than 1048576 bytes. */
+static void al_repeat_check(uint32_t pn, uint64_t n, int line, int col) {
+    al_out e;
+    if ((uint64_t)pn * n <= 1048576u) return;
+    e = al_trap_begin("R0013");
+    AL_PUTS(&e, "repeat() would make ");
+    al_fmt_u64(&e, (uint64_t)pn * n);
+    AL_PUTS(&e, " bytes, more than 1048576");
+    al_trap_end(&e, line, col);
+}
+
+/* repeat(): writes the pn bytes at p n times. */
+static void al_repeat(al_out *o, const uint8_t *p, uint32_t pn, uint64_t n) {
+    uint64_t i;
+    for (i = 0; i < n; i++) al_put(o, p, pn);
+}
+
 static uint32_t al_case_into(uint8_t *dst, const uint8_t *s, uint32_t n, int upper) {
     uint32_t i;
     for (i = 0; i < n; i++) {

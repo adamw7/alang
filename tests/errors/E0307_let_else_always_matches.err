@@ -1,0 +1,14 @@
+error[E0307]: the pattern always matches, so the else block never runs
+ --> tests/errors/E0307_let_else_always_matches.al:5:9
+  |
+5 |     let (a, b): (i64, i64) = pair else {
+  |         ^^^^^^
+  = hint: remove the else block
+
+error[E0307]: the pattern always matches, so the else block never runs
+ --> tests/errors/E0307_let_else_always_matches.al:8:9
+  |
+8 |     let n: i64 = a + b else {
+  |         ^
+  = hint: remove the else block: let n: i64 = ...;
+

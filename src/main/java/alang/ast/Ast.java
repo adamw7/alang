@@ -442,13 +442,30 @@ public final class Ast {
         public final Pattern pattern;
         public final TypeRef typeRef;
         public final Expr init;
+        /**
+         * `let P: T = e else { ... };`: the block that runs when P does not match, which must leave (return, break,
+         * continue or panic); null for a let whose pattern always matches.
+         */
+        public final Block elseBlock;
+        /**
+         * Whether it is the first statement of the body of `for P in xs`, made by the parser: it takes apart the loop's
+         * hidden variable, init, whose type it has, and P must always match.
+         */
+        public final boolean loopItem;
 
         public Destructure(Span span, boolean mutable, Pattern pattern, TypeRef typeRef, Expr init) {
+            this(span, mutable, pattern, typeRef, init, null, false);
+        }
+
+        public Destructure(Span span, boolean mutable, Pattern pattern, TypeRef typeRef, Expr init, Block elseBlock,
+                           boolean loopItem) {
             super(span);
             this.mutable = mutable;
             this.pattern = pattern;
             this.typeRef = typeRef;
             this.init = init;
+            this.elseBlock = elseBlock;
+            this.loopItem = loopItem;
         }
     }
 
@@ -1134,6 +1151,21 @@ public final class Ast {
             this.op = op;
             this.left = left;
             this.right = right;
+        }
+    }
+
+    /**
+     * `e?`: the value in e, an Option or a Result, when it is Option.Some or Result.Ok; when it is Option.None or
+     * Result.Err, the function returns that at once.
+     */
+    public static final class Try extends Expr {
+        public final Expr inner;
+        /** Set by the checker: the return type of the function, an Option or a Result, which a failure is returned as. */
+        public Type ret;
+
+        public Try(Span span, Expr inner) {
+            super(span);
+            this.inner = inner;
         }
     }
 

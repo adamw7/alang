@@ -1,0 +1,8 @@
+Option.Some(Pair(a: 3, b: 40)) Option.None Option.None Option.None
+Result.Ok(6) Result.Err("no digit")
+Result.Ok(2) Result.Err("not positive")
+Option.Some(false) Option.None Option.Some(true) Option.Some(true)
+Option.Some(("a", "a")) Option.Some((1, 1)) Option.None
+Option.Some("zy") ["x"]
+Option.None []
+Option.None Option.Some(2)

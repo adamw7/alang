@@ -1,0 +1,7 @@
+error[E0309]: the else block of a let must leave: the names of the pattern have no value after it
+ --> tests/errors/E0309_let_else_falls_through.al:4:57
+  |
+4 |     let Option.Some(n): Option<i64> = parse_i64(s) else {
+  |                                                         ^
+  = hint: end it with return, break, continue or panic("...")
+

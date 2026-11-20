@@ -138,6 +138,7 @@ final class Debug implements Debugger {
                 }
                 case While w -> collect(w.body);
                 case For f2 -> collect(f2.body);
+                case Destructure d when d.elseBlock != null -> collect(d.elseBlock);
                 case Match m -> {
                     for (Arm a : m.arms) collect(a.body());
                 }

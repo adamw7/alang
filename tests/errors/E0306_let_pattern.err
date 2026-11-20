@@ -3,5 +3,5 @@ error[E0306]: the pattern of a let does not match every value of MaybeI64: missi
   |
 9 |     let MaybeI64.Some(v): MaybeI64 = m;
   |         ^^^^^^^^^^^^^^^^
-  = hint: a let cannot fail; use match, or if let MaybeI64.Some(v) = ... { } else { }
+  = hint: add an else block that leaves: let MaybeI64.Some(v): MaybeI64 = ... else { return ...; }; or use match, or if let MaybeI64.Some(v) = ... { }
 

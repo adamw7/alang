@@ -269,7 +269,12 @@ public final class Interpreter {
             }
         }
         retVal = null;
-        execBlock(f.body, slots);
+        try {
+            execBlock(f.body, slots);
+        } catch (Escape e) {
+            // `e?` met an Option.None or a Result.Err: the function returns it.
+            retVal = e.value;
+        }
         Object result = retVal == null ? null : Values.coerce(retVal, f.ret, meter);
         retVal = null;
         if (f.resultVar != null) slots[f.resultVar.slot] = result;
@@ -366,11 +371,13 @@ public final class Interpreter {
                 yield NORMAL;
             }
             case Destructure d -> {
-                // The pattern always matches; matching it binds its names.
+                // Matching the pattern binds its names; one that can fail has an else block, which leaves.
                 Object v = Values.coerce(owned(d.init, slots), d.init.type, meter);
                 if (debugger != null) callStack.peek().truncate(callStack.peek().mark);
-                matches(d.pattern, v, slots);
-                yield NORMAL;
+                if (matches(d.pattern, v, slots) || d.elseBlock == null) yield NORMAL;
+                int r = execBlock(d.elseBlock, slots);
+                if (r == NORMAL) throw new IllegalStateException("the else block of a let ran to its end");
+                yield r;
             }
             case If i -> {
                 for (int k = 0; k < i.conds.size(); k++) {
@@ -843,6 +850,7 @@ public final class Interpreter {
                 };
             }
             case Binary b -> binary(b, slots);
+            case Try t -> tryValue(t, slots);
             case ArrayLit a when a.type instanceof Type.MapT mt -> {
                 meter.slots(2L * mt.cap());
                 MapV m = new MapV(new Object[mt.cap()], new Object[mt.cap()], 0);
@@ -1602,6 +1610,117 @@ public final class Interpreter {
                 if (i >= 0 || stored(args.get(2).expr())) v = Values.copy(v, meter);
                 return Values.coerce(v, mt.value(), meter);
             }
+            case UNWRAP_OR -> {
+                Expr o = args.get(0).expr();
+                EnumV e = (EnumV) eval(o, slots);
+                Expr d = args.get(1).expr();
+                Object dv = eval(d, slots);
+                boolean ok = succeeded(o.type, e);
+                // As get_or: the value is the variable's or the default's own, so the result is a copy of either.
+                Object v = ok ? e.payload[0] : dv;
+                if (stored(ok ? o : d)) v = Values.copy(v, meter);
+                return Values.coerce(v, c.type, meter);
+            }
+            case IS_SOME, IS_NONE, IS_OK, IS_ERR -> {
+                Expr o = args.get(0).expr();
+                boolean ok = succeeded(o.type, (EnumV) eval(o, slots));
+                return c.builtin == Builtin.IS_SOME || c.builtin == Builtin.IS_OK ? ok : !ok;
+            }
+            case STRIP_PREFIX, STRIP_SUFFIX -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                byte[] p = Stdlib.pattern(eval(args.get(1).expr(), slots), meter);
+                boolean prefix = c.builtin == Builtin.STRIP_PREFIX;
+                boolean has = prefix ? Stdlib.startsWith(s, p, meter) : Stdlib.endsWith(s, p, meter);
+                int from = has && prefix ? p.length : 0;
+                int to = has && !prefix ? s.len - p.length : s.len;
+                meter.bytes(s.b.length);
+                byte[] b = new byte[s.b.length];
+                System.arraycopy(s.b, from, b, 0, to - from);
+                return new StrV(b, to - from);
+            }
+            case SPLIT_ONCE -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                byte[] sep = Stdlib.pattern(eval(args.get(1).expr(), slots), meter);
+                if (sep.length == 0) throw new Trap(Code.R0013, c.span, "split_once separator is empty");
+                int at = Stdlib.find(s.b, s.len, sep, 0, meter);
+                if (at < 0) return option(null);
+                // Each piece has the capacity of its element of the result, at least that of s.
+                List<Type> caps = ((Type.TupleT) ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0)).elems();
+                int cap0 = ((Type.Str) caps.get(0)).cap();
+                int cap1 = ((Type.Str) caps.get(1)).cap();
+                meter.bytes((long) cap0 + cap1);
+                byte[] before = new byte[cap0];
+                System.arraycopy(s.b, 0, before, 0, at);
+                byte[] after = new byte[cap1];
+                int rest = s.len - at - sep.length;
+                System.arraycopy(s.b, at + sep.length, after, 0, rest);
+                meter.elements(1);
+                return option(new StructV(new Object[] {new StrV(before, at), new StrV(after, rest)}));
+            }
+            case REPEAT -> {
+                byte[] p = Stdlib.pattern(eval(args.get(0).expr(), slots), meter);
+                long n = (Long) eval(args.get(1).expr(), slots);
+                PrimKind k = Type.kind(args.get(1).expr().type);
+                if (!inRange(k, n, Format.MAX_PAD)) {
+                    throw new Trap(Code.R0013, c.span, "repeat() needs a count of 0 to " + Format.MAX_PAD + ", found "
+                        + IntOps.toString(k, n));
+                }
+                long total = p.length * n;
+                if (total > Format.MAX_PAD) {
+                    throw new Trap(Code.R0013, c.span, "repeat() would make " + total + " bytes, more than " + Format.MAX_PAD);
+                }
+                byte[] out = new byte[(int) total];
+                for (int i = 0; i < n; i++) System.arraycopy(p, 0, out, i * p.length, p.length);
+                return text(c, out);
+            }
+            case MIN_BY, MAX_BY -> {
+                Expr xs = args.get(0).expr();
+                Object v = eval(xs, slots);
+                Object[] items = v instanceof ListV l ? l.items : ((ArrV) v).items;
+                int n = v instanceof ListV l ? l.len : items.length;
+                if (n == 0) {
+                    throw new Trap(Code.R0013, c.span, c.builtin.name + "() of an empty " + (v instanceof ListV ? "list" : "array"));
+                }
+                boolean min = c.builtin == Builtin.MIN_BY;
+                Object best = items[0];
+                for (int i = 1; i < n; i++) {
+                    meter.elements(1);
+                    // The first of the smallest: x replaces it only when x comes before it; of the largest, when it comes
+                    // before x.
+                    if (min ? test(c, items[i], best) : test(c, best, items[i])) best = items[i];
+                }
+                return stored(xs) ? Values.copy(best, meter) : best;
+            }
+            case POP_FRONT -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                int n = xs instanceof StrV s ? s.len : ((ListV) xs).len;
+                if (n == 0) {
+                    throw new Trap(Code.R0012, c.span, "pop_front from an empty " + (xs instanceof StrV ? "str" : "list"));
+                }
+                return Stdlib.remove(xs, 0, PrimKind.I64, c.span, meter);
+            }
+            case SWAP -> {
+                if (args.size() == 2) {
+                    Ref a = ref(args.get(0).expr(), slots);
+                    Ref b = ref(args.get(1).expr(), slots);
+                    Object x = a.get();
+                    a.set(b.get());
+                    b.set(x);
+                    return null;
+                }
+                Object xs = ref(args.get(0).expr(), slots).get();
+                long i = (Long) eval(args.get(1).expr(), slots);
+                long j = (Long) eval(args.get(2).expr(), slots);
+                Stdlib.swap(xs, i, Type.kind(args.get(1).expr().type), j, Type.kind(args.get(2).expr().type), c.span, meter);
+                return null;
+            }
+            case UNION, INTERSECTION, DIFFERENCE -> {
+                Type.SetT st = (Type.SetT) c.type;
+                ListV a = (ListV) eval(args.get(0).expr(), slots);
+                ListV b = (ListV) eval(args.get(1).expr(), slots);
+                return Stdlib.setOp(c.builtin, a, b, st, c.span, meter);
+            }
+            case ASSERT_EQ -> throw new IllegalStateException("assert_eq is an assert statement");
             case PANIC -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);
                 ByteArrayOutputStream msg = new ByteArrayOutputStream();
@@ -1611,6 +1730,36 @@ public final class Interpreter {
             }
         }
         throw new IllegalStateException();
+    }
+
+    /**
+     * `e?` meeting an Option.None or a Result.Err, on its way out of the function, which {@link #invoke} returns: thrown
+     * from inside an expression, which statements do not return from.
+     */
+    private static final class Escape extends RuntimeException {
+        final transient Object value;
+
+        Escape(Object value) {
+            super(null, null, false, false);
+            this.value = value;
+        }
+    }
+
+    /** `e?`: the value in the Option or Result e, or its Option.None or Result.Err returned from the function. */
+    private Object tryValue(Try t, Object[] slots) {
+        EnumV e = (EnumV) eval(t.inner, slots);
+        boolean copy = stored(t.inner);
+        if (succeeded(t.inner.type, e)) return copy ? Values.copy(e.payload[0], meter) : e.payload[0];
+        Variant fail = ((Type.EnumT) t.ret).decl().variants.get(e.payload.length == 0 ? 0 : 1);
+        if (fail.payload.isEmpty()) throw new Escape(new EnumV(fail.index, new Object[0]));
+        Object err = copy ? Values.copy(e.payload[0], meter) : e.payload[0];
+        throw new Escape(new EnumV(fail.index, new Object[] {Values.coerce(err, fail.payload.get(0), meter)}));
+    }
+
+    /** Whether e, an Option or Result (of type t), is Option.Some or Result.Ok. */
+    private static boolean succeeded(Type t, EnumV e) {
+        String name = ((Type.EnumT) t).decl().variants.get(e.tag).name;
+        return name.equals("Some") || name.equals("Ok");
     }
 
     /** Option.Some(v), or Option.None for null. */

@@ -1,0 +1,7 @@
+error[E0306]: the pattern of a for loop does not match every element, of type Option<i64>: missing Option.None
+ --> tests/errors/E0306_for_pattern.al:5:9
+  |
+5 |     for Option.Some(v) in xs {
+  |         ^^^^^^^^^^^^^^
+  = hint: go through the elements with a name, for x in xs { }, and match x in the body
+

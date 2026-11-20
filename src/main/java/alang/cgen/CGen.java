@@ -698,7 +698,8 @@ public final class CGen {
     // =================================================================== functions
 
     private String cName(LocalVar v) {
-        return "v" + v.slot + "_" + v.name;
+        // The hidden variable of `for (a, b) in xs` is named `$item...`, which C does not allow.
+        return "v" + v.slot + "_" + v.name.replace('$', '_');
     }
 
     /** How a local is read in C (pointer parameters are dereferenced). */
@@ -869,10 +870,17 @@ public final class CGen {
             }
             case Assign a -> assign(a);
             case Destructure d -> {
-                // The pattern always matches: only its names are taken from the value.
+                // Without an else block the pattern always matches: only its names are taken from the value.
                 String v = lowerLvalue(d.init);
                 Map<LocalVar, String> binds = new LinkedHashMap<>();
-                patternCond(d.pattern, v, d.init.type, binds);
+                String cond = patternCond(d.pattern, v, d.init.type, binds);
+                if (d.elseBlock != null && cond != null) {
+                    open("if (!(" + cond + ")) {");
+                    block(d.elseBlock);
+                    close("}");
+                }
+                // `for _ in 0..n` takes nothing from the value.
+                if (binds.isEmpty()) emit("(void)" + v + ";");
                 bind(binds);
             }
             case If i -> ifStmt(i);
@@ -889,19 +897,23 @@ public final class CGen {
                     emit("return;");
                     return;
                 }
-                String v = r.value == null ? null : coerce(lower(r.value), r.value.type, fn.ret);
-                if (!fn.ensures.isEmpty()) {
-                    if (v != null) emit(cName(fn.resultVar) + " = " + v + ";");
-                    emit("goto al_exit;");
-                } else {
-                    emit(v == null ? "return;" : "return " + v + ";");
-                }
+                returnValue(r.value == null ? null : coerce(lower(r.value), r.value.type, fn.ret));
             }
             case Assert a -> assertStmt(a);
             case ExprStmt e -> {
                 String v = lower(e.expr);
                 if (v != null && !v.isEmpty()) emit("(void)(" + v + ");");
             }
+        }
+    }
+
+    /** Returns v (null for none) from the function: through its postconditions, if it has any. */
+    private void returnValue(String v) {
+        if (!fn.ensures.isEmpty()) {
+            if (v != null) emit(cName(fn.resultVar) + " = " + v + ";");
+            emit("goto al_exit;");
+        } else {
+            emit(v == null ? "return;" : "return " + v + ";");
         }
     }
 
@@ -1468,6 +1480,24 @@ public final class CGen {
                 };
             }
             case Binary b -> binary(b);
+            case Try t -> {
+                // An Option.None, or a Result.Err with its error, is returned as the function's own type.
+                String v = lowerLvalue(t.inner);
+                Variant ok = success(t.inner.type);
+                List<Variant> rv = ((Type.EnumT) t.ret).decl().variants;
+                Variant fail = rv.get(ok.name.equals("Some") ? 0 : 1);
+                open("if ((" + v + ").tag != " + ok.index + "u) {");
+                String r = tmp(t.ret, "{0}");
+                emit(r + ".tag = " + fail.index + "u;");
+                if (!fail.payload.isEmpty()) {
+                    Variant err = ((Type.EnumT) t.inner.type).decl().variants.get(fail.index);
+                    emit(r + ".u.v_" + fail.name + ".p0 = " + coerce("(" + v + ").u.v_" + err.name + ".p0", err.payload.get(0),
+                        fail.payload.get(0)) + ";");
+                }
+                returnValue(r);
+                close("}");
+                yield "(" + v + ").u.v_" + ok.name + ".p0";
+            }
             case ArrayLit a when a.type instanceof Type.MapT mt -> {
                 String r = tmp(mt, "{0}");
                 String m = keyedFns(mt);
@@ -1611,6 +1641,14 @@ public final class CGen {
         return fnName(f) + "(" + String.join(", ", args) + ")";
     }
 
+    /** The variant of an Option or Result type that holds a value: Option.Some or Result.Ok. */
+    private static Variant success(Type t) {
+        for (Variant v : ((Type.EnumT) t).decl().variants) {
+            if (v.name.equals("Some") || v.name.equals("Ok")) return v;
+        }
+        throw new IllegalStateException(t.toString());
+    }
+
     /** A value of {@code option}, an Option<T>: Option.Some(value) where {@code some} holds, else Option.None. */
     private String optionValue(Type option, String some, String value) {
         Variant v = ((Type.EnumT) option).decl().variants.get(1);
@@ -1681,6 +1719,19 @@ public final class CGen {
             String mag = signed ? "al_mag((int64_t)" + n + ")" : "(uint64_t)" + n;
             String neg = signed ? "(" + n + " < 0)" : "0";
             return sink -> emit("al_fmt_base(" + sink + ", " + mag + ", " + neg + ", (int)" + base + ");");
+        }
+        if (c.builtin == Builtin.REPEAT) {
+            String[] p = pattern(args.get(0).expr());
+            Type nt = args.get(1).expr().type;
+            String n = tmp(nt, lower(args.get(1).expr()));
+            PrimKind nk = Type.kind(nt);
+            // An i8, u8, i16 or u16 is never too large, and C compilers reject a comparison that is always false.
+            String neg = nk.signed ? "(" + n + ") < 0" : null;
+            String big = nk.bits > 16 ? "(" + n + ") > " + Format.MAX_PAD + (nk.signed ? "" : "u") : null;
+            String bad = neg != null && big != null ? neg + " || " + big : neg != null ? neg : big;
+            if (bad != null) rangeTrap(bad, "repeat() needs a count of 0 to " + Format.MAX_PAD + ", found ", nt, n, at);
+            emit("al_repeat_check(" + p[1] + ", (uint64_t)(" + n + "), " + at + ");");
+            return sink -> emit("al_repeat(" + sink + ", " + p[0] + ", " + p[1] + ", (uint64_t)(" + n + "));");
         }
         Consumer<String> value = text(args.get(0).expr());
         Type wt = args.get(1).expr().type;
@@ -2378,7 +2429,7 @@ public final class CGen {
                 emit(r + ".len = al_trim_into(" + r + ".b, (" + v + ").b, (" + v + ").len);");
                 return r;
             }
-            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE -> {
+            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE, REPEAT -> {
                 // Stored in a str: the text is written into it, and must fit.
                 String target = into;
                 into = null;
@@ -2609,6 +2660,142 @@ public final class CGen {
                 emit("uint32_t " + i + " = al_find_" + keyedFns(mt) + "(&(" + m + "), &" + key + ", &" + found + ");");
                 return tmp(mt.value(), found + " ? (" + m + ").v[" + i + "] : " + d);
             }
+            case UNWRAP_OR -> {
+                Expr o = args.get(0).expr();
+                String v = lowerLvalue(o);
+                Expr d = args.get(1).expr();
+                String dv = coerce(lower(d), d.type, c.type);
+                Variant ok = success(o.type);
+                return tmp(c.type, "(" + v + ").tag == " + ok.index + "u ? (" + v + ").u.v_" + ok.name + ".p0 : " + dv);
+            }
+            case IS_SOME, IS_NONE, IS_OK, IS_ERR -> {
+                Expr o = args.get(0).expr();
+                String v = lowerLvalue(o);
+                boolean yes = c.builtin == Builtin.IS_SOME || c.builtin == Builtin.IS_OK;
+                return tmp(Type.BOOL, "(" + v + ").tag " + (yes ? "==" : "!=") + " " + success(o.type).index + "u");
+            }
+            case STRIP_PREFIX, STRIP_SUFFIX -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String[] p = pattern(args.get(1).expr());
+                String r = tmp(c.type, "{0}");
+                emit(r + ".len = al_strip_into(" + r + ".b, (" + v + ").b, (" + v + ").len, " + p[0] + ", " + p[1] + ", "
+                    + (c.builtin == Builtin.STRIP_PREFIX ? 1 : 0) + ");");
+                return r;
+            }
+            case SPLIT_ONCE -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String[] p = pattern(args.get(1).expr());
+                if (args.get(1).expr().type instanceof Type.Str) {
+                    emit("if (" + p[1] + " == 0) AL_TRAP(\"R0013\", \"split_once separator is empty\", " + at + ");");
+                }
+                String found = tmp(Type.I64, "al_find_bytes((" + v + ").b, (" + v + ").len, " + p[0] + ", " + p[1] + ", 0)");
+                Type pair = ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0);
+                String r = tmp(pair, "{0}");
+                open("if (" + found + " >= 0) {");
+                emit(r + ".e0.len = al_copy_bytes(" + r + ".e0.b, (" + v + ").b, (uint32_t)" + found + ");");
+                emit(r + ".e1.len = al_copy_bytes(" + r + ".e1.b, (" + v + ").b + (uint32_t)" + found + " + " + p[1] + ", ("
+                    + v + ").len - (uint32_t)" + found + " - " + p[1] + ");");
+                close("}");
+                return optionValue(c.type, found + " >= 0", r);
+            }
+            case MIN_BY, MAX_BY -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String n = xs.type instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + h + ").len";
+                String kind = xs.type instanceof Type.ArrayT ? "array" : "list";
+                emit("if (" + n + " == 0) AL_TRAP(\"R0013\", \"" + c.builtin.name + "() of an empty " + kind + "\", " + at + ");");
+                String best = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                String x = "(" + h + ").v[" + i + "]";
+                String y = "(" + h + ").v[" + best + "]";
+                emit("uint32_t " + best + " = 0;");
+                open("{");
+                emit("uint32_t " + i + ";");
+                open("for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
+                emit("if (" + (c.builtin == Builtin.MIN_BY ? fnArgCall(c, x, y) : fnArgCall(c, y, x)) + ") " + best + " = " + i + ";");
+                close("}");
+                close("}");
+                return tmp(c.type, y);
+            }
+            case POP_FRONT -> {
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String kind = t instanceof Type.Str ? "str" : "list";
+                String arr = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
+                emit("if ((" + place + ").len == 0) AL_TRAP(\"R0012\", \"pop_front from an empty " + kind + "\", " + at + ");");
+                String r = tmp(Type.elementOf(t), arr + "[0]");
+                String k = "t" + ++tmpCount;
+                open("{");
+                emit("uint32_t " + k + ";");
+                emit("for (" + k + " = 1; " + k + " < (" + place + ").len; " + k + "++) " + arr + "[" + k + " - 1] = " + arr + "[" + k + "];");
+                close("}");
+                emit("(" + place + ").len--;");
+                return r;
+            }
+            case SWAP -> {
+                if (args.size() == 2) {
+                    Type t = args.get(0).expr().type;
+                    String a = lower(args.get(0).expr());
+                    String b = lower(args.get(1).expr());
+                    String x = "t" + ++tmpCount;
+                    open("{");
+                    emit(ct(t) + " " + x + " = " + a + ";");
+                    emit(a + " = " + b + ";");
+                    emit(b + " = " + x + ";");
+                    close("}");
+                    return null;
+                }
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String sp = "t" + ++tmpCount;
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                String len = t instanceof Type.ArrayT arr ? arr.len() + "u" : sp + "->len";
+                String[] ij = new String[2];
+                for (int k = 0; k < 2; k++) {
+                    Expr ie = args.get(1 + k).expr();
+                    String idx = lower(ie);
+                    ij[k] = tmp(Type.U32, Type.kind(ie.type).signed ? "al_idx_s((int64_t)(" + idx + "), " + len + ", " + at + ")"
+                        : "al_idx_u((uint64_t)(" + idx + "), " + len + ", " + at + ")");
+                }
+                Type elem = Type.elementOf(t);
+                String arr = sp + "->" + (t instanceof Type.Str ? "b" : "v");
+                String x = "t" + ++tmpCount;
+                open("{");
+                emit(ct(elem) + " " + x + " = " + arr + "[" + ij[0] + "];");
+                emit(arr + "[" + ij[0] + "] = " + arr + "[" + ij[1] + "];");
+                emit(arr + "[" + ij[1] + "] = " + x + ";");
+                close("}");
+                return null;
+            }
+            case UNION, INTERSECTION, DIFFERENCE -> {
+                Type.SetT st = (Type.SetT) c.type;
+                String a = lowerLvalue(args.get(0).expr());
+                String b = lowerLvalue(args.get(1).expr());
+                String r = tmp(st, "{0}");
+                String i = "t" + ++tmpCount;
+                String j = "t" + ++tmpCount;
+                String o = "t" + ++tmpCount;
+                boolean union = c.builtin == Builtin.UNION;
+                String x = "(" + a + ").v[" + i + "]";
+                String y = "(" + b + ").v[" + j + "]";
+                open("{");
+                emit("uint32_t " + i + " = 0, " + j + " = 0;");
+                emit("int " + o + ";");
+                open("while (" + i + " < (" + a + ").len" + (union ? " || " + j + " < (" + b + ").len" : "") + ") {");
+                emit(o + " = " + i + " == (" + a + ").len ? 1 : " + j + " == (" + b + ").len ? -1 : (" + cmpExpr(st.elem(), x, y) + ");");
+                if (union) {
+                    emit("if (" + r + ".len >= " + st.cap() + "u) AL_TRAP(\"R0004\", \"union exceeds set capacity " + st.cap() + "\", " + at + ");");
+                    emit(r + ".v[" + r + ".len++] = " + o + " <= 0 ? " + x + " : " + y + ";");
+                } else {
+                    emit("if (" + o + (c.builtin == Builtin.INTERSECTION ? " == 0" : " < 0") + ") " + r + ".v[" + r + ".len++] = " + x + ";");
+                }
+                emit("if (" + o + " <= 0) " + i + "++;");
+                emit("if (" + o + " >= 0) " + j + "++;");
+                close("}");
+                close("}");
+                return r;
+            }
+            case ASSERT_EQ -> throw new IllegalStateException("assert_eq is an assert statement");
             case PANIC -> {
                 String v = lowerLvalue(args.get(0).expr());
                 open("{");

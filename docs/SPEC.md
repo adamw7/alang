@@ -141,7 +141,9 @@ enum Result<T, E> { Ok(T), Err(E) }     // a value, or the error that kept it fr
 ```
 
 Return `Option.Some(i)` or `Option.None` from a search, and `Result.Ok(n)` or `Result.Err(why)` from something that
-can fail; a caller takes them apart with `match` or `if let Option.Some(i) = find(xs, x) { }`. Like every enum they
+can fail; a caller takes them apart with `match` or `if let Option.Some(i) = find(xs, x) { }`, with
+`let Option.Some(i): Option<i64> = find(xs, x) else { return -1; };` (§4), with `unwrap_or(o, default)`,
+`is_some`, `is_none`, `is_ok` and `is_err` (§9.1), or passes the failure on with `?` (§6). Like every enum they
 compare with `==`, sort (`None` before `Some`, `Ok` before `Err`), print as `Option.Some(3)`, and are JSON values in
 a tool's arguments and result (§10): `"None"`, `{"Some": [3]}`.
 
@@ -271,14 +273,14 @@ package itself: its manifest is part of its hash.
 
 | Statement | Form |
 |-----------|------|
-| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;`, `let Point(x: px, y: _): Point = p;` (a pattern that always matches) |
+| binding | `let name: Type = expr;` (immutable), `var name: Type = expr;` (mutable), `let (a, b): (T1, T2) = tuple;`, `let Point(x: px, y: _): Point = p;` (a pattern that always matches), `let Option.Some(v): Option<i64> = o else { return 0; };` (one that can fail, with a block that leaves) |
 | assignment | `place = expr;` and `+= -= *= /= %=` |
 | condition | `if c { } else if c { } else { }`; any condition may be `let Pattern = expr` (`if let Option.Some(v) = m { }`) |
-| loops | `while c limit n { }`, `while let Pattern = expr limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`; `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
+| loops | `while c limit n { }`, `while let Pattern = expr limit n { }`, `for i in a..b { }` (half-open), `for i in a..=b { }` (inclusive), either with `step k`, and `rev` before either for the same values last first; `for x in xs { }` (array, list or str: `u8` bytes), `for i, x in xs { }` (with each index), `for x in rev xs { }`, `for (k, v) in pairs { }` (each element taken apart by a pattern); `for p in split(s, sep) { }`, `for w in words(s) { }`, `for c in chars(s) { }` |
 | labels | `outer: for ... { }` or `outer: while ... { }`, then `break outer;` or `continue outer;` from a loop inside it |
 | match | `match e { Pattern => { } ... }` (and as a value: `match e { Pattern => value, ... }`, §6) |
 | jumps | `break;` `continue;` `return;` `return expr;` |
-| assertion | `assert cond;` `assert cond, "message";` |
+| assertion | `assert cond;` `assert cond, "message";` `assert_eq(a, b);` (`assert a == b;`) |
 | call | `f(args);` |
 
 - Every binding has an explicit type and an initializer.
@@ -304,6 +306,10 @@ package itself: its manifest is part of its hash.
 - `for i, x in xs` also gives each element's position, an `i64`, as `i` (for split, words and chars, the
   number of the piece or code point). `for x in rev xs` goes through an array, list or str from its last
   element; `i` is then still the position, counting down.
+- `for P in xs`, with a pattern `P` in place of the name, takes each element apart as `let P: T = x;` would:
+  `for (name, n) in pairs { }`, `for i, (k, v) in pairs { }`, `for k, (lo, hi) in m { }` (the values of a map),
+  `for Point(x: px, y: py) in pts { }`. The pattern must match every element (E0306): to skip some, take them
+  with a name and use `let ... else { continue; };` in the body.
 - `break label;` and `continue label;` leave or continue the loop labelled `label:` around them, from any
   depth; `break;` and `continue;` the innermost loop. Labels of loops inside one another differ (E0105).
 - `for p in split(s, sep)` and `for w in words(s)` go through the pieces of `s` one at a time (§9.4),
@@ -338,7 +344,11 @@ leave, such as `5` below `1..=10`, is unreachable (E0307), as is any arm below a
 their values from the first alternative that matches.
 
 `let Pattern: Type = value;` takes a value apart with a pattern that matches every value of the type (E0306
-otherwise): a tuple or struct of names, `_`s and such patterns. `if let Pattern = value { A } else { B }` runs A,
+otherwise): a tuple or struct of names, `_`s and such patterns. With an else block, the pattern may fail:
+`let Option.Some(n): Option<i64> = parse_i64(s) else { return 0; };` binds `n` when the value matches and
+otherwise runs the block, which must not reach its end (E0309): it returns, breaks, continues or panics, since
+the names of the pattern have no value after it. Its names are not in scope inside the block, and a pattern that
+always matches leaves the block nothing to do (E0307). Any pattern of a match arm can be used. `if let Pattern = value { A } else { B }` runs A,
 with the pattern's names bound, when the value matches, and B otherwise; it is `match value { Pattern => { A } _ =>
 { B } }`, so a pattern that always matches is E0307, and `else if` may chain more conditions of either kind.
 
@@ -364,7 +374,7 @@ fn shift(p: mut Point, dx: f64) {               // p refers to the caller's vari
 - `mut` references cannot be stored, returned or captured, so they never dangle.
 - **Exclusive access (E0208):** a variable passed as `mut` may not appear in another argument of the
   same call that is an aggregate or is itself passed as `mut`: `append(mut s, s)` is rejected, and so is
-  `swap(mut xs[i], mut xs[j])`, since `i` and `j` may be equal; copy first. A read-only number or bool
+  `swap(mut xs[i], mut xs[j])`, since `i` and `j` may be equal; write `swap(mut xs, i, j)`. A read-only number or bool
   is a copy made before the call, so `remove(mut xs, len(xs) - 1)` is fine.
 - **Mutating calls are statements (E0215):** a call with a `mut` argument is a statement of its own or the
   whole right-hand side of `let`/`var`/assignment/`return` or of `while let P =`, so every mutation is at a
@@ -455,7 +465,8 @@ ALang keeps ordinary arithmetic precedence and refuses to guess anywhere else:
 
 | Level | Operators | Rule |
 |-------|-----------|------|
-| unary | `-x` `~x` | bind tightest |
+| postfix | `e?` `e.f` `e[i]` | bind tightest |
+| unary | `-x` `~x` | |
 | multiplicative | `* / %` | left-associative |
 | additive | `+ -` | left-associative |
 | comparison | `== != < <= > >=` | operands are additive expressions; **comparisons never chain** |
@@ -504,6 +515,16 @@ gives: a str or list of the capacity of `xs`, or a list for an array. A left-out
 (a `for` loop over it whose body leaves its variable alone, `len`, `contains`, `index_of`, `count`, the text
 functions, a comparison or `print` of a str, a conversion `i64(s[2..5])`, a `match` on it), the C backend reads it
 where it is, through a pointer and a length, and the memory bound counts no copy of it.
+
+**The `?` operator.** `e?`, after a value `e` of type `Option<T>` or `Result<T, E>`, is the `T` in it when it is
+`Option.Some` or `Result.Ok`. When it is `Option.None` or `Result.Err(why)`, the function returns that at once, as a
+value of its own return type: `let n: i64 = parse_i64(s)?;` in a function that returns an `Option`, or
+`total += digit(c)?;` in one that returns a `Result` whose error type can hold `E` (`str[8]` widens to `str[32]`;
+E0310 otherwise, and for an `Option` in a function that returns a `Result` or the other way round). The return goes
+through the function's `ensures`, as a `return` does. `?` may be anywhere in an expression and is evaluated where it
+is: `flag and parse_i64(s)? > 0` returns only when `flag` holds. `f(x)?;` on its own is a statement, for the
+failure only. It is E0310 in a test, `fn main`, a `requires` or `ensures` clause or a default value, which have no
+`Option` or `Result` to return. There is no `c ? a : b`: write `if c then a else b`.
 
 **Match expressions.** `match e { P => a, Q if c => b, _ => d }` is the value of the first arm whose pattern (and
 guard) matches; only that arm's value is evaluated. Its arms are values, separated by commas, and checked like a match
@@ -612,9 +633,13 @@ them all.
 | `cap(x) -> i64` | Capacity N of a `list[T; N]` or `str[N]`. |
 | `push(mut xs, v)` | Appends an element (a `u8` byte for str). Traps if full (R0004). |
 | `pop(mut xs) -> T` | Removes and returns the last element. Traps if empty (R0012). |
+| `pop_front(mut xs) -> T` | Removes and returns the first element, moving the rest down: a queue with `push` at the back. Traps if empty (R0012). |
 | `clear(mut xs)` | Removes all elements. |
 | `append(mut s, values...)` | Appends the text of each value to a str. Traps if it does not fit (R0004). |
 | `panic(message)` | Stops with trap R0010. |
+| `assert_eq(a, b);` | A statement: `assert a == b;`, for two values `==` compares. When they differ it traps (R0005) with both: `assertion failed: assert_eq(total, 10) (left: 9, right: 10)`. |
+| `unwrap_or(o, d) -> T` | The value in an `Option<T>` or a `Result<T, E>` when it is `Option.Some` or `Result.Ok`, otherwise `d`, a `T`: `unwrap_or(parse_i64(s), 0)`. |
+| `is_some(o)`, `is_none(o)`, `is_ok(r)`, `is_err(r)` -> `bool` | Which variant an `Option` or a `Result` is. |
 
 ### 9.2 Math
 
@@ -678,6 +703,8 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `starts_with(s, p) -> bool`, `ends_with(s, p) -> bool` | Whether the str `s` begins or ends with the pattern `p`. |
 | `slice(xs, from, to) -> T` | The elements `from..to` (half-open) of a str or list, of the same type, or of an array, as a `list[T; N]`. Traps (R0003) unless `0 <= from <= to <= len(xs)`. `xs[from..to]` is the same, and either end may be left out: `s[1..]`, `xs[..n]`, `xs[..]` (§6). |
 | `trim(s) -> str[N]` | `s` without the ASCII whitespace at its start and end. |
+| `strip_prefix(s, p) -> str[N]`, `strip_suffix(s, p) -> str[N]` | `s` without the pattern `p` at its start (end), or `s` unchanged when it does not start (end) with it, as a str of the capacity of `s`: `strip_prefix("v1.2", 'v')` is `"1.2"`. |
+| `split_once(s, sep) -> Option<(str[N], str[N])>` | The text before and after the first occurrence of the pattern `sep`, each a str of the capacity N of `s` (or of the wider strs of the `Option` it is stored as), or `Option.None` when there is none: `split_once("k=v=w", '=')` is `Option.Some(("k", "v=w"))`. Traps if `sep` is empty (R0013). |
 | `split(s, sep) -> list[str[K]; M]` | The pieces of `s` between occurrences of the pattern `sep`, left to right, empty pieces included: `split("a,,b", ",")` is `["a", "", "b"]`, `split("", ",")` is `[""]`. Traps if `sep` is empty (R0013). |
 | `words(s) -> list[str[K]; M]` | The pieces of `s` between runs of ASCII whitespace; never empty pieces. |
 | `join(parts, sep) -> str[N]` | The strs of an array or list, with the pattern `sep` between them. |
@@ -693,7 +720,7 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `fixed(x, n)`, `pad_left(v, w, fill)`, `pad_right(v, w, fill)` | Formatted text (§9.6). |
 
 **Results typed by where they are stored.** The size of what `split`, `words`, `join` and `replace`
-(and `fixed`, `pad_left` and `pad_right` when they are not written out at once, §9.6) build depends on the data, so each takes its type, capacities included, from the variable it initializes
+(and `fixed`, `pad_left`, `pad_right`, `to_base` and `repeat` when they are not written out at once, §9.6) build depends on the data, so each takes its type, capacities included, from the variable it initializes
 or is assigned to, or from the function's return type. The call must be the whole right-hand side of a
 typed `let`/`var`, a constant, an assignment with `=`, or a `return`, or for `split` and `words`, what a
 `for` loop goes through; anywhere else is E0216. A result that does not fit traps (R0004): `split` and
@@ -786,12 +813,16 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 | `count_if(xs, f) -> i64` | How many elements `x` of an array or list have `f(x)` true. |
 | `find_index(xs, f) -> i64` | The position of the first element `x` with `f(x)` true, or -1. |
 | `retain(mut xs, keep)` | Keeps the elements `x` of a list for which `keep(x)` is true, in their order, and removes the rest; `keep` is called once per element, first to last. |
+| `min_by(xs, before) -> T`, `max_by(xs, before) -> T` | The first element of an array or list that no other comes before (`min_by`), or that comes before no other (`max_by`), in the order of `before` as for `sort_by`: the smallest or largest by any key. `before` is called once per element after the first. Traps if `xs` is empty (R0013). |
+| `swap(mut xs, i, j)` | Exchanges the elements at positions `i` and `j` of a list or array (bytes of a str); traps unless both are below `len(xs)` (R0003), `i` checked first. |
+| `swap(mut a, mut b)` | Exchanges the values of two places of the same type, of different variables (E0208 for one variable twice: `swap(mut xs[i], mut xs[j])` is `swap(mut xs, i, j)`). |
 | `insert(mut xs, i, v)` | Inserts `v` into a list (a `u8` into a str) at position `i`, moving the rest up. Traps unless `0 <= i <= len(xs)` (R0003), then if full (R0004). |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position `i` of a list (a byte of a str), moving the rest down. Traps unless `0 <= i < len(xs)` (R0003). Like `pop`, it may be a statement of its own. |
 
 | `insert(mut m, k, v)`, `insert(mut s, x)` | Sets `k` to `v` in a map (as `m[k] = v`), or adds `x` to a set; a key or value already there is kept once. Traps (R0004) when a new one does not fit. |
 | `remove(mut m, k) -> bool`, `remove(mut s, x) -> bool` | Removes a key (with its value) or a value; whether it was there. |
 | `get_or(m, k, d) -> V` | The value of `k` in the map `m`, or `d` when there is none. |
+| `union(a, b)`, `intersection(a, b)`, `difference(a, b)` | The values in either set, in both, or in `a` but not `b`, as a set of the type of `a`; the sets have one element type, of any capacities. A union that does not fit traps (R0004). |
 | `keys(m) -> list[K; N]`, `values(m) -> list[V; N]` | The keys of the map `m` in order, or its values in the order of their keys, as a list of the map's capacity. |
 | `variants(E) -> [E; K]` | Every variant of the enum named `E` (or `ns.E`), in declaration order: `for c in variants(Color) { }`. The variants carry no values and `E` has no type parameters (E0203). It is a constant: `const ALL: [Color; 3] = variants(Color);`. |
 
@@ -829,7 +860,7 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
 - a `u8` (a character literal too) as a number: add a character to a string with `push(mut s, 'a')`;
   `append(mut s, 'a')` appends `97` (warning W0303).
 
-Four functions format text with a width, a number of decimals or a base:
+Five functions make text: with a width, a number of decimals or a base, or a pattern repeated:
 
 | Function | Text |
 |----------|------|
@@ -837,9 +868,10 @@ Four functions format text with a width, a number of decimals or a base:
 | `pad_left(v, w, fill)` | The text of the number, bool, str or `fixed(...)` `v`, as `print` writes it, with the `u8` byte `fill` in front up to `w` bytes; longer text is kept whole. `pad_left(7, 3, '0')` is `007`, `pad_left(-42, 6, '0')` is `000-42`. A width above 1 048 576 traps (R0013). |
 | `pad_right(v, w, fill)` | The same with the fill after the text: `pad_right("ab", 4, '.')` is `ab..`. |
 | `to_base(n, base)` | The integer `n` in a base from 2 to 36 (otherwise R0013), with the digits `0`-`9` then `a`-`z`, no prefix, and a `-` before a negative `n`: `to_base(255, 16)` is `ff`, `to_base(-5, 2)` is `-101`. `pad_left(to_base(b, 16), 2, '0')` gives two hex digits. |
+| `repeat(p, n)` | The pattern `p`, a str or `u8` byte, `n` times: `repeat("ab", 3)` is `ababab`, `repeat('-', 20)` a rule. Traps (R0013) unless `0 <= n <= 1048576` (`n` of any integer type), and when the text would be longer than 1 048 576 bytes. |
 
 They build no str when they are an argument of `print` or `append`, or the value `pad_left` or
-`pad_right` pads (`to_base` too): the text is written straight out, `append(mut s, "$", c / 100, ".", pad_left(c % 100, 2, '0'))`.
+`pad_right` pads (`to_base` and `repeat` too): the text is written straight out, `append(mut s, "$", c / 100, ".", pad_left(c % 100, 2, '0'))`.
 Anywhere else they take the type of a typed str they are stored in, as `join` does (§9.4), and trap
 (R0004) when the text does not fit it: `let cell: str[8] = pad_left(n, 6, ' ');`. Elsewhere they are
 E0216. Their arguments are evaluated and checked before any of the text is written.

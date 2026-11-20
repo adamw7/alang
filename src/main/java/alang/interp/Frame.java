@@ -79,7 +79,8 @@ public final class Frame {
             }
         }
         for (LocalVar v : live) {
-            if (!vars.contains(v) && slots[v.slot] != null) vars.add(v);
+            // The hidden variable of `for (a, b) in xs`, whose names are shown instead, starts with `$`.
+            if (!vars.contains(v) && slots[v.slot] != null && !v.name.startsWith("$")) vars.add(v);
         }
         return vars;
     }

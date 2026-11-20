@@ -73,7 +73,10 @@ final class ToolExamples {
     private static void calls(Stmt s, List<Call> out) {
         switch (s) {
             case Let l -> calls(l.init, out);
-            case Destructure d -> calls(d.init, out);
+            case Destructure d -> {
+                calls(d.init, out);
+                if (d.elseBlock != null) calls(d.elseBlock, out);
+            }
             case Assign a -> {
                 calls(a.value, out);
                 calls(a.target, out);
@@ -154,6 +157,7 @@ final class ToolExamples {
             }
             case Convert c -> calls(c.arg, out);
             case Resize z -> calls(z.arg, out);
+            case Try t -> calls(t.inner, out);
             case FieldAccess fa -> calls(fa.target, out);
             case Index ix -> {
                 calls(ix.target, out);

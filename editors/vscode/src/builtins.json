@@ -48,6 +48,42 @@
     "description": "Stops the program with an error message. Never returns."
   },
   {
+    "name": "assert_eq",
+    "group": "core",
+    "signature": "assert_eq(a, b)",
+    "description": "A statement: the same as assert a == b; for two values of a type that == compares. When they differ it traps (R0005) and shows both: assertion failed: assert_eq(total, 10) (left: 9, right: 10)."
+  },
+  {
+    "name": "unwrap_or",
+    "group": "core",
+    "signature": "unwrap_or(o, default) -> T",
+    "description": "The value in an Option<T> (Option.Some(v)) or a Result<T, E> (Result.Ok(v)), or default, a T, when it is Option.None or Result.Err: unwrap_or(parse_i64(s), 0)."
+  },
+  {
+    "name": "is_some",
+    "group": "core",
+    "signature": "is_some(o) -> bool",
+    "description": "Whether an Option is Option.Some."
+  },
+  {
+    "name": "is_none",
+    "group": "core",
+    "signature": "is_none(o) -> bool",
+    "description": "Whether an Option is Option.None."
+  },
+  {
+    "name": "is_ok",
+    "group": "core",
+    "signature": "is_ok(r) -> bool",
+    "description": "Whether a Result is Result.Ok."
+  },
+  {
+    "name": "is_err",
+    "group": "core",
+    "signature": "is_err(r) -> bool",
+    "description": "Whether a Result is Result.Err."
+  },
+  {
     "name": "abs",
     "group": "math",
     "signature": "abs(x) -> T",
@@ -396,6 +432,30 @@
     "description": "s without the ASCII whitespace at its start and end."
   },
   {
+    "name": "strip_prefix",
+    "group": "text",
+    "signature": "strip_prefix(s, prefix) -> str[N]",
+    "description": "s without prefix (a str or u8 byte) at its start, or s unchanged if it does not start with it, as a str of the capacity of s: strip_prefix(\"v1.2\", 'v') is \"1.2\". starts_with(s, prefix) tells which."
+  },
+  {
+    "name": "strip_suffix",
+    "group": "text",
+    "signature": "strip_suffix(s, suffix) -> str[N]",
+    "description": "s without suffix (a str or u8 byte) at its end, or s unchanged if it does not end with it: strip_suffix(\"a.txt\", \".txt\") is \"a\"."
+  },
+  {
+    "name": "split_once",
+    "group": "text",
+    "signature": "split_once(s, sep) -> Option<(str[N], str[N])>",
+    "description": "The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once(\"k=v=w\", '=') is Option.Some((\"k\", \"v=w\")). Traps (R0013) if sep is empty."
+  },
+  {
+    "name": "repeat",
+    "group": "text",
+    "signature": "repeat(s, n) -> str[N]",
+    "description": "The str or u8 byte s, n times over: repeat(\"ab\", 3) is \"ababab\", repeat('-', 10) a rule of dashes. Its type is that of the variable it is stored in. Traps (R0013) if n < 0, and (R0004) if the result does not fit."
+  },
+  {
     "name": "split",
     "group": "text",
     "signature": "split(s, sep) -> list[str[K]; M]",
@@ -574,6 +634,48 @@
     "group": "collections",
     "signature": "retain(mut xs, keep)",
     "description": "Keeps the elements x of a list for which keep(x) is true, in their order, and removes the rest; keep is a function fn(T) -> bool passed by name, called once per element, first to last."
+  },
+  {
+    "name": "min_by",
+    "group": "collections",
+    "signature": "min_by(xs, before) -> T",
+    "description": "The first element of an array or list that no other comes before, in the order that before, a function fn(T, T) -> bool passed by name, gives (as for sort_by): the smallest by any key. Traps (R0013) if xs is empty."
+  },
+  {
+    "name": "max_by",
+    "group": "collections",
+    "signature": "max_by(xs, before) -> T",
+    "description": "The first element of an array or list that comes before no other, in the order of before (as for min_by): the largest by any key. Traps (R0013) if xs is empty."
+  },
+  {
+    "name": "swap",
+    "group": "collections",
+    "signature": "swap(mut xs, i, j)",
+    "description": "Exchanges the elements at positions i and j of a list or array (bytes of a str); traps (R0003) unless both are below len(xs). swap(mut a, mut b) exchanges two variables (or fields, or elements of different variables) of the same type."
+  },
+  {
+    "name": "pop_front",
+    "group": "collections",
+    "signature": "pop_front(mut xs) -> T",
+    "description": "Removes and returns the first element of a list (first byte of a str), shifting the rest down: a queue with push(mut q, x) at the back. Traps (R0012) if it is empty."
+  },
+  {
+    "name": "union",
+    "group": "collections",
+    "signature": "union(a, b) -> set[T; N]",
+    "description": "The values in either of two sets of the same element type, as a set of the type of a. Traps (R0004) if they do not fit in its capacity."
+  },
+  {
+    "name": "intersection",
+    "group": "collections",
+    "signature": "intersection(a, b) -> set[T; N]",
+    "description": "The values in both of two sets of the same element type, as a set of the type of a."
+  },
+  {
+    "name": "difference",
+    "group": "collections",
+    "signature": "difference(a, b) -> set[T; N]",
+    "description": "The values of the set a that are not in the set b (of the same element type), as a set of the type of a."
   },
   {
     "name": "binary_search",

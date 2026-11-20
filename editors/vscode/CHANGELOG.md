@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Highlighting, hovers and completion know the new builtins (`unwrap_or`, `is_some`, `is_none`, `is_ok`,
+  `is_err`, `assert_eq`, `strip_prefix`, `strip_suffix`, `split_once`, `repeat`, `min_by`, `max_by`, `swap`,
+  `pop_front`, `union`, `intersection`, `difference`), and the `?` that takes the value out of an Option or Result.
 - Highlighting, hovers and completion know the new builtins (`count_ones`, `leading_zeros`, `trailing_zeros`,
   `rotl`, `rotr`, `keys`, `values`, `variants`, `hash`, `to_base`).
 - *Apply every ALang fix* now runs from `"editor.codeActionsOnSave": {"source.fixAll.alang": "explicit"}`:

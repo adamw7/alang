@@ -115,6 +115,7 @@ final class Uses {
                 case Destructure d -> {
                     patterns.add(d.pattern);
                     read(d.init);
+                    if (d.elseBlock != null) block(d.elseBlock);
                 }
                 case Assign a -> {
                     // `x += 1` uses x only to change it, so it is not a read of x.
@@ -183,9 +184,10 @@ final class Uses {
                 }
                 case Call c when c.asStruct != null -> read(c.asStruct);
                 case Call c -> {
-                    // A user function may read what it is given as `mut`, and so do pop and remove, which
-                    // return part of it; the other builtins that take `mut` only change it.
-                    boolean reads = c.builtin == null || c.builtin == Builtin.POP || c.builtin == Builtin.REMOVE;
+                    // A user function may read what it is given as `mut`, and so do pop, pop_front and remove, which
+                    // return part of it, and swap, which moves it; the other builtins that take `mut` only change it.
+                    boolean reads = c.builtin == null || c.builtin == Builtin.POP || c.builtin == Builtin.POP_FRONT
+                        || c.builtin == Builtin.REMOVE || c.builtin == Builtin.SWAP;
                     for (Arg a : c.args) {
                         if (a.mut()) {
                             written(a.expr());
@@ -233,6 +235,7 @@ final class Uses {
                 case TupleLit t -> {
                     for (Expr x : t.elems) read(x);
                 }
+                case Try t -> read(t.inner);
                 case IntLit i -> { }
                 case FloatLit f -> { }
                 case StrLit s -> { }
