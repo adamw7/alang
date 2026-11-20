@@ -240,6 +240,42 @@ class CBackendTest {
     }
 
     /**
+     * f64(s) caps the exponent it reads, but a str holds up to 1 048 576 digits, which once made up for the cap:
+     * text of about 10^8999998 converted to 0.1, the same on both backends. Not in tests/run, where FuzzTest
+     * would run a thousand mutations of a program that copies a megabyte at each step.
+     */
+    @TestFactory
+    Stream<DynamicTest> floatTextOfAMillionDigits() {
+        String program = """
+            fn main() {
+                // 0.000...01e10000000, about 10^8999998: too large for an f64.
+                var huge: str[1000016] = "0.";
+                append(mut huge, repeat('0', 1000000));
+                append(mut huge, "1e10000000");
+                // 1000...0e-10000000, 10^-9000000: too small.
+                var tiny: str[1000016] = "1";
+                append(mut tiny, repeat('0', 1000000));
+                append(mut tiny, "e-10000000");
+                // 1000...0e-1000000 is exactly 1.
+                var one: str[1000016] = "1";
+                append(mut one, repeat('0', 1000000));
+                append(mut one, "e-1000000");
+                print(is_float(huge), " ", parse_f64(huge));
+                print(is_float(tiny), " ", parse_f64(tiny));
+                print(is_float(one), " ", parse_f64(one));
+            }
+            """;
+        return Stream.of(Harness.dynamicTest("float_text_of_a_million_digits.al", COMPILE_AND_RUN_TIMEOUT, () -> {
+            Frontend.Result r = Frontend.compile(new Source("float_text_of_a_million_digits.al", program), Checker.DEFAULT_MAX_STACK);
+            assertTrue(r.ok(), () -> r.diags().renderText());
+            assertEquals("false Option.None\nfalse Option.None\ntrue Option.Some(1.0)\n", Harness.runMain(r, new byte[0]).stdout());
+            List<String[]> ccs = compilers();
+            assumeTrue(!ccs.isEmpty(), "no C compiler available");
+            buildEachAndCompare(r, ccs);
+        }));
+    }
+
+    /**
      * {@code depth} nested conversions ending in an f64: i64(true), then f64, then f32 and f64 in turn. A
      * contract is read before the function's brace, so it may nest all 128 levels; the C used to take two
      * parentheses per conversion (three for the bool), as it did per `not`, past the 256 that clang accepts.

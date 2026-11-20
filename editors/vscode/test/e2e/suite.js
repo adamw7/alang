@@ -173,7 +173,12 @@ test('Apply every ALang fix, then errors in an imported file show on that file',
 });
 
 test('fixing the imported file clears its errors, whichever check finishes last', async () => {
+  // Saving re-checks the open ALang files, so main.al must stay open: shown in a column of its own, not in the
+  // preview tab that lib.al takes over, after which VS Code may close it before the save.
   const lib = await open('lib.al');
+  const main = await vscode.workspace.openTextDocument(uri('main.al'));
+  await vscode.window.showTextDocument(main, { viewColumn: vscode.ViewColumn.Beside, preview: false, preserveFocus: true });
+  assert.ok(vscode.workspace.textDocuments.includes(main), 'main.al is open');
   const edit = new vscode.WorkspaceEdit();
   edit.replace(lib.uri, new vscode.Range(0, 0, lib.lineCount, 0), 'fn helper() -> i64 { return 1; }\n');
   assert.ok(await vscode.workspace.applyEdit(edit));
@@ -188,6 +193,8 @@ test('fixing the imported file clears its errors, whichever check finishes last'
   await sleep(500);
   assert.strictEqual(show(), JSON.stringify([['W0306'], []]));
   assert.strictEqual(alangDiagnostics('lib.al')[0].severity, vscode.DiagnosticSeverity.Warning);
+  // Back to one column for the tests that follow.
+  await vscode.commands.executeCommand('workbench.action.closeEditorsInOtherGroups');
 });
 
 test('Format Document lays the file out; a file that does not parse is left alone', async () => {
