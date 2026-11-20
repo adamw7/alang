@@ -159,6 +159,8 @@ test "counts repeated words" {
 | `int`, `usize`, `String`, `Vec<T>` | `i32`/`i64`, `i64`, `str[N]`, `list[T; N]` |
 | `dict`, `HashMap<K, V>`, `set()`, `HashSet<T>` | `map[str[16], i64; 64]`, `set[i64; 32]`: a capacity, keys always in order; `var m: map[str[8], i64; 16] = [];` then `m[k] = v;` |
 | `d.get(k, 0)`, `d[k] = d.get(k, 0) + 1`, `for k, v in d.items()` | `get_or(m, k, 0)`, `m[k] = get_or(m, k, 0) + 1;`, `for k, v in m { }` |
+| `d.get(k)` (None when missing), `m.get(&k)` | `get(m, k)`: `Option.Some(v)`, or `Option.None` |
+| `m.firstKey()`, `m.floorKey(k)`, `m.ceilingKey(k)` (a sorted map or set) | `first_key(m)`, `last_key(m)`, `floor_key(m, k)`, `ceil_key(m, k)`: an `Option`, on maps and sets |
 | `list(d.keys())`, `d.values()`, `m.keys().collect()` | `keys(m)`, `values(m)`: lists of the map's capacity, in key order |
 | `list(Color)`, `Color::iter()`, `Color.values()` | `for c in variants(Color) { }`: an array of every variant (of an enum whose variants carry no values) |
 | `while let Some(x) = it.next()`, `while (m = re.exec(s))` | `while let Option.Some(x) = next(mut it) limit 1000 { }`: the failing test is not an iteration |
@@ -192,7 +194,10 @@ test "counts repeated words" {
 | `fn first<T>(xs: &[T]) -> T`, `def first(xs)` | `fn first<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
 | `any(f(x) for x in xs)`, `xs.iter().all(f)`, `xs.filter(f).count()`, `xs.iter().position(f)` | `any(xs, f)`, `all(xs, f)`, `count_if(xs, f)`, `find_index(xs, f)` (-1 if none), with `fn f(x: T) -> bool` passed by name |
 | `xs = [x for x in xs if f(x)]`, `xs.retain(f)` | `retain(mut xs, f);` |
-| `map(f, xs)`, a callback of your own | a parameter `f: fn(T) -> U`, passed by name: `fn apply(xs: list[i64; _], f: fn(i64) -> i64)`; no closures or lambdas |
+| `[f(x) for x in xs]`, `map(f, xs)`, `xs.iter().map(f).collect()` | `transform(xs, f)` with `fn f(x: T) -> U`: a list of the capacity of `xs` (an array for an array) |
+| `reduce(f, xs, init)`, `xs.iter().fold(init, f)` | `fold(xs, init, f)` with `fn f(acc: A, x: T) -> A` |
+| `zip(xs, ys)` | `for (x, y) in zip(xs, ys) { }`: a list of pairs, as long as the shorter |
+| a callback of your own | a parameter `f: fn(T) -> U`, passed by name: `fn apply(xs: list[i64; _], f: fn(i64) -> i64)`; no closures or lambdas |
 | `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
 | `s.removeprefix("v")`, `s.strip_suffix(".txt")` | `strip_prefix(s, 'v')`, `strip_suffix(s, ".txt")`: `s` unchanged when it does not start (end) with it |
 | `k, _, v = s.partition("=")`, `s.split_once('=')` | `split_once(s, '=')`: `Option.Some((before, after))`, or `Option.None` |
@@ -201,7 +206,11 @@ test "counts repeated words" {
 | `s.rfind("x")`, `xs.lastIndexOf(x)` | `last_index_of(s, "x")`, `last_index_of(xs, x)` (-1 if absent) |
 | `sum(xs)`, `min(xs)`, `max(xs)`, `xs.iter().sum()` | `sum(xs)`, `min(xs)`, `max(xs)` on an array or list of numbers (`min`/`max` trap on an empty one) |
 | `sorted(set(xs))`, `xs.dedup()`, `uniq` | `sort(mut xs);` then `dedup(mut xs);` |
-| `bisect_left(xs, x)`, `xs.binary_search(&x)` | `binary_search(xs, x)` on a sorted list: the position of an equal element, or -1 |
+| `xs.binary_search(&x)`, `Collections.binarySearch(xs, x)` | `binary_search(xs, x)` on a sorted list: the position of an equal element, or -1 |
+| `bisect_left(xs, x)`, `bisect_right(xs, x)`, `partition_point` | `lower_bound(xs, x)`, `upper_bound(xs, x)` on a sorted list: where `x` would go, before (after) equal ones |
+| `xs.extend(ys)`, `xs + ys`, `xs.addAll(ys)`, `[...xs, ...ys]` | `extend(mut xs, ys);` (traps, adding nothing, if they do not all fit) |
+| `xs.fill(v)`, `xs.rotate_left(k)`, `all(a <= b for a, b in pairwise(xs))` | `fill(mut xs, v);`, `rotate(mut xs, k);` (negative `k` rotates right), `is_sorted(xs)` |
+| `math.prod(xs)`, `np.argmin(xs)`, `xs.index(max(xs))` | `product(xs)`, `min_index(xs)`, `max_index(xs)` |
 | `xs.sort()`, `sorted(xs, reverse=True)` | `sort(mut xs);` then `reverse(mut xs);` |
 | `xs.sort(key=f)`, `xs.sort_by(cmp)`, `Collections.sort(xs, cmp)` | `sort_by(mut xs, before)`, with `fn before(a: T, b: T) -> bool` true when `a` must come first; stable |
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
@@ -215,7 +224,8 @@ test "counts repeated words" {
 | `a, b = b, a`, `std::mem::swap(&mut a, &mut b)`, `xs.swap(i, j)` | `swap(mut a, mut b);`, `swap(mut xs, i, j);` |
 | `xs.pop(0)`, `q.popleft()`, `xs.shift()`, `VecDeque::pop_front` | `let x: T = pop_front(mut xs);` (and `push(mut xs, x)` at the back) |
 | `min(xs, key=f)`, `xs.iter().max_by_key(f)`, `minBy` | `min_by(xs, before)`, `max_by(xs, before)` with `fn before(a: T, b: T) -> bool` |
-| `a \| b`, `a & b`, `a - b` on sets, `a.union(&b)` | `union(a, b)`, `intersection(a, b)`, `difference(a, b)` |
+| `a \| b`, `a & b`, `a - b`, `a ^ b` on sets, `a.union(&b)` | `union(a, b)`, `intersection(a, b)`, `difference(a, b)`, `symmetric_difference(a, b)` |
+| `a <= b`, `a.issubset(b)`, `b.containsAll(a)` on sets | `is_subset(a, b)` |
 | `assert_eq!(a, b)`, `assertEqual(a, b)` | `assert_eq(a, b);` or `assert a == b;`: both show the two values when they differ |
 | `let Point { x, y } = p;`, `const { x, y } = p` | `let Point(x: px, y: py): Point = p;` |
 | `Point { y: 0, ..p }`, `{...p, y: 0}`, `dataclasses.replace(p, y=0)` | `Point(..p, y: 0)`, with `p` a variable |
@@ -228,11 +238,11 @@ adds tested helpers (pseudo-random numbers, an insertion-ordered map).
 
 | Area | Functions |
 |------|-----------|
-| Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` (an `Option`) `rem_euclid` `div_euclid` `mul_mod(a, b, m)` `count_ones` `leading_zeros` `trailing_zeros` `rotl(x, n)` `rotr(x, n)` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
+| Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `product(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` (an `Option`) `rem_euclid` `div_euclid` `mul_mod(a, b, m)` `count_ones` `leading_zeros` `trailing_zeros` `rotl(x, n)` `rotr(x, n)` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
 | Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `strip_prefix` `strip_suffix` `split(s, sep)` `split_once(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `repeat(s, n)` `is_int` `is_float` `parse_i64(s)` `parse_i64(s, base)` `parse_f64` (an `Option`) `str[N](n)` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` `to_base(n, base)` `hash(s)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
 | Option, Result | `unwrap_or(o, d)` `is_some` `is_none` `is_ok` `is_err`; `e?`; `assert_eq(a, b);` |
-| Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `binary_search(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `pop_front(mut xs)` `swap(mut xs, i, j)` `swap(mut a, mut b)` `retain(mut xs, keep)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` `min_by(xs, before)` `max_by(xs, before)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get_or(m, k, d)`, `keys(m)`, `values(m)`, `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear`, `union(a, b)`, `intersection(a, b)`, `difference(a, b)`; enums: `variants(E)` |
+| Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `is_sorted(xs)` `binary_search(xs, x)` `lower_bound(xs, x)` `upper_bound(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `pop_front(mut xs)` `extend(mut xs, ys)` `fill(mut xs, v)` `rotate(mut xs, k)` `swap(mut xs, i, j)` `swap(mut a, mut b)` `retain(mut xs, keep)` `min_index(xs)` `max_index(xs)` `zip(a, b)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` `min_by(xs, before)` `max_by(xs, before)` `fold(xs, init, f)` `transform(xs, f)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get(m, k)` (an `Option`), `get_or(m, k, d)`, `keys(m)`, `values(m)`, `first_key(m)` `last_key(m)` `floor_key(m, k)` `ceil_key(m, k)` (an `Option`), `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear`, `union(a, b)`, `intersection(a, b)`, `difference(a, b)`, `symmetric_difference(a, b)`, `is_subset(a, b)`; enums: `variants(E)` |
 
 - `split`, `words`, `join`, `replace` take their type from the typed `let`/`var`/assignment/`return` they
   are the whole right side of: `let parts: list[str[16]; 8] = split(line, ",");`. Pieces that do not fit

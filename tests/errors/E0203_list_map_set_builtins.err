@@ -1,0 +1,75 @@
+error[E0203]: extend() needs a list to add to, found str[8]
+  --> tests/errors/E0203_list_map_set_builtins.al:12:12
+   |
+12 |     extend(mut s, "cd");
+   |            ^^^^^
+  = hint: to add text to a str, use append(mut s, t)
+
+error[E0203]: extend() adds the elements of an array or list, found i64
+  --> tests/errors/E0203_list_map_set_builtins.al:13:20
+   |
+13 |     extend(mut xs, 3);
+   |                    ^
+  = hint: for one element, use push(mut xs, 3)
+
+error[E0203]: get() needs a map, found set[i64; 4]
+  --> tests/errors/E0203_list_map_set_builtins.al:14:15
+   |
+14 |     print(get(set1, 1));
+   |               ^^^^
+  = hint: for a set, use contains(s, x)
+
+error[E0203]: floor_key() needs a map or set, found list[i64; 8]
+  --> tests/errors/E0203_list_map_set_builtins.al:15:21
+   |
+15 |     print(floor_key(xs, 1));
+   |                     ^^
+  = hint: for a sorted list, use lower_bound(xs, x) or upper_bound(xs, x)
+
+error[E0203]: first_key() needs a map or set, found list[i64; 8]
+  --> tests/errors/E0203_list_map_set_builtins.al:16:21
+   |
+16 |     print(first_key(xs));
+   |                     ^^
+  = hint: for a list, check len(xs) > 0 and read xs[0]
+
+error[E0203]: is_sorted() needs a list, array or str, found set[i64; 4]
+  --> tests/errors/E0203_list_map_set_builtins.al:17:21
+   |
+17 |     print(is_sorted(set1));
+   |                     ^^^^
+  = hint: a set or map is always in order
+
+error[E0203]: lower_bound() needs a sorted array or list, found map[str[4], i64; 4]
+  --> tests/errors/E0203_list_map_set_builtins.al:18:23
+   |
+18 |     print(lower_bound(m, "a"));
+   |                       ^
+  = hint: for a set or map, use floor_key or ceil_key
+
+error[E0203]: transform() needs an array or list, found str[3]
+  --> tests/errors/E0203_list_map_set_builtins.al:19:21
+   |
+19 |     print(transform("abc", is_even));
+   |                     ^^^^^
+  = hint: for every byte, use a loop: for c in s { push(mut out, f(c)); }
+
+error[E0203]: zip() needs two arrays or lists, found set[i64; 4]
+  --> tests/errors/E0203_list_map_set_builtins.al:20:19
+   |
+20 |     print(zip(xs, set1));
+   |                   ^^^^
+
+error[E0203]: is_subset() needs two sets, found list[i64; 8]
+  --> tests/errors/E0203_list_map_set_builtins.al:21:21
+   |
+21 |     print(is_subset(xs, set1));
+   |                     ^^
+
+error[E0203]: fold() needs an array or list, found str[3]
+  --> tests/errors/E0203_list_map_set_builtins.al:22:16
+   |
+22 |     print(fold("abc", 0, is_even));
+   |                ^^^^^
+  = hint: go through the bytes with a loop: for c in s { }
+

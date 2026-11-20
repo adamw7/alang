@@ -734,6 +734,7 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `min(a, b) -> T` | Smaller of two numbers of the same type. min(xs), with one array or list of numbers, is its smallest element; traps (R0013) if it is empty. |
 | `max(a, b) -> T` | Larger of two numbers of the same type. max(xs), with one array or list of numbers, is its largest element; traps (R0013) if it is empty. |
 | `sum(xs) -> T` | The total of an array or list of numbers, added left to right; 0 if it is empty. Traps (R0001) if an integer total does not fit its type, as + does. |
+| `product(xs) -> T` | The elements of an array or list of numbers multiplied left to right; 1 if it is empty. Traps (R0001) if an integer product does not fit its type, as * does. |
 | `clamp(x, lo, hi) -> T` | x limited to lo..hi (numbers of the same type). Traps (R0013) unless lo <= hi. |
 | `pow(x, n) -> T` | x to the power n. For integers: n >= 0, pow(0, 0) is 1, traps on overflow, and (R0013) if n < 0. For an f32/f64 x, n is a float of the same type: pow(2.0, 0.5); never traps (pow(-8.0, 0.5) is NaN), with the special cases of C99. |
 | `gcd(a, b) -> T` | Greatest common divisor of two integers of the same type, never negative; gcd(0, 0) is 0. Traps if it does not fit. |
@@ -852,3 +853,21 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `values(m) -> list[V; N]` | The values of the map m, in the order of their keys, as a list of the map's capacity. |
 | `variants(E) -> [E; K]` | Every variant of the enum named E, in the order they are declared, as an array: for c in variants(Color) { }. The enum's variants carry no values, and it has no type parameters. |
 | `get_or(m, key, default) -> V` | The value of key in the map m, or default when m has no such key; m[key] traps (R0003) instead. |
+| `get(m, key) -> Option<V>` | Option.Some(the value of key) in the map m, or Option.None when m has no such key: tells a missing key from a stored default, which get_or cannot. |
+| `first_key(m) -> Option<K>` | The smallest key of a map, or the smallest value of a set (its first in order), or Option.None if it is empty. |
+| `last_key(m) -> Option<K>` | The largest key of a map, or the largest value of a set (its last in order), or Option.None if it is empty. |
+| `floor_key(m, key) -> Option<K>` | The largest key of a map (value of a set) that is <= key in the order of sort, or Option.None if there is none: the entry at or before key. |
+| `ceil_key(m, key) -> Option<K>` | The smallest key of a map (value of a set) that is >= key in the order of sort, or Option.None if there is none: the entry at or after key. |
+| `is_subset(a, b) -> bool` | Whether every value of the set a is in the set b (two sets of one element type, of any capacities); true if a is empty. |
+| `symmetric_difference(a, b) -> set[T; N]` | The values in exactly one of two sets of the same element type, as a set of the type of a. Traps (R0004) if it does not fit in its capacity. |
+| `extend(mut xs, ys)` | Appends every element of the array or list ys to the list xs, in order. Traps (R0004), changing nothing, if they do not all fit. For text, append(mut s, t). |
+| `fill(mut xs, value)` | Sets every element of a list or array (every byte of a str) to value; the length stays the same. |
+| `rotate(mut xs, k)` | Moves the elements of a list, array or str k places toward the front, the first ones coming back at the end: [1, 2, 3, 4] rotated by 1 is [2, 3, 4, 1]. k is any integer, taken as rem_euclid(k, len(xs)), so a negative k rotates toward the back. |
+| `is_sorted(xs) -> bool` | Whether the array, list or str xs is in the order sort(mut xs) gives: no element comes after the next one. |
+| `min_index(xs) -> i64` | The position of the first smallest element of a non-empty array or list of numbers, the element min(xs) returns. Traps (R0013) if it is empty. |
+| `max_index(xs) -> i64` | The position of the first largest element of a non-empty array or list of numbers, the element max(xs) returns. Traps (R0013) if it is empty. |
+| `lower_bound(xs, x) -> i64` | In an array or list sorted as sort sorts it, the first position whose element is not before x (compare(e, x) >= 0), or len(xs): where x would be inserted to keep it sorted, before any equal elements. |
+| `upper_bound(xs, x) -> i64` | In an array or list sorted as sort sorts it, the first position whose element comes after x (compare(e, x) > 0), or len(xs): where x would be inserted after any equal elements. upper_bound - lower_bound counts them. |
+| `fold(xs, init, f) -> A` | Combines the elements of an array or list, first to last, into one value: acc starts as init, and each element x makes it f(acc, x), with f a function fn(A, T) -> A passed by name. |
+| `transform(xs, f) -> list[U; N]` | f(x) of each element x of an array or list, in order, with f a function fn(T) -> U passed by name: a list[U; N] of the same length and capacity N as the list xs, or a [U; N] for an array. |
+| `zip(a, b) -> list[(A, B); N]` | The pairs (a[i], b[i]) of two arrays or lists, as far as the shorter goes, as a list whose capacity N is the smaller of theirs: for (x, y) in zip(xs, ys) { }. |

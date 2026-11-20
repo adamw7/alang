@@ -1,0 +1,17 @@
+Option.Some(Stock(qty: 3, tags: ["g"])) Option.None Option.Some(Stock(qty: 0, tags: []))
+100 7
+Option.Some("fig") Option.Some("pear")
+a: Option.None Option.Some("fig")
+fig: Option.Some("fig") Option.Some("fig")
+g: Option.Some("fig") Option.Some("kiwi")
+kiwi: Option.Some("kiwi") Option.Some("kiwi")
+l: Option.Some("kiwi") Option.Some("pear")
+pear: Option.Some("pear") Option.Some("pear")
+z: Option.Some("pear") Option.None
+Option.None Option.None Option.None Option.None
+Option.Some(10) Option.Some(30) Option.Some(20) Option.Some(30) Option.None Option.None Option.Some(20)
+Option.Some(0.5) Option.Some(1.5)
+true false true true false false
+true false
+{10} {10} {10, 20, 30} {20, 30} {"c"}
+{5, 20, 30, 40} 4

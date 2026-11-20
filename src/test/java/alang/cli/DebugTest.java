@@ -119,7 +119,7 @@ class DebugTest {
     @Test
     void aTrapStopsBeforeTheStackUnwinds() throws IOException {
         Path p = write("t.al", """
-            fn fill(xs: mut list[i64; 2], n: i64) {
+            fn fill_up(xs: mut list[i64; 2], n: i64) {
                 for i in 0..n {
                     push(mut xs, i * 10);
                 }
@@ -127,13 +127,13 @@ class DebugTest {
 
             fn main() {
                 var xs: list[i64; 2] = [];
-                fill(mut xs, 3);
+                fill_up(mut xs, 3);
             }
             """);
         Result r = debug("run\nprint i\nframe 1\nprint xs\ncontinue\n", p.toString());
         assertEquals(1, r.code());
         String o = r.out();
-        assertTrue(o.contains("trapped in fn fill, " + p + ":3:9: trap[R0004]: push to a full list (capacity 2)"), o);
+        assertTrue(o.contains("trapped in fn fill_up, " + p + ":3:9: trap[R0004]: push to a full list (capacity 2)"), o);
         assertTrue(o.contains("  xs: list[i64; 2] = [0, 10]\n  n: i64 = 3\n  i: i64 = 2\n"), o);
         assertTrue(o.contains("i: i64 = 2\n"), o);
         assertTrue(o.contains("xs: list[i64; 2] = [0, 10]\n"), o);

@@ -2722,7 +2722,7 @@ public final class Checker {
             case "to_string", "str", "string", "toString", "itoa", "String" ->
                 "convert a number or bool to text with the str type: let s: str[24] = str[24](n);";
             case "format", "sprintf", "concat", "str_cat", "strcat" ->
-                "build strings with append(mut s, values...) into a str[N] variable";
+                "build strings with append(mut s, values...) into a str[N] variable; join lists with extend(mut xs, ys)";
             case "hex", "to_hex", "toHex", "bin", "to_bin", "oct", "radix", "to_radix", "format_int", "toString_radix" ->
                 "use to_base(n, base): to_base(255, 16) is \"ff\"; pad_left(to_base(n, 16), 2, '0') pads it";
             case "add", "append_item", "push_back" -> "use push(mut xs, value)";
@@ -2772,8 +2772,23 @@ public final class Checker {
             case "rfind", "rindex", "lastIndexOf", "last_index", "find_last", "rposition" ->
                 "use last_index_of(xs, x), which is -1 when x is absent";
             case "unique", "uniq", "distinct", "dedupe", "dedup_by" -> "sort(mut xs); then dedup(mut xs); leaves every value once";
-            case "bisect", "bisect_left", "binarySearch", "binsearch", "lower_bound", "bsearch" ->
+            case "binarySearch", "binsearch", "bsearch" ->
                 "use binary_search(xs, x) on a sorted list: the position of an element equal to x, or -1";
+            case "bisect", "bisect_left", "partition_point", "insertion_point", "searchsorted" ->
+                "use lower_bound(xs, x) on a sorted list: the first position whose element is not before x, or len(xs)";
+            case "bisect_right" -> "use upper_bound(xs, x) on a sorted list: the first position whose element comes after x";
+            case "push_all", "extend_from_slice", "addAll", "add_all_from", "append_all", "chain" ->
+                "use extend(mut xs, ys), which appends every element of ys to the list xs";
+            case "prod", "multiply_all" -> "use product(xs) on an array or list of numbers";
+            case "issorted", "isSorted", "is_sorted_by" -> "use is_sorted(xs): whether it is in the order sort gives";
+            case "issubset", "isSubset", "is_subset_of", "containsAll", "contains_all", "issuperset" ->
+                "use is_subset(a, b) on two sets: whether every value of a is in b";
+            case "symmetricDifference", "sym_diff", "symmetric_diff", "xor_set" ->
+                "use symmetric_difference(a, b) on two sets";
+            case "firstKey", "first_entry", "min_key", "lastKey", "last_entry", "max_key" ->
+                "use first_key(m) or last_key(m): the smallest or largest key of a map or set, an Option";
+            case "floorKey", "floor_entry", "ceilingKey", "ceiling_key", "ceil_entry", "higher_key", "lower_key" ->
+                "use floor_key(m, k) or ceil_key(m, k): the key at or before (after) k in a map or set, an Option";
             case "minimum", "maximum", "min_of", "max_of", "min_element", "max_element", "amin", "amax" ->
                 "use min(xs) or max(xs) on an array or list of numbers";
             case "total", "add_all", "accumulate" -> "use sum(xs) on an array or list of numbers";
@@ -2794,11 +2809,13 @@ public final class Checker {
             case "overflowing_add", "try_add", "add_checked", "safe_add", "overflowing_sub", "try_sub", "safe_sub",
                  "overflowing_mul", "try_mul", "safe_mul", "mul_checked" ->
                 "use checked_add(a, b), checked_sub(a, b) or checked_mul(a, b): Option.None when the result does not fit";
-            case "map", "transform", "collect" ->
-                "write the loop: var out: list[U; N] = []; for x in xs { push(mut out, f(x)); }";
-            case "reduce", "fold", "foldl", "inject", "aggregate" ->
-                "write the loop: var acc: T = start; for x in xs { acc = f(acc, x); }; for a total, sum(xs)";
-            case "zip" -> "go through both by position: for i, x in xs { let y: T = ys[i]; ... }, with len(xs) <= len(ys)";
+            case "map", "collect", "map_list", "mapped", "select" ->
+                "use transform(xs, f) with fn f(x: T) -> U: a list of f(x) for each element, of the capacity of xs";
+            case "reduce", "foldl", "inject", "aggregate", "fold_left" ->
+                "use fold(xs, start, f) with fn f(acc: A, x: T) -> A; for a total, sum(xs)";
+            case "zip_with", "zipWith", "izip" -> "use zip(xs, ys), a list of pairs: for (x, y) in zip(xs, ys) { }";
+            case "fill_with", "memset", "assign_all" -> "use fill(mut xs, value)";
+            case "rotate_list", "rotated" -> "use rotate(mut xs, k): k places toward the front, wrapping around";
             case "foreach", "for_each", "forEach", "each" -> "write the loop: for x in xs { f(x); }";
             case "sign", "signum", "sgn" -> "use compare(x, 0): -1, 0 or 1";
             case "isqrt", "int_sqrt", "integer_sqrt" ->
@@ -2821,7 +2838,9 @@ public final class Checker {
             case "times", "replicate", "repeat_str", "str_repeat", "multiply" -> "use repeat(s, n): repeat(\"ab\", 3) is \"ababab\"";
             case "intersect", "set_union", "union_with", "intersect_with", "set_difference", "minus", "except", "subtract" ->
                 "use union(a, b), intersection(a, b) or difference(a, b) on two sets";
-            case "min_by_key", "max_by_key", "minBy", "maxBy", "argmin", "argmax" ->
+            case "argmin", "argmax", "index_of_min", "index_of_max", "position_min", "position_max" ->
+                "use min_index(xs) or max_index(xs): the position of the first smallest (largest) element";
+            case "min_by_key", "max_by_key", "minBy", "maxBy" ->
                 "use min_by(xs, before) or max_by(xs, before) with fn before(a: T, b: T) -> bool, true when a comes first";
             case "popleft", "pop_left", "shift", "dequeue", "poll", "pop_first", "remove_first" ->
                 "use pop_front(mut xs), which removes and returns the first element";
@@ -2835,7 +2854,7 @@ public final class Checker {
             case "ord" -> "a character is already a byte: s[i] and 'a' are u8 values; use i64(c) for its number";
             case "chr" -> "push(mut s, u8(n)) adds the byte n to a str";
             case "dict", "HashMap", "hashmap", "Map", "Set", "HashSet", "BTreeMap", "TreeMap" -> Hints.COLLECTIONS;
-            case "get", "getOrDefault", "get_or_default" -> "use get_or(m, key, default), or m[key], which traps (R0003) when the key is missing";
+            case "getOrDefault", "get_or_default" -> "use get_or(m, key, default), or get(m, key), an Option";
             case "items", "entries" -> "go through a map in key order: for k, v in m { }; keys(m) and values(m) are lists";
             case "popcount", "bit_count", "bitCount", "countOnes", "count_bits", "popcnt" -> "use count_ones(x)";
             case "clz", "countLeadingZeros", "numberOfLeadingZeros" -> "use leading_zeros(x)";
@@ -3909,6 +3928,225 @@ public final class Checker {
                 }
                 return a;
             }
+            case PRODUCT -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                return numbersArg(b, args.get(0));
+            }
+            case MIN_INDEX, MAX_INDEX -> {
+                if (!arity(c, 1)) return Type.I64;
+                numbersArg(b, args.get(0));
+                return Type.I64;
+            }
+            case IS_SORTED -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                Type t = readArg(args.get(0));
+                if (Type.elementOf(t) == null && !Type.isError(t)) {
+                    diags.error(Code.E0203, args.get(0).span(), "is_sorted() needs a list, array or str, found " + t,
+                        t instanceof Type.SetT || t instanceof Type.MapT ? "a set or map is always in order" : null);
+                }
+                return Type.BOOL;
+            }
+            case LOWER_BOUND, UPPER_BOUND -> {
+                if (!arity(c, 2)) return Type.I64;
+                Type t = readArg(args.get(0));
+                noMut(args.get(1));
+                if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
+                    Type elem = Type.elementOf(t);
+                    Type x = expr(args.get(1).expr(), elem);
+                    boolean text = x instanceof Type.Str && elem instanceof Type.Str;
+                    if (!Type.isError(x) && !text && !Type.assignable(x, elem)) {
+                        diags.error(Code.E0201, args.get(1).span(), b.name + "() looks for an element of type " + elem + ", found " + x);
+                    }
+                } else {
+                    expr(args.get(1).expr(), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, args.get(0).span(), b.name + "() needs a sorted array or list, found " + t,
+                            t instanceof Type.SetT || t instanceof Type.MapT ? "for a set or map, use floor_key or ceil_key" : null);
+                    }
+                }
+                return Type.I64;
+            }
+            case EXTEND -> {
+                if (!arity(c, 2)) return Type.VOID;
+                Arg xs = args.get(0);
+                Type t;
+                if (!xs.mut()) {
+                    t = expr(xs.expr(), null);
+                    missingMut(xs, "extend() modifies its first argument", "write extend(mut " + exprText(xs.expr()) + ", "
+                        + exprText(args.get(1).expr()) + ")");
+                } else {
+                    t = mutPlace(xs.expr());
+                }
+                boolean list = t instanceof Type.ListT;
+                if (!list && !Type.isError(t)) {
+                    diags.error(Code.E0203, xs.span(), "extend() needs a list to add to, found " + t,
+                        t instanceof Type.Str ? "to add text to a str, use append(mut s, t)"
+                            : t instanceof Type.SetT ? "for two sets, use union(a, b)" : null);
+                }
+                Arg ys = args.get(1);
+                Type yt = value(ys, list ? t : null);
+                readInPlace(ys.expr());
+                if (!list) return Type.VOID;
+                if (!(yt instanceof Type.ArrayT) && !(yt instanceof Type.ListT)) {
+                    if (!Type.isError(yt)) {
+                        diags.error(Code.E0203, ys.span(), "extend() adds the elements of an array or list, found " + yt,
+                            "for one element, use push(mut " + exprText(xs.expr()) + ", " + exprText(ys.expr()) + ")");
+                    }
+                    return Type.VOID;
+                }
+                if (!Type.assignable(Type.elementOf(yt), Type.elementOf(t))) {
+                    diags.error(Code.E0201, ys.span(), "extend() needs elements of type " + Type.elementOf(t) + ", found "
+                        + Type.elementOf(yt));
+                }
+                return Type.VOID;
+            }
+            case FILL -> {
+                if (!arity(c, 2)) return Type.VOID;
+                Type t = sequenceArg(c, args.get(0));
+                Arg v = args.get(1);
+                noMut(v);
+                Type elem = Type.isError(t) ? null : Type.elementOf(t);
+                Type vt = expr(v.expr(), elem);
+                if (elem != null) requireAssignable(v.expr(), vt, elem);
+                return Type.VOID;
+            }
+            case ROTATE -> {
+                if (!arity(c, 2)) return Type.VOID;
+                sequenceArg(c, args.get(0));
+                Type k = value(args.get(1), Type.I64);
+                if (!Type.isInt(k) && !Type.isError(k)) {
+                    diags.error(Code.E0201, args.get(1).span(), "rotate() needs an integer number of places, found " + k);
+                }
+                return Type.VOID;
+            }
+            case GET -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                Type t = readArg(args.get(0));
+                if (!(t instanceof Type.MapT mt)) {
+                    expr(args.get(1).expr(), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, args.get(0).span(), "get() needs a map, found " + t,
+                            t instanceof Type.SetT ? "for a set, use contains(s, x)"
+                                : Type.elementOf(t) != null ? "for a position, check it first: if i < len(xs) then xs[i] else d" : null);
+                    }
+                    return Type.ERROR;
+                }
+                keyArg(b, args.get(1), mt.key());
+                return optionOf(mt.value());
+            }
+            case FIRST_KEY, LAST_KEY, FLOOR_KEY, CEIL_KEY -> {
+                boolean probe = b == Builtin.FLOOR_KEY || b == Builtin.CEIL_KEY;
+                if (!arity(c, probe ? 2 : 1)) return Type.ERROR;
+                Type t = readArg(args.get(0));
+                Type kt = t instanceof Type.MapT mt ? mt.key() : t instanceof Type.SetT st ? st.elem() : null;
+                if (kt == null) {
+                    if (probe) expr(args.get(1).expr(), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, args.get(0).span(), b.name + "() needs a map or set, found " + t,
+                            Type.elementOf(t) == null ? null : probe ? "for a sorted list, use lower_bound(xs, x) or upper_bound(xs, x)"
+                                : b == Builtin.FIRST_KEY ? "for a list, check len(xs) > 0 and read xs[0]"
+                                : "for a list, check len(xs) > 0 and read xs[len(xs) - 1]");
+                    }
+                    return Type.ERROR;
+                }
+                if (probe) keyArg(b, args.get(1), kt);
+                return optionOf(kt);
+            }
+            case IS_SUBSET, SYMMETRIC_DIFFERENCE -> {
+                Type ret = b == Builtin.IS_SUBSET ? Type.BOOL : Type.ERROR;
+                if (!arity(c, 2)) return ret;
+                Type[] ts = new Type[2];
+                // A literal takes its type from the other set: is_subset([2, 3], s).
+                boolean literalFirst = args.get(0).expr() instanceof ArrayLit && !(args.get(1).expr() instanceof ArrayLit);
+                for (int k = 0; k < 2; k++) {
+                    int i = literalFirst ? 1 - k : k;
+                    Type other = ts[1 - i];
+                    noMut(args.get(i));
+                    ts[i] = expr(args.get(i).expr(), other instanceof Type.SetT ? other : null);
+                    readInPlace(args.get(i).expr());
+                    if (!(ts[i] instanceof Type.SetT) && !Type.isError(ts[i])) {
+                        diags.error(Code.E0203, args.get(i).span(), b.name + "() needs two sets, found " + ts[i]);
+                        ts[i] = Type.ERROR;
+                    }
+                }
+                if (Type.isError(ts[0]) || Type.isError(ts[1])) return ret;
+                Type.SetT a = (Type.SetT) ts[0];
+                Type.SetT bt = (Type.SetT) ts[1];
+                if (!a.elem().equals(bt.elem())) {
+                    diags.error(Code.E0201, c.span, b.name + "() needs two sets of the same element type, found " + a + " and " + bt);
+                    return ret;
+                }
+                return b == Builtin.IS_SUBSET ? Type.BOOL : a;
+            }
+            case FOLD -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                Arg xs = args.get(0);
+                Type t = readArg(xs);
+                if (!(t instanceof Type.ArrayT) && !(t instanceof Type.ListT)) {
+                    value(args.get(1), null);
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, xs.span(), "fold() needs an array or list, found " + t,
+                            t instanceof Type.Str ? "go through the bytes with a loop: for c in s { }" : null);
+                    }
+                    return Type.ERROR;
+                }
+                // The accumulator has the type of what the function returns, which a literal start value takes: fold(xs, "",
+                // f) with f returning a str[16]; without a function to go by, the start value's own type.
+                Type ret = resultOfFnArg(args.get(2));
+                boolean known = ret != null && !Type.isError(ret) && !(ret instanceof Type.Void);
+                Type acc = value(args.get(1), known ? ret : expected);
+                if (known && !Type.isError(acc) && Type.assignable(acc, ret)) acc = ret;
+                if (Type.isError(acc)) return Type.ERROR;
+                if (acc instanceof Type.Void) {
+                    diags.error(Code.E0201, args.get(1).span(), "fold() needs a starting value, found a call that returns nothing");
+                    return Type.ERROR;
+                }
+                fnArg(c, args.get(2), new Type.FnT(List.of(acc, Type.elementOf(t)), acc));
+                return acc;
+            }
+            case TRANSFORM -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                Arg xs = args.get(0);
+                Type t = readArg(xs);
+                if (!(t instanceof Type.ArrayT) && !(t instanceof Type.ListT)) {
+                    if (!Type.isError(t)) {
+                        diags.error(Code.E0203, xs.span(), "transform() needs an array or list, found " + t,
+                            t instanceof Type.Str ? "for every byte, use a loop: for c in s { push(mut out, f(c)); }" : null);
+                    }
+                    return Type.ERROR;
+                }
+                Type elem = Type.elementOf(t);
+                Type out = resultOfFnArg(args.get(1));
+                if (out instanceof Type.Void) {
+                    diags.error(Code.E0201, args.get(1).span(), "transform() needs a function that returns a value, but `"
+                        + exprText(args.get(1).expr()) + "` returns nothing", "for each element, write the loop: for x in "
+                        + exprText(xs.expr()) + " { " + exprText(args.get(1).expr()) + "(x); }");
+                    return Type.ERROR;
+                }
+                if (out == null) {
+                    fnArg(c, args.get(1), new Type.FnT(List.of(elem), Type.ERROR));
+                    return Type.ERROR;
+                }
+                fnArg(c, args.get(1), new Type.FnT(List.of(elem), out));
+                return t instanceof Type.ArrayT at ? new Type.ArrayT(out, at.len()) : new Type.ListT(out, ((Type.ListT) t).cap());
+            }
+            case ZIP -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                Type[] ts = new Type[2];
+                for (int i = 0; i < 2; i++) {
+                    ts[i] = readArg(args.get(i));
+                    if (!(ts[i] instanceof Type.ArrayT) && !(ts[i] instanceof Type.ListT) && !Type.isError(ts[i])) {
+                        diags.error(Code.E0203, args.get(i).span(), "zip() needs two arrays or lists, found " + ts[i]);
+                        ts[i] = Type.ERROR;
+                    }
+                }
+                if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
+                int ca = ts[0] instanceof Type.ArrayT at ? at.len() : ((Type.ListT) ts[0]).cap();
+                int cb = ts[1] instanceof Type.ArrayT at ? at.len() : ((Type.ListT) ts[1]).cap();
+                // A `_` (negative) is known only in each instance, which is checked again with it.
+                int cap = ca < 0 ? ca : cb < 0 ? cb : Math.min(ca, cb);
+                return new Type.ListT(new Type.TupleT(List.of(Type.elementOf(ts[0]), Type.elementOf(ts[1]))), cap);
+            }
             case PANIC -> {
                 if (!arity(c, 1)) return Type.VOID;
                 Type t = value(args.get(0), null);
@@ -4044,6 +4282,34 @@ public final class Checker {
             ctx.routine.fnValues.add(f);
             ctx.routine.callees.add(f);
         }
+    }
+
+    /**
+     * The declared result type of the function an argument names (f, a parameter of a function type, or ns.f),
+     * without reporting anything: what transform builds a list of. Null when it names no function with one type,
+     * which {@link #fnArg} then reports.
+     */
+    private Type resultOfFnArg(Arg a) {
+        if (a.mut()) return null;
+        if (a.expr() instanceof Name n) {
+            LocalVar lv = lookupLocal(n.name);
+            if (lv != null) return lv.type instanceof Type.FnT ft ? ft.ret() : null;
+            FnDecl d = fns.get(n.name);
+            if (d == null || d.generic()) return null;
+            signature(d);
+            return d.ret;
+        }
+        if (a.expr() instanceof FieldAccess fa && fa.target instanceof Name q && lookupLocal(q.name) == null
+            && aliasScope(q.name) != null) {
+            FnDecl d = fns.in(aliasScope(q.name), fa.name);
+            if (d == null || d.generic()) return null;
+            int saved = ctx.scope;
+            ctx.scope = d.scope;
+            signature(d);
+            ctx.scope = saved;
+            return d.ret;
+        }
+        return null;
     }
 
     /**
@@ -4293,7 +4559,11 @@ public final class Checker {
     private Type sequenceArg(Call c, Arg a) {
         if (!a.mut()) {
             Type t = expr(a.expr(), null);
-            missingMut(a, c.name + "() modifies its argument", "write " + c.name + "(mut " + exprText(a.expr()) + ")");
+            StringBuilder rest = new StringBuilder();
+            if (c.builtin == Builtin.FILL || c.builtin == Builtin.ROTATE) {
+                for (int i = 1; i < c.args.size(); i++) rest.append(", ").append(exprText(c.args.get(i).expr()));
+            }
+            missingMut(a, c.name + "() modifies its argument", "write " + c.name + "(mut " + exprText(a.expr()) + rest + ")");
             return t;
         }
         Type t = mutPlace(a.expr());

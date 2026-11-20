@@ -1169,8 +1169,8 @@ final class Stdlib {
     }
 
     /**
-     * union, intersection or difference of two sets of the same element type, merged in order into a new set of
-     * the type st (that of a). Every value is a copy. Traps (R0004) when a union does not fit.
+     * union, intersection, difference or symmetric_difference of two sets of the same element type, merged in order into a new set of
+     * the type st (that of a). Every value is a copy. Traps (R0004) when a union or symmetric difference does not fit.
      */
     static ListV setOp(Builtin op, ListV a, ListV b, Type.SetT st, Span at, Meter cost) {
         Type t = st.elem();
@@ -1179,19 +1179,21 @@ final class Stdlib {
         int n = 0;
         int i = 0;
         int j = 0;
-        while (i < a.len || op == Builtin.UNION && j < b.len) {
+        boolean both = op == Builtin.UNION || op == Builtin.SYMMETRIC_DIFFERENCE;
+        while (i < a.len || both && j < b.len) {
             cost.elements(1);
             int c = i == a.len ? 1 : j == b.len ? -1 : compare(a.items[i], b.items[j], t, cost);
             Object x = c <= 0 ? a.items[i] : b.items[j];
             boolean keep = switch (op) {
                 case UNION -> true;
                 case INTERSECTION -> c == 0;
+                case SYMMETRIC_DIFFERENCE -> c != 0;
                 default -> c < 0;
             };
             if (c <= 0) i++;
             if (c >= 0) j++;
             if (!keep) continue;
-            if (n == out.length) throw new Trap(Code.R0004, at, "union exceeds set capacity " + st.cap());
+            if (n == out.length) throw new Trap(Code.R0004, at, op.name + " exceeds set capacity " + st.cap());
             out[n++] = Values.copy(x, cost);
         }
         return new ListV(out, n);

@@ -1,0 +1,37 @@
+error[E0201]: transform() needs a function that returns a value, but `show` returns nothing
+  --> tests/errors/E0201_fold_transform.al:18:25
+   |
+18 |     print(transform(xs, show));
+   |                         ^^^^
+  = hint: for each element, write the loop: for x in xs { show(x); }
+
+error[E0201]: `half` is fn(f64) -> f64, but fn(i64) -> f64 is expected
+  --> tests/errors/E0201_fold_transform.al:19:25
+   |
+19 |     print(transform(xs, half));
+   |                         ^^^^
+
+error[E0201]: `add` is fn(i64, i64) -> i64, but fn(f64, i64) -> f64 is expected
+  --> tests/errors/E0201_fold_transform.al:20:25
+   |
+20 |     print(fold(xs, 0.0, add));
+   |                         ^^^
+
+error[E0201]: extend() needs elements of type str[4], found str[8]
+  --> tests/errors/E0201_fold_transform.al:21:23
+   |
+21 |     extend(mut words, long);
+   |                       ^^^^
+
+error[E0201]: extend() needs elements of type str[4], found i64
+  --> tests/errors/E0201_fold_transform.al:22:23
+   |
+22 |     extend(mut words, xs);
+   |                       ^^
+
+error[E0201]: lower_bound() looks for an element of type i64, found str[1]
+  --> tests/errors/E0201_fold_transform.al:23:27
+   |
+23 |     print(lower_bound(xs, "a"));
+   |                           ^^^
+

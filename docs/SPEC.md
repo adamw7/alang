@@ -648,6 +648,7 @@ them all.
 | `abs(x)`, `min(a, b)`, `max(a, b)` | Same-type numbers. `abs` of the minimum integer traps (R0001). |
 | `min(xs)`, `max(xs)` | The smallest or largest element of a non-empty array or list of numbers, compared as `min(a, b)` compares (a NaN is kept only if it is first). Traps (R0013) if it is empty. |
 | `sum(xs) -> T` | The elements of an array or list of numbers added left to right, as `+` adds them, in their type; 0 if it is empty. An integer total that does not fit traps (R0001), as `+` does, so sum a `list[u8; N]` into a wider type with a loop. |
+| `product(xs) -> T` | The elements multiplied left to right, as `*` multiplies them, in their type; 1 if it is empty. An integer product that does not fit traps (R0001). |
 | `clamp(x, lo, hi) -> T` | `lo` if `x < lo`, `hi` if `x > hi`, else `x`; same-type numbers. Traps (R0013) unless `lo <= hi`, so a NaN bound traps. |
 | `pow(x, n) -> T` | `x` (any integer type) to the power `n` (any integer type); `pow(0, 0)` is 1. Traps if `n < 0` (R0013) or the result does not fit (R0001). For an `f32`/`f64` `x`, `n` is a float of the same type (`pow(2.0, 0.5)`, `pow(x, 3.0)`) and nothing traps: the special cases are C99's (`pow(-8.0, 0.5)` is NaN, `pow(0.0, -1.0)` is `inf`), an integer `n` gives the correctly rounded power (`pow(2.0, 10.0)` is `1024.0`), and `pow(x, 0.5)` is `sqrt(x)`. |
 | `gcd(a, b) -> T` | Greatest common divisor of same-type integers, never negative; `gcd(0, 0)` is 0. `gcd(x, 0)` for the minimum `x` does not fit and traps (R0001). |
@@ -818,11 +819,25 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 | `swap(mut a, mut b)` | Exchanges the values of two places of the same type, of different variables (E0208 for one variable twice: `swap(mut xs[i], mut xs[j])` is `swap(mut xs, i, j)`). |
 | `insert(mut xs, i, v)` | Inserts `v` into a list (a `u8` into a str) at position `i`, moving the rest up. Traps unless `0 <= i <= len(xs)` (R0003), then if full (R0004). |
 | `remove(mut xs, i) -> T` | Removes and returns the element at position `i` of a list (a byte of a str), moving the rest down. Traps unless `0 <= i < len(xs)` (R0003). Like `pop`, it may be a statement of its own. |
+| `extend(mut xs, ys)` | Appends the elements of the array or list `ys` to the list `xs`, in order, each widened to the element type of `xs` as `push` widens it. Traps (R0004) when they do not all fit, before adding any. For text, `append(mut s, t)`. |
+| `fill(mut xs, v)` | Sets every element of a list or array (byte of a str) to `v`; a list keeps its length. |
+| `rotate(mut xs, k)` | Moves the elements of a list, array or str `k` places toward the front, those that leave the front coming back at the end: `[1, 2, 3, 4, 5]` rotated by 2 is `[3, 4, 5, 1, 2]`. `k` (any integer type) is taken as `rem_euclid(k, len(xs))`, so a negative `k` rotates toward the back; an empty one is left as it is. |
+| `is_sorted(xs) -> bool` | Whether the list, array or str `xs` is in the order of `sort`: no element comes after the one that follows it. True for fewer than two. |
+| `min_index(xs) -> i64`, `max_index(xs) -> i64` | The position of the element `min(xs)` (`max(xs)`) returns: the first smallest (largest) of a non-empty array or list of numbers, a NaN only when it is first. Traps (R0013) if it is empty. |
+| `lower_bound(xs, x) -> i64`, `upper_bound(xs, x) -> i64` | In an array or list sorted as `sort` sorts it, the first position whose element `e` has `compare(e, x) >= 0` (`> 0`), or `len(xs)`: where `x` would be inserted before (after) the elements equal to it, so `upper_bound(xs, x) - lower_bound(xs, x)` counts them. About log2(len(xs)) elements are looked at, as by `binary_search`. |
+| `fold(xs, init, f) -> A` | `f(...f(f(init, xs[0]), xs[1])..., xs[n - 1])`: the elements of an array or list combined first to last, with `f` a function `fn(A, T) -> A` passed by name; `init` when it is empty. `A` is the result type of `f`, which a literal `init` takes: `fold(xs, "", f)` with `f` returning a `str[32]`. |
+| `transform(xs, f)` | `f(x)` for each element `x` of an array or list, in order, with `f` a function `fn(T) -> U` passed by name: a `list[U; N]` of the length and capacity of the `list[T; N]` `xs`, or a `[U; N]` for an array. |
+| `zip(a, b) -> list[(A, B); N]` | The pairs `(a[i], b[i])` of two arrays or lists, as far as the shorter goes, in a list whose capacity `N` is the smaller of theirs (an array's is its length): `for (x, y) in zip(xs, ys) { }`. |
 
 | `insert(mut m, k, v)`, `insert(mut s, x)` | Sets `k` to `v` in a map (as `m[k] = v`), or adds `x` to a set; a key or value already there is kept once. Traps (R0004) when a new one does not fit. |
 | `remove(mut m, k) -> bool`, `remove(mut s, x) -> bool` | Removes a key (with its value) or a value; whether it was there. |
 | `get_or(m, k, d) -> V` | The value of `k` in the map `m`, or `d` when there is none. |
 | `union(a, b)`, `intersection(a, b)`, `difference(a, b)` | The values in either set, in both, or in `a` but not `b`, as a set of the type of `a`; the sets have one element type, of any capacities. A union that does not fit traps (R0004). |
+| `symmetric_difference(a, b)` | The values in exactly one of the two sets, as a set of the type of `a`, as for `union`; traps (R0004) when it does not fit. |
+| `is_subset(a, b) -> bool` | Whether every value of the set `a` is in the set `b` (one element type, any capacities); true when `a` is empty. |
+| `get(m, k) -> Option<V>` | `Option.Some` of the value of `k` in the map `m`, or `Option.None` when there is none: unlike `get_or`, it tells a missing key from one holding the default. |
+| `first_key(m) -> Option<K>`, `last_key(m) -> Option<K>` | The smallest (largest) key of the map `m`, or value of the set `m`, or `Option.None` when it is empty. |
+| `floor_key(m, k) -> Option<K>`, `ceil_key(m, k) -> Option<K>` | The largest key (value of a set) `<= k`, or the smallest `>= k`, in the order of `sort`, or `Option.None` when there is none: a lookup between the keys. About log2(len(m)) keys are looked at. |
 | `keys(m) -> list[K; N]`, `values(m) -> list[V; N]` | The keys of the map `m` in order, or its values in the order of their keys, as a list of the map's capacity. |
 | `variants(E) -> [E; K]` | Every variant of the enum named `E` (or `ns.E`), in declaration order: `for c in variants(Color) { }`. The variants carry no values and `E` has no type parameters (E0203). It is a constant: `const ALL: [Color; 3] = variants(Color);`. |
 
@@ -840,10 +855,12 @@ values this order calls equal cannot be told apart, so the result is the same wh
 and no sort is stable or unstable in a way a program can see. For any other order, `sort_by` takes a function
 of your own, and is stable.
 
-The function passed to `any`, `all`, `count_if`, `find_index`, `retain` or `sort_by` follows the rules of a
-parameter of a function type (§5): a function of exactly the type wanted (its parameters the element type, and
-`bool` back), passed by its name, or a parameter of a function type passed on. A trap in it stops the call where
-it is, as a trap in any call does.
+The function passed to `any`, `all`, `count_if`, `find_index`, `retain`, `sort_by`, `min_by`, `max_by`, `fold`
+or `transform` follows the rules of a parameter of a function type (§5): a function of exactly the type wanted
+(its parameters the element type, and `bool` back; for `fold` the accumulator and the element type, and the
+accumulator back; for `transform` the element type, and anything back), passed by its name, or a parameter of a
+function type passed on. It is called once per element, first to last (`any`, `all` and `find_index` stop
+early). A trap in it stops the call where it is, as a trap in any call does.
 
 ### 9.6 Text formatting
 

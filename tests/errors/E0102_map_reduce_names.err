@@ -1,0 +1,42 @@
+error[E0102]: unknown function `map`
+ --> tests/errors/E0102_map_reduce_names.al:8:11
+  |
+8 |     print(map(xs, double));
+  |           ^^^
+  = hint: use transform(xs, f) with fn f(x: T) -> U: a list of f(x) for each element, of the capacity of xs
+
+error[E0101]: unknown name `double`
+ --> tests/errors/E0102_map_reduce_names.al:8:19
+  |
+8 |     print(map(xs, double));
+  |                   ^^^^^^
+  = hint: `double` is a function; call it with parentheses: double(...)
+
+error[E0102]: unknown function `reduce`
+ --> tests/errors/E0102_map_reduce_names.al:9:11
+  |
+9 |     print(reduce(xs, 0, double));
+  |           ^^^^^^
+  = hint: use fold(xs, start, f) with fn f(acc: A, x: T) -> A; for a total, sum(xs)
+
+error[E0101]: unknown name `double`
+ --> tests/errors/E0102_map_reduce_names.al:9:25
+  |
+9 |     print(reduce(xs, 0, double));
+  |                         ^^^^^^
+  = hint: `double` is a function; call it with parentheses: double(...)
+
+error[E0102]: unknown function `argmax`
+  --> tests/errors/E0102_map_reduce_names.al:10:11
+   |
+10 |     print(argmax(xs));
+   |           ^^^^^^
+  = hint: use min_index(xs) or max_index(xs): the position of the first smallest (largest) element
+
+error[E0102]: unknown function `bisect_left`
+  --> tests/errors/E0102_map_reduce_names.al:11:11
+   |
+11 |     print(bisect_left(xs, 1));
+   |           ^^^^^^^^^^^
+  = hint: use lower_bound(xs, x) on a sorted list: the first position whose element is not before x, or len(xs)
+

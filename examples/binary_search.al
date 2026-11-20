@@ -22,15 +22,6 @@ fn search(xs: [i32; 10], target: i32) -> i64
     return -1;
 }
 
-fn is_sorted(xs: [i32; 10]) -> bool {
-    for i in 1..len(xs) {
-        if xs[i - 1] > xs[i] {
-            return false;
-        }
-    }
-    return true;
-}
-
 const DATA: [i32; 10] = [-5, 0, 3, 8, 13, 21, 34, 55, 89, 144];
 
 fn main() {
