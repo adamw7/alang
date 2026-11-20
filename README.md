@@ -266,6 +266,9 @@ CI runs on Linux, macOS and Windows with gcc and clang. To release, set the vers
 `main`, and publish a GitHub release with a new tag; [release.yml](.github/workflows/release.yml) re-runs CI,
 then attaches the jar, archives, native binaries, AGENTS.md and `SHA256SUMS`, and publishes to GitHub Packages.
 
+**Dependencies:** do not introduce Spring (or any other application framework) into the compiler or its
+tooling; keep the Java code plain and the dependency list short.
+
 ## Status
 
 Version 0.6: imports, vendored packages pinned by hash, generics, `Option`/`Result`, function values, tuples, maps, sets, slices, labelled
