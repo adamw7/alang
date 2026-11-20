@@ -2,3 +2,5 @@ target/
 *.class
 /out/
 __pycache__/
+.venv-wheel/
+/dist-python/
