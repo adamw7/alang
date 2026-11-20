@@ -2692,9 +2692,10 @@ public final class CGen {
                 Type pair = ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0);
                 String r = tmp(pair, "{0}");
                 open("if (" + found + " >= 0) {");
-                emit(r + ".e0.len = al_copy_bytes(" + r + ".e0.b, (" + v + ").b, (uint32_t)" + found + ");");
-                emit(r + ".e1.len = al_copy_bytes(" + r + ".e1.b, (" + v + ").b + (uint32_t)" + found + " + " + p[1] + ", ("
-                    + v + ").len - (uint32_t)" + found + " - " + p[1] + ");");
+                List<Type> pieces = ((Type.TupleT) pair).elems();
+                emit("al_split_once_into(" + r + ".e0.b, &" + r + ".e0.len, " + ((Type.Str) pieces.get(0)).cap() + "u, " + r
+                    + ".e1.b, &" + r + ".e1.len, " + ((Type.Str) pieces.get(1)).cap() + "u, (" + v + ").b, (" + v + ").len, (uint32_t)"
+                    + found + ", " + p[1] + ");");
                 close("}");
                 return optionValue(c.type, found + " >= 0", r);
             }
