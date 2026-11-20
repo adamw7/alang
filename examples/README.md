@@ -25,6 +25,7 @@ agent can call with JSON. CI type-checks every example, runs its tests, compares
 | [helpers.al](helpers.al) | Helpers the standard library leaves out, to import or copy: pseudo-random numbers, a list of entries as a map in insertion order; their parameters take any capacity (`list[Entry; _]`, `str[_]`) |
 | [tally.al](tally.al) | `import "helpers.al";` instead of copying, `parse_i64`, and a `fn main(input: str[N])` that reads the standard input ([tally.in](tally.in)) |
 | [expenses.al](expenses.al) | A data job: a CSV on the standard input ([expenses.in](expenses.in)) summed per category in exact cents, bad rows counted instead of fatal; the same `tool fn` over `alang call` and `alang serve` |
+| [scoreboard.al](scoreboard.al) | The collection builtins: a `map` with `get_or` and `values`, `transform`, `retain`, `fold`, `extend`, `zip`, and `floor_key` on a `set`, with functions passed by name |
 
 ## Try them
 
