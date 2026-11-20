@@ -143,6 +143,15 @@ class CBackendTest {
     }
 
     private static Path buildEachAndCompare(Frontend.Result r, byte[] input, List<String[]> ccs) throws IOException, InterruptedException {
+        return buildEachAndCompare(r, input, ccs, 0);
+    }
+
+    /**
+     * As above; a {@code stack} above 0 is the stack, in bytes, that the program is linked with on Windows, whose
+     * default of 1 MB is less than the checker allows (elsewhere the default, usually 8 MB, is enough).
+     */
+    private static Path buildEachAndCompare(Frontend.Result r, byte[] input, List<String[]> ccs, long stack)
+            throws IOException, InterruptedException {
         Harness.Run expected = Harness.runMain(r, input);
         Path dir = Files.createTempDirectory("alang-c");
         Path c = dir.resolve("prog.c");
@@ -150,6 +159,7 @@ class CBackendTest {
         for (String[] cc : ccs) {
             List<String> cmd = new ArrayList<>(List.of(cc));
             cmd.addAll(List.of("-o", PROG, "prog.c"));
+            if (WINDOWS && stack > 0) cmd.add((msvc(cc[0]) ? "-Wl,/STACK:" : "-Wl,--stack,") + stack);
             cmd.addAll(libm(cc[0]));
             Proc build = exec(dir, cmd.toArray(new String[0]));
             assertEquals(0, build.exit(), () -> String.join(" ", cc) + ":\n" + build.stderr());
@@ -271,7 +281,8 @@ class CBackendTest {
             assertEquals("false Option.None\nfalse Option.None\ntrue Option.Some(1.0)\n", Harness.runMain(r, new byte[0]).stdout());
             List<String[]> ccs = compilers();
             assumeTrue(!ccs.isEmpty(), "no C compiler available");
-            buildEachAndCompare(r, ccs);
+            // Three strs of a megabyte each: more than the 1 MB a Windows program gets unless it asks for more.
+            buildEachAndCompare(r, new byte[0], ccs, r.check().memory().maxStack() + STACK_SLACK_KB * 1024);
         }));
     }
 
