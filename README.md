@@ -79,8 +79,13 @@ what it writes to any MCP client with `alang serve prog.al` ([how](#tools-in-an-
 ## Install
 
 ```sh
+pip install alang-toolchain                                                      # any OS with Python 3.9+
 curl -fsSL https://raw.githubusercontent.com/adamw7/alang/main/install.sh | sh   # Linux, macOS
 ```
+
+`pip` installs the `alang` command and a Python module ([below](#embedding-in-a-python-host)). Linux x64/arm64
+(glibc 2.35+), Apple-silicon macOS and Windows x64 get the native binary; elsewhere the jar, which needs Java
+21+ (`pip install "alang-toolchain[java]"` brings a Java runtime too).
 
 It installs into `~/.alang`, links `~/.local/bin/alang`, and verifies downloads against `SHA256SUMS`
 (`ALANG_HOME`, `ALANG_BIN_DIR`, `ALANG_VERSION` override; see [install.sh](install.sh)). Linux x64/arm64
@@ -220,6 +225,27 @@ r.resultJson();   // [334, 333, 333]; r.toJson() is what `alang call` prints
 
 A call never throws for what the model sends: every failure is a `CallResult` with an `errorCode()`.
 `Alang.agentsGuide()` returns AGENTS.md for a system prompt.
+
+## Embedding in a Python host
+
+`pip install alang-toolchain` adds the `alang` module, which runs the toolchain in a subprocess:
+
+```python
+import alang
+
+report = alang.check("bill.al")                   # `alang check --json` as a dict
+if not report["ok"]:
+    for d in report["diagnostics"]:
+        print(d["code"], d["line"], d["message"], d["hint"])
+tools = alang.tools("bill.al")                    # tool definitions for the model
+r = alang.call("bill.al", "split_bill", {"total_cents": 1000, "people": 3})
+r["result"]       # [334, 333, 333]; r is what `alang call` prints, parsed
+alang.agents_md()                                 # AGENTS.md for a system prompt
+alang.invoke("test", "bill.al")                   # any command, as a subprocess.CompletedProcess
+```
+
+Like `alang call`, `alang.call` returns failures as a reply with `"ok": False` and an `error` code; it
+raises `alang.AlangError` only when the toolchain cannot start. [python/](python) builds the wheels.
 
 ## Tool results as TOON
 

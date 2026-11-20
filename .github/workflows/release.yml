@@ -101,6 +101,15 @@ jobs:
           path: native
           merge-multiple: true
 
+      - name: Fetch the Python wheels
+        # pip install alang-toolchain: the wheels that the ci job built and tested, one per native binary
+        # and one with the jar.
+        uses: actions/download-artifact@v8
+        with:
+          pattern: alang-wheel-*
+          path: wheels
+          merge-multiple: true
+
       - name: Attach the files to the GitHub release
         timeout-minutes: 3
         env:
@@ -114,20 +123,21 @@ jobs:
           mkdir -p "$assets"
           cp target/alang.jar "$assets/alang-$FILES.jar"
           cp "target/alang-$FILES.tar.gz" "target/alang-$FILES.zip" AGENTS.md "$assets/"
-          cp native/alang-*.tar.gz native/alang-*.zip "$assets/"
+          cp native/alang-*.tar.gz native/alang-*.zip wheels/*.whl "$assets/"
           (cd "$assets" && sha256sum -- * > SHA256SUMS)
 
           # The release and its tag already exist; --clobber lets a re-run replace the files.
           gh release upload "$TAG" "$assets"/* --clobber
 
           cat > "$RUNNER_TEMP/files.md" <<EOF
-          Install on Linux or macOS with \`curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.sh | sh\`, which puts the binary for your platform on your PATH; it needs no Java. Elsewhere, unpack \`alang-$FILES.tar.gz\` (or the \`.zip\`) and run \`alang-$FILES/bin/alang\`, or run the jar directly: \`java -jar alang-$FILES.jar\`; both need Java 21 or newer. Agents start with [AGENTS.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/AGENTS.md).
+          Install with \`pip install alang-toolchain\` on any OS, or on Linux or macOS with \`curl -fsSL https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.sh | sh\`, which puts the binary for your platform on your PATH; it needs no Java. Elsewhere, unpack \`alang-$FILES.tar.gz\` (or the \`.zip\`) and run \`alang-$FILES/bin/alang\`, or run the jar directly: \`java -jar alang-$FILES.jar\`; both need Java 21 or newer. Agents start with [AGENTS.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/AGENTS.md).
 
           | File | Contents |
           |------|----------|
           | \`alang-linux-x64.tar.gz\`, \`alang-linux-arm64.tar.gz\`, \`alang-macos-arm64.tar.gz\`, \`alang-windows-x64.zip\` | \`bin/alang\` (\`bin\\alang.exe\`) as a native binary that needs no Java, with AGENTS.md, the docs and the examples; Linux needs glibc 2.35 or newer |
           | \`alang-$FILES.tar.gz\`, \`alang-$FILES.zip\` | \`bin/alang\`, \`lib/alang.jar\`, AGENTS.md, README.md, the spec, the error catalog and the other docs, the grammar, the examples, \`harness/toon.py\`, the licenses |
           | \`alang-$FILES.jar\` | The toolchain as one runnable jar, with AGENTS.md inside (\`/alang/AGENTS.md\` on the classpath) |
+          | \`alang_toolchain-$FILES-py3-none-*.whl\` | The Python package (\`pip install alang-toolchain\`): the \`alang\` command and module, with the native binary for its platform or, in the \`any\` wheel, the jar |
           | \`AGENTS.md\` | The guide for agents writing ALang |
           | \`SHA256SUMS\` | Checksums of the files above |
 
@@ -140,3 +150,30 @@ jobs:
             { cat "$RUNNER_TEMP/files.md"; echo; cat "$RUNNER_TEMP/drafted.md"; } > "$RUNNER_TEMP/notes.md"
             gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi
+
+  pypi:
+    name: Publish to PyPI
+    # The wheels the ci job tested, as alang-toolchain on PyPI, through trusted publishing: on pypi.org, add
+    # this repository, release.yml and the environment `pypi` as a trusted publisher of alang-toolchain, then
+    # set the repository variable PYPI_PUBLISH to true. Until then this job is skipped. PyPI refuses a version
+    # it already has, so a re-run skips the wheels it holds.
+    needs: [version, publish]
+    if: vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/alang-toolchain/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: alang-wheel-*
+          path: wheels
+          merge-multiple: true
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: wheels
+          skip-existing: true

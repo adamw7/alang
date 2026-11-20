@@ -30,8 +30,9 @@ line with the variables in scope (`--break fn_name`, `--break "12 if i == 3"`, `
 `--call TOOL '{...}'` also work, and a trap always stops). Pipe commands in to drive it: `step`, `next`,
 `finish`, `continue`, `where`, `frame N`, `locals`, `print EXPR`, `help`.
 
-No `bin/alang`? `curl -fsSL https://raw.githubusercontent.com/adamw7/alang/main/install.sh | sh` (Linux,
-macOS), or unpack a [release](https://github.com/adamw7/alang/releases/latest) archive (needs Java 21+).
+No `bin/alang`? `pip install alang-toolchain` (then run `alang`), or
+`curl -fsSL https://raw.githubusercontent.com/adamw7/alang/main/install.sh | sh` (Linux, macOS), or unpack a
+[release](https://github.com/adamw7/alang/releases/latest) archive (needs Java 21+).
 
 ## A complete program
 

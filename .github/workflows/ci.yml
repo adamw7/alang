@@ -202,6 +202,32 @@ jobs:
           printf 'tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n' > size.al
           LC_ALL=C path/alang call size.al size '{"text": "é"}' | grep -q '"result": 2'
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Python wheel (jar)
+        # pip install alang-toolchain where there is no native binary: the wheel with the jar, installed into
+        # a fresh virtual environment and tested there with this Java. Linux's is the one a release publishes.
+        timeout-minutes: 4
+        env:
+          PYTHON: python
+        run: |
+          "$PYTHON" python/build_wheels.py --jar target/alang.jar --out dist-python
+          "$PYTHON" -m venv .venv-wheel
+          venv_python=.venv-wheel/bin/python
+          if [ "$RUNNER_OS" = Windows ]; then venv_python=.venv-wheel/Scripts/python.exe; fi
+          "$venv_python" -m pip install -q dist-python/alang_toolchain-*-py3-none-any.whl
+          ALANG_EXPECT=jar "$venv_python" -m unittest discover -s python/tests -v
+
+      - uses: actions/upload-artifact@v7
+        if: runner.os == 'Linux'
+        with:
+          name: alang-wheel-any
+          path: dist-python/*.whl
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Windows launcher
         # The release archive's bin\alang.cmd, run from PowerShell as a Windows user runs it, in a folder
         # whose path has a space in it.
@@ -397,6 +423,31 @@ jobs:
           HOME="$home" ALANG_DOWNLOAD_URL="file://$release" ALANG_JAR=1 sh install.sh
           test -f "$home/.alang/lib/alang.jar"
           "$home/.local/bin/alang" run examples/hello.al | diff -u tests/examples/hello.out -
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: Python wheel (native)
+        # pip install alang-toolchain on this platform: the wheel with this binary, installed into a fresh
+        # virtual environment and tested there.
+        timeout-minutes: 4
+        env:
+          PYTHON: python
+        run: |
+          "$PYTHON" python/build_wheels.py --native "${{ matrix.platform }}=target/native/alang$EXE" --out dist-python
+          "$PYTHON" -m venv .venv-wheel
+          venv_python=.venv-wheel/bin/python
+          if [ "$RUNNER_OS" = Windows ]; then venv_python=.venv-wheel/Scripts/python.exe; fi
+          "$venv_python" -m pip install -q dist-python/alang_toolchain-*.whl
+          ALANG_EXPECT=native "$venv_python" -m unittest discover -s python/tests -v
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: alang-wheel-${{ matrix.platform }}
+          path: dist-python/*.whl
+          if-no-files-found: error
+          retention-days: 14
 
       - uses: actions/upload-artifact@v7
         with:
