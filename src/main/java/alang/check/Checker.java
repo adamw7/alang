@@ -4497,6 +4497,24 @@ public final class Checker {
                 textPattern(b, args.get(1), b == Builtin.STRIP_PREFIX ? "the prefix" : "the suffix");
                 return t;
             }
+            case RE_MATCH, RE_FIND -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                textArg(b, args.get(0));
+                Type pt = textArg(b, args.get(1));
+                // A pattern written out is compiled now, so that a mistake in it is an error, not a trap.
+                if (args.get(1).expr() instanceof StrLit lit) {
+                    try {
+                        alang.interp.Regex.compile(lit.value, lit.value.length);
+                    } catch (alang.interp.Regex.BadPattern e) {
+                        diags.error(Code.E0202, lit.span, "this pattern is not a valid regular expression: " + e.getMessage()
+                                + " at byte " + e.at,
+                            "special characters are . [ ] ( ) | * + ? { } ^ $ and \\; put a \\ before one to match it, and "
+                                + "write the pattern as a raw string, r\"...\", so that each \\ reaches it as it is");
+                    }
+                }
+                if (Type.isError(pt)) return b == Builtin.RE_MATCH ? Type.BOOL : Type.ERROR;
+                return b == Builtin.RE_MATCH ? Type.BOOL : optionOf(new Type.TupleT(List.of(Type.I64, Type.I64)));
+            }
             case SPLIT_ONCE -> {
                 if (!arity(c, 2)) return Type.ERROR;
                 Type t = textArg(b, args.get(0));

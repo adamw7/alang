@@ -740,6 +740,427 @@ static uint64_t al_fnv1a(const uint8_t *b, uint32_t n) {
     return h;
 }
 
+/*
+ * The regular expressions of re_match and re_find: the compiler and Pike VM of the interpreter's Regex class,
+ * step for step, with its limits (see there for the syntax). All of their state is in one al_re on the stack.
+ */
+#define AL_RE_PATTERN 256
+#define AL_RE_PROGRAM 1024
+#define AL_RE_CLASSES 64
+#define AL_RE_DEPTH 32
+#define AL_RE_REPEAT 100
+#define AL_RE_NODES (2 * AL_RE_PATTERN + 2)
+
+enum { AL_RC_CHAR, AL_RC_ANY, AL_RC_CLASS, AL_RC_SPLIT, AL_RC_JMP, AL_RC_MATCH, AL_RC_BOL, AL_RC_EOL };
+enum { AL_RN_LIT, AL_RN_ANY, AL_RN_CLASS, AL_RN_BOL, AL_RN_EOL, AL_RN_CAT, AL_RN_ALT, AL_RN_REPEAT, AL_RN_EMPTY };
+
+typedef struct {
+    const uint8_t *p;
+    uint32_t len, pos;
+    int depth;
+    uint8_t kind[AL_RE_NODES];
+    int16_t a[AL_RE_NODES], b[AL_RE_NODES];
+    int8_t min[AL_RE_NODES];
+    int16_t max[AL_RE_NODES];
+    int nodes;
+    uint64_t classes[AL_RE_CLASSES][4];
+    int nclasses;
+    uint8_t op[AL_RE_PROGRAM];
+    uint16_t x[AL_RE_PROGRAM], y[AL_RE_PROGRAM];
+    int n;
+    /* Why the pattern is not valid (NULL when it is), the byte where, and the character of an unknown escape. */
+    const char *why;
+    uint32_t at;
+    int esc;
+    /* The machine. */
+    uint16_t cpc[AL_RE_PROGRAM], npc[AL_RE_PROGRAM];
+    uint32_t cstart[AL_RE_PROGRAM], nstart[AL_RE_PROGRAM];
+    uint32_t mark[AL_RE_PROGRAM];
+    uint16_t stack[2 * AL_RE_PROGRAM + 1];
+} al_re;
+
+static int al_re_fail(al_re *r, const char *why, uint32_t at) {
+    if (r->why == NULL) {
+        r->why = why;
+        r->at = at;
+    }
+    return -1;
+}
+
+static int al_re_node(al_re *r, int k, int a, int b) {
+    r->kind[r->nodes] = (uint8_t)k;
+    r->a[r->nodes] = (int16_t)a;
+    r->b[r->nodes] = (int16_t)b;
+    return r->nodes++;
+}
+
+static int al_re_new_class(al_re *r, uint32_t at) {
+    int k;
+    if (r->nclasses == AL_RE_CLASSES) return al_re_fail(r, "more than 64 classes", at);
+    k = r->nclasses++;
+    r->classes[k][0] = r->classes[k][1] = r->classes[k][2] = r->classes[k][3] = 0;
+    return k;
+}
+
+static void al_re_shorthand(uint64_t *set, int kind) {
+    int v;
+    for (v = 0; v < 256; v++) {
+        int in = kind == 'd' ? v >= '0' && v <= '9'
+            : kind == 'w' ? (v >= '0' && v <= '9') || (v >= 'a' && v <= 'z') || (v >= 'A' && v <= 'Z') || v == '_'
+            : v == ' ' || v == '\t' || v == '\n' || v == '\r' || v == 0x0B || v == 0x0C;
+        if (in) set[v >> 6] |= (uint64_t)1 << (v & 63);
+    }
+}
+
+static void al_re_invert(uint64_t *set) {
+    int i;
+    for (i = 0; i < 4; i++) set[i] = ~set[i];
+}
+
+/* The byte an escape other than a class stands for, or -1 after failing. */
+static int al_re_escaped(al_re *r, int e, uint32_t at) {
+    switch (e) {
+    case 'n': return '\n';
+    case 't': return '\t';
+    case 'r': return '\r';
+    case '0': return 0;
+    default:
+        if ((e >= '0' && e <= '9') || (e >= 'a' && e <= 'z') || (e >= 'A' && e <= 'Z')) {
+            if (r->why == NULL) r->esc = e;
+            return al_re_fail(r, "unknown escape \\", at);
+        }
+        return e;
+    }
+}
+
+static int al_re_alt(al_re *r);
+
+static int al_re_bracket(al_re *r, uint32_t at) {
+    int k = al_re_new_class(r, at), first = 1, negate;
+    uint64_t *set;
+    if (k < 0) return -1;
+    set = r->classes[k];
+    negate = r->pos < r->len && r->p[r->pos] == '^';
+    if (negate) r->pos++;
+    for (;;) {
+        int c, lo, hi, v;
+        uint32_t item;
+        if (r->pos >= r->len) return al_re_fail(r, "missing ]", at);
+        c = r->p[r->pos];
+        if (c == ']' && !first) {
+            r->pos++;
+            break;
+        }
+        first = 0;
+        item = r->pos;
+        r->pos++;
+        if (c == '\\') {
+            int e, lower;
+            if (r->pos >= r->len) return al_re_fail(r, "escape at the end of the pattern", item);
+            e = r->p[r->pos++];
+            lower = e | 0x20;
+            if (lower == 'd' || lower == 'w' || lower == 's') {
+                uint64_t sh[4] = {0, 0, 0, 0};
+                int i;
+                al_re_shorthand(sh, lower);
+                if (e != lower) al_re_invert(sh);
+                for (i = 0; i < 4; i++) set[i] |= sh[i];
+                continue;
+            }
+            lo = al_re_escaped(r, e, item);
+            if (lo < 0) return -1;
+        } else {
+            lo = c;
+        }
+        hi = lo;
+        if (r->pos + 1 < r->len && r->p[r->pos] == '-' && r->p[r->pos + 1] != ']') {
+            int d;
+            r->pos++;
+            d = r->p[r->pos++];
+            if (d == '\\') {
+                int e;
+                if (r->pos >= r->len) return al_re_fail(r, "escape at the end of the pattern", r->pos - 1);
+                e = r->p[r->pos++];
+                if ((e | 0x20) == 'd' || (e | 0x20) == 'w' || (e | 0x20) == 's') return al_re_fail(r, "bad range in a class", item);
+                d = al_re_escaped(r, e, r->pos - 2);
+                if (d < 0) return -1;
+            }
+            hi = d;
+            if (hi < lo) return al_re_fail(r, "bad range in a class", item);
+        }
+        for (v = lo; v <= hi; v++) set[v >> 6] |= (uint64_t)1 << (v & 63);
+    }
+    if (negate) al_re_invert(set);
+    return k;
+}
+
+static int al_re_atom(al_re *r) {
+    uint32_t at = r->pos;
+    int c = r->p[r->pos++];
+    switch (c) {
+    case '(': {
+        int inner;
+        if (++r->depth > AL_RE_DEPTH) return al_re_fail(r, "groups nested more than 32 deep", at);
+        inner = al_re_alt(r);
+        if (inner < 0) return -1;
+        if (r->pos >= r->len || r->p[r->pos] != ')') return al_re_fail(r, "missing )", at);
+        r->pos++;
+        r->depth--;
+        return inner;
+    }
+    case ')': return al_re_fail(r, "unmatched )", at);
+    case '*': case '+': case '?': case '{': return al_re_fail(r, "nothing to repeat", at);
+    case '.': return al_re_node(r, AL_RN_ANY, 0, 0);
+    case '^': return al_re_node(r, AL_RN_BOL, 0, 0);
+    case '$': return al_re_node(r, AL_RN_EOL, 0, 0);
+    case '[': {
+        int k = al_re_bracket(r, at);
+        return k < 0 ? -1 : al_re_node(r, AL_RN_CLASS, k, 0);
+    }
+    case '\\': {
+        int e, lower, v;
+        if (r->pos >= r->len) return al_re_fail(r, "escape at the end of the pattern", at);
+        e = r->p[r->pos++];
+        lower = e | 0x20;
+        if (lower == 'd' || lower == 'w' || lower == 's') {
+            int k = al_re_new_class(r, at);
+            if (k < 0) return -1;
+            al_re_shorthand(r->classes[k], lower);
+            if (e != lower) al_re_invert(r->classes[k]);
+            return al_re_node(r, AL_RN_CLASS, k, 0);
+        }
+        v = al_re_escaped(r, e, at);
+        return v < 0 ? -1 : al_re_node(r, AL_RN_LIT, v, 0);
+    }
+    default: return al_re_node(r, AL_RN_LIT, c, 0);
+    }
+}
+
+static int al_re_number(al_re *r, uint32_t at) {
+    int n = 0, digits = 0;
+    while (r->pos < r->len && r->p[r->pos] >= '0' && r->p[r->pos] <= '9') {
+        n = n * 10 + (r->p[r->pos] - '0');
+        if (n > AL_RE_REPEAT) return al_re_fail(r, "bad repetition count", at);
+        r->pos++;
+        digits++;
+    }
+    if (digits == 0) return al_re_fail(r, "bad repetition count", at);
+    return n;
+}
+
+static int al_re_repeat(al_re *r) {
+    uint32_t start = r->pos;
+    int atom = al_re_atom(r), c, lo, hi, k, node;
+    if (atom < 0) return -1;
+    if (r->pos >= r->len) return atom;
+    c = r->p[r->pos];
+    if (c == '*') {
+        lo = 0;
+        hi = -1;
+        r->pos++;
+    } else if (c == '+') {
+        lo = 1;
+        hi = -1;
+        r->pos++;
+    } else if (c == '?') {
+        lo = 0;
+        hi = 1;
+        r->pos++;
+    } else if (c == '{') {
+        uint32_t at = r->pos;
+        r->pos++;
+        lo = al_re_number(r, at);
+        if (lo < 0) return -1;
+        hi = lo;
+        if (r->pos < r->len && r->p[r->pos] == ',') {
+            r->pos++;
+            if (r->pos < r->len && r->p[r->pos] == '}') {
+                hi = -1;
+            } else {
+                hi = al_re_number(r, at);
+                if (hi < 0) return -1;
+            }
+        }
+        if (r->pos >= r->len || r->p[r->pos] != '}' || (hi >= 0 && hi < lo)) return al_re_fail(r, "bad repetition count", at);
+        r->pos++;
+    } else {
+        return atom;
+    }
+    k = r->kind[atom];
+    if (k == AL_RN_BOL || k == AL_RN_EOL || (k == AL_RN_EMPTY && start == r->pos)) return al_re_fail(r, "nothing to repeat", start);
+    if (r->pos < r->len && (r->p[r->pos] == '*' || r->p[r->pos] == '+' || r->p[r->pos] == '?' || r->p[r->pos] == '{')) {
+        return al_re_fail(r, "nothing to repeat", r->pos);
+    }
+    node = al_re_node(r, AL_RN_REPEAT, atom, 0);
+    r->min[node] = (int8_t)lo;
+    r->max[node] = (int16_t)hi;
+    return node;
+}
+
+static int al_re_concat(al_re *r) {
+    int left = -1;
+    while (r->pos < r->len && r->p[r->pos] != '|' && r->p[r->pos] != ')') {
+        int x = al_re_repeat(r);
+        if (x < 0) return -1;
+        left = left < 0 ? x : al_re_node(r, AL_RN_CAT, left, x);
+    }
+    return left < 0 ? al_re_node(r, AL_RN_EMPTY, 0, 0) : left;
+}
+
+static int al_re_alt(al_re *r) {
+    int left = al_re_concat(r);
+    if (left < 0) return -1;
+    while (r->pos < r->len && r->p[r->pos] == '|') {
+        int right;
+        r->pos++;
+        right = al_re_concat(r);
+        if (right < 0) return -1;
+        left = al_re_node(r, AL_RN_ALT, left, right);
+    }
+    return left;
+}
+
+static int al_re_emit(al_re *r, int o, int a, int b) {
+    if (r->n == AL_RE_PROGRAM) return al_re_fail(r, "more than 1024 instructions once its repetitions are written out", 0);
+    r->op[r->n] = (uint8_t)o;
+    r->x[r->n] = (uint16_t)a;
+    r->y[r->n] = (uint16_t)b;
+    return r->n++;
+}
+
+static int al_re_code(al_re *r, int k) {
+    int i, split, jmp;
+    switch (r->kind[k]) {
+    case AL_RN_LIT: return al_re_emit(r, AL_RC_CHAR, r->a[k], 0) < 0 ? -1 : 0;
+    case AL_RN_ANY: return al_re_emit(r, AL_RC_ANY, 0, 0) < 0 ? -1 : 0;
+    case AL_RN_CLASS: return al_re_emit(r, AL_RC_CLASS, r->a[k], 0) < 0 ? -1 : 0;
+    case AL_RN_BOL: return al_re_emit(r, AL_RC_BOL, 0, 0) < 0 ? -1 : 0;
+    case AL_RN_EOL: return al_re_emit(r, AL_RC_EOL, 0, 0) < 0 ? -1 : 0;
+    case AL_RN_EMPTY: return 0;
+    case AL_RN_CAT: return al_re_code(r, r->a[k]) < 0 || al_re_code(r, r->b[k]) < 0 ? -1 : 0;
+    case AL_RN_ALT:
+        split = al_re_emit(r, AL_RC_SPLIT, 0, 0);
+        if (split < 0) return -1;
+        r->x[split] = (uint16_t)r->n;
+        if (al_re_code(r, r->a[k]) < 0) return -1;
+        jmp = al_re_emit(r, AL_RC_JMP, 0, 0);
+        if (jmp < 0) return -1;
+        r->y[split] = (uint16_t)r->n;
+        if (al_re_code(r, r->b[k]) < 0) return -1;
+        r->x[jmp] = (uint16_t)r->n;
+        return 0;
+    default:
+        for (i = 0; i < r->min[k]; i++) {
+            if (al_re_code(r, r->a[k]) < 0) return -1;
+        }
+        if (r->max[k] < 0) {
+            split = al_re_emit(r, AL_RC_SPLIT, 0, 0);
+            if (split < 0) return -1;
+            r->x[split] = (uint16_t)r->n;
+            if (al_re_code(r, r->a[k]) < 0 || al_re_emit(r, AL_RC_JMP, split, 0) < 0) return -1;
+            r->y[split] = (uint16_t)r->n;
+        } else {
+            for (i = r->min[k]; i < r->max[k]; i++) {
+                split = al_re_emit(r, AL_RC_SPLIT, 0, 0);
+                if (split < 0) return -1;
+                r->x[split] = (uint16_t)r->n;
+                if (al_re_code(r, r->a[k]) < 0) return -1;
+                r->y[split] = (uint16_t)r->n;
+            }
+        }
+        return 0;
+    }
+}
+
+/* Compiles a pattern into r; 0, or -1 with r->why, r->at (and r->esc) saying why it is not valid. */
+static int al_re_compile(al_re *r, const uint8_t *p, uint32_t len) {
+    int root;
+    r->why = NULL;
+    r->at = 0;
+    r->esc = 0;
+    r->nodes = r->nclasses = r->n = r->depth = 0;
+    r->p = p;
+    r->len = len;
+    r->pos = 0;
+    if (len > AL_RE_PATTERN) return al_re_fail(r, "longer than 256 bytes", 0);
+    root = al_re_alt(r);
+    if (root < 0) return -1;
+    if (r->pos < len) return al_re_fail(r, "unmatched )", r->pos);
+    if (al_re_code(r, root) < 0 || al_re_emit(r, AL_RC_MATCH, 0, 0) < 0) return -1;
+    return 0;
+}
+
+static uint32_t al_re_add(al_re *r, uint16_t *lpc, uint32_t *lstart, uint32_t ln, int pc0, uint32_t start, uint32_t pos, uint32_t len) {
+    uint32_t gen = pos + 1;
+    int sp = 0;
+    r->stack[sp++] = (uint16_t)pc0;
+    while (sp > 0) {
+        int pc = r->stack[--sp];
+        if (r->mark[pc] == gen) continue;
+        r->mark[pc] = gen;
+        switch (r->op[pc]) {
+        case AL_RC_JMP: r->stack[sp++] = r->x[pc]; break;
+        case AL_RC_SPLIT:
+            r->stack[sp++] = r->y[pc];
+            r->stack[sp++] = r->x[pc];
+            break;
+        case AL_RC_BOL: if (pos == 0) r->stack[sp++] = (uint16_t)(pc + 1); break;
+        case AL_RC_EOL: if (pos == len) r->stack[sp++] = (uint16_t)(pc + 1); break;
+        default:
+            lpc[ln] = (uint16_t)pc;
+            lstart[ln] = start;
+            ln++;
+        }
+    }
+    return ln;
+}
+
+/* Runs the program of r on s: with whole, 1 if it matches all of s, else 0; otherwise whether it matches somewhere,
+   and where its leftmost match starts and ends. */
+static int al_re_run(al_re *r, const uint8_t *s, uint32_t len, int whole, uint32_t *from, uint32_t *to) {
+    uint16_t *cpc = r->cpc, *npc = r->npc, *tp;
+    uint32_t *cstart = r->cstart, *nstart = r->nstart, *ts;
+    uint32_t cn = 0, pos, i;
+    int matched = 0;
+    for (i = 0; i < (uint32_t)r->n; i++) r->mark[i] = 0;
+    for (pos = 0; pos <= len; pos++) {
+        uint32_t nn = 0;
+        if (!matched && (!whole || pos == 0)) cn = al_re_add(r, cpc, cstart, cn, 0, pos, pos, len);
+        if (cn == 0) {
+            if (matched || whole) break;
+            continue;
+        }
+        for (i = 0; i < cn; i++) {
+            int pc = cpc[i];
+            int c = pos < len ? s[pos] : -1;
+            switch (r->op[pc]) {
+            case AL_RC_MATCH:
+                if (whole && pos != len) continue;
+                *from = cstart[i];
+                *to = pos;
+                matched = 1;
+                i = cn;
+                break;
+            case AL_RC_CHAR:
+                if (c == r->x[pc]) nn = al_re_add(r, npc, nstart, nn, pc + 1, cstart[i], pos + 1, len);
+                break;
+            case AL_RC_ANY:
+                if (c >= 0 && c != '\n') nn = al_re_add(r, npc, nstart, nn, pc + 1, cstart[i], pos + 1, len);
+                break;
+            default:
+                if (c >= 0 && ((r->classes[r->x[pc]][c >> 6] >> (c & 63)) & 1)) {
+                    nn = al_re_add(r, npc, nstart, nn, pc + 1, cstart[i], pos + 1, len);
+                }
+            }
+        }
+        tp = cpc; cpc = npc; npc = tp;
+        ts = cstart; cstart = nstart; nstart = ts;
+        cn = nn;
+        if (matched && cn == 0) break;
+    }
+    return matched;
+}
+
 /* isqrt: the largest r with r * r <= n, digit by digit, two bits at a time, as the interpreter does. */
 static uint64_t al_isqrt(uint64_t n) {
     uint64_t rem = n, root = 0, bit = (uint64_t)1 << 62;

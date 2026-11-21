@@ -2965,6 +2965,36 @@ public final class CGen {
                     + (c.builtin == Builtin.STRIP_PREFIX ? 1 : 0) + ");");
                 return r;
             }
+            case RE_MATCH, RE_FIND -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String p = lowerLvalue(args.get(1).expr());
+                String re = "t" + ++tmpCount;
+                String from = "t" + ++tmpCount;
+                String to = "t" + ++tmpCount;
+                String ok = "t" + ++tmpCount;
+                emit("uint32_t " + from + " = 0, " + to + " = 0;");
+                emit("int " + ok + ";");
+                open("{");
+                emit("al_re " + re + ";");
+                open("if (al_re_compile(&" + re + ", (" + p + ").b, (" + p + ").len) < 0) {");
+                emit("al_out al_e = al_trap_begin(\"R0013\");");
+                emit("AL_PUTS(&al_e, \"" + c.name + "() pattern is not valid: \");");
+                emit("al_puts_c(&al_e, " + re + ".why);");
+                emit("if (" + re + ".esc != 0) { char al_c = (char)" + re + ".esc; al_put(&al_e, &al_c, 1); }");
+                emit("AL_PUTS(&al_e, \" at byte \");");
+                emit("al_fmt_u64(&al_e, " + re + ".at);");
+                emit("al_trap_end(&al_e, " + at + ");");
+                close("}");
+                emit(ok + " = al_re_run(&" + re + ", (" + v + ").b, (" + v + ").len, " + (c.builtin == Builtin.RE_MATCH ? 1 : 0) + ", &"
+                    + from + ", &" + to + ");");
+                close("}");
+                if (c.builtin == Builtin.RE_MATCH) return tmp(Type.BOOL, "(" + ok + " != 0)");
+                Type pair = ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0);
+                String r = tmp(pair, "{0}");
+                emit(r + ".e0 = (int64_t)" + from + ";");
+                emit(r + ".e1 = (int64_t)" + to + ";");
+                return optionValue(c.type, ok + " != 0", r);
+            }
             case SPLIT_ONCE -> {
                 String v = lowerLvalue(args.get(0).expr());
                 String[] p = pattern(args.get(1).expr());

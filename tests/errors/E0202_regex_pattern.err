@@ -1,0 +1,7 @@
+error[E0202]: this pattern is not a valid regular expression: missing ) at byte 1
+ --> tests/errors/E0202_regex_pattern.al:3:26
+  |
+3 |     print(re_match("ab", "a(b"));
+  |                          ^^^^^
+  = hint: special characters are . [ ] ( ) | * + ? { } ^ $ and \; put a \ before one to match it, and write the pattern as a raw string, r"...", so that each \ reaches it as it is
+

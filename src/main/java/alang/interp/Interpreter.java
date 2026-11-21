@@ -1831,6 +1831,22 @@ public final class Interpreter {
                 System.arraycopy(s.b, from, b, 0, to - from);
                 return new StrV(b, to - from);
             }
+            case RE_MATCH, RE_FIND -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                StrV p = (StrV) eval(args.get(1).expr(), slots);
+                Regex.Program prog;
+                try {
+                    meter.bytes(p.len);
+                    prog = Regex.compile(p.b, p.len);
+                } catch (Regex.BadPattern e) {
+                    throw new Trap(Code.R0013, c.span, c.name + "() pattern is not valid: " + e.getMessage() + " at byte " + e.at);
+                }
+                long r = Regex.run(prog, s.b, s.len, c.builtin == Builtin.RE_MATCH, meter);
+                if (c.builtin == Builtin.RE_MATCH) return r >= 0;
+                if (r < 0) return option(null);
+                meter.elements(1);
+                return option(new StructV(new Object[] {r >>> 32, r & 0xFFFFFFFFL}));
+            }
             case SPLIT_ONCE -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);
                 byte[] sep = Stdlib.pattern(eval(args.get(1).expr(), slots), meter);

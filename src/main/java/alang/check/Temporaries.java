@@ -223,6 +223,9 @@ final class Temporaries {
     }
 
     /** What the C backend of some builtins keeps besides their arguments and result, all of it on the stack at once. */
+    /** An upper bound on sizeof(al_re) in the C prelude: what re_match and re_find keep on the stack. */
+    static final long RE_STATE = 65536;
+
     private static long builtin(Call c) {
         List<Arg> args = c.args;
         return switch (c.builtin) {
@@ -250,6 +253,8 @@ final class Temporaries {
                 long keys = Type.isAggregate(c.fnArgResult()) ? 2 * Layout.size(c.fnArgResult()) : 0;
                 yield Layout.add(Type.isAggregate(elem) ? Layout.size(elem) : 0, keys);
             }
+            // The compiled pattern and the state of the machine that runs it: one al_re of the C prelude.
+            case RE_MATCH, RE_FIND -> RE_STATE;
             // The element on its way to its new place.
             case ROTATE, SORT_BY, HEAP_POP -> {
                 Type elem = Type.elementOf(args.get(0).expr().type);

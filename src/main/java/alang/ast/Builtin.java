@@ -152,6 +152,16 @@ public enum Builtin {
     STRIP_SUFFIX(Group.TEXT, true, "strip_suffix", "strip_suffix(s, suffix) -> str[N]",
         "s without suffix (a str or u8 byte) at its end, or s unchanged if it does not end with it: "
             + "strip_suffix(\"a.txt\", \".txt\") is \"a\"."),
+    RE_MATCH(Group.TEXT, true, "re_match", "re_match(s, pattern) -> bool",
+        "Whether the regular expression pattern matches all of the str s: re_match(s, r\"\\d{3}-\\d{4}\"). The syntax: a "
+            + "byte matches itself; . any byte but a newline; [abc], [a-z], [^...] a class; \\d \\w \\s (and \\D \\W \\S) "
+            + "digits, word characters and spaces; ^ and $ the start and end; ( ) a group; | alternatives; * + ? and {m}, "
+            + "{m,}, {m,n} (up to 100) repetition, greedy; \\ before a symbol the symbol. It runs in time linear in the "
+            + "length of s. Traps (R0013) if the pattern is not valid, or longer than 256 bytes."),
+    RE_FIND(Group.TEXT, true, "re_find", "re_find(s, pattern) -> Option<(i64, i64)>",
+        "Where the regular expression pattern (see re_match) first matches in the str s: Option.Some((start, end)), the "
+            + "byte positions of the match, s[start..end], or Option.None. Of the matches that start there it takes "
+            + "the one Perl does: the left alternative first, each repetition as long as it can be."),
     SPLIT_ONCE(Group.TEXT, true, "split_once", "split_once(s, sep) -> Option<(str[N], str[N])>",
         "The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the "
             + "capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once(\"k=v=w\", '=') is Option.Some((\"k\", \"v=w\")). "
