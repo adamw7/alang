@@ -93,6 +93,8 @@ public final class Checker {
         Map<String, Type> typeParams = Map.of();
         /** The loops around the statement being checked, innermost first. */
         final Deque<Loop> loops = new ArrayDeque<>();
+        /** The variables that a `for x in mut xs` around the statement changes through x: its body cannot use them. */
+        final Map<LocalVar, For> lent = new HashMap<>();
         boolean inEnsures;
         /** While a requires or ensures clause is checked, where `?` cannot return. */
         boolean inContract;
@@ -620,28 +622,28 @@ public final class Checker {
         return switch (ref) {
             case PrimRef p -> Type.prim(p.kind());
             case StrRef s -> {
-                int cap = s.cap() == null ? anyCapacity(s.span(), "str[_]") : typeSize(s.cap(), "string capacity");
+                int cap = capacity(s.cap(), s.span(), "str[_]", "string capacity");
                 yield cap == BAD_SIZE ? Type.ERROR : new Type.Str(cap);
             }
             case ListRef l -> {
                 Type elem = resolveType(l.elem());
-                int cap = l.cap() == null ? anyCapacity(l.span(), "list[" + elem + "; _]") : typeSize(l.cap(), "list capacity");
+                int cap = capacity(l.cap(), l.span(), "list[" + elem + "; _]", "list capacity");
                 yield cap == BAD_SIZE || Type.isError(elem) ? Type.ERROR : new Type.ListT(elem, cap);
             }
             case ArrayRef a -> {
                 Type elem = resolveType(a.elem());
-                int len = a.len() == null ? anyCapacity(a.span(), "[" + elem + "; _]") : typeSize(a.len(), "array length");
+                int len = capacity(a.len(), a.span(), "[" + elem + "; _]", "array length");
                 yield len == BAD_SIZE || Type.isError(elem) ? Type.ERROR : new Type.ArrayT(elem, len);
             }
             case MapRef m -> {
                 Type k = resolveType(m.key());
                 Type v = resolveType(m.value());
-                int cap = m.cap() == null ? anyCapacity(m.span(), "map[" + k + ", " + v + "; _]") : typeSize(m.cap(), "map capacity");
+                int cap = capacity(m.cap(), m.span(), "map[" + k + ", " + v + "; _]", "map capacity");
                 yield cap == BAD_SIZE || Type.isError(k) || Type.isError(v) ? Type.ERROR : new Type.MapT(k, v, cap);
             }
             case SetRef st -> {
                 Type e = resolveType(st.elem());
-                int cap = st.cap() == null ? anyCapacity(st.span(), "set[" + e + "; _]") : typeSize(st.cap(), "set capacity");
+                int cap = capacity(st.cap(), st.span(), "set[" + e + "; _]", "set capacity");
                 yield cap == BAD_SIZE || Type.isError(e) ? Type.ERROR : new Type.SetT(e, cap);
             }
             case TupleRef t -> {
@@ -926,9 +928,9 @@ public final class Checker {
     private void signature(FnDecl f) {
         if (!signed.add(f)) return;
         Ctx saved = ctx;
+        splitCapacityParams(f);
         enterFn(f);
         if (f.origin == null) checkTypeParams(f);
-        f.ret = f.retRef == null ? Type.VOID : resolveType(f.retRef);
         Set<String> names = new HashSet<>();
         int[] savedCapacities = paramCapacities;
         paramCapacities = new int[1];
@@ -974,6 +976,16 @@ public final class Checker {
             }
         }
         paramCapacities = savedCapacities;
+        // After the parameters, which give each capacity parameter its `_`: the result may have them too.
+        f.ret = f.retRef == null ? Type.VOID : resolveType(f.retRef);
+        if (f.origin != null) f.ret = Type.substitute(f.ret, f.capacities);
+        for (int i = 0; i < f.capacityParams.size(); i++) {
+            if (f.origin == null && !f.capacityIndex.containsKey(f.capacityParams.get(i))) {
+                diags.error(Code.E0216, f.capacityParamSpans.get(i), "capacity parameter `" + f.capacityParams.get(i)
+                    + "` is in no parameter's type, so a call cannot tell what it stands for",
+                    "use it as the capacity of a parameter, as in fn f<N>(xs: list[i64; N]) -> list[i64; N]");
+            }
+        }
         defaults(f);
         if (f.origin == null && f.paramVars.stream().noneMatch(v -> Type.isError(v.type))) {
             // A call fixes each type parameter from the arguments, so each must appear in a parameter's type.
@@ -1122,6 +1134,124 @@ public final class Checker {
         ctx.typeParams = typeParamsOf(f);
     }
 
+    /**
+     * Moves the names of `fn f<T, N>` that stand for a capacity, those written where a parameter's type has a capacity
+     * or length (`list[T; N]`), from its type parameters to its capacity parameters.
+     */
+    private void splitCapacityParams(FnDecl f) {
+        Set<String> caps = new HashSet<>();
+        for (Param p : f.params) capacityNames(p.typeRef(), caps);
+        if (f.retRef != null) capacityNames(f.retRef, caps);
+        for (int i = f.typeParams.size() - 1; i >= 0; i--) {
+            if (caps.contains(f.typeParams.get(i))) {
+                f.capacityParams.add(0, f.typeParams.remove(i));
+                f.capacityParamSpans.add(0, f.typeParamSpans.remove(i));
+            }
+        }
+    }
+
+    /** The plain names written as a capacity or length anywhere in a type. */
+    private static void capacityNames(TypeRef r, Set<String> out) {
+        java.util.function.Consumer<Expr> cap = e -> {
+            if (e instanceof Name n) out.add(n.name);
+        };
+        switch (r) {
+            case StrRef s -> cap.accept(s.cap());
+            case ListRef l -> {
+                cap.accept(l.cap());
+                capacityNames(l.elem(), out);
+            }
+            case ArrayRef a -> {
+                cap.accept(a.len());
+                capacityNames(a.elem(), out);
+            }
+            case MapRef m -> {
+                cap.accept(m.cap());
+                capacityNames(m.key(), out);
+                capacityNames(m.value(), out);
+            }
+            case SetRef s -> {
+                cap.accept(s.cap());
+                capacityNames(s.elem(), out);
+            }
+            case TupleRef t -> t.elems().forEach(e -> capacityNames(e, out));
+            case FnRef fr -> {
+                fr.params().forEach(e -> capacityNames(e, out));
+                if (fr.ret() != null) capacityNames(fr.ret(), out);
+            }
+            case NamedRef n -> n.args().forEach(e -> capacityNames(e, out));
+            case PrimRef p -> { }
+        }
+    }
+
+    /**
+     * The capacity that the name of a capacity parameter of the function being checked stands for: in an instance, its
+     * value; as written, the `_` it stands for, which the parameters' types give it, the first of them that names it
+     * taking the next. {@link #NOT_CAPACITY} if the name is no capacity parameter here.
+     */
+    private int namedCapacity(String name) {
+        FnDecl f = ctx.fn;
+        if (f == null || !f.capacityParams.contains(name)) return NOT_CAPACITY;
+        Integer i = f.capacityIndex.get(name);
+        if (i == null && paramCapacities != null) {
+            i = Type.anyCapacity(paramCapacities[0]++);
+            f.capacityIndex.put(name, i);
+        }
+        if (i == null) return BAD_SIZE;
+        // In an instance's body the capacities are known; its parameters' types are substituted after they resolve.
+        if (f.origin != null && paramCapacities == null && -1 - i < f.capacities.size()) return f.capacities.get(-1 - i);
+        return i;
+    }
+
+    /**
+     * E0201 for an argument that gives a capacity parameter of {@code f} another value than an argument before it did:
+     * `same(a, b)` with a: str[4] and b: str[8] for fn same<N>(a: str[N], b: str[N]). Whether it was one.
+     */
+    private boolean capacityConflict(FnDecl f, Arg a, Type want, Type at, Map<Integer, Integer> caps) {
+        int[] idx = topCapacity(want);
+        int[] got = topCapacity(at);
+        if (idx == null || got == null || idx[0] >= 0 || got[0] < 0) return false;
+        Integer before = caps.get(-1 - idx[0]);
+        String name = null;
+        for (Map.Entry<String, Integer> e : f.capacityIndex.entrySet()) {
+            if (e.getValue() == idx[0]) name = e.getKey();
+        }
+        if (before == null || name == null || before == got[0]) return false;
+        diags.error(Code.E0201, a.span(), "capacity parameter `" + name + "` of `" + f.name + "` is " + before
+                + " from an argument before this one, but this one gives it " + got[0],
+            "the arguments must have the same capacity there; widen the smaller with a conversion such as "
+                + at.toString().replace(String.valueOf(got[0]), String.valueOf(Math.max(before, got[0]))) + "(...)");
+        return true;
+    }
+
+    /** The capacity of a str, list, map or set, or the length of an array, as a one-element array; null for others. */
+    private static int[] topCapacity(Type t) {
+        return switch (t) {
+            case Type.Str s -> new int[] {s.cap()};
+            case Type.ListT l -> new int[] {l.cap()};
+            case Type.ArrayT a -> new int[] {a.len()};
+            case Type.MapT m -> new int[] {m.cap()};
+            case Type.SetT s -> new int[] {s.cap()};
+            default -> null;
+        };
+    }
+
+    /** What {@link #namedCapacity} returns for a name that is no capacity parameter. */
+    private static final int NOT_CAPACITY = Integer.MAX_VALUE;
+
+    /** A capacity or length of a type: `_`, a capacity parameter, or a constant; BAD_SIZE after reporting an error. */
+    private int capacity(Expr cap, Span span, String written, String what) {
+        if (cap == null) return anyCapacity(span, written);
+        if (cap instanceof Name n && lookupLocal(n.name) == null) {
+            int c = namedCapacity(n.name);
+            if (c != NOT_CAPACITY) {
+                n.type = Type.I64;
+                return c;
+            }
+        }
+        return typeSize(cap, what);
+    }
+
     private void body(FnDecl f) {
         enterFn(f);
         Map<String, LocalVar> params = new HashMap<>();
@@ -1229,6 +1359,11 @@ public final class Checker {
     }
 
     private LocalVar declare(String name, Span span, Type type, boolean mutable) {
+        return declare(name, span, type, mutable, false);
+    }
+
+    /** As {@link #declare(String, Span, Type, boolean)}; {@code byRef} for a name of storage elsewhere (`for x in mut xs`). */
+    private LocalVar declare(String name, Span span, Type type, boolean mutable, boolean byRef) {
         for (Map<String, LocalVar> scope : ctx.scopes) {
             LocalVar prev = scope.get(name);
             if (prev != null) {
@@ -1238,7 +1373,7 @@ public final class Checker {
             }
         }
         checkNameFree(name, span);
-        LocalVar v = new LocalVar(name, span, type, mutable, false, ctx.routine.locals.size());
+        LocalVar v = new LocalVar(name, span, type, mutable, byRef, ctx.routine.locals.size());
         ctx.routine.locals.add(v);
         ctx.scopes.peek().put(name, v);
         return v;
@@ -1673,6 +1808,11 @@ public final class Checker {
 
     private void forLoop(For f) {
         Type varType;
+        if (f.inPlace && f.isRange()) {
+            diags.error(Code.E0212, f.from.span, "a range has no elements to change: `mut` goes before an array, list, str or map",
+                "write for i in " + exprText(f.from) + (f.inclusive ? "..=" : "..") + exprText(f.to) + " { }");
+            f.inPlace = false;
+        }
         if (f.isRange()) {
             Type[] ts = sameTypeOperands(f.from, f.to, null);
             varType = ts[0];
@@ -1709,6 +1849,28 @@ public final class Checker {
                 diags.error(Code.E0212, f.indexSpan, "a range has no index: its values are the indexes",
                     "write for " + f.name + " in " + exprText(f.from) + (f.inclusive ? "..=" : "..") + exprText(f.to) + " { }");
             }
+        } else if (f.inPlace) {
+            Type ct = mutPlace(f.from);
+            varType = Type.elementOf(ct);
+            if (ct instanceof Type.MapT mt) {
+                varType = mt.value();
+                if (f.indexName == null) {
+                    diags.error(Code.E0212, f.from.span, "the keys of a map stay as they are; `for k, v in mut m` changes each value v",
+                        "write for k, v in mut " + exprText(f.from) + " { }");
+                }
+            }
+            if (varType == null) {
+                if (!Type.isError(ct)) {
+                    diags.error(Code.E0212, f.from.span, "`for x in mut` changes the elements of an array, list or str, or the values "
+                            + "of a map, found " + ct,
+                        ct instanceof Type.SetT ? "the values of a set are kept in order; remove one and insert another" : null);
+                }
+                varType = Type.ERROR;
+            }
+            if (f.name.startsWith("$")) {
+                diags.error(Code.E0212, f.nameSpan, "`for P in mut xs` takes no pattern: a pattern takes copies apart",
+                    "name the element and change its parts: for x in mut " + exprText(f.from) + " { x.0 += 1; }");
+            }
         } else {
             // split and words in a for loop make one piece at a time: there is no list for them to take a type from.
             Builtin b = f.from instanceof Call c ? Builtin.byName(c.name) : null;
@@ -1738,11 +1900,14 @@ public final class Checker {
             f.indexVar = declare(f.indexName, f.indexSpan, indexType, false);
             loopVars.put(f.indexVar, f);
         }
-        f.var = declare(f.name, f.nameSpan, varType, false);
-        loopVars.put(f.var, f);
+        Name lentRoot = f.inPlace ? rootName(f.from) : null;
+        f.var = declare(f.name, f.nameSpan, varType, f.inPlace, f.inPlace);
+        if (!f.inPlace) loopVars.put(f.var, f);
+        if (lentRoot != null && lentRoot.local != null) ctx.lent.put(lentRoot.local, f);
         loop(f, f.body);
+        if (lentRoot != null && lentRoot.local != null) ctx.lent.remove(lentRoot.local);
         ctx.scopes.pop();
-        if (!f.isRange()) {
+        if (!f.isRange() && !f.inPlace) {
             Expr src = f.source();
             Name root = src.isPlace() ? rootName(src) : null;
             f.snapshot = root != null && root.local != null && Uses.changes(f.body, root.local);
@@ -1899,10 +2064,11 @@ public final class Checker {
         // A str is read where it is unless an arm binds it to a name, which takes a copy.
         if (t instanceof Type.Str && patterns.stream().allMatch(p -> Ast.allBindings(p).isEmpty())) readInPlace(subject);
         boolean supported = Type.isError(t) || t instanceof Type.EnumT || Type.isInt(t) || Type.isBool(t)
-            || t instanceof Type.Str || t instanceof Type.TupleT || t instanceof Type.StructT;
+            || t instanceof Type.Str || t instanceof Type.TupleT || t instanceof Type.StructT || t instanceof Type.ListT
+            || t instanceof Type.ArrayT;
         if (!supported) {
             diags.error(Code.E0308, subject.span, "cannot match on a value of type " + t,
-                "match works on enums, integers, bool, str, tuples and structs; use if/else for other types");
+                "match works on enums, integers, bool, str, tuples, structs, arrays and lists; use if/else for other types");
             return Type.ERROR;
         }
         return t;
@@ -1996,6 +2162,25 @@ public final class Checker {
             }
             case OrPat o -> {
                 return orPattern(o, t, binder);
+            }
+            case ListPat lp -> {
+                Type elem = Type.elementOf(t);
+                if (elem == null) {
+                    for (BindPat b : Ast.bindings(p)) b.var = binder.bind(b, Type.ERROR);
+                    return mismatchedPattern(p, "list pattern", t);
+                }
+                // The most elements a value of t has: an array has exactly its length.
+                int most = t instanceof Type.ArrayT a ? a.len() : Type.capacity(t);
+                boolean ok = true;
+                if (lp.named() > most || t instanceof Type.ArrayT && !lp.rest && lp.named() != most) {
+                    diags.error(Code.E0308, p.span, "a pattern of " + (lp.rest ? "at least " : "") + lp.named() + " element(s) cannot match "
+                            + (t instanceof Type.ArrayT ? "an array of " + most : "a value of " + t + ", which holds at most " + most),
+                        t instanceof Type.ArrayT ? "write one pattern per element, or `..` for the ones you do not need" : null);
+                    ok = false;
+                }
+                for (Pattern e : lp.prefix) ok &= pattern(e, elem, binder);
+                for (Pattern e : lp.suffix) ok &= pattern(e, elem, binder);
+                return ok;
             }
         }
     }
@@ -2336,7 +2521,22 @@ public final class Checker {
         LocalVar v = lookupLocal(n.name);
         if (v != null) {
             n.local = v;
+            For lent = ctx.lent.get(v);
+            if (lent != null) {
+                diags.error(Code.E0208, n.span, "`" + n.name + "` is being changed through `" + lent.name + "` of `for "
+                        + lent.name + " in mut " + exprText(lent.from) + "`, and cannot be used in that loop otherwise",
+                    "use " + lent.name + " for the element; to work with the rest too, go through the indexes: for i in 0..len("
+                        + exprText(lent.from) + ") { }");
+            }
             return v.type;
+        }
+        int cap = namedCapacity(n.name);
+        // One in no parameter's type was reported where it is declared.
+        if (cap == BAD_SIZE) return Type.ERROR;
+        if (cap != NOT_CAPACITY) {
+            // A capacity parameter is an i64, a constant of each instance.
+            if (cap >= 0) n.capacity = (long) cap;
+            return Type.I64;
         }
         ConstDecl c = consts.get(n.name);
         if (c != null) {
@@ -2629,7 +2829,9 @@ public final class Checker {
                         want = Type.substituteTypes(want, f, types);
                     }
                     Type at = expr(a.expr(), argExpected(want, a.expr()));
-                    if (!Type.bind(want, at, false, caps, f, types)) mismatch(a.expr(), at, want);
+                    if (!Type.bind(want, at, false, caps, f, types)) {
+                        if (!capacityConflict(f, a, want, at, caps)) mismatch(a.expr(), at, want);
+                    }
                 }
             }
         }
@@ -2673,7 +2875,8 @@ public final class Checker {
             if (known.size() == nc && !typeArgs.contains(null) && allFns) c.fn = instance(f, known, typeArgs, fns2);
         }
         if (ctx.routine != null) ctx.routine.callees.add(c.fn);
-        Type result = Type.substituteTypes(f.ret, f, types);
+        // A result with capacity parameters, -> list[T; N], has what the arguments gave them.
+        Type result = Type.substituteCaps(Type.substituteTypes(f.ret, f, types), caps);
         // A type parameter the arguments did not fix was reported; its type variable must not reach the caller.
         if (diags.errorCount() != before && !ownTypeVarsOnly(result)) return Type.ERROR;
         return result;
@@ -6005,7 +6208,7 @@ public final class Checker {
             case FloatLit f -> true;
             case StrLit s -> true;
             case BoolLit b -> true;
-            case Name n -> n.constant != null && n.constant.value != null;
+            case Name n -> n.capacity != null || n.constant != null && n.constant.value != null;
             case FieldAccess f -> f.constant != null ? f.constant.value != null : f.variant != null || isConst(f.target);
             case Index i -> isConst(i.target) && isConst(i.index);
             case Call c when c.asStruct != null -> isConst(c.asStruct);

@@ -1,0 +1,7 @@
+error[E0201]: capacity parameter `N` of `same` is 4 from an argument before this one, but this one gives it 8
+ --> tests/errors/E0201_capacity_param_conflict.al:9:19
+  |
+9 |     print(same(a, b));
+  |                   ^
+  = hint: the arguments must have the same capacity there; widen the smaller with a conversion such as str[8](...)
+

@@ -492,8 +492,10 @@ final class AstBuilder {
             stmts.addAll(body.stmts());
             body = new Block(body.span(), stmts);
         }
-        return new For(sp, loopName, loopSpan, index == null ? null : index.getText(), index == null ? null : span(index),
+        For loop = new For(sp, loopName, loopSpan, index == null ? null : index.getText(), index == null ? null : span(index),
             expr(es.get(0)), to, inclusive, step, f.REV() != null, body);
+        loop.inPlace = f.MUT() != null;
+        return loop;
     }
 
     private Expr place(PlaceContext ctx) {
@@ -553,6 +555,22 @@ final class AstBuilder {
             return new TuplePat(sp, elems);
         }
         if (ctx instanceof ParenPatternContext p) return pattern(p.pattern());
+        if (ctx instanceof ListPatternContext l) {
+            List<Pattern> prefix = new ArrayList<>();
+            List<Pattern> suffix = new ArrayList<>();
+            boolean rest = false;
+            for (ListPatternElemContext e : l.listPatternElem()) {
+                if (e.DOTDOT() == null) {
+                    (rest ? suffix : prefix).add(pattern(e.pattern()));
+                } else if (rest) {
+                    diags.error(Code.E0308, span(e), "a list pattern has at most one `..`",
+                        "name the elements at the front and back: [first, .., last]");
+                } else {
+                    rest = true;
+                }
+            }
+            return new ListPat(sp, prefix, rest, suffix);
+        }
         if (ctx instanceof RangePatternContext r) {
             RangePat rp = new RangePat(sp, rangeBound(r.rangeBound(0)), rangeBound(r.rangeBound(1)), r.op.getType() == ALangLexer.DOTDOTEQ);
             rp.codePoint = r.rangeBound().stream().anyMatch(b -> b.CHAR_LIT() != null && codePointLiteral(b.CHAR_LIT().getSymbol()));

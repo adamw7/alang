@@ -1,0 +1,7 @@
+error[E0208]: `xs` is being changed through `x` of `for x in mut xs`, and cannot be used in that loop otherwise
+ --> tests/errors/E0208_for_mut_uses_collection.al:5:18
+  |
+5 |         push(mut xs, x);
+  |                  ^^
+  = hint: use x for the element; to work with the rest too, go through the indexes: for i in 0..len(xs) { }
+

@@ -297,6 +297,13 @@ public final class Ast {
          */
         public FnDecl origin;
         public List<Integer> capacities = List.of();
+        /**
+         * `fn f<N>(xs: [i64; N])`: the names among {@code <...>} that stand for a capacity rather than a type, moved out
+         * of {@link #typeParams} by the checker, and the index of the `_` of {@link Type#anyCapacity} each stands for.
+         */
+        public final List<String> capacityParams = new ArrayList<>();
+        public final List<Span> capacityParamSpans = new ArrayList<>();
+        public final Map<String, Integer> capacityIndex = new HashMap<>();
         public List<Type> typeArgs = List.of();
         public List<FnDecl> fnArgs = List.of();
         /**
@@ -581,6 +588,11 @@ public final class Ast {
          * variable the body leaves alone holds the same value all along.
          */
         public boolean snapshot;
+        /**
+         * `for x in mut xs`: x is each element itself, not a copy, and what the body does to x it does to the element;
+         * for a map, `for k, v in mut m` gives each value so. The body cannot use xs otherwise, so no element moves.
+         */
+        public boolean inPlace;
 
         public For(Span span, String name, Span nameSpan, String indexName, Span indexSpan, Expr from, Expr to,
                    boolean inclusive, Expr step, boolean rev, Block body) {
@@ -760,6 +772,28 @@ public final class Ast {
         }
     }
 
+    /**
+     * `[p1, p2]`: an array, list or str of exactly those elements; with `..`, `[p1, .., pk]`, of at least them: the
+     * prefix from the front, the suffix at the back, and any number of elements between.
+     */
+    public static final class ListPat extends Pattern {
+        public final List<Pattern> prefix;
+        public final boolean rest;
+        public final List<Pattern> suffix;
+
+        public ListPat(Span span, List<Pattern> prefix, boolean rest, List<Pattern> suffix) {
+            super(span);
+            this.prefix = prefix;
+            this.rest = rest;
+            this.suffix = suffix;
+        }
+
+        /** How many elements it names: all it matches without `..`, the fewest with it. */
+        public int named() {
+            return prefix.size() + suffix.size();
+        }
+    }
+
     /** `Point(x: p1, y: p2)`: a struct whose named fields match the patterns; fields it leaves out match anything. */
     public static final class StructPat extends Pattern {
         /** The alias of `ns.Point(...)`, or null. */
@@ -866,6 +900,10 @@ public final class Ast {
             }
             case TuplePat t -> {
                 for (Pattern e : t.elems) bindings(e, out, everyAlternative);
+            }
+            case ListPat l -> {
+                for (Pattern e : l.prefix) bindings(e, out, everyAlternative);
+                for (Pattern e : l.suffix) bindings(e, out, everyAlternative);
             }
             case StructPat s -> {
                 for (Pattern f : s.fields) bindings(f, out, everyAlternative);
@@ -1004,6 +1042,8 @@ public final class Ast {
         public final String name;
         public LocalVar local;
         public ConstDecl constant;
+        /** A capacity parameter, N of `fn f<N>(...)`, in an instance of the function: the capacity it stands for. */
+        public Long capacity;
 
         public Name(Span span, String name) {
             super(span);

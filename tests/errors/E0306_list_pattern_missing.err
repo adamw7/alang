@@ -1,0 +1,7 @@
+error[E0306]: match is not exhaustive: missing [_]
+ --> tests/errors/E0306_list_pattern_missing.al:4:5
+  |
+4 |     match xs {
+  |     ^^^^^
+  = hint: add arms for them, or add `_ => { }` as the last arm
+

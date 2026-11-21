@@ -1,0 +1,13 @@
+error[E0308]: a pattern of 2 element(s) cannot match an array of 3
+ --> tests/errors/E0308_list_pattern_length.al:5:9
+  |
+5 |         [x, y] => { print(x + y); }
+  |         ^^^^^^
+  = hint: write one pattern per element, or `..` for the ones you do not need
+
+error[E0308]: a pattern of at least 3 element(s) cannot match a value of list[i64; 2], which holds at most 2
+  --> tests/errors/E0308_list_pattern_length.al:10:9
+   |
+10 |         [_, _, _, ..] => { }
+   |         ^^^^^^^^^^^^^
+

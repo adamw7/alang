@@ -230,8 +230,9 @@ whileStmt
 // for item in items { }        (array, list or str; iterates over copies)
 // for i, item in items { }     (with each element's index)
 // for (k, v) in pairs { }      (each element taken apart by a pattern that always matches)
+// for x in mut xs { x += 1; }  (each element itself, which the body may change; with a map, for k, v in mut m)
 forStmt
-    : FOR (index=identifier COMMA)? (identifier | pattern) IN REV? expression (range=(DOTDOT | DOTDOTEQ) expression (STEP expression)?)? block
+    : FOR (index=identifier COMMA)? (identifier | pattern) IN REV? MUT? expression (range=(DOTDOT | DOTDOTEQ) expression (STEP expression)?)? block
     ;
 
 // outer: for i in 0..n { ... break outer; ... }
@@ -259,6 +260,7 @@ singlePattern
     | (qual=identifier DOT)? identifier LPAREN fieldPattern (COMMA fieldPattern)* COMMA? RPAREN          # structPattern
     | LPAREN pattern (COMMA pattern)+ COMMA? RPAREN                                                     # tuplePattern
     | LPAREN pattern RPAREN                                                                             # parenPattern
+    | LBRACK (listPatternElem (COMMA listPatternElem)* COMMA?)? RBRACK                                  # listPattern
     | rangeBound op=(DOTDOT | DOTDOTEQ) rangeBound                                                      # rangePattern
     | MINUS? INT_LIT                                                              # intPattern
     | CHAR_LIT                                                                    # charPattern
@@ -266,6 +268,12 @@ singlePattern
     | (TRUE | FALSE)                                                              # boolPattern
     | UNDERSCORE                                                                  # wildcardPattern
     | identifier                                                                  # bindingPattern
+    ;
+
+// [a, b]: exactly two elements; [first, ..], [.., last], [a, .., z]: at least the elements named, the `..` any others.
+listPatternElem
+    : pattern
+    | DOTDOT
     ;
 
 // Point(x: 0, y: py): the fields it names match their patterns; the others match anything.

@@ -227,7 +227,7 @@ inc(n);      // error: write `mut n`
 
 ## E0208
 
-**aliased mut argument**: A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access.
+**aliased mut argument**: A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access. Likewise, the body of `for x in mut xs` changes xs only through x, and cannot use xs otherwise.
 
 ```
 append(mut s, s);            // error: copy first: let t: str[16] = s; append(mut s, t);

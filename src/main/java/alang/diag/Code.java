@@ -62,7 +62,8 @@ public enum Code {
         "A `mut` parameter must receive `mut place` at the call site, with exactly the parameter's type; a plain parameter must not be marked `mut`.",
         "fn inc(x: mut i32) { x += 1; }\ninc(mut n);  // ok\ninc(n);      // error: write `mut n`"),
     E0208("aliased mut argument",
-        "A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access.",
+        "A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access. "
+            + "Likewise, the body of `for x in mut xs` changes xs only through x, and cannot use xs otherwise.",
         "append(mut s, s);            // error: copy first: let t: str[16] = s; append(mut s, t);\nswap(mut xs[i], mut xs[j]);  // error: i and j may be equal"),
     E0209("not a constant expression",
         "Constants, array sizes, capacities and repeat counts must be computable at compile time: literals, other constants, operators, conversions and literals of structs, enums and arrays. Function calls are not allowed.",

@@ -562,6 +562,7 @@ public final class Interpreter {
 
     private int eachLoop(For f, Object[] slots) {
         if (f.pieces() != null) return pieceLoop(f, f.pieces(), slots);
+        if (f.inPlace) return inPlaceLoop(f, slots);
         // The collection is evaluated once and iterated as a snapshot: a copy, when it is a variable the body
         // may change, else the value itself.
         Object coll = f.snapshot ? owned(f.from, slots) : eval(f.from, slots);
@@ -575,6 +576,29 @@ public final class Interpreter {
             int r = m != null ? iteration(f, slots, m.keys[i], f.indexVar != null ? m.vals[i] : m.keys[i])
                 : iteration(f, slots, (long) i, items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF));
             if (r != GO) return r;
+        }
+        return NORMAL;
+    }
+
+    /**
+     * `for x in mut xs`: x is a reference to each element where it is (to each value, for a map, with its key), so
+     * that what the body does to x it does to the element. The body cannot use xs otherwise, so nothing moves.
+     */
+    private int inPlaceLoop(For f, Object[] slots) {
+        Object coll = ref(f.from, slots).get();
+        MapV m = coll instanceof MapV mv ? mv : null;
+        int n = m != null ? m.len : length(coll);
+        for (int k = 0; k < n; k++) {
+            int i = f.rev ? n - 1 - k : k;
+            step(f.span);
+            Ref r = switch (coll) {
+                case MapV mv -> new SlotRef(mv.vals, i);
+                case ListV l -> new SlotRef(l.items, i);
+                case ArrV a -> new SlotRef(a.items, i);
+                default -> new ByteRef((StrV) coll, i);
+            };
+            int res = iteration(f, slots, m != null ? m.keys[i] : (Object) (long) i, r);
+            if (res != GO) return res;
         }
         return NORMAL;
     }
@@ -636,6 +660,15 @@ public final class Interpreter {
         return NORMAL;
     }
 
+    /** The element at index i of an array, list or str (a byte, as a number). */
+    private static Object element(Object coll, int i) {
+        return switch (coll) {
+            case ListV l -> l.items[i];
+            case ArrV a -> a.items[i];
+            default -> (long) (((StrV) coll).b[i] & 0xFF);
+        };
+    }
+
     private int match(Match m, Object[] slots) {
         Object v = eval(m.subject, slots);
         for (Arm arm : m.arms) {
@@ -670,6 +703,17 @@ public final class Interpreter {
                 StructV t = (StructV) v;
                 for (int i = 0; i < tp.elems.size(); i++) {
                     if (!matches(tp.elems.get(i), t.fields[i], slots)) yield false;
+                }
+                yield true;
+            }
+            case ListPat lp -> {
+                int n = length(v);
+                if (lp.rest ? n < lp.named() : n != lp.named()) yield false;
+                for (int i = 0; i < lp.prefix.size(); i++) {
+                    if (!matches(lp.prefix.get(i), element(v, i), slots)) yield false;
+                }
+                for (int i = 0; i < lp.suffix.size(); i++) {
+                    if (!matches(lp.suffix.get(i), element(v, n - lp.suffix.size() + i), slots)) yield false;
                 }
                 yield true;
             }
@@ -841,6 +885,7 @@ public final class Interpreter {
             }
             case BoolLit b -> b.value;
             case Name n -> {
+                if (n.capacity != null) yield n.capacity;
                 if (n.local == null) yield n.constant.value;
                 Object v = slots[n.local.slot];
                 yield n.local.byRef ? ((Ref) v).get() : v;

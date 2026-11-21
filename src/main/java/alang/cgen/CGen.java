@@ -704,7 +704,8 @@ public final class CGen {
 
     /** How a local is read in C (pointer parameters are dereferenced). */
     private String varRef(LocalVar v) {
-        if (fn != null && fn.paramVars.contains(v) && (v.byRef || Type.isAggregate(v.type))) return "(*" + cName(v) + ")";
+        // A `mut` parameter, an aggregate parameter (passed by address), or the element of `for x in mut xs`.
+        if (v.byRef || fn != null && fn.paramVars.contains(v) && Type.isAggregate(v.type)) return "(*" + cName(v) + ")";
         return cName(v);
     }
 
@@ -1209,6 +1210,23 @@ public final class CGen {
         }
         Type ct = f.from.type;
         open("{");
+        if (f.inPlace) {
+            // for x in mut xs: x points at each element (at each value, for a map).
+            String p = "t" + ++tmpCount;
+            emit(ct(ct) + " *" + p + " = &(" + lower(f.from) + ");");
+            String i = "t" + ++tmpCount;
+            String n = ct instanceof Type.ArrayT a ? a.len() + "u" : p + "->len";
+            emit("uint32_t " + i + ";");
+            open(f.rev ? "for (" + i + " = " + n + "; " + i + "-- > 0;) {" : "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+            if (ct instanceof Type.MapT) {
+                declare(ct(f.indexVar.type), f.indexVar, p + "->k[" + i + "]");
+            } else if (f.indexVar != null) {
+                declare("int64_t", f.indexVar, "(int64_t)" + i);
+            }
+            declare(ct(f.var.type) + " *", f.var, "&" + p + "->" + (ct instanceof Type.Str ? "b" : "v") + "[" + i + "]");
+            loopBody(f, f.body);
+            return;
+        }
         // The snapshot: a variable the body may change is copied; any other value already is a temporary of
         // its own, or a variable that keeps its value through the loop.
         String coll = f.snapshot ? tmp(ct, lower(f.from)) : lower(f.from);
@@ -1380,6 +1398,22 @@ public final class CGen {
                 }
                 yield parts.size() == 1 ? parts.get(0) : "(" + String.join(" && ", parts) + ")";
             }
+            case ListPat lp -> {
+                List<String> parts = new ArrayList<>();
+                String arr = v + (t instanceof Type.Str ? ".b" : ".v");
+                String len = t instanceof Type.ArrayT a ? a.len() + "u" : v + ".len";
+                if (!(t instanceof Type.ArrayT)) parts.add(len + (lp.rest ? " >= " : " == ") + lp.named() + "u");
+                Type elem = Type.elementOf(t);
+                for (int i = 0; i < lp.prefix.size(); i++) {
+                    String c = patternCond(lp.prefix.get(i), arr + "[" + i + "]", elem, binds);
+                    if (c != null) parts.add(c);
+                }
+                for (int i = 0; i < lp.suffix.size(); i++) {
+                    String c = patternCond(lp.suffix.get(i), arr + "[" + len + " - " + (lp.suffix.size() - i) + "u]", elem, binds);
+                    if (c != null) parts.add(c);
+                }
+                yield parts.isEmpty() ? null : parts.size() == 1 ? parts.get(0) : "(" + String.join(" && ", parts) + ")";
+            }
             case TuplePat tp -> {
                 List<Type> elems = ((Type.TupleT) t).elems();
                 List<String> parts = new ArrayList<>();
@@ -1465,7 +1499,7 @@ public final class CGen {
             case FloatLit f -> floatLiteral(f.valueAs(Type.kind(f.type)), Type.kind(f.type));
             case StrLit s -> strLiteral(s.value);
             case BoolLit b -> b.value ? "true" : "false";
-            case Name n -> n.local != null ? varRef(n.local) : constRef(n.constant);
+            case Name n -> n.capacity != null ? intLiteral(n.capacity, PrimKind.I64) : n.local != null ? varRef(n.local) : constRef(n.constant);
             case FieldAccess f when f.constant != null -> constRef(f.constant);
             case VariantCall v when v.asCall != null -> lower(v.asCall);
             case FieldAccess f -> {
