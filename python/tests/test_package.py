@@ -57,6 +57,14 @@ class InstalledWheel(unittest.TestCase):
         self.assertEqual(run([alang_script(), "version"]).stdout.strip(), f"alang {alang.__version__}")
         self.assertEqual(run([sys.executable, "-m", "alang", "version"]).stdout.strip(), f"alang {alang.__version__}")
 
+    def test_jvm_options_are_not_announced(self):
+        # The JVM writes "Picked up JAVA_TOOL_OPTIONS: ..." to stderr for these; the options reach it on
+        # its command line instead, so stderr holds only what the toolchain writes.
+        env = dict(os.environ, JAVA_TOOL_OPTIONS="-Xss4m", _JAVA_OPTIONS="-Xss4m")
+        proc = subprocess.run([alang_script(), "version"], capture_output=True, env=env)
+        self.assertEqual(proc.stdout.decode("utf-8").strip(), f"alang {alang.__version__}")
+        self.assertEqual(proc.stderr.decode("utf-8", errors="replace"), "")
+
     def test_run_prints_the_golden_output(self):
         proc = run([alang_script(), "run", str(EXAMPLES / "hello.al")])
         self.assertEqual(proc.returncode, 0, proc.stderr)

@@ -12,15 +12,19 @@ while [ -L "$self" ]; do
   esac
 done
 ROOT="$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)"
-# The JVM announces JAVA_TOOL_OPTIONS on stderr ("Picked up JAVA_TOOL_OPTIONS: ...") each time it starts,
-# which buries the diagnostics in a sandbox that sets it for a proxy. Give the same options on the
-# command line instead, where they apply the same way unannounced. A value with quotes, which the JVM
-# would read as one option with spaces, is left as it is.
+# The JVM announces JAVA_TOOL_OPTIONS and _JAVA_OPTIONS on stderr ("Picked up JAVA_TOOL_OPTIONS: ...")
+# each time it starts, which buries the diagnostics in a sandbox that sets one for a proxy or a JVM
+# workaround. Give the same options on the command line instead, where they apply the same way
+# unannounced: in this order, so that _JAVA_OPTIONS still wins, as it does over the other. A value with
+# quotes, which the JVM would read as one option with spaces, is left as it is.
 opts=""
-case "${JAVA_TOOL_OPTIONS:-}" in
-  *\"* | *\'*) ;;
-  *) opts="${JAVA_TOOL_OPTIONS:-}"; unset JAVA_TOOL_OPTIONS ;;
-esac
+for var in JAVA_TOOL_OPTIONS _JAVA_OPTIONS; do
+  eval "value=\"\${$var:-}\""
+  case "$value" in
+    *\"* | *\'*) ;;
+    *) opts="$opts${opts:+${value:+ }}$value"; unset "$var" ;;
+  esac
+done
 # Java decodes command-line arguments (file names, `alang call` JSON) with the host locale's
 # charset; under a POSIX/C locale every non-ASCII byte would be replaced. Use UTF-8 so the
 # result never depends on the host locale (the toolchain's own output is locale-independent).

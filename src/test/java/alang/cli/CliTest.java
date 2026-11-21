@@ -96,7 +96,8 @@ class CliTest {
     private Result start(String locale, ProcessBuilder pb, byte[] stdin, boolean keepStdinOpen) throws Exception {
         pb.directory(dir.toFile());
         Map<String, String> env = pb.environment();
-        env.keySet().removeIf(k -> k.startsWith("LC_") || k.equals("LANG") || k.equals("JAVA_TOOL_OPTIONS"));
+        env.keySet().removeIf(k -> k.startsWith("LC_") || k.equals("LANG") || k.equals("JAVA_TOOL_OPTIONS")
+            || k.equals("_JAVA_OPTIONS"));
         env.put("LC_ALL", locale);
         env.put("ALANG_JAVA", java());
         env.put("ALANG_CP", System.getProperty("java.class.path"));

@@ -131,6 +131,9 @@ jobs:
           grep -q 'building .* (sources changed)' "$out/rebuild.err"
           bin/alang version 2> "$out/rebuild.err"
           if grep -q 'building' "$out/rebuild.err"; then exit 1; fi
+          # Options the JVM would announce on stderr ("Picked up ...") reach it on the command line instead.
+          JAVA_TOOL_OPTIONS=-Xss4m _JAVA_OPTIONS=-Xss4m bin/alang version > /dev/null 2> "$out/options.err"
+          test ! -s "$out/options.err"
 
           # C backend: the compiled program prints the same bytes as the interpreter. Windows has gcc
           # but no cc.
@@ -197,6 +200,8 @@ jobs:
           ln -s "$home/bin/alang" "$out/path/alang"
           cd "$out"
           path/alang version | grep -qx "alang $version"
+          JAVA_TOOL_OPTIONS=-Xss4m _JAVA_OPTIONS=-Xss4m path/alang version 2> options.err | grep -qx "alang $version"
+          test ! -s options.err
           path/alang run "$home/examples/hello.al" | diff -u "$GITHUB_WORKSPACE/tests/examples/hello.out" -
           path/alang test "$home/examples/shapes.al"
           printf 'tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n' > size.al
