@@ -82,14 +82,16 @@ def command():
             "ALang needs Java 21 or newer on this platform, and none was found (ALANG_JAVA, JAVA_HOME, "
             f'java on PATH): install it, or run: pip install "{DIST_NAME}[java]"'
         )
-    # As the launchers in the release archives do: the JVM announces JAVA_TOOL_OPTIONS on stderr each time
-    # it starts, so give the same options on the command line instead, where they apply unannounced. A
-    # value with quotes, which the JVM would read as one option with spaces, is left as it is.
+    # As the launchers in the release archives do: the JVM announces JAVA_TOOL_OPTIONS and _JAVA_OPTIONS on
+    # stderr each time it starts, so give the same options on the command line instead, where they apply
+    # unannounced, in this order so that _JAVA_OPTIONS still wins. A value with quotes, which the JVM would
+    # read as one option with spaces, is left as it is.
     opts = []
-    tool_options = env.get("JAVA_TOOL_OPTIONS", "")
-    if '"' not in tool_options and "'" not in tool_options:
-        opts = tool_options.split()
-        env.pop("JAVA_TOOL_OPTIONS", None)
+    for var in ("JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS"):
+        value = env.get(var, "")
+        if '"' not in value and "'" not in value:
+            opts += value.split()
+            env.pop(var, None)
     if os.name != "nt":
         # Java decodes command-line arguments with the locale's charset; under a C locale every
         # non-ASCII byte would be replaced.
