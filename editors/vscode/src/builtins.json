@@ -240,6 +240,12 @@
     "description": "The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps."
   },
   {
+    "name": "isqrt",
+    "group": "math",
+    "signature": "isqrt(n) -> T",
+    "description": "The integer square root of an integer n >= 0: the largest r with r * r <= n, exact for every value of every type, isqrt(17) is 4. Traps (R0013) if n is negative."
+  },
+  {
     "name": "sqrt",
     "group": "math",
     "signature": "sqrt(x) -> f",
@@ -610,6 +616,24 @@
     "group": "collections",
     "signature": "sort_by(mut xs, before)",
     "description": "Sorts a list or array in place into the order that before, a function fn(T, T) -> bool passed by name, gives: before(a, b) is true when a must come before b. Stable: elements neither comes before keep their order, so sorting by one key and then by another sorts by both. A binary insertion sort: about n log2(n) calls of before."
+  },
+  {
+    "name": "sort_by_key",
+    "group": "collections",
+    "signature": "sort_by_key(mut xs, key)",
+    "description": "Sorts a list or array in place by key(x), a function fn(T) -> K passed by name, in the order sort gives the keys: sort_by_key(mut people, age). Stable, as sort_by is: elements with equal keys keep their order."
+  },
+  {
+    "name": "heap_push",
+    "group": "collections",
+    "signature": "heap_push(mut heap, x)",
+    "description": "Adds x to a list kept as a binary heap, a priority queue whose smallest element (in the order of sort) is always heap[0]; heap_push(mut heap, x, before) orders by before, a function fn(T, T) -> bool passed by name, as sort_by does. About log2(len) comparisons. Traps (R0004) if the list is full."
+  },
+  {
+    "name": "heap_pop",
+    "group": "collections",
+    "signature": "heap_pop(mut heap) -> T",
+    "description": "Removes and returns the smallest element of a list kept as a heap by heap_push (pass the same before, if it was given one): the next in priority order. Traps (R0012) if it is empty."
   },
   {
     "name": "any",

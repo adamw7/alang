@@ -1,0 +1,7 @@
+error[E0001]: unexpected ';', expected 'else'
+ --> tests/errors/E0001_loop_value_without_else.al:8:6
+  |
+8 |     };
+  |      ^
+  = hint: a loop that gives a value ends with `else` and the value it has when no break leaves it: let i: i64 = for i, x in xs { if x == 0 { break i; } } else -1;
+

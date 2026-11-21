@@ -148,6 +148,13 @@ public enum Code {
             + "an Option for an Option; for a Result, a Result whose error type can hold e's. Tests, contracts and default "
             + "values have nothing to return from.",
         "fn first_digit(s: str[8]) -> i64 { let n: i64 = parse_i64(s)?; return n; }  // error: return Option<i64>"),
+    E0311("loop value",
+        "A `for` or `while` loop gives a value when it is the whole value of a let, var, assignment or return and ends "
+            + "with `else`: `let i: i64 = for i, x in xs { if x == 0 { break i; } } else -1;`. `break v;` leaves it with the "
+            + "value v, and the value after `else` is its value when it ends without a break. Such a loop is left only "
+            + "with a value, and a loop that is not one is left with a plain `break;`. A `break v;` leaves the innermost "
+            + "loop around it that gives a value, and any loops inside that one.",
+        "let i: i64 = for i, x in xs { if x == 0 { break; } } else -1;  // error: break i;"),
 
     // ---- memory, termination ----
     E0401("recursion is not allowed",

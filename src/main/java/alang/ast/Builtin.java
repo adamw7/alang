@@ -97,6 +97,9 @@ public enum Builtin {
     ROTR(Group.MATH, true, "rotr", "rotr(x, n) -> T",
         "The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: "
             + "rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps."),
+    ISQRT(Group.MATH, true, "isqrt", "isqrt(n) -> T",
+        "The integer square root of an integer n >= 0: the largest r with r * r <= n, exact for every value of every "
+            + "type, isqrt(17) is 4. Traps (R0013) if n is negative."),
     SQRT(Group.MATH, true, "sqrt", "sqrt(x) -> f", "Square root of an f32/f64."),
     FLOOR(Group.MATH, true, "floor", "floor(x) -> f", "Largest integral value not greater than x (f32/f64)."),
     CEIL(Group.MATH, true, "ceil", "ceil(x) -> f", "Smallest integral value not less than x (f32/f64)."),
@@ -245,6 +248,16 @@ public enum Builtin {
         "Sorts a list or array in place into the order that before, a function fn(T, T) -> bool passed by name, gives: "
             + "before(a, b) is true when a must come before b. Stable: elements neither comes before keep their order, so "
             + "sorting by one key and then by another sorts by both. A binary insertion sort: about n log2(n) calls of before."),
+    SORT_BY_KEY(Group.COLLECTIONS, false, "sort_by_key", "sort_by_key(mut xs, key)",
+        "Sorts a list or array in place by key(x), a function fn(T) -> K passed by name, in the order sort gives the keys: "
+            + "sort_by_key(mut people, age). Stable, as sort_by is: elements with equal keys keep their order."),
+    HEAP_PUSH(Group.COLLECTIONS, false, "heap_push", "heap_push(mut heap, x)",
+        "Adds x to a list kept as a binary heap, a priority queue whose smallest element (in the order of sort) is "
+            + "always heap[0]; heap_push(mut heap, x, before) orders by before, a function fn(T, T) -> bool passed by "
+            + "name, as sort_by does. About log2(len) comparisons. Traps (R0004) if the list is full."),
+    HEAP_POP(Group.COLLECTIONS, false, "heap_pop", "heap_pop(mut heap) -> T",
+        "Removes and returns the smallest element of a list kept as a heap by heap_push (pass the same before, if it was "
+            + "given one): the next in priority order. Traps (R0012) if it is empty."),
     ANY(Group.COLLECTIONS, false, "any", "any(xs, f) -> bool",
         "Whether f(x) is true for some element x of an array or list, f being a function fn(T) -> bool passed by name: "
             + "any(xs, is_even). Calls f from the first element on, and stops at the first true; false if xs is empty."),
@@ -417,8 +430,8 @@ public enum Builtin {
     /** Whether the first argument is modified, and so passed as `mut`. */
     public boolean modifiesFirst() {
         return switch (this) {
-            case PUSH, POP, POP_FRONT, CLEAR, APPEND, PUSH_CHAR, SORT, SORT_BY, RETAIN, REVERSE, DEDUP, INSERT, REMOVE, SWAP,
-                 TRY_SPLIT, TRY_WORDS, EXTEND, FILL, ROTATE -> true;
+            case PUSH, POP, POP_FRONT, CLEAR, APPEND, PUSH_CHAR, SORT, SORT_BY, SORT_BY_KEY, HEAP_PUSH, HEAP_POP, RETAIN,
+                 REVERSE, DEDUP, INSERT, REMOVE, SWAP, TRY_SPLIT, TRY_WORDS, EXTEND, FILL, ROTATE -> true;
             default -> false;
         };
     }

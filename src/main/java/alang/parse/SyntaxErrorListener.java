@@ -397,6 +397,17 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 }
                 return "\\x" + (hex.isEmpty() || Character.digit(hex.charAt(0), 16) < 0 ? "" : hex.substring(0, 1));
             }
+            if (e == 'u') {
+                int j = i + 2;
+                boolean open = j < end && cs.getText(Interval.of(j, j)).charAt(0) == '{';
+                int digits = 0;
+                for (j = j + 1; open && j < end && Character.digit(cs.getText(Interval.of(j, j)).charAt(0), 16) >= 0; j++) digits++;
+                if (open && digits > 0 && j < end && cs.getText(Interval.of(j, j)).charAt(0) == '}') {
+                    i = j;
+                    continue;
+                }
+                return "\\u";
+            }
             return e == '\n' || e == '\r' ? "\\" : "\\" + e;
         }
         return null;
@@ -439,7 +450,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
             }
             if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT
                 || t == ALangParser.STEP || t == ALangParser.REV || t == ALangParser.THEN || t == ALangParser.MAP
-                || t == ALangParser.SET || t == ALangParser.AS || t == ALangParser.TRAPS) {
+                || t == ALangParser.SET || t == ALangParser.AS || t == ALangParser.TRAPS || t == ALangParser.TYPE) {
+                // `type` starts a declaration too, where no name is expected.
                 if (expected.contains(ALangParser.IDENT)) continue;
             }
             String lit = ALangParser.VOCABULARY.getLiteralName(t);
@@ -450,7 +462,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (expr) names.add(0, "an expression");
         if (operator) names.add("an operator");
         if (names.isEmpty()) return null;
-        if (names.size() > 8) return "a statement or expression";
+        if (names.size() > (names.contains("end of file") ? 9 : 8)) return "a statement or expression";
         if (names.size() == 1) return names.get(0);
         if (names.size() == 2) return names.get(0) + " or " + names.get(1);
         return "one of " + String.join(", ", names);
@@ -515,11 +527,16 @@ final class SyntaxErrorListener extends BaseErrorListener {
             if (s.equals("\"") || s.equals("'")) {
                 String escape = badEscape(tok, s.charAt(0));
                 if (escape != null) {
-                    return "`" + escape + "` is not an escape; the escapes are \\n \\t \\r \\0 \\\\ \\\" \\' and \\xHH (two hex digits), "
-                        + "and a character beyond ASCII is written as itself in UTF-8";
+                    if (escape.equals("\\u")) {
+                        return "a \\u escape gives a character by its code point in hex, in braces: \\u{e9}, \\u{1F600}";
+                    }
+                    return "`" + escape + "` is not an escape; the escapes are \\n \\t \\r \\0 \\\\ \\\" \\' \\xHH (two hex digits) and "
+                        + "\\u{HHHH} (a code point); r\"...\" reads backslashes as they are";
                 }
             }
-            if (s.equals("\"")) return "unterminated string literal; strings must close on the same line (use \\n for newlines)";
+            if (s.equals("\"")) {
+                return "unterminated string literal; a \"...\" string closes on the same line (use \\n for newlines, or \"\"\" for text of several lines)";
+            }
             if (s.equals("'")) return "strings use double quotes \"...\"; single quotes are for one-byte character literals like 'a'";
             if (s.equals("﻿") && tok.getStartIndex() == 0) {
                 return "the file starts with a byte order mark (U+FEFF); save it as UTF-8 without a BOM";
@@ -531,7 +548,11 @@ final class SyntaxErrorListener extends BaseErrorListener {
             return "the character '" + s + "' is not part of ALang syntax";
         }
         if (t == ALangLexer.STAR && p == ALangLexer.SLASH) {
-            return "block comments are not supported; start each comment line with //";
+            return "a block comment that is never closed; end it with */";
+        }
+        if (p == ALangLexer.RBRACE && expected != null && expected.size() == 1 && expected.contains(ALangParser.ELSE)) {
+            return "a loop that gives a value ends with `else` and the value it has when no break leaves it: "
+                + "let i: i64 = for i, x in xs { if x == 0 { break i; } } else -1;";
         }
         String missing = missingFeature(ts, tok, prev, prev2, expected);
         if (missing != null) return missing;
@@ -816,7 +837,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
 
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
-            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t == ALangLexer.TYPE || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 
     private static boolean expectsOperator(IntervalSet expected) {

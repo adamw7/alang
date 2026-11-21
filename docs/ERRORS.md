@@ -48,6 +48,7 @@ Codes are never reused for a different meaning.
 | [E0308](#e0308) | pattern mismatch |
 | [E0309](#e0309) | let else does not leave |
 | [E0310](#e0310) | misplaced `?` |
+| [E0311](#e0311) | loop value |
 | [E0401](#e0401) | recursion is not allowed |
 | [E0402](#e0402) | stack bound exceeded |
 | [E0403](#e0403) | recursive type |
@@ -400,6 +401,14 @@ let Option.Some(n): Option<i64> = parse_i64(s) else { print("bad"); };  // error
 
 ```
 fn first_digit(s: str[8]) -> i64 { let n: i64 = parse_i64(s)?; return n; }  // error: return Option<i64>
+```
+
+## E0311
+
+**loop value**: A `for` or `while` loop gives a value when it is the whole value of a let, var, assignment or return and ends with `else`: `let i: i64 = for i, x in xs { if x == 0 { break i; } } else -1;`. `break v;` leaves it with the value v, and the value after `else` is its value when it ends without a break. Such a loop is left only with a value, and a loop that is not one is left with a plain `break;`. A `break v;` leaves the innermost loop around it that gives a value, and any loops inside that one.
+
+```
+let i: i64 = for i, x in xs { if x == 0 { break; } } else -1;  // error: break i;
 ```
 
 ## E0401
@@ -756,6 +765,7 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `trailing_zeros(x) -> i64` | The number of 0 bits below the lowest 1 bit of the integer x: trailing_zeros(u8(8)) is 3; the number of bits of its type if x is 0. |
 | `rotl(x, n) -> T` | The bits of the integer x shifted left by n (any integer), those that leave at the top coming back at the bottom: rotl(u8(0x81), 1) is 0x03. n is taken modulo the number of bits, rem_euclid(n, bits), so a negative n rotates right. Never traps. |
 | `rotr(x, n) -> T` | The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps. |
+| `isqrt(n) -> T` | The integer square root of an integer n >= 0: the largest r with r * r <= n, exact for every value of every type, isqrt(17) is 4. Traps (R0013) if n is negative. |
 | `sqrt(x) -> f` | Square root of an f32/f64. |
 | `floor(x) -> f` | Largest integral value not greater than x (f32/f64). |
 | `ceil(x) -> f` | Smallest integral value not less than x (f32/f64). |
@@ -833,6 +843,9 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `reverse(mut xs)` | Reverses a list, array or str in place. |
 | `dedup(mut xs)` | Removes each element of a list (byte of a str) equal to the one before it, keeping the first of each run. After sort(mut xs), every value is left once. |
 | `sort_by(mut xs, before)` | Sorts a list or array in place into the order that before, a function fn(T, T) -> bool passed by name, gives: before(a, b) is true when a must come before b. Stable: elements neither comes before keep their order, so sorting by one key and then by another sorts by both. A binary insertion sort: about n log2(n) calls of before. |
+| `sort_by_key(mut xs, key)` | Sorts a list or array in place by key(x), a function fn(T) -> K passed by name, in the order sort gives the keys: sort_by_key(mut people, age). Stable, as sort_by is: elements with equal keys keep their order. |
+| `heap_push(mut heap, x)` | Adds x to a list kept as a binary heap, a priority queue whose smallest element (in the order of sort) is always heap[0]; heap_push(mut heap, x, before) orders by before, a function fn(T, T) -> bool passed by name, as sort_by does. About log2(len) comparisons. Traps (R0004) if the list is full. |
+| `heap_pop(mut heap) -> T` | Removes and returns the smallest element of a list kept as a heap by heap_push (pass the same before, if it was given one): the next in priority order. Traps (R0012) if it is empty. |
 | `any(xs, f) -> bool` | Whether f(x) is true for some element x of an array or list, f being a function fn(T) -> bool passed by name: any(xs, is_even). Calls f from the first element on, and stops at the first true; false if xs is empty. |
 | `all(xs, f) -> bool` | Whether f(x) is true for every element x of an array or list (as for any); stops at the first false; true if xs is empty. |
 | `count_if(xs, f) -> i64` | How many elements x of an array or list have f(x) true, f being a function fn(T) -> bool passed by name. |

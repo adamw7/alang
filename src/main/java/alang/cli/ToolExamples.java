@@ -91,6 +91,7 @@ final class ToolExamples {
             case While w -> {
                 calls(w.limit, out);
                 calls(w.cond, out);
+                if (w.guard != null) calls(w.guard, out);
                 calls(w.body, out);
             }
             case For f -> {
@@ -111,7 +112,9 @@ final class ToolExamples {
             }
             case Assert a -> calls(a.cond, out);
             case ExprStmt e -> calls(e.expr, out);
-            case Break b -> { }
+            case Break b -> {
+                if (b.value != null) calls(b.value, out);
+            }
             case Continue c -> { }
         }
     }
@@ -145,6 +148,10 @@ final class ToolExamples {
                 }
             }
             case TupleLit t -> t.elems.forEach(x -> calls(x, out));
+            case LoopExpr l -> {
+                calls(l.loop, out);
+                calls(l.otherwise, out);
+            }
             case SliceExpr s -> {
                 calls(s.target, out);
                 if (s.from != null) calls(s.from, out);

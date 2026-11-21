@@ -1,4 +1,4 @@
 // expect: E0001
 fn main() {
-    print("caf\u{e9}");
+    print("caf\u00e9");
 }

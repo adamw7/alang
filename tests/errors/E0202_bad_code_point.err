@@ -1,0 +1,7 @@
+error[E0202]: `\u{D800}` is not a Unicode character
+ --> tests/errors/E0202_bad_code_point.al:3:11
+  |
+3 |     print("\u{D800}");
+  |           ^^^^^^^^^^
+  = hint: a \u{...} escape holds the hex digits of a code point from 0 to 10FFFF, not a surrogate (D800 to DFFF)
+

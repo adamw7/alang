@@ -1,0 +1,7 @@
+error[E0311]: `break` with a value leaves a loop that gives a value, and no loop around it gives one
+ --> tests/errors/E0311_break_value_plain_loop.al:4:9
+  |
+4 |         break print(1);
+  |         ^^^^^^^^^^^^^^^
+  = hint: write break; to leave the loop; a loop gives a value as the whole value of a let, var, assignment or return: let i: i64 = for i, x in xs { if x == 0 { break i; } } else -1;
+

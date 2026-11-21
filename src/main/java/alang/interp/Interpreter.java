@@ -354,7 +354,49 @@ public final class Interpreter {
         if (debugger != null && v != null) callStack.peek().bind(v);
     }
 
+    /**
+     * How a loop that gives a value ({@link LoopExpr}) left the let, assignment or return it is the value of, without a
+     * value: a `return` in it, or a `break` or `continue` of a loop around that statement. It carries the code
+     * {@link #exec} returns for the statement.
+     */
+    private static final class LoopEscape extends RuntimeException {
+        final int code;
+
+        LoopEscape(int code) {
+            super(null, null, false, false);
+            this.code = code;
+        }
+    }
+
+    /** The loop that a `break v;` being carried out leaves, and v: what the {@link LoopExpr} of that loop evaluates to. */
+    private Loop brokenWith;
+    private Object breakValue;
+
     private int exec(Stmt s, Object[] slots) {
+        try {
+            return run(s, slots);
+        } catch (LoopEscape e) {
+            return e.code;
+        }
+    }
+
+    /** A loop that gives a value: the value of the `break v;` that leaves it, or its else value. */
+    private Object loopValue(LoopExpr l, Object[] slots) {
+        int r = switch (l.loop) {
+            case While w -> whileLoop(w, slots);
+            case For f -> f.isRange() ? rangeLoop(f, slots) : eachLoop(f, slots);
+        };
+        if (brokenWith == l.loop) {
+            Object v = breakValue;
+            brokenWith = null;
+            breakValue = null;
+            return v;
+        }
+        if (r != NORMAL) throw new LoopEscape(r);
+        return Values.coerce(owned(l.otherwise, slots), l.type, meter);
+    }
+
+    private int run(Stmt s, Object[] slots) {
         step(s.span);
         return switch (s) {
             case Let l -> {
@@ -389,6 +431,10 @@ public final class Interpreter {
             case For f -> f.isRange() ? rangeLoop(f, slots) : eachLoop(f, slots);
             case Match m -> match(m, slots);
             case Break b -> {
+                if (b.value != null) {
+                    breakValue = Values.coerce(owned(b.value, slots), b.target.valueType, meter);
+                    brokenWith = b.target;
+                }
                 jumpTarget = b.target;
                 yield BREAK;
             }
@@ -452,7 +498,8 @@ public final class Interpreter {
         Object lim = eval(w.limit, slots);
         PrimKind lk = Type.kind(w.limit.type);
         long count = 0;
-        while (w.pattern == null ? (Boolean) eval(w.cond, slots) : matches(w.pattern, eval(w.cond, slots), slots)) {
+        while (w.pattern == null ? (Boolean) eval(w.cond, slots)
+            : matches(w.pattern, eval(w.cond, slots), slots) && (w.guard == null || (Boolean) eval(w.guard, slots))) {
             boolean exceeded = lk == PrimKind.U64 ? Long.compareUnsigned(count, (Long) lim) >= 0 : count >= (Long) lim;
             if (exceeded) {
                 throw new Trap(Code.R0008, w.span, "while loop exceeded its limit of " + IntOps.toString(lk, (Long) lim)
@@ -883,6 +930,7 @@ public final class Interpreter {
                 PrimKind tk = s.to == null ? PrimKind.I64 : Type.kind(s.to.type);
                 yield Stdlib.slice(xs, s.type, from, fk, to, tk, s.span, meter);
             }
+            case LoopExpr l -> loopValue(l, slots);
             case TupleLit t -> {
                 List<Type> elems = ((Type.TupleT) t.type).elems();
                 Object[] vals = new Object[t.elems.size()];
@@ -976,7 +1024,9 @@ public final class Interpreter {
                 default -> x >= y;
             };
         }
-        int c = t instanceof Type.Str ? Stdlib.compare(l, r, t, meter) : IntOps.compare(Type.kind(t), (Long) l, (Long) r);
+        // A number by value; a value of any other type in the order of sort.
+        int c = t instanceof Type.Prim p && p.kind() != PrimKind.BOOL ? IntOps.compare(Type.kind(t), (Long) l, (Long) r)
+            : Stdlib.compare(l, r, t, meter);
         return switch (b.op) {
             case LT -> c < 0;
             case LE -> c <= 0;
@@ -1261,6 +1311,14 @@ public final class Interpreter {
                 long b = (Long) eval(args.get(1).expr(), slots);
                 return Stdlib.wrapOrSaturate(c.builtin, Type.kind(c.type), a, b);
             }
+            case ISQRT -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                PrimKind k = Type.kind(c.type);
+                if (k.signed && a < 0) {
+                    throw new Trap(Code.R0013, c.span, "isqrt() needs a number >= 0, found " + IntOps.toString(k, a));
+                }
+                return Stdlib.isqrt(a);
+            }
             case COUNT_ONES, LEADING_ZEROS, TRAILING_ZEROS -> {
                 long a = (Long) eval(args.get(0).expr(), slots);
                 return Stdlib.bits(c.builtin, Type.kind(args.get(0).expr().type), a);
@@ -1362,6 +1420,70 @@ public final class Interpreter {
                     }
                 }
                 return null;
+            }
+            case SORT_BY_KEY -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                Type key = c.fnArg.ret;
+                // The binary insertion sort of sort_by, with x before y when key(x) comes before key(y): key(x) once per
+                // element, and key(items[mid]) at each probe, in the same order as the C backend.
+                for (int i = 1; i < n; i++) {
+                    Object x = items[i];
+                    Object kx = apply(c, x);
+                    int lo = 0;
+                    int hi = i;
+                    while (lo < hi) {
+                        int mid = lo + (hi - lo) / 2;
+                        meter.elements(1);
+                        if (Stdlib.compare(kx, apply(c, items[mid]), key, meter) < 0) hi = mid;
+                        else lo = mid + 1;
+                    }
+                    if (lo < i) {
+                        meter.elements(i - lo);
+                        System.arraycopy(items, lo, items, lo + 1, i - lo);
+                        items[lo] = x;
+                    }
+                }
+                return null;
+            }
+            case HEAP_PUSH -> {
+                ListV l = (ListV) ref(args.get(0).expr(), slots).get();
+                Type elem = ((Type.ListT) args.get(0).expr().type).elem();
+                Object v = Values.coerce(owned(args.get(1).expr(), slots), elem, meter);
+                if (l.len == l.items.length) throw new Trap(Code.R0004, c.span, "push to a full list (capacity " + l.items.length + ")");
+                int i = l.len++;
+                l.items[i] = v;
+                while (i > 0) {
+                    int parent = (i - 1) / 2;
+                    if (!heapBefore(c, l.items[i], l.items[parent], elem)) break;
+                    Object t = l.items[i];
+                    l.items[i] = l.items[parent];
+                    l.items[parent] = t;
+                    i = parent;
+                }
+                return null;
+            }
+            case HEAP_POP -> {
+                ListV l = (ListV) ref(args.get(0).expr(), slots).get();
+                Type elem = ((Type.ListT) args.get(0).expr().type).elem();
+                if (l.len == 0) throw new Trap(Code.R0012, c.span, "pop from an empty list");
+                Object top = l.items[0];
+                l.len--;
+                l.items[0] = l.items[l.len];
+                l.items[l.len] = null;
+                int i = 0;
+                while (true) {
+                    int child = 2 * i + 1;
+                    if (child >= l.len) break;
+                    if (child + 1 < l.len && heapBefore(c, l.items[child + 1], l.items[child], elem)) child++;
+                    if (!heapBefore(c, l.items[child], l.items[i], elem)) break;
+                    Object t = l.items[i];
+                    l.items[i] = l.items[child];
+                    l.items[child] = t;
+                    i = child;
+                }
+                return top;
             }
             case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
                 long ch = (Long) eval(args.get(0).expr(), slots);
@@ -1981,6 +2103,15 @@ public final class Interpreter {
         Object result = invoke(f, a, c.span);
         meter.at(caller);
         return (Boolean) result;
+    }
+
+    /**
+     * Whether a comes before b in a heap: by the function passed to heap_push or heap_pop, or else in the order of sort.
+     * Each comparison costs an element, as a probe of sort_by does.
+     */
+    private boolean heapBefore(Call c, Object a, Object b, Type elem) {
+        meter.elements(1);
+        return c.fnArg != null ? test(c, a, b) : Stdlib.compare(a, b, elem, meter) < 0;
     }
 
     /** Calls the function passed to fold or transform (c.fnArg) with the given values, and returns its result. */

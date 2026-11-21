@@ -1,0 +1,7 @@
+error[E0203]: `<` needs two values of the same type, found list[i64; 2] and list[i64; 4]
+ --> tests/errors/E0203_list_order_capacity.al:5:11
+  |
+5 |     print(a < b);
+  |           ^^^^^
+  = hint: the two sides must have the same type, capacities included; widen the smaller: list[i64; 4](a)
+

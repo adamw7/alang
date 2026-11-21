@@ -913,6 +913,13 @@ public final class CGen {
                 else eachLoop(f);
             }
             case Match m -> match(m);
+            case Break b when b.value != null -> {
+                String[] to = valueLoops.get(b.target);
+                String v = lower(b.value);
+                emit(to[0] + " = " + coerce(v, b.value.type, b.target.valueType) + ";");
+                emit("goto " + to[1] + ";");
+                to[2] = "used";
+            }
             case Break b -> jump(b.target, true);
             case Continue c -> jump(c.target, false);
             case Return r -> {
@@ -1022,6 +1029,12 @@ public final class CGen {
 
     private final java.util.ArrayDeque<CLoop> loops = new java.util.ArrayDeque<>();
 
+    /**
+     * For each loop that gives a value: the C variable that holds the value, the label after its else value, and
+     * whether a break jumps to that label (null if none does).
+     */
+    private final Map<Loop, String[]> valueLoops = new HashMap<>();
+
     /** Starts the body of a loop: break and continue inside it know where to go. */
     private CLoop enterLoop(Loop l, boolean continueSkips) {
         CLoop c = new CLoop(l, ++tmpCount, continueSkips);
@@ -1098,6 +1111,14 @@ public final class CGen {
             String s = Type.isAggregate(t) ? lower(w.cond) : tmp(t, lower(w.cond));
             String c = patternCond(w.pattern, s, t, binds);
             if (c != null) emit("if (!(" + c + ")) break;");
+            if (w.guard != null) {
+                // `while let P = e and c`: the names are bound before c is read, and a failing c ends the loop before
+                // the iteration is counted, as a failing match does.
+                bind(binds);
+                binds.clear();
+                String g = lower(w.guard);
+                emit("if (!(" + g + ")) break;");
+            }
         }
         open("if (" + count + " >= " + lim + ") {");
         emit("al_out al_e = al_trap_begin(\"R0008\");");
@@ -1545,6 +1566,19 @@ public final class CGen {
                 yield t;
             }
             case SliceExpr s -> slice(s);
+            case LoopExpr l -> {
+                // The value goes into r: a `break v;` sets it and jumps past the else value to the end.
+                String r = tmp(l.type, Type.isAggregate(l.type) ? "{0}" : "0");
+                String end = "al_lv" + ++tmpCount;
+                String[] to = {r, end, null};
+                valueLoops.put(l.loop, to);
+                stmt(l.loop);
+                String ov = lower(l.otherwise);
+                emit(r + " = " + coerce(ov, l.otherwise.type, l.type) + ";");
+                // Only where a break jumps to it: C compilers warn of an unused label.
+                if (to[2] != null) emit(end + ":;");
+                yield r;
+            }
             case TupleLit t -> {
                 List<Type> elems = ((Type.TupleT) t.type).elems();
                 List<String> vals = new ArrayList<>();
@@ -1660,6 +1694,11 @@ public final class CGen {
         }
         if (!f.requires.isEmpty()) args.add(loc(c.span));
         return fnName(f) + "(" + String.join(", ", args) + ")";
+    }
+
+    /** A C bool: whether the element a comes before b in a heap, by the function passed (c.fnArg) or else as sort orders. */
+    private String heapBefore(Call c, Type elem, String a, String b) {
+        return c.fnArg != null ? fnArgCall(c, a, b) : "(" + cmpExpr(elem, a, b) + ") < 0";
     }
 
     /** The variant of an Option or Result type that holds a value: Option.Some or Result.Ok. */
@@ -1810,8 +1849,10 @@ public final class CGen {
             return t;
         }
         if (b.op.isEquality() || b.op.isOrdering()) {
-            String l = lower(b.left);
-            String r = lower(b.right);
+            // An aggregate is ordered by its comparison function, which takes the addresses of both.
+            boolean byAddress = b.op.isOrdering() && Type.isAggregate(b.left.type) && !(b.left.type instanceof Type.Str);
+            String l = byAddress ? lowerLvalue(b.left) : lower(b.left);
+            String r = byAddress ? lowerLvalue(b.right) : lower(b.right);
             return tmp(Type.BOOL, compare(b, l, r));
         }
         String l = lower(b.left);
@@ -1826,7 +1867,7 @@ public final class CGen {
             String eq = eqExpr(b.left.type, b.right.type, l, r);
             return b.op == BinOp.EQ ? eq : "(!" + eq + ")";
         }
-        if (b.left.type instanceof Type.Str) return "(" + cmpExpr(b.left.type, l, r) + " " + b.op.text + " 0)";
+        if (Type.isAggregate(b.left.type)) return "(" + cmpExpr(b.left.type, l, r) + " " + b.op.text + " 0)";
         return "((" + l + ") " + b.op.text + " (" + r + "))";
     }
 
@@ -2123,6 +2164,106 @@ public final class CGen {
                 compactInPlace(args.get(0).expr(), (sp, w, i) -> fnArgCall(c, sp + "->v[" + i + "]"));
                 return null;
             }
+            case SORT_BY_KEY -> {
+                // sort_by's binary insertion sort, by key: key(x) once per element and key(v[mid]) at each probe.
+                Type t = args.get(0).expr().type;
+                Type elem = Type.elementOf(t);
+                Type key = c.fnArg.ret;
+                String place = lower(args.get(0).expr());
+                String sp = "t" + ++tmpCount;
+                String n = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                String lo = "t" + ++tmpCount;
+                String hi = "t" + ++tmpCount;
+                String mid = "t" + ++tmpCount;
+                String x = "t" + ++tmpCount;
+                String kx = "t" + ++tmpCount;
+                String km = "t" + ++tmpCount;
+                open("{");
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                emit("uint32_t " + n + " = " + (t instanceof Type.ArrayT arr ? arr.len() + "u" : sp + "->len") + ", " + i + ", "
+                    + lo + ", " + hi + ", " + mid + ";");
+                open("for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
+                emit(ct(elem) + " " + x + " = " + sp + "->v[" + i + "];");
+                emit(ct(key) + " " + kx + " = " + fnArgCall(c, x) + ";");
+                emit(lo + " = 0;");
+                emit(hi + " = " + i + ";");
+                open("while (" + lo + " < " + hi + ") {");
+                emit(mid + " = " + lo + " + (" + hi + " - " + lo + ") / 2u;");
+                open("{");
+                emit(ct(key) + " " + km + " = " + fnArgCall(c, sp + "->v[" + mid + "]") + ";");
+                emit("if (" + cmpExpr(key, kx, km) + " < 0) " + hi + " = " + mid + ";");
+                emit("else " + lo + " = " + mid + " + 1u;");
+                close("}");
+                close("}");
+                open("if (" + lo + " < " + i + ") {");
+                emit("uint32_t " + mid + "2;");
+                emit("for (" + mid + "2 = " + i + "; " + mid + "2 > " + lo + "; " + mid + "2--) " + sp + "->v[" + mid + "2] = "
+                    + sp + "->v[" + mid + "2 - 1];");
+                emit(sp + "->v[" + lo + "] = " + x + ";");
+                close(3);
+                return null;
+            }
+            case HEAP_PUSH -> {
+                // Sift up, as the interpreter does: swap with the parent while it comes after the element.
+                Type t = args.get(0).expr().type;
+                Type elem = Type.elementOf(t);
+                String place = lower(args.get(0).expr());
+                String v = coerce(lower(args.get(1).expr()), args.get(1).expr().type, elem);
+                String vt = Type.isAggregate(elem) ? v : tmp(elem, v);
+                int cap = Type.capacity(t);
+                String sp = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                String p = "t" + ++tmpCount;
+                String w = "t" + ++tmpCount;
+                emit("if ((" + place + ").len >= " + cap + "u) AL_TRAP(\"R0004\", \"push to a full list (capacity " + cap + ")\", " + at + ");");
+                open("{");
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                emit("uint32_t " + i + " = " + sp + "->len++, " + p + ";");
+                emit(sp + "->v[" + i + "] = " + vt + ";");
+                open("while (" + i + " > 0u) {");
+                emit(p + " = (" + i + " - 1u) / 2u;");
+                emit("if (!(" + heapBefore(c, elem, sp + "->v[" + i + "]", sp + "->v[" + p + "]") + ")) break;");
+                open("{");
+                emit(ct(elem) + " " + w + " = " + sp + "->v[" + i + "];");
+                emit(sp + "->v[" + i + "] = " + sp + "->v[" + p + "];");
+                emit(sp + "->v[" + p + "] = " + w + ";");
+                close("}");
+                emit(i + " = " + p + ";");
+                close(2);
+                return null;
+            }
+            case HEAP_POP -> {
+                // Take the top, move the last element there and sift it down, as the interpreter does.
+                Type t = args.get(0).expr().type;
+                Type elem = Type.elementOf(t);
+                String place = lower(args.get(0).expr());
+                emit("if ((" + place + ").len == 0) AL_TRAP(\"R0012\", \"pop from an empty list\", " + at + ");");
+                String top = tmp(elem, "(" + place + ").v[0]");
+                String sp = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                String ch = "t" + ++tmpCount;
+                String w = "t" + ++tmpCount;
+                open("{");
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                emit("uint32_t " + i + " = 0u, " + ch + ";");
+                emit(sp + "->len--;");
+                emit(sp + "->v[0] = " + sp + "->v[" + sp + "->len];");
+                open("for (;;) {");
+                emit(ch + " = 2u * " + i + " + 1u;");
+                emit("if (" + ch + " >= " + sp + "->len) break;");
+                emit("if (" + ch + " + 1u < " + sp + "->len && " + heapBefore(c, elem, sp + "->v[" + ch + " + 1u]", sp + "->v[" + ch + "]")
+                    + ") " + ch + "++;");
+                emit("if (!(" + heapBefore(c, elem, sp + "->v[" + ch + "]", sp + "->v[" + i + "]") + ")) break;");
+                open("{");
+                emit(ct(elem) + " " + w + " = " + sp + "->v[" + i + "];");
+                emit(sp + "->v[" + i + "] = " + sp + "->v[" + ch + "];");
+                emit(sp + "->v[" + ch + "] = " + w + ";");
+                close("}");
+                emit(i + " = " + ch + ";");
+                close(2);
+                return top;
+            }
             case SORT_BY -> {
                 // A binary insertion sort, as the interpreter's: before is called with the same elements in the same order.
                 Type t = args.get(0).expr().type;
@@ -2258,6 +2399,12 @@ public final class CGen {
                 String hi = "(uint64_t)" + (k.signed ? "INT" : "UINT") + k.bits + "_MAX";
                 return tmp(c.type, "(" + cPrim(k) + ")al_" + c.builtin.name + "(" + ma + ", " + mb + ", " + hi + ", \""
                     + k.name + "\", " + at + ")");
+            }
+            case ISQRT -> {
+                PrimKind k = Type.kind(c.type);
+                String a = tmp(c.type, lower(args.get(0).expr()));
+                if (k.signed) rangeTrap(a + " < 0", "isqrt() needs a number >= 0, found ", c.type, a, at);
+                return tmp(c.type, "(" + cPrim(k) + ")al_isqrt((uint64_t)" + a + ")");
             }
             case COUNT_ONES, LEADING_ZEROS, TRAILING_ZEROS -> {
                 PrimKind k = Type.kind(args.get(0).expr().type);

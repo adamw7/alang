@@ -1,0 +1,14 @@
+0 1 4 1000 4294967295
+3037000499 15 10
+plan 1
+write 2
+test 2
+ship 3
+[Task(name: "plan", priority: 1), Task(name: "ship", priority: 3), Task(name: "test", priority: 2), Task(name: "write", priority: 2)]
+1 8
+[1, 2, 3, 3, 5, 7, 8, 9]
+3 ship
+2 write
+2 test
+1 plan
+apple fig

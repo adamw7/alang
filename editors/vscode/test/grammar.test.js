@@ -96,6 +96,23 @@ test('habits from other languages stand out', () => {
   assert.match(scopeOf(ok, '!='), /keyword\.operator\.comparison/);
 });
 
+test('block comments, raw and multi-line strings, octal and code points', () => {
+  const t = tokenize(grammar, [
+    'let p: str[16] = r"\\d+"; /* one',
+    'two */ let m: i64 = 0o755;',
+    'let s: str[32] = """',
+    '    caf\\u{e9}',
+    '    """;',
+    "let e: u32 = '\\u{20AC}';",
+  ].join('\n'));
+  assert.match(scopeOf(t, 'r"\\d+"'), /string\.quoted\.double\.raw/);
+  assert.match(scopeOf(t, '/*'), /comment\.block/);
+  assert.match(scopeOf(t, 'two '), /comment\.block/);
+  assert.match(scopeOf(t, '0o755'), /constant\.numeric\.octal/);
+  assert.match(scopeOf(t, '\\u{e9}'), /string\.quoted\.triple.*constant\.character\.escape/);
+  assert.match(scopeOf(t, '\\u{20AC}'), /string\.quoted\.single.*constant\.character\.escape/);
+});
+
 test('a comment inside a string is not a comment', () => {
   const t = tokenize(grammar, 'let url: str[32] = "http://x"; // real');
   assert.ok(!t.some(([text, s]) => text.includes('//x') && s.some((x) => x.startsWith('comment'))));

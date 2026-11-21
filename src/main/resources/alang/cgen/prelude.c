@@ -740,6 +740,22 @@ static uint64_t al_fnv1a(const uint8_t *b, uint32_t n) {
     return h;
 }
 
+/* isqrt: the largest r with r * r <= n, digit by digit, two bits at a time, as the interpreter does. */
+static uint64_t al_isqrt(uint64_t n) {
+    uint64_t rem = n, root = 0, bit = (uint64_t)1 << 62;
+    while (bit > rem) bit >>= 2;
+    while (bit != 0) {
+        if (rem >= root + bit) {
+            rem -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    return root;
+}
+
 /* count_ones (op 0), leading_zeros (op 1) and trailing_zeros (op 2) of the low `bits` bits of u. */
 static int64_t al_bits(uint64_t u, int bits, int op) {
     int64_t n = 0;

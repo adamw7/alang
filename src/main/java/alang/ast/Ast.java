@@ -150,6 +150,21 @@ public final class Ast {
         }
     }
 
+    /**
+     * `type Grid = [[i64; 8]; 8];`: another name for a type. With type parameters, `type Pair<T> = (T, T);`, each use
+     * gives their types, Pair<i64>, which stand for them in the type it names.
+     */
+    public static final class TypeAlias extends Item {
+        public final Generics generics;
+        public final TypeRef typeRef;
+
+        public TypeAlias(Span span, String name, Generics generics, TypeRef typeRef) {
+            super(span, name);
+            this.generics = generics;
+            this.typeRef = typeRef;
+        }
+    }
+
     public static final class StructDecl extends Item {
         public final List<Field> fields;
         public State state = State.NEW;
@@ -500,6 +515,8 @@ public final class Ast {
     public abstract static sealed class Loop extends Stmt {
         public String label;
         public Span labelSpan;
+        /** For a loop that gives a value ({@link LoopExpr}): the type of that value, set by the checker; null for others. */
+        public Type valueType;
 
         Loop(Span span) {
             super(span);
@@ -516,6 +533,11 @@ public final class Ast {
         public final Block body;
         /** The pattern of `while let`, or null. */
         public final Pattern pattern;
+        /**
+         * `while let P = e and c limit n`: the condition c, which may use the names P binds; the loop runs while P
+         * matches and c holds. Null without one.
+         */
+        public Expr guard;
 
         public While(Span span, Expr cond, Expr limit, Block body) {
             this(span, null, cond, limit, body);
@@ -625,14 +647,26 @@ public final class Ast {
     /** A match arm; {@code guard} is the condition of `Pattern if cond =>`, or null. */
     public record Arm(Pattern pattern, Expr guard, Block body) {}
 
-    /** `break;` or `break label;`: {@code target} is the loop it leaves, set by the checker for a label. */
+    /**
+     * `break;` or `break label;`: {@code target} is the loop it leaves, set by the checker for a label. `break value;`
+     * leaves the innermost loop around it that gives a value ({@link LoopExpr}), with that value: the checker sets its
+     * target.
+     */
     public static final class Break extends Stmt {
-        public final String label;
+        /** The label, or null; the checker reads `break x;` with no loop labelled x as the value x, moving it to value. */
+        public String label;
+        public Span labelSpan;
+        public Expr value;
         public Loop target;
 
         public Break(Span span, String label) {
+            this(span, label, null);
+        }
+
+        public Break(Span span, String label, Expr value) {
             super(span);
             this.label = label;
+            this.value = value;
         }
     }
 
@@ -754,6 +788,8 @@ public final class Ast {
         public final boolean inclusive;
         /** The integer type it matches, set by the checker. */
         public PrimKind kind;
+        /** A bound is a character beyond ASCII, a code point (see {@link IntLit#codePoint}). */
+        public boolean codePoint;
 
         public RangePat(Span span, BigInteger lo, BigInteger hi, boolean inclusive) {
             super(span);
@@ -775,6 +811,8 @@ public final class Ast {
 
     public static final class IntPat extends Pattern {
         public final BigInteger value;
+        /** A character beyond ASCII, a code point (see {@link IntLit#codePoint}). */
+        public boolean codePoint;
 
         public IntPat(Span span, BigInteger value) {
             super(span);
@@ -908,6 +946,8 @@ public final class Ast {
     public static final class IntLit extends Expr {
         public final BigInteger value;
         public final boolean isChar;
+        /** A character literal beyond ASCII, 'é' or '\\u{20AC}': its value is a code point, never a byte (a u8). */
+        public boolean codePoint;
 
         public IntLit(Span span, BigInteger value, boolean isChar) {
             super(span);
@@ -1191,6 +1231,21 @@ public final class Ast {
             super(span);
             this.subject = subject;
             this.arms = arms;
+        }
+    }
+
+    /**
+     * `for ... { ... break v; ... } else e` or the same with `while`: a loop that gives a value, the whole value of a
+     * let, var, assignment or return. It is the value of the `break v;` that leaves it, or e when it ends without one.
+     */
+    public static final class LoopExpr extends Expr {
+        public final Loop loop;
+        public final Expr otherwise;
+
+        public LoopExpr(Span span, Loop loop, Expr otherwise) {
+            super(span);
+            this.loop = loop;
+            this.otherwise = otherwise;
         }
     }
 

@@ -1,0 +1,7 @@
+error[E0403]: type `Tree` is defined in terms of itself
+ --> tests/errors/E0403_alias_itself.al:2:6
+  |
+2 | type Tree = list[Tree; 4];
+  |      ^^^^
+  = hint: an alias names a type that exists without it; store linked items in a list and refer to them by index
+

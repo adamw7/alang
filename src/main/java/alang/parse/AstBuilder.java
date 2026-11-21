@@ -120,6 +120,10 @@ final class AstBuilder {
             return new EnumDecl(span(e.identifier()), e.identifier().getText(), variants, generics(e.typeParams()));
         }
         if (ctx.functionDecl() != null) return function(ctx.functionDecl());
+        if (ctx.typeAliasDecl() != null) {
+            TypeAliasDeclContext a = ctx.typeAliasDecl();
+            return new TypeAlias(span(a.identifier()), a.identifier().getText(), generics(a.typeParams()), type(a.type()));
+        }
         TestDeclContext t = ctx.testDecl();
         String name = new String(unescape(t.STRING_LIT().getSymbol()), StandardCharsets.UTF_8);
         Code expected = null;
@@ -295,11 +299,11 @@ final class AstBuilder {
             if (l.identifier() == null || elseBlock != null) {
                 // `let x: T = e else { }` too, whose pattern is a name that always matches: the checker says so.
                 Pattern p = l.identifier() != null ? new BindPat(span(l.identifier()), l.identifier().getText()) : pattern(l.pattern());
-                return new Destructure(sp, mutable, p, l.type() == null ? null : type(l.type()), expr(l.expression()),
+                return new Destructure(sp, mutable, p, l.type() == null ? null : type(l.type()), value(l.loopValue(), l.expression()),
                     elseBlock, false);
             }
             return new Let(sp, mutable, l.identifier().getText(), span(l.identifier()),
-                l.type() == null ? null : type(l.type()), expr(l.expression()));
+                l.type() == null ? null : type(l.type()), value(l.loopValue(), l.expression()));
         }
         if (ctx.assignStmt() != null) {
             AssignStmtContext a = ctx.assignStmt();
@@ -311,7 +315,7 @@ final class AstBuilder {
                 case ALangLexer.PERCENT_ASSIGN -> BinOp.MOD;
                 default -> null;
             };
-            return new Assign(sp, place(a.place()), op, expr(a.expression()));
+            return new Assign(sp, place(a.place()), op, value(a.loopValue(), a.expression()));
         }
         if (ctx.ifStmt() != null) {
             IfStmtContext i = ctx.ifStmt();
@@ -324,7 +328,9 @@ final class AstBuilder {
         if (ctx.forStmt() != null) return forLoop(sp, ctx.forStmt());
         if (ctx.labeledStmt() != null) {
             LabeledStmtContext l = ctx.labeledStmt();
+            labels.push(l.identifier().getText());
             Loop loop = l.whileStmt() != null ? whileLoop(sp, l.whileStmt()) : forLoop(sp, l.forStmt());
+            labels.pop();
             loop.label = l.identifier().getText();
             loop.labelSpan = span(l.identifier());
             return loop;
@@ -337,21 +343,18 @@ final class AstBuilder {
             }
             return new Match(sp, expr(m.expression()), arms);
         }
-        if (ctx.breakStmt() != null) {
-            IdentifierContext l = ctx.breakStmt().identifier();
-            return new Break(sp, l == null ? null : l.getText());
-        }
+        if (ctx.breakStmt() != null) return breakStmt(sp, ctx.breakStmt());
         if (ctx.continueStmt() != null) {
             IdentifierContext l = ctx.continueStmt().identifier();
             return new Continue(sp, l == null ? null : l.getText());
         }
         if (ctx.returnStmt() != null) {
-            ExpressionContext e = ctx.returnStmt().expression();
-            return new Return(sp, e == null ? null : expr(e));
+            ReturnStmtContext r = ctx.returnStmt();
+            return new Return(sp, r.loopValue() == null && r.expression() == null ? null : value(r.loopValue(), r.expression()));
         }
         if (ctx.assertStmt() != null) {
             AssertStmtContext a = ctx.assertStmt();
-            byte[] msg = a.STRING_LIT() == null ? null : unescape(a.STRING_LIT().getSymbol());
+            byte[] msg = a.STRING_LIT() == null ? null : literalBytes(a.STRING_LIT().getSymbol());
             return new Assert(sp, expr(a.expression()), msg);
         }
         Expr e = expr(ctx.exprStmt().expression());
@@ -382,15 +385,84 @@ final class AstBuilder {
         Block rest = k + 1 < cs.size()
             ? new Block(span(cs.get(k + 1)), List.of(ifChain(span(cs.get(k + 1)), cs, bs, k + 1, elseBlock)))
             : elseBlock != null ? elseBlock : new Block(at, List.of());
-        Match m = new Match(conds.isEmpty() ? sp : at, expr(c.expression()),
-            List.of(new Arm(pattern(c.pattern()), null, then), new Arm(new WildPat(at), null, rest)), true);
+        Expr[] sg = scrutineeAndGuard(c.expression());
+        Match m = new Match(conds.isEmpty() ? sp : at, sg[0],
+            List.of(new Arm(pattern(c.pattern()), sg[1], then), new Arm(new WildPat(at), null, rest)), true);
         if (conds.isEmpty()) return m;
         return new If(sp, conds, blocks, new Block(at, List.of(m)));
     }
 
+    /** The labels of the loops around the statement being built, innermost first: what a `break name` may leave. */
+    private final Deque<String> labels = new ArrayDeque<>();
+
+    /** The value of a let, assignment or return: a loop that gives a value, or an expression. */
+    private Expr value(LoopValueContext lv, ExpressionContext e) {
+        if (lv == null) return expr(e);
+        Span sp = span(lv.whileStmt() != null ? lv.whileStmt() : lv.forStmt());
+        Loop loop = lv.whileStmt() != null ? whileLoop(sp, lv.whileStmt()) : forLoop(sp, lv.forStmt());
+        return new LoopExpr(span(lv), loop, expr(lv.expression()));
+    }
+
+    /**
+     * `break;`, `break label;` or `break value;`. `break x;` names a label or a value, which the checker tells apart. A
+     * name that labels no loop around it and is followed by more starts the value, which the parser cut after the name:
+     * `break x - 1;` reads as the label x and the value -1, so the tokens from the name on are read again as one value.
+     */
+    private Break breakStmt(Span sp, BreakStmtContext b) {
+        IdentifierContext id = b.identifier();
+        if (id != null && b.expression() == null) {
+            Break plain = new Break(sp, id.getText());
+            plain.labelSpan = span(id);
+            return plain;
+        }
+        if (id != null && !labels.contains(id.getText())) {
+            List<Token> ts = new ArrayList<>();
+            for (int i = id.getStart().getTokenIndex(); i < b.SEMI().getSymbol().getTokenIndex(); i++) {
+                Token t = tokens.get(i);
+                if (t.getChannel() == Token.DEFAULT_CHANNEL) ts.add(t);
+            }
+            ALangParser p = new ALangParser(new CommonTokenStream(new ListTokenSource(ts)));
+            p.removeErrorListeners();
+            p.setErrorHandler(new BailErrorStrategy());
+            try {
+                ExpressionContext e = p.expression();
+                if (p.getCurrentToken().getType() == Token.EOF) return new Break(sp, null, expr(e));
+            } catch (org.antlr.v4.runtime.misc.ParseCancellationException ignored) {
+                // reported below
+            }
+            diags.error(Code.E0001, span(id), "`" + id.getText() + "` labels no loop around this break, and what follows it is no value",
+                "write break; or break label; to leave a loop, or break value; to leave a loop that gives a value");
+            return new Break(sp, null, null);
+        }
+        if (id != null) {
+            diags.error(Code.E0001, span(id), "a break with a value leaves the innermost loop that gives a value, and names no label",
+                "write break value;");
+            return new Break(sp, null, null);
+        }
+        return new Break(sp, null, b.expression() == null ? null : expr(b.expression()));
+    }
+
     private While whileLoop(Span sp, WhileStmtContext w) {
-        return new While(sp, w.pattern() == null ? null : pattern(w.pattern()), expr(w.expression(0)), expr(w.expression(1)),
-            block(w.block()));
+        if (w.pattern() == null) return new While(sp, null, expr(w.expression(0)), expr(w.expression(1)), block(w.block()));
+        Expr[] sg = scrutineeAndGuard(w.expression(0));
+        While loop = new While(sp, pattern(w.pattern()), sg[0], expr(w.expression(1)), block(w.block()));
+        loop.guard = sg[1];
+        return loop;
+    }
+
+    /**
+     * The value that `if let P = e` or `while let P = e` matches against, and the condition of the names it binds:
+     * in `if let P = a and c and d`, the pattern matches a, and the conditions after the first `and`, which may use
+     * those names, must hold too. Parentheses match against a whole `and`: if let false = (a and b). The guard is null
+     * without an `and`.
+     */
+    private Expr[] scrutineeAndGuard(ExpressionContext e) {
+        if (!(e instanceof LogicExprContext le) || !(le.logic() instanceof AndChainContext a)) return new Expr[] {expr(e), null};
+        List<NotExprContext> parts = a.notExpr();
+        Expr guard = not(parts.get(1));
+        Span gs = span(parts.get(1).getStart(), parts.get(parts.size() - 1).getStop());
+        for (int i = 2; i < parts.size(); i++) guard = new Binary(gs, BinOp.AND, guard, not(parts.get(i)));
+        return new Expr[] {not(parts.get(0)), guard};
     }
 
     /**
@@ -482,7 +554,9 @@ final class AstBuilder {
         }
         if (ctx instanceof ParenPatternContext p) return pattern(p.pattern());
         if (ctx instanceof RangePatternContext r) {
-            return new RangePat(sp, rangeBound(r.rangeBound(0)), rangeBound(r.rangeBound(1)), r.op.getType() == ALangLexer.DOTDOTEQ);
+            RangePat rp = new RangePat(sp, rangeBound(r.rangeBound(0)), rangeBound(r.rangeBound(1)), r.op.getType() == ALangLexer.DOTDOTEQ);
+            rp.codePoint = r.rangeBound().stream().anyMatch(b -> b.CHAR_LIT() != null && codePointLiteral(b.CHAR_LIT().getSymbol()));
+            return rp;
         }
         if (ctx instanceof BindingPatternContext b) return new BindPat(sp, b.identifier().getText());
         if (ctx instanceof IntPatternContext i) {
@@ -490,9 +564,11 @@ final class AstBuilder {
             return new IntPat(sp, i.MINUS() != null ? val.negate() : val);
         }
         if (ctx instanceof CharPatternContext c) {
-            return new IntPat(sp, BigInteger.valueOf(charValue(c.CHAR_LIT().getSymbol())));
+            IntPat ip = new IntPat(sp, BigInteger.valueOf(charValue(c.CHAR_LIT().getSymbol())));
+            ip.codePoint = codePointLiteral(c.CHAR_LIT().getSymbol());
+            return ip;
         }
-        if (ctx instanceof StringPatternContext s) return new StrPat(sp, unescape(s.STRING_LIT().getSymbol()));
+        if (ctx instanceof StringPatternContext s) return new StrPat(sp, literalBytes(s.STRING_LIT().getSymbol()));
         if (ctx instanceof BoolPatternContext b) return new BoolPat(sp, b.TRUE() != null);
         return new WildPat(sp);
     }
@@ -744,8 +820,12 @@ final class AstBuilder {
                 String text = t.getText().replace("_", "");
                 yield new FloatLit(sp, Double.parseDouble(text), Float.parseFloat(text));
             }
-            case ALangLexer.STRING_LIT -> new StrLit(sp, unescape(t));
-            case ALangLexer.CHAR_LIT -> new IntLit(sp, BigInteger.valueOf(charValue(t)), true);
+            case ALangLexer.STRING_LIT -> new StrLit(sp, literalBytes(t));
+            case ALangLexer.CHAR_LIT -> {
+                IntLit lit = new IntLit(sp, BigInteger.valueOf(charValue(t)), true);
+                lit.codePoint = codePointLiteral(t);
+                yield lit;
+            }
             case ALangLexer.TRUE -> new BoolLit(sp, true);
             default -> new BoolLit(sp, false);
         };
@@ -757,13 +837,71 @@ final class AstBuilder {
         String s = text.replace("_", "");
         if (s.startsWith("0x")) return new BigInteger(s.substring(2), 16);
         if (s.startsWith("0b")) return new BigInteger(s.substring(2), 2);
+        if (s.startsWith("0o")) return new BigInteger(s.substring(2), 8);
         return new BigInteger(s);
     }
 
-    /** Decodes a string or char literal token (including quotes) into UTF-8 bytes. */
+    /**
+     * Decodes a string or char literal token (including quotes) into UTF-8 bytes: "..." and '...' with escapes,
+     * r"..." without, and the multi-line forms """...""" and r"""...""" (see {@link #textBlock}).
+     */
     static byte[] unescape(Token t) {
-        String s = t.getText();
-        String body = s.substring(1, s.length() - 1);
+        return decode(t.getText(), null, null);
+    }
+
+    /** As {@link #unescape(Token)}, reporting a bad \\u{...} escape or text block to {@code diags} (when not null). */
+    private byte[] literalBytes(Token t) {
+        return decode(t.getText(), diags, span(t));
+    }
+
+    private static byte[] decode(String s, Diagnostics diags, Span at) {
+        if (s.startsWith("r\"\"\"")) return textBlock(s.substring(4, s.length() - 3), false, diags, at);
+        if (s.startsWith("\"\"\"") && s.length() >= 6) return textBlock(s.substring(3, s.length() - 3), true, diags, at);
+        if (s.startsWith("r\"")) return s.substring(2, s.length() - 1).getBytes(StandardCharsets.UTF_8);
+        return escapes(s.substring(1, s.length() - 1), diags, at);
+    }
+
+    /**
+     * The text of a multi-line literal, {@code body} being what comes between its quotes: it must start with a line
+     * break, which is not part of the text; the indentation that every line which is not blank shares, and the line of
+     * the closing quotes if they stand on a line of their own, is removed from each; and a line break escaped with a
+     * backslash joins two lines (only where escapes are read).
+     */
+    private static byte[] textBlock(String body, boolean escaped, Diagnostics diags, Span at) {
+        String b = body.replace("\r\n", "\n").replace('\r', '\n');
+        if (!b.startsWith("\n")) {
+            if (diags != null) {
+                diags.error(Code.E0202, at, "a multi-line string starts with a line break after its opening quotes",
+                    "write \"\"\" at the end of a line and the text from the next one, or use \"...\" for one line");
+            }
+            return new byte[0];
+        }
+        List<String> lines = new ArrayList<>(Arrays.asList(b.substring(1).split("\n", -1)));
+        String last = lines.get(lines.size() - 1);
+        boolean closingOwnLine = last.isBlank();
+        int indent = Integer.MAX_VALUE;
+        for (int i = 0; i < lines.size(); i++) {
+            String l = lines.get(i);
+            if (l.isBlank() && !(closingOwnLine && i == lines.size() - 1)) continue;
+            int n = 0;
+            while (n < l.length() && (l.charAt(n) == ' ' || l.charAt(n) == '\t')) n++;
+            indent = Math.min(indent, n);
+        }
+        if (indent == Integer.MAX_VALUE) indent = 0;
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < lines.size(); i++) {
+            String l = lines.get(i);
+            if (i == lines.size() - 1 && closingOwnLine) break;
+            text.append(l.length() >= indent ? l.substring(indent) : "");
+            if (i < lines.size() - 1) text.append('\n');
+        }
+        String t = text.toString();
+        if (!escaped) return t.getBytes(StandardCharsets.UTF_8);
+        return escapes(t.replace("\\\n", ""), diags, at);
+    }
+
+    /** The UTF-8 bytes of text with the escapes of a "..." literal in it. */
+    private static byte[] escapes(String body, Diagnostics diags, Span at) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         StringBuilder plain = new StringBuilder();
         for (int i = 0; i < body.length(); i++) {
@@ -787,6 +925,20 @@ final class AstBuilder {
                     out.write(Integer.parseInt(body.substring(i + 1, i + 3), 16));
                     i += 2;
                 }
+                case 'u' -> {
+                    int close = body.indexOf('}', i);
+                    String hex = body.substring(i + 2, close);
+                    int cp = codePoint(hex);
+                    if (cp < 0) {
+                        if (diags != null) {
+                            diags.error(Code.E0202, at, "`\\u{" + hex + "}` is not a Unicode character",
+                                "a \\u{...} escape holds the hex digits of a code point from 0 to 10FFFF, not a surrogate (D800 to DFFF)");
+                        }
+                    } else {
+                        out.writeBytes(new String(Character.toChars(cp)).getBytes(StandardCharsets.UTF_8));
+                    }
+                    i = close;
+                }
                 default -> throw new IllegalStateException("lexer accepted bad escape");
             }
         }
@@ -794,17 +946,48 @@ final class AstBuilder {
         return out.toByteArray();
     }
 
+    /** The code point that the hex digits of a \\u{...} escape give, or -1 for none (too large, or a surrogate). */
+    private static int codePoint(String hex) {
+        if (hex.length() > 6) return -1;
+        int cp = Integer.parseInt(hex, 16);
+        return cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) ? -1 : cp;
+    }
+
+    /**
+     * The value of a character literal: its byte, or for one character beyond ASCII ('é', '\\u{20AC}') its code
+     * point, which {@link #codePointLiteral} tells apart.
+     */
     private int charValue(Token t) {
-        byte[] b = unescape(t);
+        String text = t.getText();
+        String body = text.substring(1, text.length() - 1);
+        if (body.startsWith("\\u{")) {
+            byte[] b = literalBytes(t);
+            if (b.length == 0) return 0;
+            return new String(b, StandardCharsets.UTF_8).codePointAt(0);
+        }
+        if (!body.startsWith("\\") && body.codePointCount(0, body.length()) == 1 && body.codePointAt(0) > 0x7F) {
+            return body.codePointAt(0);
+        }
+        byte[] b = literalBytes(t);
         if (b.length != 1) {
             // 'abc' is the text "abc", in the quotes text takes; one with a `"` in it would need escapes.
-            String body = t.getText().substring(1, t.getText().length() - 1);
             List<Edit> fix = body.contains("\"") ? List.of() : List.of(new Edit(span(t), "\"" + body + "\""));
-            diags.fixable(Code.E0202, span(t), "character literal " + t.getText() + " is not a single byte",
-                "character literals hold one ASCII byte; use a string \"...\" for other text", fix);
+            diags.fixable(Code.E0202, span(t), "character literal " + text + " is not a single character",
+                "character literals hold one character; use a string \"...\" for other text", fix);
             return 0;
         }
         return b[0] & 0xFF;
+    }
+
+    /** Whether a character literal is one beyond ASCII, whose value is a code point rather than a byte. */
+    static boolean codePointLiteral(Token t) {
+        String body = t.getText().substring(1, t.getText().length() - 1);
+        if (body.startsWith("\\u{")) {
+            String hex = body.substring(3, body.length() - 1);
+            int cp = codePoint(hex);
+            return cp > 0x7F;
+        }
+        return !body.startsWith("\\") && body.codePointCount(0, body.length()) == 1 && body.codePointAt(0) > 0x7F;
     }
 
     static Ast.Program build(Diagnostics diags, Source file, BufferedTokenStream tokens, ProgramContext ctx, boolean imported) {

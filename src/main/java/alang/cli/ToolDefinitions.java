@@ -80,6 +80,7 @@ public final class ToolDefinitions {
             case IfExpr i -> isConstant(i.cond) && isConstant(i.then) && isConstant(i.otherwise);
             case Try t -> false;
             case MatchExpr m -> false;
+            case LoopExpr l -> false;
             case TupleLit t -> t.elems.stream().allMatch(ToolDefinitions::isConstant);
             case SliceExpr s -> isConstant(s.target) && (s.from == null || isConstant(s.from)) && (s.to == null || isConstant(s.to));
         };

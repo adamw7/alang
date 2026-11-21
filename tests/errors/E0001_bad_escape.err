@@ -1,7 +1,7 @@
 error[E0001]: unexpected character `"`, expected a statement or expression
  --> tests/errors/E0001_bad_escape.al:3:11
   |
-3 |     print("caf\u{e9}");
+3 |     print("caf\u00e9");
   |           ^
-  = hint: `\u` is not an escape; the escapes are \n \t \r \0 \\ \" \' and \xHH (two hex digits), and a character beyond ASCII is written as itself in UTF-8
+  = hint: a \u escape gives a character by its code point in hex, in braces: \u{e9}, \u{1F600}
 

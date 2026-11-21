@@ -138,6 +138,13 @@ final class Debug implements Debugger {
                 }
                 case While w -> collect(w.body);
                 case For f2 -> collect(f2.body);
+                case Let l when l.init instanceof LoopExpr le -> collect(loopBody(le.loop));
+                case Assign a when a.value instanceof LoopExpr le -> collect(loopBody(le.loop));
+                case Return r when r.value instanceof LoopExpr le -> collect(loopBody(le.loop));
+                case Destructure d when d.init instanceof LoopExpr le -> {
+                    collect(loopBody(le.loop));
+                    if (d.elseBlock != null) collect(d.elseBlock);
+                }
                 case Destructure d when d.elseBlock != null -> collect(d.elseBlock);
                 case Match m -> {
                     for (Arm a : m.arms) collect(a.body());
@@ -145,6 +152,10 @@ final class Debug implements Debugger {
                 default -> { }
             }
         }
+    }
+
+    private static Block loopBody(Loop l) {
+        return l instanceof While w ? w.body : ((For) l).body;
     }
 
     /** The outcome of the run, for the session's last event. */

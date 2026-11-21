@@ -1,0 +1,7 @@
+error[E0103]: type `Pair` takes 1 type argument(s) but 0 were given
+ --> tests/errors/E0103_alias_arguments.al:5:12
+  |
+5 |     let p: Pair = (1, 2);
+  |            ^^^^
+  = hint: write a type for each parameter: Pair<T>
+

@@ -49,8 +49,15 @@ item
     : constDecl
     | structDecl
     | enumDecl
+    | typeAliasDecl
     | functionDecl
     | testDecl
+    ;
+
+// type Grid = [[i64; 8]; 8];  another name for a type, which means exactly that type wherever it is written.
+// type Pair<T> = (T, T);  with type parameters, which each use fixes: Pair<i64>.
+typeAliasDecl
+    : TYPE identifier typeParams? ASSIGN type SEMI
     ;
 
 // const MAX_USERS: i32 = 64;
@@ -176,11 +183,17 @@ statement
 // let Option.Some(n): Option<i64> = parse_i64(s) else { return 0; };  a pattern that can fail, with a block that
 // runs when it does not match and must leave: return, break, continue or panic.
 letStmt
-    : kind=(LET | VAR) (identifier | pattern) (COLON type)? ASSIGN expression (ELSE block)? SEMI
+    : kind=(LET | VAR) (identifier | pattern) (COLON type)? ASSIGN (loopValue | expression) (ELSE block)? SEMI
     ;
 
 assignStmt
-    : place op=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) expression SEMI
+    : place op=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) (loopValue | expression) SEMI
+    ;
+
+// let i: i64 = for i, x in xs { if x == 0 { break i; } } else -1;  a loop as the whole value of a let, var,
+// assignment or return: the value of the `break v;` that leaves it, or the value after `else` when it ends.
+loopValue
+    : (whileStmt | forStmt) ELSE expression
     ;
 
 // A storage location: a variable, optionally followed by fields and indexes.
@@ -266,8 +279,9 @@ rangeBound
     | CHAR_LIT
     ;
 
+// `break v;` leaves the innermost loop around it that gives a value (see loopValue) with the value v.
 breakStmt
-    : BREAK identifier? SEMI
+    : BREAK identifier? expression? SEMI
     ;
 
 continueStmt
@@ -275,7 +289,7 @@ continueStmt
     ;
 
 returnStmt
-    : RETURN expression? SEMI
+    : RETURN (loopValue | expression)? SEMI
     ;
 
 assertStmt
@@ -394,9 +408,11 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set`, `as` and `traps` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set`, `as`, `traps` and `type` are contextual keywords and
+// remain usable as names.
 identifier
     : IDENT
+    | TYPE
     | LIMIT
     | TEST
     | TOOL
@@ -422,6 +438,7 @@ LET       : 'let' ;
 VAR       : 'var' ;
 CONST     : 'const' ;
 STRUCT    : 'struct' ;
+TYPE      : 'type' ;
 ENUM      : 'enum' ;
 IF        : 'if' ;
 ELSE      : 'else' ;
@@ -525,14 +542,22 @@ FLOAT_LIT
 INT_LIT
     : DIGITS
     | '0x' HEX_DIGIT ('_'? HEX_DIGIT)*
+    | '0o' [0-7] ('_'? [0-7])*
     | '0b' [01] ('_'? [01])*
     ;
 
+// "text\n" on one line, with escapes; r"C:\dir" raw, without escapes;
+// """ on a line of its own, then lines of text, then """: several lines, with escapes, their common indentation
+// removed (r""" ... """ without escapes). Every form is the same kind of literal, a str.
 STRING_LIT
     : '"' (ESCAPE | ~["\\\r\n])* '"'
+    | 'r"' ~["\r\n]* '"'
+    | '"""' (ESCAPE | '\\' [\r\n] | ~[\\])*? '"""'
+    | 'r"""' .*? '"""'
     ;
 
-// A single byte: 'a', '\n', '\x41'. Its value is an integer constant.
+// One character: 'a', '\n', '\x41', or one beyond ASCII, 'é', '\u{20AC}', whose value is its code point.
+// Its value is an integer constant.
 CHAR_LIT
     : '\'' (ESCAPE | ~['\\\r\n]) '\''
     ;
@@ -552,6 +577,11 @@ LINE_COMMENT
     : '//' ~[\r\n]* -> channel(HIDDEN)
     ;
 
+// /* ... */, which may span lines; it ends at the first */ (block comments do not nest).
+BLOCK_COMMENT
+    : '/*' .*? '*/' -> channel(HIDDEN)
+    ;
+
 WS
     : [ \t\r\n]+ -> skip
     ;
@@ -564,4 +594,4 @@ ERROR_CHAR
 fragment DIGITS    : [0-9] ('_'? [0-9])* ;
 fragment EXPONENT  : [eE] [+-]? DIGITS ;
 fragment HEX_DIGIT : [0-9a-fA-F] ;
-fragment ESCAPE    : '\\' ( [ntr0\\"'] | 'x' HEX_DIGIT HEX_DIGIT ) ;
+fragment ESCAPE    : '\\' ( [ntr0\\"'] | 'x' HEX_DIGIT HEX_DIGIT | 'u{' HEX_DIGIT+ '}' ) ;

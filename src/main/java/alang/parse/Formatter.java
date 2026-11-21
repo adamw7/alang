@@ -45,14 +45,19 @@ public final class Formatter {
     }
 
     private static boolean isComment(Token t) {
-        return t.getType() == ALangLexer.LINE_COMMENT || t.getType() == ALangLexer.DOC_COMMENT;
+        return t.getType() == ALangLexer.LINE_COMMENT || t.getType() == ALangLexer.DOC_COMMENT || t.getType() == ALangLexer.BLOCK_COMMENT;
+    }
+
+    /** The line a token ends on: a block comment or a multi-line string may span several, which it keeps as written. */
+    private static int endLine(Token t) {
+        return t.getLine() + (int) t.getText().chars().filter(c -> c == '\n').count();
     }
 
     /** Words that are names in some places and keywords in others. */
     private static boolean contextual(int t) {
         return t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL || t == ALangLexer.IMPORT
             || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP
-            || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS;
+            || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t == ALangLexer.TYPE;
     }
 
     private static boolean nameLike(int t) {
@@ -131,7 +136,8 @@ public final class Formatter {
         for (int i = 1; i < tokens.size(); i++) {
             if (tokens.get(i).getType() != ALangLexer.LT || !nameLike(tokens.get(i - 1).getType())) continue;
             int before = i >= 2 ? tokens.get(i - 2).getType() : -1;
-            boolean declaration = before == ALangLexer.FN || before == ALangLexer.STRUCT || before == ALangLexer.ENUM;
+            boolean declaration = before == ALangLexer.FN || before == ALangLexer.STRUCT || before == ALangLexer.ENUM
+                || before == ALangLexer.TYPE;
             int close = typeArgsClose(tokens, i);
             if (close < 0) continue;
             int after = close + 1 < tokens.size() ? tokens.get(close + 1).getType() : -1;
@@ -202,14 +208,14 @@ public final class Formatter {
         for (int i = 0; i < tokens.size(); i++) {
             Token t = tokens.get(i);
             int k = t.getType();
-            boolean newLine = prev == null || t.getLine() > prev.getLine();
+            boolean newLine = prev == null || t.getLine() > endLine(prev);
             if (newLine) {
                 if (prev != null) {
                     lines.add(line.toString());
                     line.setLength(0);
                     // At most one blank line, and none right after a `{`; one between top-level declarations.
                     boolean nextItem = depth == 0 && prev == prevCode && prev.getType() == ALangLexer.RBRACE;
-                    if ((t.getLine() - prev.getLine() > 1 || nextItem) && !openedBlock && !lines.get(lines.size() - 1).isEmpty()) {
+                    if ((t.getLine() - endLine(prev) > 1 || nextItem) && !openedBlock && !lines.get(lines.size() - 1).isEmpty()) {
                         lines.add("");
                     }
                 }
@@ -225,6 +231,9 @@ public final class Formatter {
                     d = depth + 1;
                 }
                 line.append(INDENT.repeat(Math.max(0, d)));
+            } else if (t.getType() == ALangLexer.BLOCK_COMMENT || prev.getType() == ALangLexer.BLOCK_COMMENT) {
+                // A block comment inside a line keeps the source's choice of a space on each side.
+                if (gap(prev, t)) line.append(' ');
             } else if (isComment(t)) {
                 // A comment after code keeps its distance from it, so that aligned comments stay aligned.
                 int end = prev.getCharPositionInLine() + prev.getText().length();
