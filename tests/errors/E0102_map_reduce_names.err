@@ -5,26 +5,12 @@ error[E0102]: unknown function `map`
   |           ^^^
   = hint: use transform(xs, f) with fn f(x: T) -> U: a list of f(x) for each element, of the capacity of xs
 
-error[E0101]: unknown name `double`
- --> tests/errors/E0102_map_reduce_names.al:8:19
-  |
-8 |     print(map(xs, double));
-  |                   ^^^^^^
-  = hint: `double` is a function; call it with parentheses: double(...)
-
 error[E0102]: unknown function `reduce`
  --> tests/errors/E0102_map_reduce_names.al:9:11
   |
 9 |     print(reduce(xs, 0, double));
   |           ^^^^^^
   = hint: use fold(xs, start, f) with fn f(acc: A, x: T) -> A; for a total, sum(xs)
-
-error[E0101]: unknown name `double`
- --> tests/errors/E0102_map_reduce_names.al:9:25
-  |
-9 |     print(reduce(xs, 0, double));
-  |                         ^^^^^^
-  = hint: `double` is a function; call it with parentheses: double(...)
 
 error[E0102]: unknown function `argmax`
   --> tests/errors/E0102_map_reduce_names.al:10:11

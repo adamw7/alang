@@ -128,6 +128,17 @@ final class Temporaries {
             case Call c when c.asStruct != null -> inner(c.asStruct);
             case Call c -> call(c);
             case VariantCall v when v.asCall != null -> call(v.asCall);
+            case VariantCall v when v.asValueCall != null -> expr(v.asValueCall);
+            case CallValue c -> {
+                // A read-only argument is passed as it is, unless it has to be widened to the parameter's type.
+                long t = expr(c.callee);
+                List<Type> ps = ((Type.FnT) c.callee.type).params();
+                for (int i = 0; i < c.args.size(); i++) {
+                    Expr a = c.args.get(i).expr();
+                    t = Layout.add(t, Layout.add(expr(a), a.type.equals(ps.get(i)) ? 0 : stored(a, ps.get(i))));
+                }
+                yield t;
+            }
             case VariantCall v -> {
                 long t = 0;
                 for (int i = 0; i < v.args.size(); i++) {
@@ -236,7 +247,7 @@ final class Temporaries {
             // The element moving into its place, and the two keys a probe compares.
             case SORT_BY_KEY -> {
                 Type elem = Type.elementOf(args.get(0).expr().type);
-                long keys = Type.isAggregate(c.fnArg.ret) ? 2 * Layout.size(c.fnArg.ret) : 0;
+                long keys = Type.isAggregate(c.fnArgResult()) ? 2 * Layout.size(c.fnArgResult()) : 0;
                 yield Layout.add(Type.isAggregate(elem) ? Layout.size(elem) : 0, keys);
             }
             // The element on its way to its new place.

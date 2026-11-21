@@ -33,6 +33,11 @@ public final class Ast {
         public final Map<Source, Map<String, Integer>> aliases;
         /** The scope of each file's declarations; a file not listed is in scope 0. */
         public final Map<Source, Integer> scopes;
+        /**
+         * The functions the program uses as values (stored, returned, or passed to a function that takes any function
+         * of a type), in the order the checker met them: each instance with known types. A function value is one of them.
+         */
+        public final List<FnDecl> functionValues = new ArrayList<>();
 
         public Program(Source source, List<Item> items, List<Import> imports) {
             this(source, items, imports, List.of(source), Map.of(), Map.of());
@@ -259,6 +264,11 @@ public final class Ast {
         public final Set<FnDecl> callees = new LinkedHashSet<>();
         /** Functions this routine passes as values, to a parameter of a function type. */
         public final Set<FnDecl> fnValues = new LinkedHashSet<>();
+        /**
+         * The types of the function values this routine calls: each such call may call any function that the program uses
+         * as a value ({@link Program#functionValues}) and has that type.
+         */
+        public final Set<Type.FnT> dynamicCalls = new LinkedHashSet<>();
 
         Routine(Span span, String name, Block body) {
             super(span, name);
@@ -311,6 +321,13 @@ public final class Ast {
          * what they stand for, in the order they were made.
          */
         public final Map<List<Object>, FnDecl> instances = new LinkedHashMap<>();
+
+        /** The type of the function as a value: its parameters' types and its result's. */
+        public Type.FnT fnType() {
+            List<Type> ps = new ArrayList<>();
+            for (LocalVar v : paramVars) ps.add(v.type);
+            return new Type.FnT(ps, ret);
+        }
 
         /** Whether the function takes any capacity somewhere: it runs and compiles only as its instances. */
         public boolean generic() {
@@ -976,7 +993,8 @@ public final class Ast {
 
         /** Places evaluate to the storage they name; everything else builds a new value. */
         public boolean isPlace() {
-            return this instanceof Name || this instanceof Index || (this instanceof FieldAccess f && f.variant == null && f.constant == null);
+            return this instanceof Name n && n.function == null && n.capacity == null || this instanceof Index
+                || (this instanceof FieldAccess f && f.variant == null && f.constant == null && f.function == null);
         }
     }
 
@@ -1044,6 +1062,8 @@ public final class Ast {
         public ConstDecl constant;
         /** A capacity parameter, N of `fn f<N>(...)`, in an instance of the function: the capacity it stands for. */
         public Long capacity;
+        /** A function used as a value: `let f: fn(i64) -> i64 = inc;`. */
+        public FnDecl function;
 
         public Name(Span span, String name) {
             super(span);
@@ -1060,6 +1080,8 @@ public final class Ast {
         public Variant variant;
         /** `ns.NAME`: a constant of the file imported as ns. */
         public ConstDecl constant;
+        /** `ns.f` as a value: a function of the file imported as ns. */
+        public FnDecl function;
 
         public FieldAccess(Span span, Expr target, String name, Span nameSpan) {
             super(span);
@@ -1108,8 +1130,16 @@ public final class Ast {
         public final List<Arg> args;
         public FnDecl fn;
         public Builtin builtin;
-        /** A call of a parameter of a function type, in a function checked as written: which one. */
+        /**
+         * A call of a variable that holds a function value (a parameter of a function type, in a function checked as
+         * written or in an instance given a function value rather than a name): which one.
+         */
         public LocalVar fnParam;
+        /**
+         * For a builtin such as any or sort_by given a variable that holds a function value rather than a function's
+         * name: that variable, whose function it calls.
+         */
+        public LocalVar fnArgLocal;
         /**
          * The function that a builtin such as any or sort_by calls: the one passed to it by name. Null in a function
          * checked as written that passes on a parameter of a function type; its instances know the function.
@@ -1140,6 +1170,11 @@ public final class Ast {
         public boolean hasMutArg() {
             return args.stream().anyMatch(Arg::mut);
         }
+
+        /** The result type of the function a builtin such as transform or sort_by_key calls: by name or held in a variable. */
+        public Type fnArgResult() {
+            return fnArg != null ? fnArg.ret : ((Type.FnT) fnArgLocal.type).ret();
+        }
     }
 
     /** `Enum.Variant(args)`. */
@@ -1148,6 +1183,8 @@ public final class Ast {
         public String qualifier;
         /** `ns.f(...)`, which reads as Enum.Variant(...): the call of the function f of the file imported as ns. */
         public Call asCall;
+        /** `s.f(...)`, which reads as Enum.Variant(...): the call of the function value in the field f of the variable s. */
+        public CallValue asValueCall;
         public final String enumName;
         public final String variantName;
         public final List<Arg> args;
@@ -1163,6 +1200,18 @@ public final class Ast {
     }
 
     public record FieldInit(Span span, String name, Expr value) {}
+
+    /** `callee(args)`, where callee is any expression that gives a function value: `ops[i](x)`, `s.handler(x)`. */
+    public static final class CallValue extends Expr {
+        public final Expr callee;
+        public final List<Arg> args;
+
+        public CallValue(Span span, Expr callee, List<Arg> args) {
+            super(span);
+            this.callee = callee;
+            this.args = args;
+        }
+    }
 
     /** `Point(x: 1, y: 2)`. */
     public static final class StructLit extends Expr {

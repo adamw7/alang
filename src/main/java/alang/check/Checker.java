@@ -149,10 +149,7 @@ public final class Checker {
         for (TypeAlias a : aliases.values()) {
             if (!a.generics.params.isEmpty()) continue;
             enterScope(a);
-            // A function type is checked where the alias is used, as only a parameter may have one.
-            fnTypeAllowed = true;
             aliased(a, new NamedRef(a.span, a.name, null));
-            fnTypeAllowed = false;
         }
         boolean recursiveTypes = checkRecursiveTypes();
         for (ConstDecl c : consts.values()) ensureConst(c);
@@ -168,6 +165,7 @@ public final class Checker {
         checkInstances(failed);
         // The default values of parameters are constants of the program: the C backend and the memory bound count them.
         program.items.addAll(defaultValues);
+        dynamicCallees();
         boolean recursion = checkRecursion();
         if (!recursion && !diags.hasErrors()) recursion = checkInstanceRecursion();
         MemoryReport memory = null;
@@ -637,12 +635,22 @@ public final class Checker {
             }
             case MapRef m -> {
                 Type k = resolveType(m.key());
+                if (hasFunction(k)) {
+                    diags.error(Code.E0203, m.key().span(), "the keys of a map are kept in order, and functions have no order",
+                        "key it by something else, such as a name, and keep the function in the value");
+                    yield Type.ERROR;
+                }
                 Type v = resolveType(m.value());
                 int cap = capacity(m.cap(), m.span(), "map[" + k + ", " + v + "; _]", "map capacity");
                 yield cap == BAD_SIZE || Type.isError(k) || Type.isError(v) ? Type.ERROR : new Type.MapT(k, v, cap);
             }
             case SetRef st -> {
                 Type e = resolveType(st.elem());
+                if (hasFunction(e)) {
+                    diags.error(Code.E0203, st.elem().span(), "the values of a set are kept in order, and functions have no order",
+                        "keep them in a list instead");
+                    yield Type.ERROR;
+                }
                 int cap = capacity(st.cap(), st.span(), "set[" + e + "; _]", "set capacity");
                 yield cap == BAD_SIZE || Type.isError(e) ? Type.ERROR : new Type.SetT(e, cap);
             }
@@ -657,8 +665,6 @@ public final class Checker {
                 yield bad ? Type.ERROR : new Type.TupleT(elems);
             }
             case FnRef fr -> {
-                boolean allowed = fnTypeAllowed;
-                fnTypeAllowed = false;
                 List<Type> ps = new ArrayList<>();
                 boolean bad = false;
                 for (TypeRef pr : fr.params()) {
@@ -667,12 +673,6 @@ public final class Checker {
                     ps.add(pt);
                 }
                 Type ret = fr.ret() == null ? Type.VOID : resolveType(fr.ret());
-                if (!allowed) {
-                    diags.error(Code.E0217, fr.span(), "a function type is only the type of a parameter",
-                        "a variable, field or result cannot hold a function; take it as a parameter: fn apply(f: " + new Type.FnT(ps, ret)
-                            + ", ...)");
-                    yield Type.ERROR;
-                }
                 yield bad || Type.isError(ret) ? Type.ERROR : new Type.FnT(ps, ret);
             }
             case NamedRef n when n.qualifier() != null -> {
@@ -789,9 +789,6 @@ public final class Checker {
 
     /** While a parameter's type is resolved: how many `_`s the function's parameters have so far. */
     private int[] paramCapacities;
-
-    /** Whether the type being resolved is a parameter's, at its top: the one place a function type may be. */
-    private boolean fnTypeAllowed;
 
     /** The type parameters of {@code f}: type variables as written, and the types an instance was made for. */
     private Map<String, Type> typeParamsOf(FnDecl f) {
@@ -935,14 +932,12 @@ public final class Checker {
         int[] savedCapacities = paramCapacities;
         paramCapacities = new int[1];
         for (Param p : f.params) {
-            fnTypeAllowed = !p.mut();
             Type t = resolveType(p.typeRef());
-            fnTypeAllowed = false;
             if (p.mut() && p.typeRef() instanceof FnRef) {
                 diags.error(Code.E0217, p.span(), "a parameter of a function type cannot be `mut`", "remove `mut`");
                 t = Type.ERROR;
             }
-            if ((f.tool || f.name.equals("main")) && (t instanceof Type.FnT || Type.hasTypeVar(t))) {
+            if ((f.tool || f.name.equals("main")) && (hasFunction(t) || Type.hasTypeVar(t))) {
                 diags.error(f.tool ? Code.E0601 : Code.E0602, p.typeRef().span(), (f.tool ? "a tool's" : "`main`'s")
                     + " parameters have fixed types: no type parameters or functions",
                     "callers send JSON values; have the tool call a generic function of your own");
@@ -978,6 +973,11 @@ public final class Checker {
         paramCapacities = savedCapacities;
         // After the parameters, which give each capacity parameter its `_`: the result may have them too.
         f.ret = f.retRef == null ? Type.VOID : resolveType(f.retRef);
+        if (f.tool && hasFunction(f.ret)) {
+            diags.error(Code.E0601, f.retRef.span(), "a tool's result is sent as JSON, which holds no functions",
+                "return the data the caller needs, such as the function's name as a str");
+            f.ret = Type.ERROR;
+        }
         if (f.origin != null) f.ret = Type.substitute(f.ret, f.capacities);
         for (int i = 0; i < f.capacityParams.size(); i++) {
             if (f.origin == null && !f.capacityIndex.containsKey(f.capacityParams.get(i))) {
@@ -1070,12 +1070,9 @@ public final class Checker {
                 c.state = State.DONE;
             } else {
                 int[] savedCapacities = paramCapacities;
-                boolean savedFnType = fnTypeAllowed;
                 paramCapacities = null;
-                fnTypeAllowed = false;
                 ensureConst(c);
                 paramCapacities = savedCapacities;
-                fnTypeAllowed = savedFnType;
             }
             f.defaults.add(c);
             defaultValues.add(c);
@@ -1236,6 +1233,143 @@ public final class Checker {
         };
     }
 
+    /**
+     * The type of the field {@code name} of the struct that the place {@code holder} (a variable, or a field of one) holds,
+     * found without reporting anything; null if it has none.
+     */
+    private Type fieldType(Expr holder, String name) {
+        Type t = null;
+        if (holder instanceof Name n && lookupLocal(n.name) != null) t = lookupLocal(n.name).type;
+        if (holder instanceof FieldAccess f) t = fieldType(f.target, f.name);
+        if (!(t instanceof Type.StructT st)) return null;
+        int i = st.decl().fieldIndex(name);
+        return i < 0 ? null : st.decl().fields.get(i).type;
+    }
+
+    /** `callee(args)`: a call of the function value that callee gives, which the program decides when it runs. */
+    private Type callValue(CallValue c) {
+        if (c.callee instanceof FieldAccess fa && !(fa.target instanceof Name n && lookupLocal(n.name) == null)) {
+            // xs[0].abs(): no field holds a function there, so it reads as a method, which ALang has none of.
+            Type target = expr(fa.target, null);
+            boolean field = target instanceof Type.StructT st && st.decl().fieldIndex(fa.name) >= 0;
+            if (!field) {
+                for (Arg a : c.args) expr(a.expr(), null);
+                if (!Type.isError(target)) {
+                    String receiver = exprText(fa.target);
+                    String mut = modifiesFirstArgument(fa.name) ? "mut " : "";
+                    diags.error(Code.E0102, c.span, "there are no methods: `" + receiver + "." + fa.name + "(...)` is not valid",
+                        "pass the value as the first argument: " + fa.name + "(" + mut + receiver + (c.args.isEmpty() ? "" : ", ...") + ")");
+                }
+                return Type.ERROR;
+            }
+        }
+        Type t = expr(c.callee, null);
+        if (!(t instanceof Type.FnT ft)) {
+            for (Arg a : c.args) expr(a.expr(), null);
+            if (!Type.isError(t)) {
+                diags.error(Code.E0102, c.callee.span, "`" + exprText(c.callee) + "` is a " + t + ", not a function",
+                    "only a function value can be called: a variable, field or element of a type such as fn(i64) -> i64");
+            }
+            return Type.ERROR;
+        }
+        if (c.args.size() != ft.params().size()) {
+            diags.error(Code.E0204, c.span, "`" + exprText(c.callee) + "` takes " + ft.params().size() + " argument(s) but "
+                + c.args.size() + " were given", "its type: " + ft);
+            for (Arg a : c.args) expr(a.expr(), null);
+            return ft.ret();
+        }
+        for (int i = 0; i < c.args.size(); i++) {
+            Arg a = c.args.get(i);
+            noMut(a);
+            Type want = ft.params().get(i);
+            requireAssignable(a.expr(), expr(a.expr(), want), want);
+        }
+        if (ctx.routine != null) ctx.routine.dynamicCalls.add(ft);
+        return ft.ret();
+    }
+
+    /** E0203 for a builtin that orders values given values with functions in them, which have no order. */
+    private void unordered(Call c, Builtin b) {
+        boolean orders = switch (b) {
+            case SORT, COMPARE, BINARY_SEARCH, LOWER_BOUND, UPPER_BOUND, IS_SORTED, MIN, MAX, MIN_INDEX, MAX_INDEX -> true;
+            case HEAP_PUSH, HEAP_POP -> c.fnArg == null && c.fnArgLocal == null;
+            default -> false;
+        };
+        Type t = c.args.isEmpty() ? null : c.args.get(0).expr().type;
+        if (b == Builtin.SORT_BY_KEY) {
+            orders = true;
+            t = c.fnArg != null ? c.fnArg.ret : c.fnArgLocal != null && c.fnArgLocal.type instanceof Type.FnT ft ? ft.ret() : null;
+        }
+        if (orders && t != null && hasFunction(t)) {
+            diags.error(Code.E0203, c.span, b.name + "() orders values, and functions have no order",
+                b == Builtin.SORT_BY_KEY ? "give it a key without functions in it" : "order them with sort_by and a function of your own, "
+                    + "or by something else in them");
+        }
+    }
+
+    private static Type.FnT fnType(FnDecl f) {
+        return f.fnType();
+    }
+
+    /** Notes that the program uses {@code f} as a value: a call of a function value of its type may call it. */
+    private void escape(FnDecl f) {
+        if (f != null && !program.functionValues.contains(f)) program.functionValues.add(f);
+    }
+
+    /**
+     * The function {@code d} as a value at {@code at}, `let f: fn(i64) -> i64 = inc;`: d itself, or for one that takes
+     * any capacity, type or function, its instance for the function type expected there. Null after reporting why it
+     * cannot be one, and in a function checked as written whose types are not known yet.
+     */
+    private FnDecl fnValue(Expr at, FnDecl d, Type expected) {
+        signature(d);
+        if (d.paramVars.stream().anyMatch(v -> v.byRef)) {
+            diags.error(Code.E0201, at.span, "`" + d.name + "` has `mut` parameters, which a function value cannot have",
+                "use a function whose parameters are read-only and that returns its result");
+            return null;
+        }
+        if (!d.generic()) {
+            escape(d);
+            return d;
+        }
+        if (!(expected instanceof Type.FnT want)) {
+            diags.error(Code.E0201, at.span, "`" + d.name + "` takes any capacity, type or function, so as a value it needs a "
+                    + "function type to take", "give it one: let f: fn(list[i64; 8]) -> i64 = " + d.name + ";");
+            return null;
+        }
+        Map<Integer, Integer> caps = new HashMap<>();
+        Map<Integer, Type> types = new HashMap<>();
+        boolean ok = want.params().size() == d.paramVars.size();
+        for (int i = 0; ok && i < want.params().size(); i++) {
+            ok = Type.bind(d.paramVars.get(i).type, want.params().get(i), true, caps, d, types);
+        }
+        ok = ok && Type.bind(d.ret, want.ret(), true, caps, d, types);
+        if (!ok) {
+            diags.error(Code.E0201, at.span, "`" + d.name + "` cannot be " + want);
+            return null;
+        }
+        if (ctx.fn != null && ctx.fn.generic()) return null;
+        List<Integer> known = new ArrayList<>();
+        int nc = anyCapacities(d);
+        for (int i = 0; i < nc; i++) {
+            if (caps.get(i) == null || caps.get(i) < 0) return null;
+            known.add(caps.get(i));
+        }
+        List<Type> typeArgs = new ArrayList<>();
+        for (int i = 0; i < d.typeParams.size(); i++) {
+            if (types.get(i) == null) return null;
+            typeArgs.add(types.get(i));
+        }
+        List<FnDecl> fnArgs = new ArrayList<>(java.util.Collections.nCopies(d.params.size(), (FnDecl) null));
+        FnDecl inst = instance(d, known, typeArgs, fnArgs);
+        escape(inst);
+        return inst;
+    }
+
+    /** What {@link #functionValue} returns for an argument that is a function value, whose function is known only when it runs. */
+    private static final FnDecl DYNAMIC = new FnDecl(null, null, "$dynamic", false, List.of(), List.of(), List.of(), null,
+        List.of(), List.of(), List.of(), List.of(), null);
+
     /** What {@link #namedCapacity} returns for a name that is no capacity parameter. */
     private static final int NOT_CAPACITY = Integer.MAX_VALUE;
 
@@ -1280,6 +1414,35 @@ public final class Checker {
         ctx.scopes.pop();
     }
 
+    /**
+     * A call of a function value may call any function of its type that the program uses as a value: each is a callee
+     * of the routine that makes such a call, for the recursion check and the memory bound.
+     */
+    /** The callees each routine has only through a call of a function value (see {@link #dynamicCallees}). */
+    private final Map<Routine, Set<FnDecl>> dynamicEdges = new HashMap<>();
+
+    /** ", through a function value" when a step of the cycle is a call of a function value, else "". */
+    private String throughValue(List<FnDecl> cycle) {
+        for (int i = 0; i + 1 < cycle.size(); i++) {
+            Set<FnDecl> d = dynamicEdges.get(cycle.get(i));
+            FnDecl next = cycle.get(i + 1);
+            if (d != null && (d.contains(next) || d.stream().anyMatch(x -> x.origin == next))) return ", through a function value";
+        }
+        return "";
+    }
+
+    private void dynamicCallees() {
+        List<Routine> routines = new ArrayList<>(program.itemsOf(Routine.class));
+        for (FnDecl f : fns.values()) routines.addAll(f.instances.values());
+        for (Routine r : routines) {
+            for (Type.FnT ft : r.dynamicCalls) {
+                for (FnDecl v : program.functionValues) {
+                    if (fnType(v).equals(ft) && r.callees.add(v)) dynamicEdges.computeIfAbsent(r, k -> new HashSet<>()).add(v);
+                }
+            }
+        }
+    }
+
     private boolean checkRecursion() {
         Map<FnDecl, Integer> state = new HashMap<>();
         boolean found = false;
@@ -1288,7 +1451,7 @@ public final class Checker {
             if (cycle != null) {
                 found = true;
                 diags.error(Code.E0401, cycle.get(0).nameSpan,
-                    "recursion is not allowed: " + String.join(" -> ", cycle.stream().map(c -> c.name).toList()),
+                    "recursion is not allowed: " + String.join(" -> ", cycle.stream().map(c -> c.name).toList()) + throughValue(cycle),
                     "rewrite with a loop; keep pending work in a fixed-capacity list (a stack) if needed");
             }
         }
@@ -1963,12 +2126,21 @@ public final class Checker {
             }
             return false;
         }
+        if (e instanceof CallValue cv) {
+            Type t = expr(cv, null);
+            boolean trapTest = ctx.routine instanceof TestDecl td && td.expectedTrap != null;
+            if (!(t instanceof Type.Void) && !Type.isError(t) && !trapTest) {
+                diags.warning(Code.W0302, cv.span, "the result of `" + exprText(cv) + "` (" + t + ") is not used",
+                    "store it: let value: " + t + " = " + exprText(cv) + ";");
+            }
+            return false;
+        }
         if (e instanceof VariantCall vc) {
             // ns.f(...) is a call of a function of an imported file.
             ctx.mutCallAllowed = vc;
             Type t = expr(vc, null);
             ctx.mutCallAllowed = null;
-            if (vc.asCall != null) {
+            if (vc.asCall != null || vc.asValueCall != null) {
                 boolean trapTest = ctx.routine instanceof TestDecl td && td.expectedTrap != null;
                 if (!(t instanceof Type.Void) && !Type.isError(t) && !trapTest) {
                     diags.warning(Code.W0302, vc.span, "the result of `" + exprText(vc) + "` (" + t + ") is not used",
@@ -2432,7 +2604,7 @@ public final class Checker {
             }
             case StrLit s -> new Type.Str(s.value.length);
             case BoolLit b -> Type.BOOL;
-            case Name n -> name(n);
+            case Name n -> name(n, expected);
             case FieldAccess f -> fieldAccess(f, expected);
             case Index ix -> index(ix);
             case Call c -> call(c, expected);
@@ -2449,6 +2621,7 @@ public final class Checker {
             case MatchExpr m -> matchExpr(m, expected);
             case TupleLit t -> tupleLit(t, expected);
             case LoopExpr l -> loopExpr(l, expected);
+            case CallValue c -> callValue(c);
             case SliceExpr s -> sliceExpr(s);
         };
     }
@@ -2517,8 +2690,14 @@ public final class Checker {
         }
     }
 
-    private Type name(Name n) {
+    private Type name(Name n, Type expected) {
         LocalVar v = lookupLocal(n.name);
+        if (v != null && v.type instanceof Type.FnT && boundFunction(v) != null) {
+            // A parameter that an instance was given a function by name for, used as a value: that function.
+            n.function = boundFunction(v);
+            escape(n.function);
+            return v.type;
+        }
         if (v != null) {
             n.local = v;
             For lent = ctx.lent.get(v);
@@ -2529,6 +2708,13 @@ public final class Checker {
                         + exprText(lent.from) + ") { }");
             }
             return v.type;
+        }
+        FnDecl fd = fns.get(n.name);
+        if (fd != null) {
+            // A function used as a value.
+            FnDecl got = fnValue(n, fd, expected);
+            n.function = got;
+            return got == null ? Type.ERROR : fnType(got);
         }
         int cap = namedCapacity(n.name);
         // One in no parameter's type was reported where it is declared.
@@ -2591,9 +2777,18 @@ public final class Checker {
             && aliasScope(n.name) != null) {
             int s = aliasScope(n.name);
             ConstDecl c = consts.in(s, f.name);
+            if (c == null && fns.in(s, f.name) != null) {
+                // ns.f as a value.
+                FnDecl d = fns.in(s, f.name);
+                int saved = ctx.scope;
+                ctx.scope = d.scope;
+                FnDecl got = fnValue(f, d, expected);
+                ctx.scope = saved;
+                f.function = got;
+                return got == null ? Type.ERROR : fnType(got);
+            }
             if (c == null) {
-                diags.error(Code.E0101, f.span, "`" + n.name + "` has no constant `" + f.name + "`",
-                    fns.in(s, f.name) != null ? "`" + f.name + "` is a function: call it, " + n.name + "." + f.name + "(...)" : null);
+                diags.error(Code.E0101, f.span, "`" + n.name + "` has no constant `" + f.name + "`");
                 return Type.ERROR;
             }
             ensureConst(c);
@@ -2687,6 +2882,7 @@ public final class Checker {
         if (b != null) {
             c.builtin = b;
             Type t = builtin(c, b, expected);
+            unordered(c, b);
             checkMutCallPosition(c, t);
             Name swapped = b == Builtin.SWAP && !c.args.isEmpty() ? rootName(c.args.get(0).expr()) : null;
             checkAliasing(c.args, swapped == null ? null : "to exchange two elements of one list, array or str, use swap(mut "
@@ -2738,6 +2934,7 @@ public final class Checker {
     /** A call of a parameter of a function type, in a function checked as written: its arguments against the type. */
     private Type callFnParam(Call c, LocalVar fv, Type.FnT ft) {
         c.fnParam = fv;
+        if (ctx.routine != null) ctx.routine.dynamicCalls.add(ft);
         checkMutCallPosition(c, ft.ret());
         if (c.args.size() != ft.params().size()) {
             diags.error(Code.E0204, c.span, "`" + c.name + "` takes " + ft.params().size() + " argument(s) but " + c.args.size()
@@ -2855,7 +3052,7 @@ public final class Checker {
         }
         if (ctx.routine != null) {
             for (FnDecl v : fnArgs) {
-                if (v != null) ctx.routine.fnValues.add(v);
+                if (v != null && v != DYNAMIC) ctx.routine.fnValues.add(v);
             }
         }
         if (f.generic() && diags.errorCount() == before && ctx.routine != null && !(ctx.fn != null && ctx.fn.generic())) {
@@ -2867,7 +3064,9 @@ public final class Checker {
             for (int i = 0; i < nc && caps.get(i) != null && caps.get(i) >= 0; i++) known.add(caps.get(i));
             List<Type> typeArgs = new ArrayList<>();
             for (int i = 0; i < f.typeParams.size(); i++) typeArgs.add(types.get(i));
-            List<FnDecl> fns2 = java.util.Arrays.asList(fnArgs);
+            // A function value given to a parameter of a function type stays a value in the instance: null there.
+            List<FnDecl> fns2 = new ArrayList<>();
+            for (FnDecl v : fnArgs) fns2.add(v == DYNAMIC ? null : v);
             boolean allFns = true;
             for (int i = 0; i < f.params.size(); i++) {
                 if (f.paramVars.get(i).type instanceof Type.FnT && fnArgs[i] == null) allFns = false;
@@ -2921,13 +3120,29 @@ public final class Checker {
             fa.type = n.type;
             return got;
         }
-        if (!(a.expr() instanceof Name n)) {
-            Type t = expr(a.expr(), null);
-            if (!Type.isError(t)) {
+        if (!(a.expr() instanceof Name n) || lookupLocal(n.name) != null && boundFunction(lookupLocal(n.name)) == null
+            && lookupLocal(n.name).type instanceof Type.FnT) {
+            // A function value, known only when it runs: its type must be the parameter's, as written.
+            if (a.mut()) extraMut(a, "a function is passed without `mut`", null);
+            Type t = expr(a.expr(), Type.hasTypeVar(want) || Type.hasAnyCapacity(want) ? null : want);
+            if (Type.isError(t)) return null;
+            if (!(t instanceof Type.FnT given)) {
                 diags.error(Code.E0201, a.span(), "expected a function of type " + want + ", found " + t,
                     "pass a function by its name: f(is_even), where fn is_even(x: i64) -> bool");
+                return null;
             }
-            return null;
+            boolean ok = want.params().size() == given.params().size();
+            for (int i = 0; ok && i < want.params().size(); i++) {
+                ok = Type.bind(want.params().get(i), given.params().get(i), true, caps, owner, types);
+            }
+            ok = ok && Type.bind(want.ret(), given.ret(), true, caps, owner, types);
+            if (!ok) {
+                diags.error(Code.E0201, a.span(), "`" + exprText(a.expr()) + "` is " + given + ", but "
+                    + Type.substituteTypes(want, owner, types) + " is expected");
+                return null;
+            }
+            if (ctx.routine != null) ctx.routine.dynamicCalls.add(given);
+            return DYNAMIC;
         }
         if (a.mut()) extraMut(a, "a function is passed by its name, without `mut`", null);
         Type.FnT given;
@@ -3508,6 +3723,7 @@ public final class Checker {
                 || mentions(a.value(), v));
             case TupleLit t -> t.elems.stream().anyMatch(x -> mentions(x, v));
             case SliceExpr s -> mentions(s.target, v) || s.from != null && mentions(s.from, v) || s.to != null && mentions(s.to, v);
+            case CallValue c -> mentions(c.callee, v) || c.args.stream().anyMatch(a -> mentions(a.expr(), v));
             case Try t -> mentions(t.inner, v);
             default -> false;
         };
@@ -4716,6 +4932,17 @@ public final class Checker {
         // No type parameters to fix: the function must have exactly this type, type variables of the caller included.
         FnDecl f = functionValue(a, want, null, new HashMap<>(), null);
         if (f == null) return;
+        if (f == DYNAMIC) {
+            // A variable that holds a function value: the builtin calls whichever function it holds, as often as it
+            // calls one, so it must be a variable, which reading again gives the same.
+            if (a.expr() instanceof Name n && n.local != null) {
+                c.fnArgLocal = n.local;
+            } else {
+                diags.error(Code.E0201, a.span(), c.name + "() takes a function by its name, or a variable that holds one",
+                    "store it in a variable first: let f: " + want + " = " + exprText(a.expr()) + ";");
+            }
+            return;
+        }
         c.fnArg = f;
         if (ctx.routine != null) {
             ctx.routine.fnValues.add(f);
@@ -5079,6 +5306,15 @@ public final class Checker {
 
     private Type variantCall(VariantCall v, Type expected) {
         EnumDecl d;
+        if (v.asValueCall != null) return expr(v.asValueCall, expected);
+        // s.f(x) or p.s.f(x): a call of the function value in a field.
+        Expr holder = v.qualifier != null && aliasScope(v.qualifier) == null && lookupLocal(v.qualifier) != null
+            ? new FieldAccess(v.span, new Name(v.span, v.qualifier), v.enumName, v.span)
+            : v.qualifier == null && lookupLocal(v.enumName) != null ? new Name(v.span, v.enumName) : null;
+        if (holder != null && fieldType(holder, v.variantName) instanceof Type.FnT) {
+            v.asValueCall = new CallValue(v.span, new FieldAccess(v.span, holder, v.variantName, v.span), v.args);
+            return expr(v.asValueCall, expected);
+        }
         if (v.qualifier != null && aliasScope(v.qualifier) == null
             && (lookupLocal(v.qualifier) != null || consts.containsKey(v.qualifier))) {
             // p.xs.len(), a method called on a field of a variable, reads as ns.Enum.Variant(...) with p as ns.
@@ -6208,8 +6444,8 @@ public final class Checker {
             case FloatLit f -> true;
             case StrLit s -> true;
             case BoolLit b -> true;
-            case Name n -> n.capacity != null || n.constant != null && n.constant.value != null;
-            case FieldAccess f -> f.constant != null ? f.constant.value != null : f.variant != null || isConst(f.target);
+            case Name n -> n.capacity != null || n.function != null || n.constant != null && n.constant.value != null;
+            case FieldAccess f -> f.function != null || (f.constant != null ? f.constant.value != null : f.variant != null || isConst(f.target));
             case Index i -> isConst(i.target) && isConst(i.index);
             case Call c when c.asStruct != null -> isConst(c.asStruct);
             case Call c -> c.builtin != null && c.builtin.pure && c.args.stream().allMatch(a -> isConst(a.expr()));
@@ -6228,6 +6464,7 @@ public final class Checker {
             case Try t -> false;
             // It runs statements, in a frame.
             case LoopExpr l -> false;
+            case CallValue c -> false;
             case TupleLit t -> t.elems.stream().allMatch(Checker::isConst);
             case SliceExpr s -> isConst(s.target) && (s.from == null || isConst(s.from)) && (s.to == null || isConst(s.to));
         };

@@ -189,6 +189,9 @@ final class Uses {
                 case Call c -> {
                     // A user function may read what it is given as `mut`, and so do pop, pop_front and remove, which
                     // return part of it, and swap, which moves it; the other builtins that take `mut` only change it.
+                    // A call of a variable that holds a function value reads it, and so does a builtin given one.
+                    if (c.fnParam != null) read.add(c.fnParam);
+                    if (c.fnArgLocal != null) read.add(c.fnArgLocal);
                     boolean reads = c.builtin == null || c.builtin == Builtin.POP || c.builtin == Builtin.POP_FRONT
                         || c.builtin == Builtin.REMOVE || c.builtin == Builtin.SWAP || c.builtin == Builtin.HEAP_POP;
                     for (Arg a : c.args) {
@@ -201,7 +204,12 @@ final class Uses {
                     }
                 }
                 case VariantCall v -> {
+                    if (v.asValueCall != null) read(v.asValueCall);
                     for (Arg a : v.args) read(a.expr());
+                }
+                case CallValue c -> {
+                    read(c.callee);
+                    for (Arg a : c.args) read(a.expr());
                 }
                 case StructLit s -> {
                     for (FieldInit f : s.fields) read(f.value());

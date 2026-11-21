@@ -885,12 +885,14 @@ public final class Interpreter {
             }
             case BoolLit b -> b.value;
             case Name n -> {
+                if (n.function != null) yield n.function;
                 if (n.capacity != null) yield n.capacity;
                 if (n.local == null) yield n.constant.value;
                 Object v = slots[n.local.slot];
                 yield n.local.byRef ? ((Ref) v).get() : v;
             }
             case FieldAccess f when f.constant != null -> f.constant.value;
+            case FieldAccess f when f.function != null -> f.function;
             case VariantCall v when v.asCall != null -> callUser(v.asCall, slots);
             case FieldAccess f -> f.variant != null ? new EnumV(f.variant.index, new Object[0])
                 : ((StructV) eval(f.target, slots)).fields[f.fieldIndex];
@@ -903,7 +905,10 @@ public final class Interpreter {
                 yield elementRef(container, i, Type.kind(ix.index.type), ix.span).get();
             }
             case Call c when c.asStruct != null -> eval(c.asStruct, slots);
+            case Call c when c.builtin == null && c.fn == null -> callValue((FnDecl) local(c.fnParam, slots), c.args, c.span, slots);
             case Call c -> c.builtin != null ? builtin(c, slots) : callUser(c, slots);
+            case CallValue c -> callValue((FnDecl) eval(c.callee, slots), c.args, c.span, slots);
+            case VariantCall v when v.asValueCall != null -> eval(v.asValueCall, slots);
             case VariantCall v -> {
                 Object[] payload = new Object[v.args.size()];
                 for (int i = 0; i < payload.length; i++) {
@@ -1004,13 +1009,29 @@ public final class Interpreter {
         for (int i = 0; i < args.length; i++) {
             LocalVar p = f.paramVars.get(i);
             Expr a = c.args.get(i).expr();
-            // A function argument is not a value: the instance calls the function it was made for.
-            if (p.type instanceof Type.FnT) continue;
+            // A function given by name is not a value: the instance calls the function it was made for.
+            if (p.type instanceof Type.FnT && i < f.fnArgs.size() && f.fnArgs.get(i) != null) continue;
             args[i] = p.byRef ? ref(a, slots) : Values.coerce(eval(a, slots), p.type, meter);
         }
         // What the caller does with the result is charged at the caller's statement, not the callee's last.
         Span caller = meter.at();
         Object result = invoke(f, args, c.span);
+        meter.at(caller);
+        return result;
+    }
+
+    /** The value of a local variable: what its slot holds, or for one that names storage elsewhere, what that holds. */
+    private static Object local(LocalVar v, Object[] slots) {
+        Object o = slots[v.slot];
+        return v.byRef ? ((Ref) o).get() : o;
+    }
+
+    /** A call of a function value, the function {@code f}, with the values of {@code args}. */
+    private Object callValue(FnDecl f, List<Arg> args, Span at, Object[] slots) {
+        Object[] vals = new Object[f.params.size()];
+        for (int i = 0; i < vals.length; i++) vals[i] = Values.coerce(eval(args.get(i).expr(), slots), f.paramVars.get(i).type, meter);
+        Span caller = meter.at();
+        Object result = invoke(f, vals, at);
         meter.at(caller);
         return result;
     }
@@ -1171,7 +1192,21 @@ public final class Interpreter {
 
     // =================================================================== builtins
 
+    /** The function value that the builtin being run was given in a variable (see {@link Call#fnArgLocal}). */
+    private FnDecl fnArgValue;
+
     private Object builtin(Call c, Object[] slots) {
+        if (c.fnArgLocal == null) return runBuiltin(c, slots);
+        FnDecl saved = fnArgValue;
+        fnArgValue = (FnDecl) local(c.fnArgLocal, slots);
+        try {
+            return runBuiltin(c, slots);
+        } finally {
+            fnArgValue = saved;
+        }
+    }
+
+    private Object runBuiltin(Call c, Object[] slots) {
         List<Arg> args = c.args;
         switch (c.builtin) {
             case PRINT -> {
@@ -1470,7 +1505,7 @@ public final class Interpreter {
                 Object xs = ref(args.get(0).expr(), slots).get();
                 Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
                 int n = xs instanceof ListV l ? l.len : items.length;
-                Type key = c.fnArg.ret;
+                Type key = c.fnArgResult();
                 // The binary insertion sort of sort_by, with x before y when key(x) comes before key(y): key(x) once per
                 // element, and key(items[mid]) at each probe, in the same order as the C backend.
                 for (int i = 1; i < n; i++) {
@@ -2141,7 +2176,7 @@ public final class Interpreter {
      * result. Like a call written in the program, it is charged where it is made.
      */
     private boolean test(Call c, Object... values) {
-        FnDecl f = c.fnArg;
+        FnDecl f = c.fnArg != null ? c.fnArg : fnArgValue;
         Object[] a = new Object[f.params.size()];
         for (int i = 0; i < a.length; i++) a[i] = Values.coerce(values[i], f.paramVars.get(i).type, meter);
         Span caller = meter.at();
@@ -2156,12 +2191,12 @@ public final class Interpreter {
      */
     private boolean heapBefore(Call c, Object a, Object b, Type elem) {
         meter.elements(1);
-        return c.fnArg != null ? test(c, a, b) : Stdlib.compare(a, b, elem, meter) < 0;
+        return c.fnArg != null || c.fnArgLocal != null ? test(c, a, b) : Stdlib.compare(a, b, elem, meter) < 0;
     }
 
     /** Calls the function passed to fold or transform (c.fnArg) with the given values, and returns its result. */
     private Object apply(Call c, Object... values) {
-        FnDecl f = c.fnArg;
+        FnDecl f = c.fnArg != null ? c.fnArg : fnArgValue;
         Object[] a = new Object[f.params.size()];
         for (int i = 0; i < a.length; i++) a[i] = Values.coerce(values[i], f.paramVars.get(i).type, meter);
         Span caller = meter.at();

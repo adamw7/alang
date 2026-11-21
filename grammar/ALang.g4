@@ -128,7 +128,7 @@ type
     | LPAREN type (COMMA type)+ COMMA? RPAREN    # tupleTypeRef    // (i64, str[8]): a pair
     | MAP LBRACK type COMMA type SEMI capacity RBRACK  # mapTypeRef  // map[str[16], i64; 64]: up to 64 entries, in key order
     | SET LBRACK type SEMI capacity RBRACK       # setTypeRef      // set[i64; 32]: up to 32 distinct values, in order
-    | FN LPAREN (type (COMMA type)*)? RPAREN (ARROW type)?  # fnTypeRef  // fn(i64) -> bool: a function, as a parameter
+    | FN LPAREN (type (COMMA type)*)? RPAREN (ARROW type)?  # fnTypeRef  // fn(i64) -> bool: a function, as a value
     | (qual=identifier DOT)? identifier (LT type (COMMA type)* GT)?   # namedTypeRef  // struct or enum, or ns.Name; Pair<i64, bool>
     // Option<Option<i64>>: the lexer reads `>>` as one token, which closes the last type argument's list and this one.
     | (qual=identifier DOT)? identifier LT (type COMMA)* innerType SHR   # nestedTypeRef
@@ -367,6 +367,7 @@ postfixOp
     | LBRACK expression RBRACK           # indexAccess
     | LBRACK (from=expression)? DOTDOT (to=expression)? RBRACK   # sliceAccess  // s[1..], xs[a..b]: the elements from..to
     | QUESTION                           # tryAccess    // parse_i64(s)?: the value, or return the Option.None or Result.Err
+    | LPAREN argList? RPAREN             # callAccess   // ops[i](x), make_adder()(1): a call of a function value
     ;
 
 primary

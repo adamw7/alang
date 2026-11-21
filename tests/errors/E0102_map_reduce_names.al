@@ -1,4 +1,4 @@
-// expect: E0101 E0102
+// expect: E0102
 fn double(x: i64) -> i64 {
     return x * 2;
 }

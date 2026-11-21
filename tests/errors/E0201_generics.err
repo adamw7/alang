@@ -25,19 +25,11 @@ error[E0601]: a tool's parameters have fixed types: no type parameters or functi
    |                    ^
   = hint: callers send JSON values; have the tool call a generic function of your own
 
-error[E0217]: a function type is only the type of a parameter
-  --> tests/errors/E0201_generics.al:28:12
-   |
-28 |     let f: fn(i64) -> i64 = half;
-   |            ^^^^^^^^^^^^^^
-  = hint: a variable, field or result cannot hold a function; take it as a parameter: fn apply(f: fn(i64) -> i64, ...)
-
-error[E0101]: unknown name `half`
+error[E0201]: type mismatch: expected fn(i64) -> i64, found fn(i64) -> f64
   --> tests/errors/E0201_generics.al:28:29
    |
 28 |     let f: fn(i64) -> i64 = half;
    |                             ^^^^
-  = hint: `half` is a function; call it with parentheses: half(...)
 
 error[E0201]: `half` is fn(i64) -> f64, but fn(i64) -> i64 is expected
   --> tests/errors/E0201_generics.al:29:17

@@ -74,7 +74,10 @@ public sealed interface Type {
         }
     }
 
-    /** A function, as the type of a parameter: fn(i64, i64) -> bool. A call passes a function by its name. */
+    /**
+     * A function, as a value: fn(i64, i64) -> bool. A parameter of this type takes a function by its name (each call
+     * then runs a copy of its function made for it) or a function value; a variable, field or element holds a value.
+     */
     record FnT(List<Type> params, Type ret) implements Type {
         @Override
         public String toString() {
@@ -336,8 +339,9 @@ public sealed interface Type {
         return t instanceof Error;
     }
 
+    /** Whether values of t are stored and passed as a whole: anything but a number, bool or function value. */
     static boolean isAggregate(Type t) {
-        return !(t instanceof Prim) && !(t instanceof Void) && !(t instanceof Error);
+        return !(t instanceof Prim) && !(t instanceof Void) && !(t instanceof Error) && !(t instanceof FnT);
     }
 
     static PrimKind kind(Type t) {

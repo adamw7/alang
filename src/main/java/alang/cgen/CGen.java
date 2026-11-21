@@ -35,6 +35,9 @@ public final class CGen {
     private final StringBuilder helpers = new StringBuilder();
     private final StringBuilder protos = new StringBuilder();
     private final StringBuilder bodies = new StringBuilder();
+    /** The prototypes and bodies of the dispatchers of function values (see {@link #dispatcher}). */
+    private final StringBuilder dispatchProtos = new StringBuilder();
+    private final StringBuilder dispatchers = new StringBuilder();
 
     private final Set<String> doneTypes = new HashSet<>();
     private final Set<String> doneHelpers = new HashSet<>();
@@ -75,7 +78,8 @@ public final class CGen {
         sb.append("\n/* ---------------------------------------------------------------- helpers */\n\n");
         sb.append(helpers);
         sb.append("\n/* ---------------------------------------------------------------- functions */\n\n");
-        sb.append(protos).append('\n');
+        sb.append(protos).append(dispatchProtos).append('\n');
+        sb.append(dispatchers);
         sb.append(bodies);
         FnDecl main = program.function("main");
         List<Source> imported = program.files.subList(1, program.files.size());
@@ -333,6 +337,16 @@ public final class CGen {
                 }
                 yield sb.toString();
             }
+            // F, the number of parameters, each parameter's name after its length, then the result's (v for none).
+            case Type.FnT f -> {
+                StringBuilder sb = new StringBuilder("F").append(f.params().size());
+                for (Type p : f.params()) {
+                    String m = mangle(p);
+                    sb.append('_').append(m.length()).append(m);
+                }
+                String r = f.ret() instanceof Type.Void ? "v" : mangle(f.ret());
+                yield sb.append("_r").append(r.length()).append(r).toString();
+            }
             default -> throw new IllegalStateException("no C type for " + t);
         };
     }
@@ -340,6 +354,8 @@ public final class CGen {
     /** The C type for an ALang type; emits its typedef (and its dependencies) on first use. */
     private String ct(Type t) {
         if (t instanceof Type.Prim p) return cPrim(p.kind());
+        // A function value is the number of its function (see fnId), from 1.
+        if (t instanceof Type.FnT) return "uint32_t";
         String name = "al_" + mangle(t);
         if (!doneTypes.add(name)) return name;
         StringBuilder sb = new StringBuilder();
@@ -410,6 +426,7 @@ public final class CGen {
                 default -> "al_fmt_i64(" + o + ", (int64_t)(" + x + "));";
             };
             case Type.Str s -> "al_fmt_str(" + o + ", (" + x + ").b, (" + x + ").len, " + nested + ");";
+            case Type.FnT f -> "al_puts_c(" + o + ", " + fnNames() + "[" + x + "]);";
             default -> fmtFn(t) + "(" + o + ", &(" + x + "));";
         };
     }
@@ -493,6 +510,7 @@ public final class CGen {
     private String eqExpr(Type t, Type tb, String a, String b) {
         return switch (t) {
             case Type.Prim p -> "((" + a + ") == (" + b + "))";
+            case Type.FnT f -> "((" + a + ") == (" + b + "))";
             case Type.Str s -> "al_eq_bytes((" + a + ").b, (" + a + ").len, (" + b + ").b, (" + b + ").len)";
             case Type.ListT l -> eqListFn(l.elem()) + "((" + a + ").v, (" + a + ").len, (" + b + ").v, (" + b + ").len)";
             case Type.SetT st -> eqListFn(st.elem()) + "((" + a + ").v, (" + a + ").len, (" + b + ").v, (" + b + ").len)";
@@ -601,6 +619,7 @@ public final class CGen {
     private String init(Object v, Type t) {
         return switch (t) {
             case Type.Prim p -> primLiteral(v, p.kind());
+            case Type.FnT f -> fnId((FnDecl) v) + "u";
             case Type.Str s -> {
                 StrV sv = (StrV) v;
                 StringBuilder sb = new StringBuilder("{").append(sv.len).append("u, {");
@@ -742,8 +761,10 @@ public final class CGen {
     private String signature(FnDecl f) {
         String ret = f.ret instanceof Type.Void ? "void" : ct(f.ret);
         List<String> ps = new ArrayList<>();
-        for (LocalVar p : f.paramVars) {
-            if (p.type instanceof Type.FnT) continue;
+        for (int i = 0; i < f.paramVars.size(); i++) {
+            LocalVar p = f.paramVars.get(i);
+            // A function given by name is no value: the instance calls it directly.
+            if (p.type instanceof Type.FnT && i < f.fnArgs.size() && f.fnArgs.get(i) != null) continue;
             String t = ct(p.type);
             if (p.byRef) ps.add(t + " *" + cName(p));
             else if (Type.isAggregate(p.type)) ps.add("const " + t + " *" + cName(p));
@@ -804,6 +825,7 @@ public final class CGen {
 
     private String zero(Type t) {
         if (t instanceof Type.Prim p) return p.kind() == PrimKind.BOOL ? "false" : "((" + cPrim(p.kind()) + ")0)";
+        if (t instanceof Type.FnT) return "0u";
         return "(" + ct(t) + "){0}";
     }
 
@@ -1499,8 +1521,13 @@ public final class CGen {
             case FloatLit f -> floatLiteral(f.valueAs(Type.kind(f.type)), Type.kind(f.type));
             case StrLit s -> strLiteral(s.value);
             case BoolLit b -> b.value ? "true" : "false";
+            case Name n when n.function != null -> fnId(n.function) + "u";
             case Name n -> n.capacity != null ? intLiteral(n.capacity, PrimKind.I64) : n.local != null ? varRef(n.local) : constRef(n.constant);
             case FieldAccess f when f.constant != null -> constRef(f.constant);
+            case FieldAccess f when f.function != null -> fnId(f.function) + "u";
+            case VariantCall v when v.asValueCall != null -> lower(v.asValueCall);
+            case CallValue c -> callValue(lower(c.callee), (Type.FnT) c.callee.type, c.args, c.span);
+            case Call c when c.builtin == null && c.fn == null && c.asStruct == null -> callValue(varRef(c.fnParam), (Type.FnT) c.fnParam.type, c.args, c.span);
             case VariantCall v when v.asCall != null -> lower(v.asCall);
             case FieldAccess f -> {
                 if (f.variant == null && f.target.type instanceof Type.TupleT) {
@@ -1722,6 +1749,15 @@ public final class CGen {
     /** A call of the function passed to a builtin such as any or sort_by (c.fnArg), with the given elements: a C bool. */
     private String fnArgCall(Call c, String... values) {
         FnDecl f = c.fnArg;
+        if (f == null) {
+            // A function value in a variable: called through the dispatcher of its type.
+            Type.FnT ft = (Type.FnT) c.fnArgLocal.type;
+            List<String> args = new ArrayList<>();
+            args.add(varRef(c.fnArgLocal));
+            for (int i = 0; i < values.length; i++) args.add(Type.isAggregate(ft.params().get(i)) ? "&(" + values[i] + ")" : values[i]);
+            args.add(loc(c.span));
+            return dispatcher(ft) + "(" + String.join(", ", args) + ")";
+        }
         List<String> args = new ArrayList<>();
         for (int i = 0; i < values.length; i++) {
             args.add(Type.isAggregate(f.paramVars.get(i).type) ? "&(" + values[i] + ")" : values[i]);
@@ -1732,7 +1768,86 @@ public final class CGen {
 
     /** A C bool: whether the element a comes before b in a heap, by the function passed (c.fnArg) or else as sort orders. */
     private String heapBefore(Call c, Type elem, String a, String b) {
-        return c.fnArg != null ? fnArgCall(c, a, b) : "(" + cmpExpr(elem, a, b) + ") < 0";
+        return c.fnArg != null || c.fnArgLocal != null ? fnArgCall(c, a, b) : "(" + cmpExpr(elem, a, b) + ") < 0";
+    }
+
+    /**
+     * The number that stands for a function value of {@code f} in C: its place among the functions the program uses
+     * as values, from 1, as the checker listed them.
+     */
+    private int fnId(FnDecl f) {
+        int i = program.functionValues.indexOf(f);
+        if (i < 0) throw new IllegalStateException("not a function value: " + f.name);
+        return i + 1;
+    }
+
+    /** The table of the names of the functions used as values, by their numbers, for printing one. */
+    private String fnNames() {
+        String name = "al_fn_names";
+        if (doneHelpers.add(name)) {
+            StringBuilder sb = new StringBuilder("static const char *const al_fn_names[] = {\"\"");
+            for (FnDecl f : program.functionValues) sb.append(", ").append(cString(utf8("fn " + f.name)));
+            helpers.append(sb).append("};\n\n");
+        }
+        return name;
+    }
+
+    /**
+     * The C function that calls a function value of type ft: given the number of its function, the arguments (an
+     * aggregate by address) and where the call is, for a precondition that fails, it calls that function.
+     */
+    private String dispatcher(Type.FnT ft) {
+        String name = "al_call_" + mangle(ft);
+        if (!doneHelpers.add(name)) return name;
+        String ret = ft.ret() instanceof Type.Void ? "void" : ct(ft.ret());
+        List<String> ps = new ArrayList<>();
+        ps.add("uint32_t al_fn");
+        List<String> as = new ArrayList<>();
+        for (int i = 0; i < ft.params().size(); i++) {
+            Type p = ft.params().get(i);
+            ps.add(Type.isAggregate(p) ? "const " + ct(p) + " *a" + i : ct(p) + " a" + i);
+            as.add("a" + i);
+        }
+        ps.add("int al_call_line");
+        ps.add("int al_call_col");
+        String sig = "static " + ret + " " + name + "(" + String.join(", ", ps) + ")";
+        dispatchProtos.append(sig).append(";\n");
+        StringBuilder body = new StringBuilder(sig).append(" {\n    (void)al_call_line;\n    (void)al_call_col;\n    switch (al_fn) {\n");
+        for (FnDecl f : program.functionValues) {
+            if (!f.fnType().equals(ft)) continue;
+            List<String> args = new ArrayList<>(as);
+            if (!f.requires.isEmpty()) {
+                args.add("al_call_line");
+                args.add("al_call_col");
+            }
+            String call = fnName(f) + "(" + String.join(", ", args) + ")";
+            body.append("    case ").append(fnId(f)).append("u: ").append(ft.ret() instanceof Type.Void ? call + "; return;" : "return " + call + ";")
+                .append("\n");
+        }
+        body.append("    default: break;\n    }\n");
+        if (!(ft.ret() instanceof Type.Void)) body.append("    return ").append(zero(ft.ret())).append(";\n");
+        body.append("}\n\n");
+        dispatchers.append(body);
+        return name;
+    }
+
+    /** A call of a function value: {@code fn}, the number of its function, of type ft, with the values of args. */
+    private String callValue(String fn, Type.FnT ft, List<Arg> args, Span at) {
+        String f = tmp(ft, fn);
+        List<String> vals = new ArrayList<>();
+        vals.add(f);
+        for (int i = 0; i < args.size(); i++) {
+            Expr a = args.get(i).expr();
+            Type p = ft.params().get(i);
+            vals.add(Type.isAggregate(p) ? "&(" + coerce(lower(a), a.type, p) + ")" : lower(a));
+        }
+        vals.add(loc(at));
+        String call = dispatcher(ft) + "(" + String.join(", ", vals) + ")";
+        if (ft.ret() instanceof Type.Void) {
+            emit(call + ";");
+            return null;
+        }
+        return tmp(ft.ret(), call);
     }
 
     /** The variant of an Option or Result type that holds a value: Option.Some or Result.Ok. */
@@ -1760,7 +1875,7 @@ public final class CGen {
         for (int i = 0; i < c.args.size(); i++) {
             LocalVar p = f.paramVars.get(i);
             Expr a = c.args.get(i).expr();
-            if (p.type instanceof Type.FnT) continue;
+            if (p.type instanceof Type.FnT && i < f.fnArgs.size() && f.fnArgs.get(i) != null) continue;
             if (p.byRef) {
                 args.add("&(" + lower(a) + ")");
             } else if (Type.isAggregate(p.type)) {
@@ -2202,7 +2317,7 @@ public final class CGen {
                 // sort_by's binary insertion sort, by key: key(x) once per element and key(v[mid]) at each probe.
                 Type t = args.get(0).expr().type;
                 Type elem = Type.elementOf(t);
-                Type key = c.fnArg.ret;
+                Type key = c.fnArgResult();
                 String place = lower(args.get(0).expr());
                 String sp = "t" + ++tmpCount;
                 String n = "t" + ++tmpCount;

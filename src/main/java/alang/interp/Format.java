@@ -147,6 +147,11 @@ public final class Format {
                     out.write(')');
                 }
             }
+            // A function value prints as `fn` and its function's name: fn inc.
+            case Type.FnT f -> {
+                cost.units(Meter.INT_TEXT);
+                ascii(out, "fn " + ((alang.ast.Ast.FnDecl) v).name);
+            }
             default -> ascii(out, "<?>");
         }
     }

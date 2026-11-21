@@ -725,6 +725,8 @@ final class AstBuilder {
                 e = new Try(sp, e);
             } else if (op instanceof SliceAccessContext sl) {
                 e = new SliceExpr(sp, e, sl.from == null ? null : expr(sl.from), sl.to == null ? null : expr(sl.to));
+            } else if (op instanceof CallAccessContext c) {
+                e = new CallValue(sp, e, c.argList() == null ? new ArrayList<>() : args(c.argList()));
             } else {
                 e = new Index(sp, e, expr(((IndexAccessContext) op).expression()));
             }

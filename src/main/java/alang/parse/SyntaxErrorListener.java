@@ -435,8 +435,10 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 continue;
             }
             // The `?` after an Option or Result is one of the operators that may follow a value.
+            // So are the `[` of an index and the `(` of a call of a function value.
             if (isBinaryOperator(t) || t == ALangParser.DOT || t == ALangParser.QUESTION
-                || t == ALangParser.LBRACK && expected.contains(ALangParser.PLUS)) {
+                || t == ALangParser.LBRACK && expected.contains(ALangParser.PLUS)
+                || t == ALangParser.LPAREN && (expected.contains(ALangParser.PLUS) || expected.contains(ALangParser.DOT))) {
                 operator = true;
                 continue;
             }

@@ -148,6 +148,10 @@ final class ToolExamples {
                 }
             }
             case TupleLit t -> t.elems.forEach(x -> calls(x, out));
+            case CallValue cv -> {
+                calls(cv.callee, out);
+                cv.args.forEach(a -> calls(a.expr(), out));
+            }
             case LoopExpr l -> {
                 calls(l.loop, out);
                 calls(l.otherwise, out);

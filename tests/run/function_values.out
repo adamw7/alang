@@ -1,0 +1,10 @@
+42 2 42
+add 13
+mul 42
+3 7 9
+13
+12 5
+true false fn inc
+3 false
+6
+Op(name: "add", run: fn add)

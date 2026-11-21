@@ -1,0 +1,14 @@
+error[E0203]: sort() orders values, and functions have no order
+ --> tests/errors/E0203_function_value_order.al:8:5
+  |
+8 |     sort(mut fs);
+  |     ^^^^^^^^^^^^
+  = hint: order them with sort_by and a function of your own, or by something else in them
+
+error[E0203]: the keys of a map are kept in order, and functions have no order
+ --> tests/errors/E0203_function_value_order.al:9:16
+  |
+9 |     let m: map[fn(i64) -> i64, i64; 4] = [];
+  |                ^^^^^^^^^^^^^^
+  = hint: key it by something else, such as a name, and keep the function in the value
+

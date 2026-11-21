@@ -1,0 +1,7 @@
+error[E0102]: there are no methods: `xs[0].abs(...)` is not valid
+ --> tests/errors/E0102_method_call_on_element.al:4:18
+  |
+4 |     let n: i64 = xs[0].abs();
+  |                  ^^^^^^^^^^^
+  = hint: pass the value as the first argument: abs(xs[0])
+
