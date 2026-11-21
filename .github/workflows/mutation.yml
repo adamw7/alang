@@ -17,8 +17,9 @@ jobs:
   mutation:
     name: Mutation testing (PIT)
     runs-on: ubuntu-latest
-    # A run takes about 6 minutes on the 2-CPU runner.
-    timeout-minutes: 15
+    # About 11,000 mutants take about 55 minutes, and the count grows with the toolchain: the limits
+    # leave room for that. At 12 minutes (when a run took 6) the run of 2026-11-21 was cut off a fifth of the way in.
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v7
 
@@ -31,7 +32,7 @@ jobs:
       - name: Mutate the toolchain and run the tests against every mutant
         # Fails when the mutation score or test strength drops below its threshold in pom.xml.
         # One test JVM per CPU: more only adds contention (private repositories get 2 CPUs).
-        timeout-minutes: 12
+        timeout-minutes: 90
         run: mvn -B -ntp test-compile pitest:mutationCoverage -Dpitest.threads="$(nproc)"
 
       - name: Upload the mutation report
