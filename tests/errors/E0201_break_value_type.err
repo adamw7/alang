@@ -1,0 +1,6 @@
+error[E0201]: type mismatch: expected i64, found str[4]
+ --> tests/errors/E0201_break_value_type.al:6:19
+  |
+6 |             break "zero";
+  |                   ^^^^^^
+

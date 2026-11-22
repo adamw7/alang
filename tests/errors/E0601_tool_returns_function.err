@@ -1,0 +1,7 @@
+error[E0601]: a tool's result is sent as JSON, which holds no functions
+ --> tests/errors/E0601_tool_returns_function.al:7:25
+  |
+7 | tool fn pick(n: i64) -> fn(i64) -> i64 {
+  |                         ^^^^^^^^^^^^^^
+  = hint: return the data the caller needs, such as the function's name as a str
+

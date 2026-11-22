@@ -1,0 +1,9 @@
+Order(id: 7, items: [Item(name: "pen", qty: 2, price: 1.5, tags: {}), Item(name: "café", qty: 10, price: 0.1, tags: {"a", "b"})], status: Status.Closed("late"), notes: {"x": -3, "y": 2}, pairs: {-1: false, 5: true}, point: (0.3, -128))
+Order(id: 1, items: [], status: Status.Open, notes: {}, pairs: {}, point: (0.0, 0))
+not an order: {"id": -1, "items": [], "status": "Open", "notes": {}, "pairs": [], "point": [0, 0]}
+not an order: {"id": 1, "items": [], "status": "Open", "notes": {}, "pairs": [], "point": [0, 0], "extra": 1}
+not an order: {"id": 1, "items": [], "status": "Closed", "notes": {}, "pairs": [], "point": [0, 0]}
+not an order: {"id": 1.5, "items": [], "status": "Open", "notes": {}, "pairs": [], "point": [0, 0]}
+not an order: {"id": 1, "items": [], "status": "Open", "notes": {"a": 1, "a": 2}, "pairs": [], "point": [0, 0]}
+Option.Some(-12) Option.Some(18446744073709551615) Option.None Option.Some(0.3) Option.Some(-0.0) Option.None
+Option.Some(["a\n", "😀", "/"]) Option.None

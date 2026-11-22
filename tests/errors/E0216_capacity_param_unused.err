@@ -1,0 +1,7 @@
+error[E0216]: capacity parameter `N` is in no parameter's type, so a call cannot tell what it stands for
+ --> tests/errors/E0216_capacity_param_unused.al:2:9
+  |
+2 | fn make<N>(x: i64) -> list[i64; N] {
+  |         ^
+  = hint: use it as the capacity of a parameter, as in fn f<N>(xs: list[i64; N]) -> list[i64; N]
+

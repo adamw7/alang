@@ -464,6 +464,27 @@ static void al_read_input(uint8_t *b, uint32_t *len, uint32_t cap, const char *p
     }
 }
 
+/* The standard input of a fn main(input: T) whose T is not a str: up to cap bytes of JSON, read once. */
+static void al_read_json_input(uint8_t *b, uint32_t *len, uint32_t cap, const char *param, int line, int col) {
+    uint8_t extra;
+    *len = 0;
+    for (;;) {
+        int64_t r = *len < cap ? al_read(0, b + *len, cap - *len) : al_read(0, &extra, 1);
+        if (r < 0) _Exit(2);
+        if (r == 0) return;
+        if (*len == cap) {
+            al_out e = al_trap_begin("R0004");
+            AL_PUTS(&e, "standard input exceeds ");
+            al_fmt_u64(&e, cap);
+            AL_PUTS(&e, " bytes of JSON for `");
+            al_puts_c(&e, param);
+            AL_PUTS(&e, "`");
+            al_trap_end(&e, line, col);
+        }
+        *len += (uint32_t)r;
+    }
+}
+
 static uint32_t al_idx_s(int64_t i, uint32_t len, int line, int col) {
     if (i < 0 || i >= (int64_t)len) {
         al_out e = al_trap_begin("R0003");
@@ -738,6 +759,908 @@ static uint64_t al_fnv1a(const uint8_t *b, uint32_t n) {
     uint32_t i;
     for (i = 0; i < n; i++) h = (h ^ b[i]) * UINT64_C(1099511628211);
     return h;
+}
+
+/*
+ * The regular expressions of re_match and re_find: the compiler and Pike VM of the interpreter's Regex class,
+ * step for step, with its limits (see there for the syntax). All of their state is in one al_re on the stack.
+ */
+#define AL_RE_PATTERN 256
+#define AL_RE_PROGRAM 1024
+#define AL_RE_CLASSES 64
+#define AL_RE_DEPTH 32
+#define AL_RE_REPEAT 100
+#define AL_RE_NODES (2 * AL_RE_PATTERN + 2)
+
+enum { AL_RC_CHAR, AL_RC_ANY, AL_RC_CLASS, AL_RC_SPLIT, AL_RC_JMP, AL_RC_MATCH, AL_RC_BOL, AL_RC_EOL };
+enum { AL_RN_LIT, AL_RN_ANY, AL_RN_CLASS, AL_RN_BOL, AL_RN_EOL, AL_RN_CAT, AL_RN_ALT, AL_RN_REPEAT, AL_RN_EMPTY };
+
+typedef struct {
+    const uint8_t *p;
+    uint32_t len, pos;
+    int depth;
+    uint8_t kind[AL_RE_NODES];
+    int16_t a[AL_RE_NODES], b[AL_RE_NODES];
+    int8_t min[AL_RE_NODES];
+    int16_t max[AL_RE_NODES];
+    int nodes;
+    uint64_t classes[AL_RE_CLASSES][4];
+    int nclasses;
+    uint8_t op[AL_RE_PROGRAM];
+    uint16_t x[AL_RE_PROGRAM], y[AL_RE_PROGRAM];
+    int n;
+    /* Why the pattern is not valid (NULL when it is), the byte where, and the character of an unknown escape. */
+    const char *why;
+    uint32_t at;
+    int esc;
+    /* The machine. */
+    uint16_t cpc[AL_RE_PROGRAM], npc[AL_RE_PROGRAM];
+    uint32_t cstart[AL_RE_PROGRAM], nstart[AL_RE_PROGRAM];
+    uint32_t mark[AL_RE_PROGRAM];
+    uint16_t stack[2 * AL_RE_PROGRAM + 1];
+} al_re;
+
+static int al_re_fail(al_re *r, const char *why, uint32_t at) {
+    if (r->why == NULL) {
+        r->why = why;
+        r->at = at;
+    }
+    return -1;
+}
+
+static int al_re_node(al_re *r, int k, int a, int b) {
+    r->kind[r->nodes] = (uint8_t)k;
+    r->a[r->nodes] = (int16_t)a;
+    r->b[r->nodes] = (int16_t)b;
+    return r->nodes++;
+}
+
+static int al_re_new_class(al_re *r, uint32_t at) {
+    int k;
+    if (r->nclasses == AL_RE_CLASSES) return al_re_fail(r, "more than 64 classes", at);
+    k = r->nclasses++;
+    r->classes[k][0] = r->classes[k][1] = r->classes[k][2] = r->classes[k][3] = 0;
+    return k;
+}
+
+static void al_re_shorthand(uint64_t *set, int kind) {
+    int v;
+    for (v = 0; v < 256; v++) {
+        int in = kind == 'd' ? v >= '0' && v <= '9'
+            : kind == 'w' ? (v >= '0' && v <= '9') || (v >= 'a' && v <= 'z') || (v >= 'A' && v <= 'Z') || v == '_'
+            : v == ' ' || v == '\t' || v == '\n' || v == '\r' || v == 0x0B || v == 0x0C;
+        if (in) set[v >> 6] |= (uint64_t)1 << (v & 63);
+    }
+}
+
+static void al_re_invert(uint64_t *set) {
+    int i;
+    for (i = 0; i < 4; i++) set[i] = ~set[i];
+}
+
+/* The byte an escape other than a class stands for, or -1 after failing. */
+static int al_re_escaped(al_re *r, int e, uint32_t at) {
+    switch (e) {
+    case 'n': return '\n';
+    case 't': return '\t';
+    case 'r': return '\r';
+    case '0': return 0;
+    default:
+        if ((e >= '0' && e <= '9') || (e >= 'a' && e <= 'z') || (e >= 'A' && e <= 'Z')) {
+            if (r->why == NULL) r->esc = e;
+            return al_re_fail(r, "unknown escape \\", at);
+        }
+        return e;
+    }
+}
+
+static int al_re_alt(al_re *r);
+
+static int al_re_bracket(al_re *r, uint32_t at) {
+    int k = al_re_new_class(r, at), first = 1, negate;
+    uint64_t *set;
+    if (k < 0) return -1;
+    set = r->classes[k];
+    negate = r->pos < r->len && r->p[r->pos] == '^';
+    if (negate) r->pos++;
+    for (;;) {
+        int c, lo, hi, v;
+        uint32_t item;
+        if (r->pos >= r->len) return al_re_fail(r, "missing ]", at);
+        c = r->p[r->pos];
+        if (c == ']' && !first) {
+            r->pos++;
+            break;
+        }
+        first = 0;
+        item = r->pos;
+        r->pos++;
+        if (c == '\\') {
+            int e, lower;
+            if (r->pos >= r->len) return al_re_fail(r, "escape at the end of the pattern", item);
+            e = r->p[r->pos++];
+            lower = e | 0x20;
+            if (lower == 'd' || lower == 'w' || lower == 's') {
+                uint64_t sh[4] = {0, 0, 0, 0};
+                int i;
+                al_re_shorthand(sh, lower);
+                if (e != lower) al_re_invert(sh);
+                for (i = 0; i < 4; i++) set[i] |= sh[i];
+                continue;
+            }
+            lo = al_re_escaped(r, e, item);
+            if (lo < 0) return -1;
+        } else {
+            lo = c;
+        }
+        hi = lo;
+        if (r->pos + 1 < r->len && r->p[r->pos] == '-' && r->p[r->pos + 1] != ']') {
+            int d;
+            r->pos++;
+            d = r->p[r->pos++];
+            if (d == '\\') {
+                int e;
+                if (r->pos >= r->len) return al_re_fail(r, "escape at the end of the pattern", r->pos - 1);
+                e = r->p[r->pos++];
+                if ((e | 0x20) == 'd' || (e | 0x20) == 'w' || (e | 0x20) == 's') return al_re_fail(r, "bad range in a class", item);
+                d = al_re_escaped(r, e, r->pos - 2);
+                if (d < 0) return -1;
+            }
+            hi = d;
+            if (hi < lo) return al_re_fail(r, "bad range in a class", item);
+        }
+        for (v = lo; v <= hi; v++) set[v >> 6] |= (uint64_t)1 << (v & 63);
+    }
+    if (negate) al_re_invert(set);
+    return k;
+}
+
+static int al_re_atom(al_re *r) {
+    uint32_t at = r->pos;
+    int c = r->p[r->pos++];
+    switch (c) {
+    case '(': {
+        int inner;
+        if (++r->depth > AL_RE_DEPTH) return al_re_fail(r, "groups nested more than 32 deep", at);
+        inner = al_re_alt(r);
+        if (inner < 0) return -1;
+        if (r->pos >= r->len || r->p[r->pos] != ')') return al_re_fail(r, "missing )", at);
+        r->pos++;
+        r->depth--;
+        return inner;
+    }
+    case ')': return al_re_fail(r, "unmatched )", at);
+    case '*': case '+': case '?': case '{': return al_re_fail(r, "nothing to repeat", at);
+    case '.': return al_re_node(r, AL_RN_ANY, 0, 0);
+    case '^': return al_re_node(r, AL_RN_BOL, 0, 0);
+    case '$': return al_re_node(r, AL_RN_EOL, 0, 0);
+    case '[': {
+        int k = al_re_bracket(r, at);
+        return k < 0 ? -1 : al_re_node(r, AL_RN_CLASS, k, 0);
+    }
+    case '\\': {
+        int e, lower, v;
+        if (r->pos >= r->len) return al_re_fail(r, "escape at the end of the pattern", at);
+        e = r->p[r->pos++];
+        lower = e | 0x20;
+        if (lower == 'd' || lower == 'w' || lower == 's') {
+            int k = al_re_new_class(r, at);
+            if (k < 0) return -1;
+            al_re_shorthand(r->classes[k], lower);
+            if (e != lower) al_re_invert(r->classes[k]);
+            return al_re_node(r, AL_RN_CLASS, k, 0);
+        }
+        v = al_re_escaped(r, e, at);
+        return v < 0 ? -1 : al_re_node(r, AL_RN_LIT, v, 0);
+    }
+    default: return al_re_node(r, AL_RN_LIT, c, 0);
+    }
+}
+
+static int al_re_number(al_re *r, uint32_t at) {
+    int n = 0, digits = 0;
+    while (r->pos < r->len && r->p[r->pos] >= '0' && r->p[r->pos] <= '9') {
+        n = n * 10 + (r->p[r->pos] - '0');
+        if (n > AL_RE_REPEAT) return al_re_fail(r, "bad repetition count", at);
+        r->pos++;
+        digits++;
+    }
+    if (digits == 0) return al_re_fail(r, "bad repetition count", at);
+    return n;
+}
+
+static int al_re_repeat(al_re *r) {
+    uint32_t start = r->pos;
+    int atom = al_re_atom(r), c, lo, hi, k, node;
+    if (atom < 0) return -1;
+    if (r->pos >= r->len) return atom;
+    c = r->p[r->pos];
+    if (c == '*') {
+        lo = 0;
+        hi = -1;
+        r->pos++;
+    } else if (c == '+') {
+        lo = 1;
+        hi = -1;
+        r->pos++;
+    } else if (c == '?') {
+        lo = 0;
+        hi = 1;
+        r->pos++;
+    } else if (c == '{') {
+        uint32_t at = r->pos;
+        r->pos++;
+        lo = al_re_number(r, at);
+        if (lo < 0) return -1;
+        hi = lo;
+        if (r->pos < r->len && r->p[r->pos] == ',') {
+            r->pos++;
+            if (r->pos < r->len && r->p[r->pos] == '}') {
+                hi = -1;
+            } else {
+                hi = al_re_number(r, at);
+                if (hi < 0) return -1;
+            }
+        }
+        if (r->pos >= r->len || r->p[r->pos] != '}' || (hi >= 0 && hi < lo)) return al_re_fail(r, "bad repetition count", at);
+        r->pos++;
+    } else {
+        return atom;
+    }
+    k = r->kind[atom];
+    if (k == AL_RN_BOL || k == AL_RN_EOL || (k == AL_RN_EMPTY && start == r->pos)) return al_re_fail(r, "nothing to repeat", start);
+    if (r->pos < r->len && (r->p[r->pos] == '*' || r->p[r->pos] == '+' || r->p[r->pos] == '?' || r->p[r->pos] == '{')) {
+        return al_re_fail(r, "nothing to repeat", r->pos);
+    }
+    node = al_re_node(r, AL_RN_REPEAT, atom, 0);
+    r->min[node] = (int8_t)lo;
+    r->max[node] = (int16_t)hi;
+    return node;
+}
+
+static int al_re_concat(al_re *r) {
+    int left = -1;
+    while (r->pos < r->len && r->p[r->pos] != '|' && r->p[r->pos] != ')') {
+        int x = al_re_repeat(r);
+        if (x < 0) return -1;
+        left = left < 0 ? x : al_re_node(r, AL_RN_CAT, left, x);
+    }
+    return left < 0 ? al_re_node(r, AL_RN_EMPTY, 0, 0) : left;
+}
+
+static int al_re_alt(al_re *r) {
+    int left = al_re_concat(r);
+    if (left < 0) return -1;
+    while (r->pos < r->len && r->p[r->pos] == '|') {
+        int right;
+        r->pos++;
+        right = al_re_concat(r);
+        if (right < 0) return -1;
+        left = al_re_node(r, AL_RN_ALT, left, right);
+    }
+    return left;
+}
+
+static int al_re_emit(al_re *r, int o, int a, int b) {
+    if (r->n == AL_RE_PROGRAM) return al_re_fail(r, "more than 1024 instructions once its repetitions are written out", 0);
+    r->op[r->n] = (uint8_t)o;
+    r->x[r->n] = (uint16_t)a;
+    r->y[r->n] = (uint16_t)b;
+    return r->n++;
+}
+
+static int al_re_code(al_re *r, int k) {
+    int i, split, jmp;
+    switch (r->kind[k]) {
+    case AL_RN_LIT: return al_re_emit(r, AL_RC_CHAR, r->a[k], 0) < 0 ? -1 : 0;
+    case AL_RN_ANY: return al_re_emit(r, AL_RC_ANY, 0, 0) < 0 ? -1 : 0;
+    case AL_RN_CLASS: return al_re_emit(r, AL_RC_CLASS, r->a[k], 0) < 0 ? -1 : 0;
+    case AL_RN_BOL: return al_re_emit(r, AL_RC_BOL, 0, 0) < 0 ? -1 : 0;
+    case AL_RN_EOL: return al_re_emit(r, AL_RC_EOL, 0, 0) < 0 ? -1 : 0;
+    case AL_RN_EMPTY: return 0;
+    case AL_RN_CAT: return al_re_code(r, r->a[k]) < 0 || al_re_code(r, r->b[k]) < 0 ? -1 : 0;
+    case AL_RN_ALT:
+        split = al_re_emit(r, AL_RC_SPLIT, 0, 0);
+        if (split < 0) return -1;
+        r->x[split] = (uint16_t)r->n;
+        if (al_re_code(r, r->a[k]) < 0) return -1;
+        jmp = al_re_emit(r, AL_RC_JMP, 0, 0);
+        if (jmp < 0) return -1;
+        r->y[split] = (uint16_t)r->n;
+        if (al_re_code(r, r->b[k]) < 0) return -1;
+        r->x[jmp] = (uint16_t)r->n;
+        return 0;
+    default:
+        for (i = 0; i < r->min[k]; i++) {
+            if (al_re_code(r, r->a[k]) < 0) return -1;
+        }
+        if (r->max[k] < 0) {
+            split = al_re_emit(r, AL_RC_SPLIT, 0, 0);
+            if (split < 0) return -1;
+            r->x[split] = (uint16_t)r->n;
+            if (al_re_code(r, r->a[k]) < 0 || al_re_emit(r, AL_RC_JMP, split, 0) < 0) return -1;
+            r->y[split] = (uint16_t)r->n;
+        } else {
+            for (i = r->min[k]; i < r->max[k]; i++) {
+                split = al_re_emit(r, AL_RC_SPLIT, 0, 0);
+                if (split < 0) return -1;
+                r->x[split] = (uint16_t)r->n;
+                if (al_re_code(r, r->a[k]) < 0) return -1;
+                r->y[split] = (uint16_t)r->n;
+            }
+        }
+        return 0;
+    }
+}
+
+/* Compiles a pattern into r; 0, or -1 with r->why, r->at (and r->esc) saying why it is not valid. */
+static int al_re_compile(al_re *r, const uint8_t *p, uint32_t len) {
+    int root;
+    r->why = NULL;
+    r->at = 0;
+    r->esc = 0;
+    r->nodes = r->nclasses = r->n = r->depth = 0;
+    r->p = p;
+    r->len = len;
+    r->pos = 0;
+    if (len > AL_RE_PATTERN) return al_re_fail(r, "longer than 256 bytes", 0);
+    root = al_re_alt(r);
+    if (root < 0) return -1;
+    if (r->pos < len) return al_re_fail(r, "unmatched )", r->pos);
+    if (al_re_code(r, root) < 0 || al_re_emit(r, AL_RC_MATCH, 0, 0) < 0) return -1;
+    return 0;
+}
+
+static uint32_t al_re_add(al_re *r, uint16_t *lpc, uint32_t *lstart, uint32_t ln, int pc0, uint32_t start, uint32_t pos, uint32_t len) {
+    uint32_t gen = pos + 1;
+    int sp = 0;
+    r->stack[sp++] = (uint16_t)pc0;
+    while (sp > 0) {
+        int pc = r->stack[--sp];
+        if (r->mark[pc] == gen) continue;
+        r->mark[pc] = gen;
+        switch (r->op[pc]) {
+        case AL_RC_JMP: r->stack[sp++] = r->x[pc]; break;
+        case AL_RC_SPLIT:
+            r->stack[sp++] = r->y[pc];
+            r->stack[sp++] = r->x[pc];
+            break;
+        case AL_RC_BOL: if (pos == 0) r->stack[sp++] = (uint16_t)(pc + 1); break;
+        case AL_RC_EOL: if (pos == len) r->stack[sp++] = (uint16_t)(pc + 1); break;
+        default:
+            lpc[ln] = (uint16_t)pc;
+            lstart[ln] = start;
+            ln++;
+        }
+    }
+    return ln;
+}
+
+/* Runs the program of r on s: with whole, 1 if it matches all of s, else 0; otherwise whether it matches somewhere,
+   and where its leftmost match starts and ends. */
+static int al_re_run(al_re *r, const uint8_t *s, uint32_t len, int whole, uint32_t *from, uint32_t *to) {
+    uint16_t *cpc = r->cpc, *npc = r->npc, *tp;
+    uint32_t *cstart = r->cstart, *nstart = r->nstart, *ts;
+    uint32_t cn = 0, pos, i;
+    int matched = 0;
+    for (i = 0; i < (uint32_t)r->n; i++) r->mark[i] = 0;
+    for (pos = 0; pos <= len; pos++) {
+        uint32_t nn = 0;
+        if (!matched && (!whole || pos == 0)) cn = al_re_add(r, cpc, cstart, cn, 0, pos, pos, len);
+        if (cn == 0) {
+            if (matched || whole) break;
+            continue;
+        }
+        for (i = 0; i < cn; i++) {
+            int pc = cpc[i];
+            int c = pos < len ? s[pos] : -1;
+            switch (r->op[pc]) {
+            case AL_RC_MATCH:
+                if (whole && pos != len) continue;
+                *from = cstart[i];
+                *to = pos;
+                matched = 1;
+                i = cn;
+                break;
+            case AL_RC_CHAR:
+                if (c == r->x[pc]) nn = al_re_add(r, npc, nstart, nn, pc + 1, cstart[i], pos + 1, len);
+                break;
+            case AL_RC_ANY:
+                if (c >= 0 && c != '\n') nn = al_re_add(r, npc, nstart, nn, pc + 1, cstart[i], pos + 1, len);
+                break;
+            default:
+                if (c >= 0 && ((r->classes[r->x[pc]][c >> 6] >> (c & 63)) & 1)) {
+                    nn = al_re_add(r, npc, nstart, nn, pc + 1, cstart[i], pos + 1, len);
+                }
+            }
+        }
+        tp = cpc; cpc = npc; npc = tp;
+        ts = cstart; cstart = nstart; nstart = ts;
+        cn = nn;
+        if (matched && cn == 0) break;
+    }
+    return matched;
+}
+
+/*
+ * JSON text read as a value of an ALang type: from_json, and fn main(input: T). The generated al_json_ functions of
+ * each type call these; together they accept exactly the text that the interpreter's Json.parse and
+ * JsonValues.fromJson accept (as tool arguments), and give the same values. Each returns 1, or 0 when the text is
+ * not that type's JSON, which is all either backend says about it.
+ */
+typedef struct {
+    const uint8_t *s;
+    uint32_t n, pos;
+} al_json;
+
+static uint32_t al_utf8_next(const uint8_t *s, uint32_t n, uint32_t i, uint32_t *len, int *ok);
+
+static void al_json_ws(al_json *j) {
+    while (j->pos < j->n && (j->s[j->pos] == ' ' || j->s[j->pos] == '\t' || j->s[j->pos] == '\n' || j->s[j->pos] == '\r')) {
+        j->pos++;
+    }
+}
+
+/* The next byte after any whitespace, or -1 at the end. */
+static int al_json_peek(al_json *j) {
+    al_json_ws(j);
+    return j->pos < j->n ? j->s[j->pos] : -1;
+}
+
+/* Consumes c after any whitespace; 0 if it is not next. */
+static int al_json_eat(al_json *j, int c) {
+    if (al_json_peek(j) != c) return 0;
+    j->pos++;
+    return 1;
+}
+
+static int al_json_word(al_json *j, const char *w) {
+    uint32_t i;
+    al_json_ws(j);
+    for (i = 0; w[i] != 0; i++) {
+        if (j->pos + i >= j->n || j->s[j->pos + i] != (uint8_t)w[i]) return 0;
+    }
+    j->pos += i;
+    return 1;
+}
+
+static int al_json_bool(al_json *j, bool *out) {
+    if (al_json_word(j, "true")) {
+        *out = true;
+        return 1;
+    }
+    if (al_json_word(j, "false")) {
+        *out = false;
+        return 1;
+    }
+    return 0;
+}
+
+static int al_json_hex4(al_json *j, uint32_t *u) {
+    uint32_t k, v = 0;
+    if (j->pos + 4 > j->n) return 0;
+    for (k = 0; k < 4; k++) {
+        int c = j->s[j->pos + k], d;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else return 0;
+        v = v * 16u + (uint32_t)d;
+    }
+    j->pos += 4;
+    *u = v;
+    return 1;
+}
+
+/* Appends code point cp in UTF-8 to b, whose capacity is cap; 0 if it does not fit. */
+static int al_json_put_cp(uint8_t *b, uint32_t *len, uint32_t cap, uint32_t cp) {
+    uint8_t t[4];
+    uint32_t n, i;
+    if (cp < 0x80) {
+        t[0] = (uint8_t)cp;
+        n = 1;
+    } else if (cp < 0x800) {
+        t[0] = (uint8_t)(0xC0 | (cp >> 6));
+        t[1] = (uint8_t)(0x80 | (cp & 0x3F));
+        n = 2;
+    } else if (cp < 0x10000) {
+        t[0] = (uint8_t)(0xE0 | (cp >> 12));
+        t[1] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+        t[2] = (uint8_t)(0x80 | (cp & 0x3F));
+        n = 3;
+    } else {
+        t[0] = (uint8_t)(0xF0 | (cp >> 18));
+        t[1] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F));
+        t[2] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+        t[3] = (uint8_t)(0x80 | (cp & 0x3F));
+        n = 4;
+    }
+    if (*len + n > cap) return 0;
+    for (i = 0; i < n; i++) b[(*len)++] = t[i];
+    return 1;
+}
+
+/* A JSON string into b, of capacity cap, as UTF-8; 0 for bad text, or for one longer than cap bytes. */
+static int al_json_str(al_json *j, uint8_t *b, uint32_t *len, uint32_t cap) {
+    *len = 0;
+    if (!al_json_eat(j, '"')) return 0;
+    for (;;) {
+        int c;
+        if (j->pos >= j->n) return 0;
+        c = j->s[j->pos];
+        if (c == '"') {
+            j->pos++;
+            return 1;
+        }
+        if (c < 0x20) return 0;
+        if (c == '\\') {
+            int e;
+            uint32_t u, lo;
+            if (j->pos + 1 >= j->n) return 0;
+            e = j->s[j->pos + 1];
+            j->pos += 2;
+            switch (e) {
+            case '"': case '\\': case '/': u = (uint32_t)e; break;
+            case 'b': u = 8; break;
+            case 'f': u = 12; break;
+            case 'n': u = 10; break;
+            case 'r': u = 13; break;
+            case 't': u = 9; break;
+            case 'u':
+                if (!al_json_hex4(j, &u)) return 0;
+                if (u >= 0xD800 && u <= 0xDBFF) {
+                    if (j->pos + 2 > j->n || j->s[j->pos] != '\\' || j->s[j->pos + 1] != 'u') return 0;
+                    j->pos += 2;
+                    if (!al_json_hex4(j, &lo) || lo < 0xDC00 || lo > 0xDFFF) return 0;
+                    u = 0x10000 + ((u - 0xD800) << 10) + (lo - 0xDC00);
+                } else if (u >= 0xDC00 && u <= 0xDFFF) {
+                    return 0;
+                }
+                break;
+            default: return 0;
+            }
+            if (!al_json_put_cp(b, len, cap, u)) return 0;
+            continue;
+        }
+        if (c < 0x80) {
+            if (*len >= cap) return 0;
+            b[(*len)++] = (uint8_t)c;
+            j->pos++;
+        } else {
+            uint32_t n, i;
+            int ok;
+            (void)al_utf8_next(j->s, j->n, j->pos, &n, &ok);
+            if (!ok || *len + n > cap) return 0;
+            for (i = 0; i < n; i++) b[(*len)++] = j->s[j->pos + i];
+            j->pos += n;
+        }
+    }
+}
+
+/*
+ * A JSON number, read as the interpreter's Json.parse reads one: its sign, where its integer and fraction digits
+ * are, and its exponent. A number with a fraction or an exponent is a BigDecimal there, whose exponent and scale
+ * must fit an int; 0 for any other text.
+ */
+typedef struct {
+    int neg, decimal;
+    uint32_t is, ie, fs, fe;
+    int64_t exp;
+} al_jnum;
+
+static int al_json_num(al_json *j, al_jnum *x) {
+    const uint8_t *s = j->s;
+    uint32_t n = j->n;
+    al_json_ws(j);
+    x->neg = j->pos < n && s[j->pos] == '-';
+    if (x->neg) j->pos++;
+    x->decimal = 0;
+    x->exp = 0;
+    x->is = j->pos;
+    if (j->pos < n && s[j->pos] == '0') {
+        j->pos++;
+        if (j->pos < n && s[j->pos] >= '0' && s[j->pos] <= '9') return 0;
+    } else {
+        if (j->pos >= n || s[j->pos] < '0' || s[j->pos] > '9') return 0;
+        while (j->pos < n && s[j->pos] >= '0' && s[j->pos] <= '9') j->pos++;
+    }
+    x->ie = j->pos;
+    x->fs = x->fe = j->pos;
+    if (j->pos < n && s[j->pos] == '.') {
+        x->decimal = 1;
+        j->pos++;
+        x->fs = j->pos;
+        if (j->pos >= n || s[j->pos] < '0' || s[j->pos] > '9') return 0;
+        while (j->pos < n && s[j->pos] >= '0' && s[j->pos] <= '9') j->pos++;
+        x->fe = j->pos;
+    }
+    if (j->pos < n && (s[j->pos] == 'e' || s[j->pos] == 'E')) {
+        int eneg = 0;
+        int64_t e = 0;
+        x->decimal = 1;
+        j->pos++;
+        if (j->pos < n && (s[j->pos] == '+' || s[j->pos] == '-')) eneg = s[j->pos++] == '-';
+        if (j->pos >= n || s[j->pos] < '0' || s[j->pos] > '9') return 0;
+        while (j->pos < n && s[j->pos] >= '0' && s[j->pos] <= '9') {
+            if (e <= 2147483647) e = e * 10 + (s[j->pos] - '0');
+            j->pos++;
+        }
+        /* The exponent of a BigDecimal is at most Integer.MAX_VALUE either way, and so is its scale. */
+        if (e > 2147483647) return 0;
+        x->exp = eneg ? -e : e;
+        if ((int64_t)(x->fe - x->fs) - x->exp > 2147483647 || (int64_t)(x->fe - x->fs) - x->exp < -2147483647 - 1) return 0;
+    }
+    return 1;
+}
+
+/* The k-th digit of the number's digits, its integer digits then its fraction digits. */
+static int al_jnum_digit(const al_json *j, const al_jnum *x, uint64_t k) {
+    uint64_t il = x->ie - x->is;
+    return k < il ? j->s[x->is + k] - '0' : j->s[x->fs + (k - il)] - '0';
+}
+
+/*
+ * The number as an integer whose magnitude is at most max (or with neg_ok, a negative one of magnitude at most
+ * max_neg), as JsonValues.fromJson takes one: a BigDecimal with no fraction left once its exponent applies, and no
+ * more than 20 integer digits. Sets *mag and *neg; 0 if it is no such integer.
+ */
+static int al_jnum_int(const al_json *j, const al_jnum *x, uint64_t max, uint64_t max_neg, uint64_t *mag, int *neg) {
+    uint64_t total = (uint64_t)(x->ie - x->is) + (x->fe - x->fs), first = 0, k;
+    int64_t int_digits;
+    uint64_t m = 0;
+    while (first < total && al_jnum_digit(j, x, first) == 0) first++;
+    *neg = 0;
+    *mag = 0;
+    if (first == total) return 1;
+    /* precision - scale: the digits of the unscaled value, from its first that is not 0, less those after the point. */
+    int_digits = (int64_t)(total - first) - ((int64_t)(x->fe - x->fs) - x->exp);
+    if (int_digits > 20 || int_digits <= 0) return 0;
+    for (k = 0; k < (uint64_t)int_digits; k++) {
+        int d = first + k < total ? al_jnum_digit(j, x, first + k) : 0;
+        if (m > (UINT64_MAX - (uint64_t)d) / 10u) return 0;
+        m = m * 10u + (uint64_t)d;
+    }
+    for (k = first + (uint64_t)int_digits; k < total; k++) {
+        if (al_jnum_digit(j, x, k) != 0) return 0;
+    }
+    if (x->neg ? m > max_neg : m > max) return 0;
+    *mag = m;
+    *neg = x->neg;
+    return 1;
+}
+
+/* The decimal of a number being converted to a float: up to 800 significant digits (Go's strconv algorithm). */
+typedef struct {
+    uint8_t d[800];
+    int nd, dp, trunc;
+} al_dec;
+
+static void al_dec_trim(al_dec *a) {
+    while (a->nd > 0 && a->d[a->nd - 1] == 0) a->nd--;
+    if (a->nd == 0) a->dp = 0;
+}
+
+/* a * 2^k, 0 < k <= 59. */
+static void al_dec_lshift(al_dec *a, int k) {
+    uint8_t t[820];
+    int w = 820, r, delta, i;
+    uint64_t n = 0;
+    for (r = a->nd - 1; r >= 0; r--) {
+        n += (uint64_t)a->d[r] << k;
+        t[--w] = (uint8_t)(n % 10u);
+        n /= 10u;
+    }
+    while (n > 0) {
+        t[--w] = (uint8_t)(n % 10u);
+        n /= 10u;
+    }
+    delta = (820 - w) - a->nd;
+    a->nd = 820 - w;
+    if (a->nd > 800) {
+        for (i = 800; i < a->nd; i++) {
+            if (t[w + i] != 0) a->trunc = 1;
+        }
+        a->nd = 800;
+    }
+    for (i = 0; i < a->nd; i++) a->d[i] = t[w + i];
+    a->dp += delta;
+    al_dec_trim(a);
+}
+
+/* a / 2^k, 0 < k <= 59, as Go's rightShift. */
+static void al_dec_rshift(al_dec *a, int k) {
+    int r = 0, w = 0;
+    uint64_t n = 0, mask = ((uint64_t)1 << k) - 1;
+    for (; (n >> k) == 0; r++) {
+        if (r >= a->nd) {
+            if (n == 0) {
+                a->nd = 0;
+                return;
+            }
+            while ((n >> k) == 0) {
+                n *= 10u;
+                r++;
+            }
+            break;
+        }
+        n = n * 10u + a->d[r];
+    }
+    a->dp -= r - 1;
+    for (; r < a->nd; r++) {
+        uint64_t dig = n >> k;
+        n &= mask;
+        a->d[w++] = (uint8_t)dig;
+        n = n * 10u + a->d[r];
+    }
+    while (n > 0) {
+        uint64_t dig = n >> k;
+        n &= mask;
+        if (w < 800) a->d[w++] = (uint8_t)dig;
+        else if (dig > 0) a->trunc = 1;
+        n *= 10u;
+    }
+    a->nd = w;
+    al_dec_trim(a);
+}
+
+static void al_dec_shift(al_dec *a, int k) {
+    if (a->nd == 0) return;
+    while (k > 59) {
+        al_dec_lshift(a, 59);
+        k -= 59;
+    }
+    while (k < -59) {
+        al_dec_rshift(a, 59);
+        k += 59;
+    }
+    if (k > 0) al_dec_lshift(a, k);
+    else if (k < 0) al_dec_rshift(a, -k);
+}
+
+static int al_dec_round_up(const al_dec *a, int nd) {
+    if (nd < 0 || nd >= a->nd) return 0;
+    if (a->d[nd] == 5 && nd + 1 == a->nd) {
+        if (a->trunc) return 1;
+        return nd > 0 && (a->d[nd - 1] % 2) == 1;
+    }
+    return a->d[nd] >= 5;
+}
+
+static uint64_t al_dec_integer(const al_dec *a) {
+    int i;
+    uint64_t n = 0;
+    if (a->dp > 20) return UINT64_MAX;
+    for (i = 0; i < a->dp && i < a->nd; i++) n = n * 10u + a->d[i];
+    for (; i < a->dp; i++) n *= 10u;
+    if (al_dec_round_up(a, a->dp)) n++;
+    return n;
+}
+
+/* The bits of the float nearest a (mantbits 52, expbits 11, bias -1023 for f64; 23, 8, -127 for f32); *inf when
+   it overflows. */
+static uint64_t al_dec_bits(al_dec *a, int mantbits, int expbits, int bias, int *inf) {
+    static const int powtab[9] = {1, 3, 6, 9, 13, 16, 19, 23, 26};
+    int exp = 0;
+    uint64_t mant;
+    *inf = 0;
+    if (a->nd == 0 || a->dp < -330) {
+        mant = 0;
+        exp = bias;
+    } else if (a->dp > 310) {
+        *inf = 1;
+        return 0;
+    } else {
+        while (a->dp > 0) {
+            int n = a->dp >= 9 ? 27 : powtab[a->dp];
+            al_dec_shift(a, -n);
+            exp += n;
+        }
+        while (a->dp < 0 || (a->dp == 0 && a->d[0] < 5)) {
+            int n = -a->dp >= 9 ? 27 : powtab[-a->dp];
+            al_dec_shift(a, n);
+            exp -= n;
+        }
+        exp--;
+        if (exp < bias + 1) {
+            int n = bias + 1 - exp;
+            al_dec_shift(a, -n);
+            exp += n;
+        }
+        if (exp - bias >= (1 << expbits) - 1) {
+            *inf = 1;
+            return 0;
+        }
+        al_dec_shift(a, 1 + mantbits);
+        mant = al_dec_integer(a);
+        if (mant == (uint64_t)2 << mantbits) {
+            mant >>= 1;
+            exp++;
+            if (exp - bias >= (1 << expbits) - 1) {
+                *inf = 1;
+                return 0;
+            }
+        }
+        if ((mant & ((uint64_t)1 << mantbits)) == 0) exp = bias;
+    }
+    return (mant & (((uint64_t)1 << mantbits) - 1)) | ((uint64_t)((exp - bias) & ((1 << expbits) - 1)) << mantbits);
+}
+
+/*
+ * The number as the nearest f64 (or with f32, the nearest f32, rounded once), as BigDecimal and BigInteger
+ * convert: 0 if it is too large for the type. -0.0 only for a number with a fraction or exponent, which
+ * Json.parse reads as a negative zero.
+ */
+static int al_jnum_float(const al_json *j, const al_jnum *x, int f32, double *out) {
+    al_dec a;
+    uint64_t total = (uint64_t)(x->ie - x->is) + (x->fe - x->fs), first = 0, k;
+    uint64_t bits;
+    int64_t dp;
+    int inf;
+    while (first < total && al_jnum_digit(j, x, first) == 0) first++;
+    if (first == total) {
+        *out = x->neg && x->decimal ? -0.0 : 0.0;
+        return 1;
+    }
+    a.nd = 0;
+    a.trunc = 0;
+    for (k = first; k < total; k++) {
+        int d = al_jnum_digit(j, x, k);
+        if (a.nd < 800) a.d[a.nd++] = (uint8_t)d;
+        else if (d != 0) a.trunc = 1;
+    }
+    dp = (int64_t)(x->ie - x->is) - (int64_t)first + x->exp;
+    if (dp > 100000) dp = 100000;
+    if (dp < -100000) dp = -100000;
+    a.dp = (int)dp;
+    al_dec_trim(&a);
+    if (f32) {
+        union { uint32_t u; float f; } b32;
+        bits = al_dec_bits(&a, 23, 8, -127, &inf);
+        if (inf) return 0;
+        b32.u = (uint32_t)bits | (x->neg ? 0x80000000u : 0u);
+        *out = (double)b32.f;
+    } else {
+        union { uint64_t u; double d; } b64;
+        bits = al_dec_bits(&a, 52, 11, -1023, &inf);
+        if (inf) return 0;
+        b64.u = bits | (x->neg ? (uint64_t)1 << 63 : 0);
+        *out = b64.d;
+    }
+    return 1;
+}
+
+/* The JSON of a key of a struct or variant: its name, of at most cap bytes (a longer one names none). */
+static int al_json_key(al_json *j, uint8_t *b, uint32_t *len, uint32_t cap) {
+    return al_json_str(j, b, len, cap);
+}
+
+static int al_json_name_is(const uint8_t *b, uint32_t len, const char *name) {
+    uint32_t i;
+    for (i = 0; i < len; i++) {
+        if (name[i] == 0 || name[i] != (char)b[i]) return 0;
+    }
+    return name[len] == 0;
+}
+
+/* Whether nothing but whitespace is left. */
+static int al_json_end(al_json *j) {
+    return al_json_peek(j) < 0;
+}
+
+/* isqrt: the largest r with r * r <= n, digit by digit, two bits at a time, as the interpreter does. */
+static uint64_t al_isqrt(uint64_t n) {
+    uint64_t rem = n, root = 0, bit = (uint64_t)1 << 62;
+    while (bit > rem) bit >>= 2;
+    while (bit != 0) {
+        if (rem >= root + bit) {
+            rem -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    return root;
 }
 
 /* count_ones (op 0), leading_zeros (op 1) and trailing_zeros (op 2) of the low `bits` bits of u. */

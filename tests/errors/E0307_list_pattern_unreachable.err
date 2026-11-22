@@ -1,0 +1,7 @@
+error[E0307]: unreachable arm: the arms above already match every value it does
+ --> tests/errors/E0307_list_pattern_unreachable.al:7:9
+  |
+7 |         [a, b] => { print(a + b); }
+  |         ^^^^^^
+  = hint: remove it, or move it above the arms that take its values
+

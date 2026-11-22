@@ -42,11 +42,11 @@ final class Temporaries {
 
     private static long stmt(Stmt s, Routine r) {
         return switch (s) {
-            case Let l -> l.builtInPlace() ? inner(l.init) : Layout.add(expr(l.init), stored(l.init, l.var.type));
+            case Let l -> l.builtInPlace() ? inner(l.init) : Layout.add(value(l.init, r), stored(l.init, l.var.type));
             // The tuple is taken apart where it is: each variable copies its element.
-            case Destructure d -> Layout.add(expr(d.init), d.elseBlock == null ? 0 : block(d.elseBlock, r));
+            case Destructure d -> Layout.add(value(d.init, r), d.elseBlock == null ? 0 : block(d.elseBlock, r));
             case Assign a -> {
-                long t = Layout.add(expr(a.target), expr(a.value));
+                long t = Layout.add(expr(a.target), value(a.value, r));
                 yield a.op == null ? Layout.add(t, stored(a.value, a.target.type)) : t;
             }
             case If i -> {
@@ -55,7 +55,8 @@ final class Temporaries {
                 for (Block b : i.blocks) sum = Layout.add(sum, block(b, r));
                 yield sum;
             }
-            case While w -> Layout.add(Layout.add(expr(w.cond), expr(w.limit)), block(w.body, r));
+            case While w -> Layout.add(Layout.add(Layout.add(expr(w.cond), expr(w.limit)), w.guard == null ? 0 : expr(w.guard)),
+                block(w.body, r));
             case For f -> {
                 if (f.isRange()) {
                     long bounds = Layout.add(Layout.add(expr(f.from), expr(f.to)), f.step == null ? 0 : expr(f.step));
@@ -86,13 +87,24 @@ final class Temporaries {
             case Return ret -> {
                 if (ret.value == null) yield 0;
                 Type to = r instanceof FnDecl f ? f.ret : ret.value.type;
-                yield Layout.add(expr(ret.value), stored(ret.value, to));
+                yield Layout.add(value(ret.value, r), stored(ret.value, to));
             }
             case Assert a -> expr(a.cond);
             case ExprStmt e -> expr(e.expr);
-            case Break b -> 0;
+            // The value is copied into what the loop gives.
+            case Break b -> b.value == null ? 0 : Layout.add(expr(b.value), stored(b.value, b.target.valueType));
             case Continue c -> 0;
         };
+    }
+
+    /**
+     * What the value of a let, assignment or return builds: for a loop that gives a value, the value itself, what its
+     * statements build, and its else value copied into it.
+     */
+    private static long value(Expr e, Routine r) {
+        if (!(e instanceof LoopExpr l)) return expr(e);
+        long own = Type.isAggregate(e.type) ? Layout.size(e.type) : 0;
+        return Layout.add(Layout.add(own, stmt(l.loop, r)), Layout.add(expr(l.otherwise), stored(l.otherwise, e.type)));
     }
 
     /** The aggregates that evaluating {@code e} builds, all of which may be alive at once. */
@@ -116,6 +128,17 @@ final class Temporaries {
             case Call c when c.asStruct != null -> inner(c.asStruct);
             case Call c -> call(c);
             case VariantCall v when v.asCall != null -> call(v.asCall);
+            case VariantCall v when v.asValueCall != null -> expr(v.asValueCall);
+            case CallValue c -> {
+                // A read-only argument is passed as it is, unless it has to be widened to the parameter's type.
+                long t = expr(c.callee);
+                List<Type> ps = ((Type.FnT) c.callee.type).params();
+                for (int i = 0; i < c.args.size(); i++) {
+                    Expr a = c.args.get(i).expr();
+                    t = Layout.add(t, Layout.add(expr(a), a.type.equals(ps.get(i)) ? 0 : stored(a, ps.get(i))));
+                }
+                yield t;
+            }
             case VariantCall v -> {
                 long t = 0;
                 for (int i = 0; i < v.args.size(); i++) {
@@ -159,6 +182,8 @@ final class Temporaries {
                 yield t;
             }
             case SliceExpr s -> Layout.add(expr(s.target), Layout.add(s.from == null ? 0 : expr(s.from), s.to == null ? 0 : expr(s.to)));
+            // Only the whole value of a let, assignment or return, which value() counts.
+            case LoopExpr l -> 0;
             case TupleLit t -> {
                 List<Type> elems = ((Type.TupleT) t.type).elems();
                 long sum = 0;
@@ -198,6 +223,9 @@ final class Temporaries {
     }
 
     /** What the C backend of some builtins keeps besides their arguments and result, all of it on the stack at once. */
+    /** An upper bound on sizeof(al_re) in the C prelude: what re_match and re_find keep on the stack. */
+    static final long RE_STATE = 65536;
+
     private static long builtin(Call c) {
         List<Arg> args = c.args;
         return switch (c.builtin) {
@@ -213,8 +241,27 @@ final class Temporaries {
                 Type from = Type.elementOf(args.get(1).expr().type);
                 yield Type.isAggregate(to) && !to.equals(from) ? Layout.size(to) : 0;
             }
+            // The value pushed, stored as an element, and the element on its way up or down when two are exchanged.
+            case HEAP_PUSH -> {
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                Expr v = args.get(1).expr();
+                yield Type.isAggregate(elem) ? Layout.add(stored(v, elem), Layout.size(elem)) : 0;
+            }
+            // The element moving into its place, and the two keys a probe compares.
+            case SORT_BY_KEY -> {
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                long keys = Type.isAggregate(c.fnArgResult()) ? 2 * Layout.size(c.fnArgResult()) : 0;
+                yield Layout.add(Type.isAggregate(elem) ? Layout.size(elem) : 0, keys);
+            }
+            // The compiled pattern and the state of the machine that runs it: one al_re of the C prelude.
+            case RE_MATCH, RE_FIND -> RE_STATE;
+            // The value read, and an element of each set or map in it on its way in: at most the value again.
+            case FROM_JSON -> {
+                Type t = ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0);
+                yield Layout.add(Layout.size(t), Layout.add(Layout.size(t), 1024));
+            }
             // The element on its way to its new place.
-            case ROTATE -> {
+            case ROTATE, SORT_BY, HEAP_POP -> {
                 Type elem = Type.elementOf(args.get(0).expr().type);
                 yield Type.isAggregate(elem) ? Layout.size(elem) : 0;
             }

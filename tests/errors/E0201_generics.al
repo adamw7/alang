@@ -1,5 +1,5 @@
-// expect: E0101 E0201 E0203 E0216 E0217 E0601
-// Type parameters stand for any type, so only what works on every type is allowed; functions are passed by name.
+// expect: E0101 E0201 E0203 E0216 E0601
+// Type parameters stand for any type, so only what works on every type is allowed; a function value has one type.
 fn add<T>(a: T, b: T) -> T {
     return a + b;
 }

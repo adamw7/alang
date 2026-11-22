@@ -1,0 +1,7 @@
+error[E0104]: duplicate type `Point`
+ --> tests/errors/E0104_alias_duplicate.al:6:6
+  |
+6 | type Point = (i64, i64);
+  |      ^^^^^
+  = hint: rename or remove one of the declarations
+

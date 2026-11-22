@@ -1,7 +1,0 @@
-error[E0001]: unexpected '(', expected ';'
- --> tests/errors/E0001_after_break.al:4:20
-  |
-4 |         break print(1);
-  |                    ^
-  = hint: add `;` at the end of the previous statement
-

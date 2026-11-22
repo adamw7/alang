@@ -283,6 +283,21 @@ public final class JsonValues {
 
     // ------------------------------------------------------------------ decode
 
+    /**
+     * The value of type t that JSON text stands for, the first {@code len} bytes of {@code b}, or null if it is not
+     * UTF-8 JSON of that type: from_json, and the input of a fn main(input: T). The C prelude's al_json functions
+     * accept the same text and give the same values.
+     */
+    public static Object decodeText(byte[] b, int len, Type t) {
+        String text = Utf8.decode(b, len);
+        if (text == null) return null;
+        try {
+            return fromJson(Json.parse(text), t, "");
+        } catch (Json.ParseException | DecodeException e) {
+            return null;
+        }
+    }
+
     public static Object fromJson(Object j, Type t, String path) {
         switch (t) {
             case Type.Prim p -> {

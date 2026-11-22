@@ -1,0 +1,7 @@
+error[E0206]: `for x in mut` changes the elements of a variable, and `"hello"` is not one
+ --> tests/errors/E0206_for_mut_literal.al:4:18
+  |
+4 |     for c in mut "hello" {
+  |                  ^^^^^^^
+  = hint: copy it into a variable first: var xs: str[5] = "hello";
+

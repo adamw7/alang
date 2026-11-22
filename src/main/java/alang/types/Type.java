@@ -74,7 +74,10 @@ public sealed interface Type {
         }
     }
 
-    /** A function, as the type of a parameter: fn(i64, i64) -> bool. A call passes a function by its name. */
+    /**
+     * A function, as a value: fn(i64, i64) -> bool. A parameter of this type takes a function by its name (each call
+     * then runs a copy of its function made for it) or a function value; a variable, field or element holds a value.
+     */
     record FnT(List<Type> params, Type ret) implements Type {
         @Override
         public String toString() {
@@ -151,6 +154,20 @@ public sealed interface Type {
         };
     }
 
+    /** {@code t} with each `_` whose index {@code caps} has replaced by what it maps it to; the others stay. */
+    static Type substituteCaps(Type t, Map<Integer, Integer> caps) {
+        java.util.function.IntUnaryOperator f = c -> c < 0 && caps.get(-1 - c) != null ? caps.get(-1 - c) : c;
+        return switch (t) {
+            case Str s -> new Str(f.applyAsInt(s.cap()));
+            case ListT l -> new ListT(substituteCaps(l.elem(), caps), f.applyAsInt(l.cap()));
+            case ArrayT a -> new ArrayT(substituteCaps(a.elem(), caps), f.applyAsInt(a.len()));
+            case TupleT tt -> new TupleT(tt.elems().stream().map(e -> substituteCaps(e, caps)).toList());
+            case MapT m -> new MapT(substituteCaps(m.key(), caps), substituteCaps(m.value(), caps), f.applyAsInt(m.cap()));
+            case SetT s -> new SetT(substituteCaps(s.elem(), caps), f.applyAsInt(s.cap()));
+            default -> t;
+        };
+    }
+
     /** {@code t} with the {@code i}-th `_` replaced by {@code caps.get(i)}. */
     static Type substitute(Type t, List<Integer> caps) {
         return switch (t) {
@@ -194,8 +211,7 @@ public sealed interface Type {
         return switch (param) {
             case Str p when arg instanceof Str a -> {
                 if (p.cap() >= 0) yield exact ? p.cap() == a.cap() : a.cap() >= 0 && a.cap() <= p.cap();
-                caps.put(-1 - p.cap(), a.cap());
-                yield true;
+                yield bindCap(p.cap(), a.cap(), exact, caps);
             }
             case ListT p when arg instanceof ListT a -> bind(p.elem(), a.elem(), true, caps, owner, types) && bindCap(p.cap(), a.cap(), exact, caps);
             case ArrayT p when arg instanceof ArrayT a -> bind(p.elem(), a.elem(), true, caps, owner, types) && bindCap(p.len(), a.len(), true, caps);
@@ -225,8 +241,9 @@ public sealed interface Type {
 
     private static boolean bindCap(int param, int arg, boolean exact, Map<Integer, Integer> caps) {
         if (param < 0) {
-            caps.put(-1 - param, arg);
-            return true;
+            // A named capacity, N of fn f<N>, may stand in two places: both must give it the same value.
+            Integer before = caps.putIfAbsent(-1 - param, arg);
+            return before == null || before == arg;
         }
         return exact ? param == arg : arg >= 0 && arg <= param;
     }
@@ -322,8 +339,9 @@ public sealed interface Type {
         return t instanceof Error;
     }
 
+    /** Whether values of t are stored and passed as a whole: anything but a number, bool or function value. */
     static boolean isAggregate(Type t) {
-        return !(t instanceof Prim) && !(t instanceof Void) && !(t instanceof Error);
+        return !(t instanceof Prim) && !(t instanceof Void) && !(t instanceof Error) && !(t instanceof FnT);
     }
 
     static PrimKind kind(Type t) {

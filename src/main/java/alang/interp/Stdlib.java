@@ -847,6 +847,25 @@ final class Stdlib {
         return new StrV(b, i - start);
     }
 
+    /** The integer square root of n, an unsigned 64-bit value: the largest r with r * r <= n. */
+    static long isqrt(long n) {
+        // Digit by digit, two bits at a time, as the C backend does: exact for every u64.
+        long rem = n;
+        long root = 0;
+        long bit = 1L << 62;
+        while (Long.compareUnsigned(bit, rem) > 0) bit >>>= 2;
+        while (bit != 0) {
+            if (Long.compareUnsigned(rem, root + bit) >= 0) {
+                rem -= root + bit;
+                root = (root >>> 1) + bit;
+            } else {
+                root >>>= 1;
+            }
+            bit >>>= 2;
+        }
+        return root;
+    }
+
     // =================================================================== collections
 
     /**

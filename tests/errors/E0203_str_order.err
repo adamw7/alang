@@ -1,4 +1,4 @@
-error[E0203]: `<` needs two numbers or two strs, found str[8] and i64
+error[E0203]: `<` needs two values of the same type, found str[8] and i64
  --> tests/errors/E0203_str_order.al:5:23
   |
 5 |     let first: bool = a < 'b';

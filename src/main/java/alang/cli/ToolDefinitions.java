@@ -73,13 +73,15 @@ public final class ToolDefinitions {
             case Index ix -> isConstant(ix.target) && isConstant(ix.index);
             case Call c -> c.fn == null && c.builtin != null && c.builtin.pure
                 && c.args.stream().allMatch(a -> !a.mut() && isConstant(a.expr()));
-            case VariantCall vc -> vc.asCall == null && vc.args.stream().allMatch(a -> isConstant(a.expr()));
+            case VariantCall vc -> vc.asCall == null && vc.asValueCall == null && vc.args.stream().allMatch(a -> isConstant(a.expr()));
+            case CallValue cv -> false;
             case StructLit s -> s.fields.stream().allMatch(fi -> isConstant(fi.value()));
             case ArrayLit a -> a.elems.stream().allMatch(ToolDefinitions::isConstant);
             case Repeat r -> isConstant(r.value) && isConstant(r.count);
             case IfExpr i -> isConstant(i.cond) && isConstant(i.then) && isConstant(i.otherwise);
             case Try t -> false;
             case MatchExpr m -> false;
+            case LoopExpr l -> false;
             case TupleLit t -> t.elems.stream().allMatch(ToolDefinitions::isConstant);
             case SliceExpr s -> isConstant(s.target) && (s.from == null || isConstant(s.from)) && (s.to == null || isConstant(s.to));
         };

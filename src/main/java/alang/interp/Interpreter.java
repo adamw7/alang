@@ -166,13 +166,34 @@ public final class Interpreter {
         }
     }
 
+    /** The most bytes of JSON that a fn main(input: T) whose T is not a str reads from its standard input. */
+    public static final int MAX_JSON_INPUT = 1 << 20;
+
+    /** How many bytes of standard input fn main's parameter p takes: a str its capacity, any other type JSON. */
+    public static int inputCapacity(LocalVar p) {
+        return p.type instanceof Type.Str s ? s.cap() : MAX_JSON_INPUT;
+    }
+
     /**
      * Runs fn main. A main that takes a str receives {@code input}, the program's standard input; input
      * longer than its capacity traps (R0004) before main starts.
      */
     public void runMain(FnDecl main, byte[] input) {
         Object[] args = new Object[main.paramVars.size()];
-        if (args.length == 1) {
+        if (args.length == 1 && !(main.paramVars.get(0).type instanceof Type.Str)) {
+            // fn main(input: Config): the input is JSON for the type.
+            LocalVar p = main.paramVars.get(0);
+            Object v = input.length > MAX_JSON_INPUT ? null : JsonValues.decodeText(input, input.length, p.type);
+            if (v == null) {
+                Trap t = new Trap(input.length > MAX_JSON_INPUT ? Code.R0004 : Code.R0014, p.span, input.length > MAX_JSON_INPUT
+                    ? "standard input exceeds " + MAX_JSON_INPUT + " bytes of JSON for `" + p.name + "`"
+                    : "the standard input is not JSON of " + p.type + " for `" + p.name + "`");
+                callStack.push(new Frame("fn main", main.nameSpan, main, new Object[main.locals.size()]));
+                fillTrace(t);
+                throw t;
+            }
+            args[0] = v;
+        } else if (args.length == 1) {
             LocalVar p = main.paramVars.get(0);
             int cap = ((Type.Str) p.type).cap();
             if (input.length > cap) {
@@ -354,7 +375,49 @@ public final class Interpreter {
         if (debugger != null && v != null) callStack.peek().bind(v);
     }
 
+    /**
+     * How a loop that gives a value ({@link LoopExpr}) left the let, assignment or return it is the value of, without a
+     * value: a `return` in it, or a `break` or `continue` of a loop around that statement. It carries the code
+     * {@link #exec} returns for the statement.
+     */
+    private static final class LoopEscape extends RuntimeException {
+        final int code;
+
+        LoopEscape(int code) {
+            super(null, null, false, false);
+            this.code = code;
+        }
+    }
+
+    /** The loop that a `break v;` being carried out leaves, and v: what the {@link LoopExpr} of that loop evaluates to. */
+    private Loop brokenWith;
+    private Object breakValue;
+
     private int exec(Stmt s, Object[] slots) {
+        try {
+            return run(s, slots);
+        } catch (LoopEscape e) {
+            return e.code;
+        }
+    }
+
+    /** A loop that gives a value: the value of the `break v;` that leaves it, or its else value. */
+    private Object loopValue(LoopExpr l, Object[] slots) {
+        int r = switch (l.loop) {
+            case While w -> whileLoop(w, slots);
+            case For f -> f.isRange() ? rangeLoop(f, slots) : eachLoop(f, slots);
+        };
+        if (brokenWith == l.loop) {
+            Object v = breakValue;
+            brokenWith = null;
+            breakValue = null;
+            return v;
+        }
+        if (r != NORMAL) throw new LoopEscape(r);
+        return Values.coerce(owned(l.otherwise, slots), l.type, meter);
+    }
+
+    private int run(Stmt s, Object[] slots) {
         step(s.span);
         return switch (s) {
             case Let l -> {
@@ -389,6 +452,10 @@ public final class Interpreter {
             case For f -> f.isRange() ? rangeLoop(f, slots) : eachLoop(f, slots);
             case Match m -> match(m, slots);
             case Break b -> {
+                if (b.value != null) {
+                    breakValue = Values.coerce(owned(b.value, slots), b.target.valueType, meter);
+                    brokenWith = b.target;
+                }
                 jumpTarget = b.target;
                 yield BREAK;
             }
@@ -452,7 +519,8 @@ public final class Interpreter {
         Object lim = eval(w.limit, slots);
         PrimKind lk = Type.kind(w.limit.type);
         long count = 0;
-        while (w.pattern == null ? (Boolean) eval(w.cond, slots) : matches(w.pattern, eval(w.cond, slots), slots)) {
+        while (w.pattern == null ? (Boolean) eval(w.cond, slots)
+            : matches(w.pattern, eval(w.cond, slots), slots) && (w.guard == null || (Boolean) eval(w.guard, slots))) {
             boolean exceeded = lk == PrimKind.U64 ? Long.compareUnsigned(count, (Long) lim) >= 0 : count >= (Long) lim;
             if (exceeded) {
                 throw new Trap(Code.R0008, w.span, "while loop exceeded its limit of " + IntOps.toString(lk, (Long) lim)
@@ -515,6 +583,7 @@ public final class Interpreter {
 
     private int eachLoop(For f, Object[] slots) {
         if (f.pieces() != null) return pieceLoop(f, f.pieces(), slots);
+        if (f.inPlace) return inPlaceLoop(f, slots);
         // The collection is evaluated once and iterated as a snapshot: a copy, when it is a variable the body
         // may change, else the value itself.
         Object coll = f.snapshot ? owned(f.from, slots) : eval(f.from, slots);
@@ -528,6 +597,29 @@ public final class Interpreter {
             int r = m != null ? iteration(f, slots, m.keys[i], f.indexVar != null ? m.vals[i] : m.keys[i])
                 : iteration(f, slots, (long) i, items != null ? items[i] : (Object) (long) (((StrV) coll).b[i] & 0xFF));
             if (r != GO) return r;
+        }
+        return NORMAL;
+    }
+
+    /**
+     * `for x in mut xs`: x is a reference to each element where it is (to each value, for a map, with its key), so
+     * that what the body does to x it does to the element. The body cannot use xs otherwise, so nothing moves.
+     */
+    private int inPlaceLoop(For f, Object[] slots) {
+        Object coll = ref(f.from, slots).get();
+        MapV m = coll instanceof MapV mv ? mv : null;
+        int n = m != null ? m.len : length(coll);
+        for (int k = 0; k < n; k++) {
+            int i = f.rev ? n - 1 - k : k;
+            step(f.span);
+            Ref r = switch (coll) {
+                case MapV mv -> new SlotRef(mv.vals, i);
+                case ListV l -> new SlotRef(l.items, i);
+                case ArrV a -> new SlotRef(a.items, i);
+                default -> new ByteRef((StrV) coll, i);
+            };
+            int res = iteration(f, slots, m != null ? m.keys[i] : (Object) (long) i, r);
+            if (res != GO) return res;
         }
         return NORMAL;
     }
@@ -589,6 +681,15 @@ public final class Interpreter {
         return NORMAL;
     }
 
+    /** The element at index i of an array, list or str (a byte, as a number). */
+    private static Object element(Object coll, int i) {
+        return switch (coll) {
+            case ListV l -> l.items[i];
+            case ArrV a -> a.items[i];
+            default -> (long) (((StrV) coll).b[i] & 0xFF);
+        };
+    }
+
     private int match(Match m, Object[] slots) {
         Object v = eval(m.subject, slots);
         for (Arm arm : m.arms) {
@@ -623,6 +724,17 @@ public final class Interpreter {
                 StructV t = (StructV) v;
                 for (int i = 0; i < tp.elems.size(); i++) {
                     if (!matches(tp.elems.get(i), t.fields[i], slots)) yield false;
+                }
+                yield true;
+            }
+            case ListPat lp -> {
+                int n = length(v);
+                if (lp.rest ? n < lp.named() : n != lp.named()) yield false;
+                for (int i = 0; i < lp.prefix.size(); i++) {
+                    if (!matches(lp.prefix.get(i), element(v, i), slots)) yield false;
+                }
+                for (int i = 0; i < lp.suffix.size(); i++) {
+                    if (!matches(lp.suffix.get(i), element(v, n - lp.suffix.size() + i), slots)) yield false;
                 }
                 yield true;
             }
@@ -794,11 +906,14 @@ public final class Interpreter {
             }
             case BoolLit b -> b.value;
             case Name n -> {
+                if (n.function != null) yield n.function;
+                if (n.capacity != null) yield n.capacity;
                 if (n.local == null) yield n.constant.value;
                 Object v = slots[n.local.slot];
                 yield n.local.byRef ? ((Ref) v).get() : v;
             }
             case FieldAccess f when f.constant != null -> f.constant.value;
+            case FieldAccess f when f.function != null -> f.function;
             case VariantCall v when v.asCall != null -> callUser(v.asCall, slots);
             case FieldAccess f -> f.variant != null ? new EnumV(f.variant.index, new Object[0])
                 : ((StructV) eval(f.target, slots)).fields[f.fieldIndex];
@@ -811,7 +926,10 @@ public final class Interpreter {
                 yield elementRef(container, i, Type.kind(ix.index.type), ix.span).get();
             }
             case Call c when c.asStruct != null -> eval(c.asStruct, slots);
+            case Call c when c.builtin == null && c.fn == null -> callValue((FnDecl) local(c.fnParam, slots), c.args, c.span, slots);
             case Call c -> c.builtin != null ? builtin(c, slots) : callUser(c, slots);
+            case CallValue c -> callValue((FnDecl) eval(c.callee, slots), c.args, c.span, slots);
+            case VariantCall v when v.asValueCall != null -> eval(v.asValueCall, slots);
             case VariantCall v -> {
                 Object[] payload = new Object[v.args.size()];
                 for (int i = 0; i < payload.length; i++) {
@@ -883,6 +1001,7 @@ public final class Interpreter {
                 PrimKind tk = s.to == null ? PrimKind.I64 : Type.kind(s.to.type);
                 yield Stdlib.slice(xs, s.type, from, fk, to, tk, s.span, meter);
             }
+            case LoopExpr l -> loopValue(l, slots);
             case TupleLit t -> {
                 List<Type> elems = ((Type.TupleT) t.type).elems();
                 Object[] vals = new Object[t.elems.size()];
@@ -911,13 +1030,29 @@ public final class Interpreter {
         for (int i = 0; i < args.length; i++) {
             LocalVar p = f.paramVars.get(i);
             Expr a = c.args.get(i).expr();
-            // A function argument is not a value: the instance calls the function it was made for.
-            if (p.type instanceof Type.FnT) continue;
+            // A function given by name is not a value: the instance calls the function it was made for.
+            if (p.type instanceof Type.FnT && i < f.fnArgs.size() && f.fnArgs.get(i) != null) continue;
             args[i] = p.byRef ? ref(a, slots) : Values.coerce(eval(a, slots), p.type, meter);
         }
         // What the caller does with the result is charged at the caller's statement, not the callee's last.
         Span caller = meter.at();
         Object result = invoke(f, args, c.span);
+        meter.at(caller);
+        return result;
+    }
+
+    /** The value of a local variable: what its slot holds, or for one that names storage elsewhere, what that holds. */
+    private static Object local(LocalVar v, Object[] slots) {
+        Object o = slots[v.slot];
+        return v.byRef ? ((Ref) o).get() : o;
+    }
+
+    /** A call of a function value, the function {@code f}, with the values of {@code args}. */
+    private Object callValue(FnDecl f, List<Arg> args, Span at, Object[] slots) {
+        Object[] vals = new Object[f.params.size()];
+        for (int i = 0; i < vals.length; i++) vals[i] = Values.coerce(eval(args.get(i).expr(), slots), f.paramVars.get(i).type, meter);
+        Span caller = meter.at();
+        Object result = invoke(f, vals, at);
         meter.at(caller);
         return result;
     }
@@ -976,7 +1111,9 @@ public final class Interpreter {
                 default -> x >= y;
             };
         }
-        int c = t instanceof Type.Str ? Stdlib.compare(l, r, t, meter) : IntOps.compare(Type.kind(t), (Long) l, (Long) r);
+        // A number by value; a value of any other type in the order of sort.
+        int c = t instanceof Type.Prim p && p.kind() != PrimKind.BOOL ? IntOps.compare(Type.kind(t), (Long) l, (Long) r)
+            : Stdlib.compare(l, r, t, meter);
         return switch (b.op) {
             case LT -> c < 0;
             case LE -> c <= 0;
@@ -1076,7 +1213,21 @@ public final class Interpreter {
 
     // =================================================================== builtins
 
+    /** The function value that the builtin being run was given in a variable (see {@link Call#fnArgLocal}). */
+    private FnDecl fnArgValue;
+
     private Object builtin(Call c, Object[] slots) {
+        if (c.fnArgLocal == null) return runBuiltin(c, slots);
+        FnDecl saved = fnArgValue;
+        fnArgValue = (FnDecl) local(c.fnArgLocal, slots);
+        try {
+            return runBuiltin(c, slots);
+        } finally {
+            fnArgValue = saved;
+        }
+    }
+
+    private Object runBuiltin(Call c, Object[] slots) {
         List<Arg> args = c.args;
         switch (c.builtin) {
             case PRINT -> {
@@ -1261,6 +1412,14 @@ public final class Interpreter {
                 long b = (Long) eval(args.get(1).expr(), slots);
                 return Stdlib.wrapOrSaturate(c.builtin, Type.kind(c.type), a, b);
             }
+            case ISQRT -> {
+                long a = (Long) eval(args.get(0).expr(), slots);
+                PrimKind k = Type.kind(c.type);
+                if (k.signed && a < 0) {
+                    throw new Trap(Code.R0013, c.span, "isqrt() needs a number >= 0, found " + IntOps.toString(k, a));
+                }
+                return Stdlib.isqrt(a);
+            }
             case COUNT_ONES, LEADING_ZEROS, TRAILING_ZEROS -> {
                 long a = (Long) eval(args.get(0).expr(), slots);
                 return Stdlib.bits(c.builtin, Type.kind(args.get(0).expr().type), a);
@@ -1362,6 +1521,70 @@ public final class Interpreter {
                     }
                 }
                 return null;
+            }
+            case SORT_BY_KEY -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                Type key = c.fnArgResult();
+                // The binary insertion sort of sort_by, with x before y when key(x) comes before key(y): key(x) once per
+                // element, and key(items[mid]) at each probe, in the same order as the C backend.
+                for (int i = 1; i < n; i++) {
+                    Object x = items[i];
+                    Object kx = apply(c, x);
+                    int lo = 0;
+                    int hi = i;
+                    while (lo < hi) {
+                        int mid = lo + (hi - lo) / 2;
+                        meter.elements(1);
+                        if (Stdlib.compare(kx, apply(c, items[mid]), key, meter) < 0) hi = mid;
+                        else lo = mid + 1;
+                    }
+                    if (lo < i) {
+                        meter.elements(i - lo);
+                        System.arraycopy(items, lo, items, lo + 1, i - lo);
+                        items[lo] = x;
+                    }
+                }
+                return null;
+            }
+            case HEAP_PUSH -> {
+                ListV l = (ListV) ref(args.get(0).expr(), slots).get();
+                Type elem = ((Type.ListT) args.get(0).expr().type).elem();
+                Object v = Values.coerce(owned(args.get(1).expr(), slots), elem, meter);
+                if (l.len == l.items.length) throw new Trap(Code.R0004, c.span, "push to a full list (capacity " + l.items.length + ")");
+                int i = l.len++;
+                l.items[i] = v;
+                while (i > 0) {
+                    int parent = (i - 1) / 2;
+                    if (!heapBefore(c, l.items[i], l.items[parent], elem)) break;
+                    Object t = l.items[i];
+                    l.items[i] = l.items[parent];
+                    l.items[parent] = t;
+                    i = parent;
+                }
+                return null;
+            }
+            case HEAP_POP -> {
+                ListV l = (ListV) ref(args.get(0).expr(), slots).get();
+                Type elem = ((Type.ListT) args.get(0).expr().type).elem();
+                if (l.len == 0) throw new Trap(Code.R0012, c.span, "pop from an empty list");
+                Object top = l.items[0];
+                l.len--;
+                l.items[0] = l.items[l.len];
+                l.items[l.len] = null;
+                int i = 0;
+                while (true) {
+                    int child = 2 * i + 1;
+                    if (child >= l.len) break;
+                    if (child + 1 < l.len && heapBefore(c, l.items[child + 1], l.items[child], elem)) child++;
+                    if (!heapBefore(c, l.items[child], l.items[i], elem)) break;
+                    Object t = l.items[i];
+                    l.items[i] = l.items[child];
+                    l.items[child] = t;
+                    i = child;
+                }
+                return top;
             }
             case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
                 long ch = (Long) eval(args.get(0).expr(), slots);
@@ -1628,6 +1851,30 @@ public final class Interpreter {
                 byte[] b = new byte[s.b.length];
                 System.arraycopy(s.b, from, b, 0, to - from);
                 return new StrV(b, to - from);
+            }
+            case FROM_JSON -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                meter.bytes(s.len);
+                Object v = JsonValues.decodeText(s.b, s.len, ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0));
+                if (v == null) return option(null);
+                meter.elements(1);
+                return option(v);
+            }
+            case RE_MATCH, RE_FIND -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                StrV p = (StrV) eval(args.get(1).expr(), slots);
+                Regex.Program prog;
+                try {
+                    meter.bytes(p.len);
+                    prog = Regex.compile(p.b, p.len);
+                } catch (Regex.BadPattern e) {
+                    throw new Trap(Code.R0013, c.span, c.name + "() pattern is not valid: " + e.getMessage() + " at byte " + e.at);
+                }
+                long r = Regex.run(prog, s.b, s.len, c.builtin == Builtin.RE_MATCH, meter);
+                if (c.builtin == Builtin.RE_MATCH) return r >= 0;
+                if (r < 0) return option(null);
+                meter.elements(1);
+                return option(new StructV(new Object[] {r >>> 32, r & 0xFFFFFFFFL}));
             }
             case SPLIT_ONCE -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);
@@ -1974,7 +2221,7 @@ public final class Interpreter {
      * result. Like a call written in the program, it is charged where it is made.
      */
     private boolean test(Call c, Object... values) {
-        FnDecl f = c.fnArg;
+        FnDecl f = c.fnArg != null ? c.fnArg : fnArgValue;
         Object[] a = new Object[f.params.size()];
         for (int i = 0; i < a.length; i++) a[i] = Values.coerce(values[i], f.paramVars.get(i).type, meter);
         Span caller = meter.at();
@@ -1983,9 +2230,18 @@ public final class Interpreter {
         return (Boolean) result;
     }
 
+    /**
+     * Whether a comes before b in a heap: by the function passed to heap_push or heap_pop, or else in the order of sort.
+     * Each comparison costs an element, as a probe of sort_by does.
+     */
+    private boolean heapBefore(Call c, Object a, Object b, Type elem) {
+        meter.elements(1);
+        return c.fnArg != null || c.fnArgLocal != null ? test(c, a, b) : Stdlib.compare(a, b, elem, meter) < 0;
+    }
+
     /** Calls the function passed to fold or transform (c.fnArg) with the given values, and returns its result. */
     private Object apply(Call c, Object... values) {
-        FnDecl f = c.fnArg;
+        FnDecl f = c.fnArg != null ? c.fnArg : fnArgValue;
         Object[] a = new Object[f.params.size()];
         for (int i = 0; i < a.length; i++) a[i] = Values.coerce(values[i], f.paramVars.get(i).type, meter);
         Span caller = meter.at();

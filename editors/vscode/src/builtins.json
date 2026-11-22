@@ -240,6 +240,12 @@
     "description": "The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps."
   },
   {
+    "name": "isqrt",
+    "group": "math",
+    "signature": "isqrt(n) -> T",
+    "description": "The integer square root of an integer n >= 0: the largest r with r * r <= n, exact for every value of every type, isqrt(17) is 4. Traps (R0013) if n is negative."
+  },
+  {
     "name": "sqrt",
     "group": "math",
     "signature": "sqrt(x) -> f",
@@ -450,6 +456,24 @@
     "description": "s without suffix (a str or u8 byte) at its end, or s unchanged if it does not end with it: strip_suffix(\"a.txt\", \".txt\") is \"a\"."
   },
   {
+    "name": "re_match",
+    "group": "text",
+    "signature": "re_match(s, pattern) -> bool",
+    "description": "Whether the regular expression pattern matches all of the str s: re_match(s, r\"\\d{3}-\\d{4}\"). The syntax: a byte matches itself; . any byte but a newline; [abc], [a-z], [^...] a class; \\d \\w \\s (and \\D \\W \\S) digits, word characters and spaces; ^ and $ the start and end; ( ) a group; | alternatives; * + ? and {m}, {m,}, {m,n} (up to 100) repetition, greedy; \\ before a symbol the symbol. It runs in time linear in the length of s. Traps (R0013) if the pattern is not valid, or longer than 256 bytes."
+  },
+  {
+    "name": "re_find",
+    "group": "text",
+    "signature": "re_find(s, pattern) -> Option<(i64, i64)>",
+    "description": "Where the regular expression pattern (see re_match) first matches in the str s: Option.Some((start, end)), the byte positions of the match, s[start..end], or Option.None. Of the matches that start there it takes the one Perl does: the left alternative first, each repetition as long as it can be."
+  },
+  {
+    "name": "from_json",
+    "group": "text",
+    "signature": "from_json(s) -> Option<T>",
+    "description": "The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to numbers (an integer type takes only whole numbers that fit), strings to strs of at most their capacity in UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default present, no other) and maps with str keys, \"Variant\" or {\"Variant\": [values]} to enums. Option.None for any other text."
+  },
+  {
     "name": "split_once",
     "group": "text",
     "signature": "split_once(s, sep) -> Option<(str[N], str[N])>",
@@ -610,6 +634,24 @@
     "group": "collections",
     "signature": "sort_by(mut xs, before)",
     "description": "Sorts a list or array in place into the order that before, a function fn(T, T) -> bool passed by name, gives: before(a, b) is true when a must come before b. Stable: elements neither comes before keep their order, so sorting by one key and then by another sorts by both. A binary insertion sort: about n log2(n) calls of before."
+  },
+  {
+    "name": "sort_by_key",
+    "group": "collections",
+    "signature": "sort_by_key(mut xs, key)",
+    "description": "Sorts a list or array in place by key(x), a function fn(T) -> K passed by name, in the order sort gives the keys: sort_by_key(mut people, age). Stable, as sort_by is: elements with equal keys keep their order."
+  },
+  {
+    "name": "heap_push",
+    "group": "collections",
+    "signature": "heap_push(mut heap, x)",
+    "description": "Adds x to a list kept as a binary heap, a priority queue whose smallest element (in the order of sort) is always heap[0]; heap_push(mut heap, x, before) orders by before, a function fn(T, T) -> bool passed by name, as sort_by does. About log2(len) comparisons. Traps (R0004) if the list is full."
+  },
+  {
+    "name": "heap_pop",
+    "group": "collections",
+    "signature": "heap_pop(mut heap) -> T",
+    "description": "Removes and returns the smallest element of a list kept as a heap by heap_push (pass the same before, if it was given one): the next in priority order. Traps (R0012) if it is empty."
   },
   {
     "name": "any",

@@ -48,6 +48,7 @@ Codes are never reused for a different meaning.
 | [E0308](#e0308) | pattern mismatch |
 | [E0309](#e0309) | let else does not leave |
 | [E0310](#e0310) | misplaced `?` |
+| [E0311](#e0311) | loop value |
 | [E0401](#e0401) | recursion is not allowed |
 | [E0402](#e0402) | stack bound exceeded |
 | [E0403](#e0403) | recursive type |
@@ -82,6 +83,7 @@ Codes are never reused for a different meaning.
 | [R0011](#r0011) | step budget exhausted |
 | [R0012](#r0012) | invalid shift or empty pop |
 | [R0013](#r0013) | invalid argument |
+| [R0014](#r0014) | input is not JSON of its type |
 
 ## E0001
 
@@ -226,7 +228,7 @@ inc(n);      // error: write `mut n`
 
 ## E0208
 
-**aliased mut argument**: A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access.
+**aliased mut argument**: A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access. Likewise, the body of `for x in mut xs` changes xs only through x, and cannot use xs otherwise.
 
 ```
 append(mut s, s);            // error: copy first: let t: str[16] = s; append(mut s, t);
@@ -400,6 +402,14 @@ let Option.Some(n): Option<i64> = parse_i64(s) else { print("bad"); };  // error
 
 ```
 fn first_digit(s: str[8]) -> i64 { let n: i64 = parse_i64(s)?; return n; }  // error: return Option<i64>
+```
+
+## E0311
+
+**loop value**: A `for` or `while` loop gives a value when it is the whole value of a let, var, assignment or return and ends with `else`: `let i: i64 = for i, x in xs { if x == 0 { break i; } } else -1;`. `break v;` leaves it with the value v, and the value after `else` is its value when it ends without a break. Such a loop is left only with a value, and a loop that is not one is left with a plain `break;`. A `break v;` leaves the innermost loop around it that gives a value, and any loops inside that one.
+
+```
+let i: i64 = for i, x in xs { if x == 0 { break; } } else -1;  // error: break i;
 ```
 
 ## E0401
@@ -703,6 +713,14 @@ let p: i64 = pow(2, -1);  // trap
 let c: i64 = clamp(x, 10, 0);  // trap
 ```
 
+## R0014
+
+**input is not JSON of its type**: A fn main whose parameter is not a str, fn main(input: Config), receives its standard input as JSON for that type, mapped as a tool's arguments are (see from_json). Input that is not, or longer than 1048576 bytes, stops the program before main starts.
+
+```
+fn main(input: Config) { ... }  // with stdin {"name": 3} where name is a str: trap
+```
+
 ## Builtin functions and the standard library
 
 Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
@@ -756,6 +774,7 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `trailing_zeros(x) -> i64` | The number of 0 bits below the lowest 1 bit of the integer x: trailing_zeros(u8(8)) is 3; the number of bits of its type if x is 0. |
 | `rotl(x, n) -> T` | The bits of the integer x shifted left by n (any integer), those that leave at the top coming back at the bottom: rotl(u8(0x81), 1) is 0x03. n is taken modulo the number of bits, rem_euclid(n, bits), so a negative n rotates right. Never traps. |
 | `rotr(x, n) -> T` | The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps. |
+| `isqrt(n) -> T` | The integer square root of an integer n >= 0: the largest r with r * r <= n, exact for every value of every type, isqrt(17) is 4. Traps (R0013) if n is negative. |
 | `sqrt(x) -> f` | Square root of an f32/f64. |
 | `floor(x) -> f` | Largest integral value not greater than x (f32/f64). |
 | `ceil(x) -> f` | Smallest integral value not less than x (f32/f64). |
@@ -801,6 +820,9 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `trim(s) -> str[N]` | s without the ASCII whitespace at its start and end. |
 | `strip_prefix(s, prefix) -> str[N]` | s without prefix (a str or u8 byte) at its start, or s unchanged if it does not start with it, as a str of the capacity of s: strip_prefix("v1.2", 'v') is "1.2". starts_with(s, prefix) tells which. |
 | `strip_suffix(s, suffix) -> str[N]` | s without suffix (a str or u8 byte) at its end, or s unchanged if it does not end with it: strip_suffix("a.txt", ".txt") is "a". |
+| `re_match(s, pattern) -> bool` | Whether the regular expression pattern matches all of the str s: re_match(s, r"\d{3}-\d{4}"). The syntax: a byte matches itself; . any byte but a newline; [abc], [a-z], [^...] a class; \d \w \s (and \D \W \S) digits, word characters and spaces; ^ and $ the start and end; ( ) a group; \| alternatives; * + ? and {m}, {m,}, {m,n} (up to 100) repetition, greedy; \ before a symbol the symbol. It runs in time linear in the length of s. Traps (R0013) if the pattern is not valid, or longer than 256 bytes. |
+| `re_find(s, pattern) -> Option<(i64, i64)>` | Where the regular expression pattern (see re_match) first matches in the str s: Option.Some((start, end)), the byte positions of the match, s[start..end], or Option.None. Of the matches that start there it takes the one Perl does: the left alternative first, each repetition as long as it can be. |
+| `from_json(s) -> Option<T>` | The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to numbers (an integer type takes only whole numbers that fit), strings to strs of at most their capacity in UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default present, no other) and maps with str keys, "Variant" or {"Variant": [values]} to enums. Option.None for any other text. |
 | `split_once(s, sep) -> Option<(str[N], str[N])>` | The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once("k=v=w", '=') is Option.Some(("k", "v=w")). Traps (R0013) if sep is empty. |
 | `repeat(s, n) -> str[N]` | The str or u8 byte s, n times over: repeat("ab", 3) is "ababab", repeat('-', 10) a rule of dashes. Its type is that of the variable it is stored in. Traps (R0013) if n < 0, and (R0004) if the result does not fit. |
 | `split(s, sep) -> list[str[K]; M]` | The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. Its type is that of the variable it is stored in. Traps if a piece or the count does not fit; for p in split(s, sep) goes through the pieces one at a time instead, each a str of the capacity of s, and never traps on their size or number. |
@@ -833,6 +855,9 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `reverse(mut xs)` | Reverses a list, array or str in place. |
 | `dedup(mut xs)` | Removes each element of a list (byte of a str) equal to the one before it, keeping the first of each run. After sort(mut xs), every value is left once. |
 | `sort_by(mut xs, before)` | Sorts a list or array in place into the order that before, a function fn(T, T) -> bool passed by name, gives: before(a, b) is true when a must come before b. Stable: elements neither comes before keep their order, so sorting by one key and then by another sorts by both. A binary insertion sort: about n log2(n) calls of before. |
+| `sort_by_key(mut xs, key)` | Sorts a list or array in place by key(x), a function fn(T) -> K passed by name, in the order sort gives the keys: sort_by_key(mut people, age). Stable, as sort_by is: elements with equal keys keep their order. |
+| `heap_push(mut heap, x)` | Adds x to a list kept as a binary heap, a priority queue whose smallest element (in the order of sort) is always heap[0]; heap_push(mut heap, x, before) orders by before, a function fn(T, T) -> bool passed by name, as sort_by does. About log2(len) comparisons. Traps (R0004) if the list is full. |
+| `heap_pop(mut heap) -> T` | Removes and returns the smallest element of a list kept as a heap by heap_push (pass the same before, if it was given one): the next in priority order. Traps (R0012) if it is empty. |
 | `any(xs, f) -> bool` | Whether f(x) is true for some element x of an array or list, f being a function fn(T) -> bool passed by name: any(xs, is_even). Calls f from the first element on, and stops at the first true; false if xs is empty. |
 | `all(xs, f) -> bool` | Whether f(x) is true for every element x of an array or list (as for any); stops at the first false; true if xs is empty. |
 | `count_if(xs, f) -> i64` | How many elements x of an array or list have f(x) true, f being a function fn(T) -> bool passed by name. |

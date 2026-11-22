@@ -1,4 +1,4 @@
-error[E0001]: unexpected 'pub', expected one of end of file, 'import', 'fn', 'tool', 'const', 'struct', 'enum', 'test'
+error[E0001]: unexpected 'pub', expected one of end of file, 'import', 'fn', 'tool', 'const', 'struct', 'type', 'enum', 'test'
  --> tests/errors/E0001_pub.al:2:1
   |
 2 | pub fn area(w: i64, h: i64) -> i64 {

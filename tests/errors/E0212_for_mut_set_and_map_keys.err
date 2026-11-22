@@ -1,0 +1,14 @@
+error[E0212]: `for x in mut` changes the elements of an array, list or str, or the values of a map, found set[i64; 8]
+ --> tests/errors/E0212_for_mut_set_and_map_keys.al:5:18
+  |
+5 |     for x in mut s {
+  |                  ^
+  = hint: the values of a set are kept in order; remove one and insert another
+
+error[E0212]: the keys of a map stay as they are; `for k, v in mut m` changes each value v
+  --> tests/errors/E0212_for_mut_set_and_map_keys.al:10:18
+   |
+10 |     for k in mut m {
+   |                  ^
+  = hint: write for k, v in mut m { }
+

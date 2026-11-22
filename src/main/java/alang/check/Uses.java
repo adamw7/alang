@@ -130,6 +130,7 @@ final class Uses {
                 case While w -> {
                     if (w.pattern != null) patterns.add(w.pattern);
                     read(w.cond);
+                    if (w.guard != null) read(w.guard);
                     read(w.limit);
                     block(w.body);
                 }
@@ -152,7 +153,9 @@ final class Uses {
                 }
                 case Assert a -> read(a.cond);
                 case ExprStmt e -> read(e.expr);
-                case Break b -> { }
+                case Break b -> {
+                    if (b.value != null) read(b.value);
+                }
                 case Continue c -> { }
             }
         }
@@ -186,8 +189,11 @@ final class Uses {
                 case Call c -> {
                     // A user function may read what it is given as `mut`, and so do pop, pop_front and remove, which
                     // return part of it, and swap, which moves it; the other builtins that take `mut` only change it.
+                    // A call of a variable that holds a function value reads it, and so does a builtin given one.
+                    if (c.fnParam != null) read.add(c.fnParam);
+                    if (c.fnArgLocal != null) read.add(c.fnArgLocal);
                     boolean reads = c.builtin == null || c.builtin == Builtin.POP || c.builtin == Builtin.POP_FRONT
-                        || c.builtin == Builtin.REMOVE || c.builtin == Builtin.SWAP;
+                        || c.builtin == Builtin.REMOVE || c.builtin == Builtin.SWAP || c.builtin == Builtin.HEAP_POP;
                     for (Arg a : c.args) {
                         if (a.mut()) {
                             written(a.expr());
@@ -198,7 +204,12 @@ final class Uses {
                     }
                 }
                 case VariantCall v -> {
+                    if (v.asValueCall != null) read(v.asValueCall);
                     for (Arg a : v.args) read(a.expr());
+                }
+                case CallValue c -> {
+                    read(c.callee);
+                    for (Arg a : c.args) read(a.expr());
                 }
                 case StructLit s -> {
                     for (FieldInit f : s.fields) read(f.value());
@@ -236,6 +247,10 @@ final class Uses {
                     for (Expr x : t.elems) read(x);
                 }
                 case Try t -> read(t.inner);
+                case LoopExpr l -> {
+                    stmt(l.loop);
+                    read(l.otherwise);
+                }
                 case IntLit i -> { }
                 case FloatLit f -> { }
                 case StrLit s -> { }

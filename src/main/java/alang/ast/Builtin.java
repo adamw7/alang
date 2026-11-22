@@ -97,6 +97,9 @@ public enum Builtin {
     ROTR(Group.MATH, true, "rotr", "rotr(x, n) -> T",
         "The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: "
             + "rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps."),
+    ISQRT(Group.MATH, true, "isqrt", "isqrt(n) -> T",
+        "The integer square root of an integer n >= 0: the largest r with r * r <= n, exact for every value of every "
+            + "type, isqrt(17) is 4. Traps (R0013) if n is negative."),
     SQRT(Group.MATH, true, "sqrt", "sqrt(x) -> f", "Square root of an f32/f64."),
     FLOOR(Group.MATH, true, "floor", "floor(x) -> f", "Largest integral value not greater than x (f32/f64)."),
     CEIL(Group.MATH, true, "ceil", "ceil(x) -> f", "Smallest integral value not less than x (f32/f64)."),
@@ -149,6 +152,23 @@ public enum Builtin {
     STRIP_SUFFIX(Group.TEXT, true, "strip_suffix", "strip_suffix(s, suffix) -> str[N]",
         "s without suffix (a str or u8 byte) at its end, or s unchanged if it does not end with it: "
             + "strip_suffix(\"a.txt\", \".txt\") is \"a\"."),
+    RE_MATCH(Group.TEXT, true, "re_match", "re_match(s, pattern) -> bool",
+        "Whether the regular expression pattern matches all of the str s: re_match(s, r\"\\d{3}-\\d{4}\"). The syntax: a "
+            + "byte matches itself; . any byte but a newline; [abc], [a-z], [^...] a class; \\d \\w \\s (and \\D \\W \\S) "
+            + "digits, word characters and spaces; ^ and $ the start and end; ( ) a group; | alternatives; * + ? and {m}, "
+            + "{m,}, {m,n} (up to 100) repetition, greedy; \\ before a symbol the symbol. It runs in time linear in the "
+            + "length of s. Traps (R0013) if the pattern is not valid, or longer than 256 bytes."),
+    RE_FIND(Group.TEXT, true, "re_find", "re_find(s, pattern) -> Option<(i64, i64)>",
+        "Where the regular expression pattern (see re_match) first matches in the str s: Option.Some((start, end)), the "
+            + "byte positions of the match, s[start..end], or Option.None. Of the matches that start there it takes "
+            + "the one Perl does: the left alternative first, each repetition as long as it can be."),
+    FROM_JSON(Group.TEXT, true, "from_json", "from_json(s) -> Option<T>",
+        "The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored "
+            + "in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to "
+            + "numbers (an integer type takes only whole numbers that fit), strings to strs of at most their capacity in "
+            + "UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default "
+            + "present, no other) and maps with str keys, \"Variant\" or {\"Variant\": [values]} to enums. "
+            + "Option.None for any other text."),
     SPLIT_ONCE(Group.TEXT, true, "split_once", "split_once(s, sep) -> Option<(str[N], str[N])>",
         "The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the "
             + "capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once(\"k=v=w\", '=') is Option.Some((\"k\", \"v=w\")). "
@@ -245,6 +265,16 @@ public enum Builtin {
         "Sorts a list or array in place into the order that before, a function fn(T, T) -> bool passed by name, gives: "
             + "before(a, b) is true when a must come before b. Stable: elements neither comes before keep their order, so "
             + "sorting by one key and then by another sorts by both. A binary insertion sort: about n log2(n) calls of before."),
+    SORT_BY_KEY(Group.COLLECTIONS, false, "sort_by_key", "sort_by_key(mut xs, key)",
+        "Sorts a list or array in place by key(x), a function fn(T) -> K passed by name, in the order sort gives the keys: "
+            + "sort_by_key(mut people, age). Stable, as sort_by is: elements with equal keys keep their order."),
+    HEAP_PUSH(Group.COLLECTIONS, false, "heap_push", "heap_push(mut heap, x)",
+        "Adds x to a list kept as a binary heap, a priority queue whose smallest element (in the order of sort) is "
+            + "always heap[0]; heap_push(mut heap, x, before) orders by before, a function fn(T, T) -> bool passed by "
+            + "name, as sort_by does. About log2(len) comparisons. Traps (R0004) if the list is full."),
+    HEAP_POP(Group.COLLECTIONS, false, "heap_pop", "heap_pop(mut heap) -> T",
+        "Removes and returns the smallest element of a list kept as a heap by heap_push (pass the same before, if it was "
+            + "given one): the next in priority order. Traps (R0012) if it is empty."),
     ANY(Group.COLLECTIONS, false, "any", "any(xs, f) -> bool",
         "Whether f(x) is true for some element x of an array or list, f being a function fn(T) -> bool passed by name: "
             + "any(xs, is_even). Calls f from the first element on, and stops at the first true; false if xs is empty."),
@@ -417,8 +447,8 @@ public enum Builtin {
     /** Whether the first argument is modified, and so passed as `mut`. */
     public boolean modifiesFirst() {
         return switch (this) {
-            case PUSH, POP, POP_FRONT, CLEAR, APPEND, PUSH_CHAR, SORT, SORT_BY, RETAIN, REVERSE, DEDUP, INSERT, REMOVE, SWAP,
-                 TRY_SPLIT, TRY_WORDS, EXTEND, FILL, ROTATE -> true;
+            case PUSH, POP, POP_FRONT, CLEAR, APPEND, PUSH_CHAR, SORT, SORT_BY, SORT_BY_KEY, HEAP_PUSH, HEAP_POP, RETAIN,
+                 REVERSE, DEDUP, INSERT, REMOVE, SWAP, TRY_SPLIT, TRY_WORDS, EXTEND, FILL, ROTATE -> true;
             default -> false;
         };
     }

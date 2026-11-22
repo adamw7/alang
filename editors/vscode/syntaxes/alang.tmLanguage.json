@@ -19,30 +19,34 @@
     "comments": {
       "patterns": [
         { "name": "comment.line.documentation.alang", "match": "///.*$" },
-        { "name": "comment.line.double-slash.alang", "match": "//.*$" }
+        { "name": "comment.line.double-slash.alang", "match": "//.*$" },
+        { "name": "comment.block.alang", "begin": "/\\*", "end": "\\*/" }
       ]
     },
     "escapes": {
       "patterns": [
-        { "name": "constant.character.escape.alang", "match": "\\\\(?:[ntr0\\\\\"']|x[0-9a-fA-F]{2})" },
+        { "name": "constant.character.escape.alang", "match": "\\\\(?:[ntr0\\\\\"']|x[0-9a-fA-F]{2}|u\\{[0-9a-fA-F]{1,6}\\})" },
         { "name": "invalid.illegal.escape.alang", "match": "\\\\." }
       ]
     },
     "strings": {
-      "name": "string.quoted.double.alang",
-      "begin": "\"",
-      "end": "\"|$",
-      "patterns": [{ "include": "#escapes" }]
+      "patterns": [
+        { "name": "string.quoted.triple.raw.alang", "begin": "r\"\"\"", "end": "\"\"\"" },
+        { "name": "string.quoted.triple.alang", "begin": "\"\"\"", "end": "\"\"\"", "patterns": [{ "include": "#escapes" }] },
+        { "name": "string.quoted.double.raw.alang", "match": "\\br\"[^\"]*\"" },
+        { "name": "string.quoted.double.alang", "begin": "\"", "end": "\"|$", "patterns": [{ "include": "#escapes" }] }
+      ]
     },
     "chars": {
       "name": "string.quoted.single.alang",
-      "match": "'(?:\\\\(?:[ntr0\\\\\"']|x[0-9a-fA-F]{2})|[^'\\\\])'",
+      "match": "'(?:\\\\(?:[ntr0\\\\\"']|x[0-9a-fA-F]{2}|u\\{[0-9a-fA-F]{1,6}\\})|[^'\\\\])'",
       "captures": { "0": { "patterns": [{ "include": "#escapes" }] } }
     },
     "numbers": {
       "patterns": [
         { "name": "constant.numeric.hex.alang", "match": "\\b0x[0-9a-fA-F](?:_?[0-9a-fA-F])*\\b" },
         { "name": "constant.numeric.binary.alang", "match": "\\b0b[01](?:_?[01])*\\b" },
+        { "name": "constant.numeric.octal.alang", "match": "\\b0o[0-7](?:_?[0-7])*\\b" },
         { "name": "constant.numeric.float.alang", "match": "\\b[0-9](?:_?[0-9])*(?:\\.[0-9](?:_?[0-9])*(?:[eE][+-]?[0-9](?:_?[0-9])*)?|[eE][+-]?[0-9](?:_?[0-9])*)\\b" },
         { "name": "constant.numeric.integer.alang", "match": "\\b[0-9](?:_?[0-9])*\\b" }
       ]

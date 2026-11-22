@@ -176,6 +176,8 @@ public final class Values {
                 List<Type> payload = et.decl().variants.get(x.tag).payload;
                 yield x.tag == y.tag && allEqual(x.payload, y.payload, payload.size(), payload::get, m);
             }
+            // Two function values are equal when they are the same function.
+            case Type.FnT f -> a == b;
             default -> false;
         };
     }

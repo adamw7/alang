@@ -81,10 +81,17 @@ final class Fuzz {
     }
 
     private static Entry main(FnDecl main, Source src, long maxSteps) {
-        int cap = ((Type.Str) main.paramVars.get(0).type).cap();
+        Type type = main.paramVars.get(0).type;
         Set<String> seen = new LinkedHashSet<>();
         List<Finding> findings = new ArrayList<>();
-        List<String> inputs = texts(cap, 0);
+        List<String> inputs;
+        if (type instanceof Type.Str s) {
+            inputs = texts(s.cap(), 0);
+        } else {
+            // fn main(input: Config): the input is JSON, so values of the type, as a tool's arguments.
+            inputs = new ArrayList<>();
+            for (Object v : values(type, JsonValues.schema(type))) inputs.add(Json.write(v));
+        }
         int n = 0;
         for (String input : inputs) {
             if (n == MAX_CALLS) break;

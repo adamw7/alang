@@ -33,6 +33,11 @@ public final class Ast {
         public final Map<Source, Map<String, Integer>> aliases;
         /** The scope of each file's declarations; a file not listed is in scope 0. */
         public final Map<Source, Integer> scopes;
+        /**
+         * The functions the program uses as values (stored, returned, or passed to a function that takes any function
+         * of a type), in the order the checker met them: each instance with known types. A function value is one of them.
+         */
+        public final List<FnDecl> functionValues = new ArrayList<>();
 
         public Program(Source source, List<Item> items, List<Import> imports) {
             this(source, items, imports, List.of(source), Map.of(), Map.of());
@@ -150,6 +155,21 @@ public final class Ast {
         }
     }
 
+    /**
+     * `type Grid = [[i64; 8]; 8];`: another name for a type. With type parameters, `type Pair<T> = (T, T);`, each use
+     * gives their types, Pair<i64>, which stand for them in the type it names.
+     */
+    public static final class TypeAlias extends Item {
+        public final Generics generics;
+        public final TypeRef typeRef;
+
+        public TypeAlias(Span span, String name, Generics generics, TypeRef typeRef) {
+            super(span, name);
+            this.generics = generics;
+            this.typeRef = typeRef;
+        }
+    }
+
     public static final class StructDecl extends Item {
         public final List<Field> fields;
         public State state = State.NEW;
@@ -244,6 +264,11 @@ public final class Ast {
         public final Set<FnDecl> callees = new LinkedHashSet<>();
         /** Functions this routine passes as values, to a parameter of a function type. */
         public final Set<FnDecl> fnValues = new LinkedHashSet<>();
+        /**
+         * The types of the function values this routine calls: each such call may call any function that the program uses
+         * as a value ({@link Program#functionValues}) and has that type.
+         */
+        public final Set<Type.FnT> dynamicCalls = new LinkedHashSet<>();
 
         Routine(Span span, String name, Block body) {
             super(span, name);
@@ -282,6 +307,13 @@ public final class Ast {
          */
         public FnDecl origin;
         public List<Integer> capacities = List.of();
+        /**
+         * `fn f<N>(xs: [i64; N])`: the names among {@code <...>} that stand for a capacity rather than a type, moved out
+         * of {@link #typeParams} by the checker, and the index of the `_` of {@link Type#anyCapacity} each stands for.
+         */
+        public final List<String> capacityParams = new ArrayList<>();
+        public final List<Span> capacityParamSpans = new ArrayList<>();
+        public final Map<String, Integer> capacityIndex = new HashMap<>();
         public List<Type> typeArgs = List.of();
         public List<FnDecl> fnArgs = List.of();
         /**
@@ -289,6 +321,13 @@ public final class Ast {
          * what they stand for, in the order they were made.
          */
         public final Map<List<Object>, FnDecl> instances = new LinkedHashMap<>();
+
+        /** The type of the function as a value: its parameters' types and its result's. */
+        public Type.FnT fnType() {
+            List<Type> ps = new ArrayList<>();
+            for (LocalVar v : paramVars) ps.add(v.type);
+            return new Type.FnT(ps, ret);
+        }
 
         /** Whether the function takes any capacity somewhere: it runs and compiles only as its instances. */
         public boolean generic() {
@@ -500,6 +539,8 @@ public final class Ast {
     public abstract static sealed class Loop extends Stmt {
         public String label;
         public Span labelSpan;
+        /** For a loop that gives a value ({@link LoopExpr}): the type of that value, set by the checker; null for others. */
+        public Type valueType;
 
         Loop(Span span) {
             super(span);
@@ -516,6 +557,11 @@ public final class Ast {
         public final Block body;
         /** The pattern of `while let`, or null. */
         public final Pattern pattern;
+        /**
+         * `while let P = e and c limit n`: the condition c, which may use the names P binds; the loop runs while P
+         * matches and c holds. Null without one.
+         */
+        public Expr guard;
 
         public While(Span span, Expr cond, Expr limit, Block body) {
             this(span, null, cond, limit, body);
@@ -559,6 +605,11 @@ public final class Ast {
          * variable the body leaves alone holds the same value all along.
          */
         public boolean snapshot;
+        /**
+         * `for x in mut xs`: x is each element itself, not a copy, and what the body does to x it does to the element;
+         * for a map, `for k, v in mut m` gives each value so. The body cannot use xs otherwise, so no element moves.
+         */
+        public boolean inPlace;
 
         public For(Span span, String name, Span nameSpan, String indexName, Span indexSpan, Expr from, Expr to,
                    boolean inclusive, Expr step, boolean rev, Block body) {
@@ -625,14 +676,26 @@ public final class Ast {
     /** A match arm; {@code guard} is the condition of `Pattern if cond =>`, or null. */
     public record Arm(Pattern pattern, Expr guard, Block body) {}
 
-    /** `break;` or `break label;`: {@code target} is the loop it leaves, set by the checker for a label. */
+    /**
+     * `break;` or `break label;`: {@code target} is the loop it leaves, set by the checker for a label. `break value;`
+     * leaves the innermost loop around it that gives a value ({@link LoopExpr}), with that value: the checker sets its
+     * target.
+     */
     public static final class Break extends Stmt {
-        public final String label;
+        /** The label, or null; the checker reads `break x;` with no loop labelled x as the value x, moving it to value. */
+        public String label;
+        public Span labelSpan;
+        public Expr value;
         public Loop target;
 
         public Break(Span span, String label) {
+            this(span, label, null);
+        }
+
+        public Break(Span span, String label, Expr value) {
             super(span);
             this.label = label;
+            this.value = value;
         }
     }
 
@@ -726,6 +789,28 @@ public final class Ast {
         }
     }
 
+    /**
+     * `[p1, p2]`: an array, list or str of exactly those elements; with `..`, `[p1, .., pk]`, of at least them: the
+     * prefix from the front, the suffix at the back, and any number of elements between.
+     */
+    public static final class ListPat extends Pattern {
+        public final List<Pattern> prefix;
+        public final boolean rest;
+        public final List<Pattern> suffix;
+
+        public ListPat(Span span, List<Pattern> prefix, boolean rest, List<Pattern> suffix) {
+            super(span);
+            this.prefix = prefix;
+            this.rest = rest;
+            this.suffix = suffix;
+        }
+
+        /** How many elements it names: all it matches without `..`, the fewest with it. */
+        public int named() {
+            return prefix.size() + suffix.size();
+        }
+    }
+
     /** `Point(x: p1, y: p2)`: a struct whose named fields match the patterns; fields it leaves out match anything. */
     public static final class StructPat extends Pattern {
         /** The alias of `ns.Point(...)`, or null. */
@@ -754,6 +839,8 @@ public final class Ast {
         public final boolean inclusive;
         /** The integer type it matches, set by the checker. */
         public PrimKind kind;
+        /** A bound is a character beyond ASCII, a code point (see {@link IntLit#codePoint}). */
+        public boolean codePoint;
 
         public RangePat(Span span, BigInteger lo, BigInteger hi, boolean inclusive) {
             super(span);
@@ -775,6 +862,8 @@ public final class Ast {
 
     public static final class IntPat extends Pattern {
         public final BigInteger value;
+        /** A character beyond ASCII, a code point (see {@link IntLit#codePoint}). */
+        public boolean codePoint;
 
         public IntPat(Span span, BigInteger value) {
             super(span);
@@ -828,6 +917,10 @@ public final class Ast {
             }
             case TuplePat t -> {
                 for (Pattern e : t.elems) bindings(e, out, everyAlternative);
+            }
+            case ListPat l -> {
+                for (Pattern e : l.prefix) bindings(e, out, everyAlternative);
+                for (Pattern e : l.suffix) bindings(e, out, everyAlternative);
             }
             case StructPat s -> {
                 for (Pattern f : s.fields) bindings(f, out, everyAlternative);
@@ -900,7 +993,8 @@ public final class Ast {
 
         /** Places evaluate to the storage they name; everything else builds a new value. */
         public boolean isPlace() {
-            return this instanceof Name || this instanceof Index || (this instanceof FieldAccess f && f.variant == null && f.constant == null);
+            return this instanceof Name n && n.function == null && n.capacity == null || this instanceof Index
+                || (this instanceof FieldAccess f && f.variant == null && f.constant == null && f.function == null);
         }
     }
 
@@ -908,6 +1002,8 @@ public final class Ast {
     public static final class IntLit extends Expr {
         public final BigInteger value;
         public final boolean isChar;
+        /** A character literal beyond ASCII, 'é' or '\\u{20AC}': its value is a code point, never a byte (a u8). */
+        public boolean codePoint;
 
         public IntLit(Span span, BigInteger value, boolean isChar) {
             super(span);
@@ -964,6 +1060,10 @@ public final class Ast {
         public final String name;
         public LocalVar local;
         public ConstDecl constant;
+        /** A capacity parameter, N of `fn f<N>(...)`, in an instance of the function: the capacity it stands for. */
+        public Long capacity;
+        /** A function used as a value: `let f: fn(i64) -> i64 = inc;`. */
+        public FnDecl function;
 
         public Name(Span span, String name) {
             super(span);
@@ -980,6 +1080,8 @@ public final class Ast {
         public Variant variant;
         /** `ns.NAME`: a constant of the file imported as ns. */
         public ConstDecl constant;
+        /** `ns.f` as a value: a function of the file imported as ns. */
+        public FnDecl function;
 
         public FieldAccess(Span span, Expr target, String name, Span nameSpan) {
             super(span);
@@ -1028,8 +1130,16 @@ public final class Ast {
         public final List<Arg> args;
         public FnDecl fn;
         public Builtin builtin;
-        /** A call of a parameter of a function type, in a function checked as written: which one. */
+        /**
+         * A call of a variable that holds a function value (a parameter of a function type, in a function checked as
+         * written or in an instance given a function value rather than a name): which one.
+         */
         public LocalVar fnParam;
+        /**
+         * For a builtin such as any or sort_by given a variable that holds a function value rather than a function's
+         * name: that variable, whose function it calls.
+         */
+        public LocalVar fnArgLocal;
         /**
          * The function that a builtin such as any or sort_by calls: the one passed to it by name. Null in a function
          * checked as written that passes on a parameter of a function type; its instances know the function.
@@ -1060,6 +1170,11 @@ public final class Ast {
         public boolean hasMutArg() {
             return args.stream().anyMatch(Arg::mut);
         }
+
+        /** The result type of the function a builtin such as transform or sort_by_key calls: by name or held in a variable. */
+        public Type fnArgResult() {
+            return fnArg != null ? fnArg.ret : ((Type.FnT) fnArgLocal.type).ret();
+        }
     }
 
     /** `Enum.Variant(args)`. */
@@ -1068,6 +1183,8 @@ public final class Ast {
         public String qualifier;
         /** `ns.f(...)`, which reads as Enum.Variant(...): the call of the function f of the file imported as ns. */
         public Call asCall;
+        /** `s.f(...)`, which reads as Enum.Variant(...): the call of the function value in the field f of the variable s. */
+        public CallValue asValueCall;
         public final String enumName;
         public final String variantName;
         public final List<Arg> args;
@@ -1083,6 +1200,18 @@ public final class Ast {
     }
 
     public record FieldInit(Span span, String name, Expr value) {}
+
+    /** `callee(args)`, where callee is any expression that gives a function value: `ops[i](x)`, `s.handler(x)`. */
+    public static final class CallValue extends Expr {
+        public final Expr callee;
+        public final List<Arg> args;
+
+        public CallValue(Span span, Expr callee, List<Arg> args) {
+            super(span);
+            this.callee = callee;
+            this.args = args;
+        }
+    }
 
     /** `Point(x: 1, y: 2)`. */
     public static final class StructLit extends Expr {
@@ -1191,6 +1320,21 @@ public final class Ast {
             super(span);
             this.subject = subject;
             this.arms = arms;
+        }
+    }
+
+    /**
+     * `for ... { ... break v; ... } else e` or the same with `while`: a loop that gives a value, the whole value of a
+     * let, var, assignment or return. It is the value of the `break v;` that leaves it, or e when it ends without one.
+     */
+    public static final class LoopExpr extends Expr {
+        public final Loop loop;
+        public final Expr otherwise;
+
+        public LoopExpr(Span span, Loop loop, Expr otherwise) {
+            super(span);
+            this.loop = loop;
+            this.otherwise = otherwise;
         }
     }
 

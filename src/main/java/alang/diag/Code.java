@@ -62,7 +62,8 @@ public enum Code {
         "A `mut` parameter must receive `mut place` at the call site, with exactly the parameter's type; a plain parameter must not be marked `mut`.",
         "fn inc(x: mut i32) { x += 1; }\ninc(mut n);  // ok\ninc(n);      // error: write `mut n`"),
     E0208("aliased mut argument",
-        "A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access.",
+        "A variable passed as `mut` may not appear anywhere else in the same call. This guarantees the callee has exclusive access. "
+            + "Likewise, the body of `for x in mut xs` changes xs only through x, and cannot use xs otherwise.",
         "append(mut s, s);            // error: copy first: let t: str[16] = s; append(mut s, t);\nswap(mut xs[i], mut xs[j]);  // error: i and j may be equal"),
     E0209("not a constant expression",
         "Constants, array sizes, capacities and repeat counts must be computable at compile time: literals, other constants, operators, conversions and literals of structs, enums and arrays. Function calls are not allowed.",
@@ -148,6 +149,13 @@ public enum Code {
             + "an Option for an Option; for a Result, a Result whose error type can hold e's. Tests, contracts and default "
             + "values have nothing to return from.",
         "fn first_digit(s: str[8]) -> i64 { let n: i64 = parse_i64(s)?; return n; }  // error: return Option<i64>"),
+    E0311("loop value",
+        "A `for` or `while` loop gives a value when it is the whole value of a let, var, assignment or return and ends "
+            + "with `else`: `let i: i64 = for i, x in xs { if x == 0 { break i; } } else -1;`. `break v;` leaves it with the "
+            + "value v, and the value after `else` is its value when it ends without a break. Such a loop is left only "
+            + "with a value, and a loop that is not one is left with a plain `break;`. A `break v;` leaves the innermost "
+            + "loop around it that gives a value, and any loops inside that one.",
+        "let i: i64 = for i, x in xs { if x == 0 { break; } } else -1;  // error: break i;"),
 
     // ---- memory, termination ----
     E0401("recursion is not allowed",
@@ -298,7 +306,12 @@ public enum Code {
             + "with lo > hi for clamp, an empty separator or pattern for split, split_once or replace, an empty list for "
             + "min(xs), max(xs), min_by or max_by, a count below 0 or text over 1048576 bytes for repeat, a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, or a "
             + "base outside 2 to 36 for to_base or parse_i64.",
-        "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap");
+        "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap"),
+    R0014("input is not JSON of its type",
+        "A fn main whose parameter is not a str, fn main(input: Config), receives its standard input as JSON for that type, "
+            + "mapped as a tool's arguments are (see from_json). Input that is not, or longer than 1048576 bytes, stops the "
+            + "program before main starts.",
+        "fn main(input: Config) { ... }  // with stdin {\"name\": 3} where name is a str: trap");
 
     public final String title;
     public final String explanation;

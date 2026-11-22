@@ -1,0 +1,10 @@
+true true false
+-42 0
+Option.Some((0, 3)) Option.Some((1, 4)) Option.Some((0, 0))
+Option.Some((0, 1)) Option.Some((0, 2)) Option.Some((0, 11))
+true true true false
+Option.Some((4, 7)) Option.None true
+false true false true
+true false Option.Some((6, 11))
+true false
+Option.Some((2, 3))

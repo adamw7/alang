@@ -49,8 +49,15 @@ item
     : constDecl
     | structDecl
     | enumDecl
+    | typeAliasDecl
     | functionDecl
     | testDecl
+    ;
+
+// type Grid = [[i64; 8]; 8];  another name for a type, which means exactly that type wherever it is written.
+// type Pair<T> = (T, T);  with type parameters, which each use fixes: Pair<i64>.
+typeAliasDecl
+    : TYPE identifier typeParams? ASSIGN type SEMI
     ;
 
 // const MAX_USERS: i32 = 64;
@@ -121,7 +128,7 @@ type
     | LPAREN type (COMMA type)+ COMMA? RPAREN    # tupleTypeRef    // (i64, str[8]): a pair
     | MAP LBRACK type COMMA type SEMI capacity RBRACK  # mapTypeRef  // map[str[16], i64; 64]: up to 64 entries, in key order
     | SET LBRACK type SEMI capacity RBRACK       # setTypeRef      // set[i64; 32]: up to 32 distinct values, in order
-    | FN LPAREN (type (COMMA type)*)? RPAREN (ARROW type)?  # fnTypeRef  // fn(i64) -> bool: a function, as a parameter
+    | FN LPAREN (type (COMMA type)*)? RPAREN (ARROW type)?  # fnTypeRef  // fn(i64) -> bool: a function, as a value
     | (qual=identifier DOT)? identifier (LT type (COMMA type)* GT)?   # namedTypeRef  // struct or enum, or ns.Name; Pair<i64, bool>
     // Option<Option<i64>>: the lexer reads `>>` as one token, which closes the last type argument's list and this one.
     | (qual=identifier DOT)? identifier LT (type COMMA)* innerType SHR   # nestedTypeRef
@@ -176,11 +183,17 @@ statement
 // let Option.Some(n): Option<i64> = parse_i64(s) else { return 0; };  a pattern that can fail, with a block that
 // runs when it does not match and must leave: return, break, continue or panic.
 letStmt
-    : kind=(LET | VAR) (identifier | pattern) (COLON type)? ASSIGN expression (ELSE block)? SEMI
+    : kind=(LET | VAR) (identifier | pattern) (COLON type)? ASSIGN (loopValue | expression) (ELSE block)? SEMI
     ;
 
 assignStmt
-    : place op=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) expression SEMI
+    : place op=(ASSIGN | PLUS_ASSIGN | MINUS_ASSIGN | STAR_ASSIGN | SLASH_ASSIGN | PERCENT_ASSIGN) (loopValue | expression) SEMI
+    ;
+
+// let i: i64 = for i, x in xs { if x == 0 { break i; } } else -1;  a loop as the whole value of a let, var,
+// assignment or return: the value of the `break v;` that leaves it, or the value after `else` when it ends.
+loopValue
+    : (whileStmt | forStmt) ELSE expression
     ;
 
 // A storage location: a variable, optionally followed by fields and indexes.
@@ -217,8 +230,9 @@ whileStmt
 // for item in items { }        (array, list or str; iterates over copies)
 // for i, item in items { }     (with each element's index)
 // for (k, v) in pairs { }      (each element taken apart by a pattern that always matches)
+// for x in mut xs { x += 1; }  (each element itself, which the body may change; with a map, for k, v in mut m)
 forStmt
-    : FOR (index=identifier COMMA)? (identifier | pattern) IN REV? expression (range=(DOTDOT | DOTDOTEQ) expression (STEP expression)?)? block
+    : FOR (index=identifier COMMA)? (identifier | pattern) IN REV? MUT? expression (range=(DOTDOT | DOTDOTEQ) expression (STEP expression)?)? block
     ;
 
 // outer: for i in 0..n { ... break outer; ... }
@@ -246,6 +260,7 @@ singlePattern
     | (qual=identifier DOT)? identifier LPAREN fieldPattern (COMMA fieldPattern)* COMMA? RPAREN          # structPattern
     | LPAREN pattern (COMMA pattern)+ COMMA? RPAREN                                                     # tuplePattern
     | LPAREN pattern RPAREN                                                                             # parenPattern
+    | LBRACK (listPatternElem (COMMA listPatternElem)* COMMA?)? RBRACK                                  # listPattern
     | rangeBound op=(DOTDOT | DOTDOTEQ) rangeBound                                                      # rangePattern
     | MINUS? INT_LIT                                                              # intPattern
     | CHAR_LIT                                                                    # charPattern
@@ -253,6 +268,12 @@ singlePattern
     | (TRUE | FALSE)                                                              # boolPattern
     | UNDERSCORE                                                                  # wildcardPattern
     | identifier                                                                  # bindingPattern
+    ;
+
+// [a, b]: exactly two elements; [first, ..], [.., last], [a, .., z]: at least the elements named, the `..` any others.
+listPatternElem
+    : pattern
+    | DOTDOT
     ;
 
 // Point(x: 0, y: py): the fields it names match their patterns; the others match anything.
@@ -266,8 +287,9 @@ rangeBound
     | CHAR_LIT
     ;
 
+// `break v;` leaves the innermost loop around it that gives a value (see loopValue) with the value v.
 breakStmt
-    : BREAK identifier? SEMI
+    : BREAK identifier? expression? SEMI
     ;
 
 continueStmt
@@ -275,7 +297,7 @@ continueStmt
     ;
 
 returnStmt
-    : RETURN expression? SEMI
+    : RETURN (loopValue | expression)? SEMI
     ;
 
 assertStmt
@@ -345,6 +367,7 @@ postfixOp
     | LBRACK expression RBRACK           # indexAccess
     | LBRACK (from=expression)? DOTDOT (to=expression)? RBRACK   # sliceAccess  // s[1..], xs[a..b]: the elements from..to
     | QUESTION                           # tryAccess    // parse_i64(s)?: the value, or return the Option.None or Result.Err
+    | LPAREN argList? RPAREN             # callAccess   // ops[i](x), make_adder()(1): a call of a function value
     ;
 
 primary
@@ -355,9 +378,8 @@ primary
     | LIST LBRACK type SEMI expression RBRACK LPAREN expression RPAREN    # listResizeExpr
     | identifier LPAREN structInit (COMMA structInit)* COMMA? RPAREN      # structExpr
     | identifier DOT identifier LPAREN structInit (COMMA structInit)* COMMA? RPAREN   # qualifiedStructExpr
-    | identifier DOT identifier DOT identifier LPAREN argList? RPAREN    # qualifiedVariantExpr
-    | identifier DOT identifier LPAREN argList? RPAREN                  # variantExpr
-    | identifier LPAREN argList? RPAREN                                 # callExpr
+    // f(x), Enum.Variant(x), ns.f(x) and ns.Enum.Variant(x) are a name with postfix fields and a call (callAccess),
+    // which the AST builder turns into the call they are: one way to read them keeps prediction linear.
     | identifier                                                        # nameExpr
     | LPAREN expression RPAREN                                          # parenExpr
     | LPAREN expression (COMMA expression)+ COMMA? RPAREN               # tupleExpr
@@ -394,9 +416,11 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set`, `as` and `traps` are contextual keywords and remain usable as names.
+// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set`, `as`, `traps` and `type` are contextual keywords and
+// remain usable as names.
 identifier
     : IDENT
+    | TYPE
     | LIMIT
     | TEST
     | TOOL
@@ -422,6 +446,7 @@ LET       : 'let' ;
 VAR       : 'var' ;
 CONST     : 'const' ;
 STRUCT    : 'struct' ;
+TYPE      : 'type' ;
 ENUM      : 'enum' ;
 IF        : 'if' ;
 ELSE      : 'else' ;
@@ -525,14 +550,22 @@ FLOAT_LIT
 INT_LIT
     : DIGITS
     | '0x' HEX_DIGIT ('_'? HEX_DIGIT)*
+    | '0o' [0-7] ('_'? [0-7])*
     | '0b' [01] ('_'? [01])*
     ;
 
+// "text\n" on one line, with escapes; r"C:\dir" raw, without escapes;
+// """ on a line of its own, then lines of text, then """: several lines, with escapes, their common indentation
+// removed (r""" ... """ without escapes). Every form is the same kind of literal, a str.
 STRING_LIT
     : '"' (ESCAPE | ~["\\\r\n])* '"'
+    | 'r"' ~["\r\n]* '"'
+    | '"""' (ESCAPE | '\\' [\r\n] | ~[\\])*? '"""'
+    | 'r"""' .*? '"""'
     ;
 
-// A single byte: 'a', '\n', '\x41'. Its value is an integer constant.
+// One character: 'a', '\n', '\x41', or one beyond ASCII, 'é', '\u{20AC}', whose value is its code point.
+// Its value is an integer constant.
 CHAR_LIT
     : '\'' (ESCAPE | ~['\\\r\n]) '\''
     ;
@@ -552,6 +585,11 @@ LINE_COMMENT
     : '//' ~[\r\n]* -> channel(HIDDEN)
     ;
 
+// /* ... */, which may span lines; it ends at the first */ (block comments do not nest).
+BLOCK_COMMENT
+    : '/*' .*? '*/' -> channel(HIDDEN)
+    ;
+
 WS
     : [ \t\r\n]+ -> skip
     ;
@@ -564,4 +602,4 @@ ERROR_CHAR
 fragment DIGITS    : [0-9] ('_'? [0-9])* ;
 fragment EXPONENT  : [eE] [+-]? DIGITS ;
 fragment HEX_DIGIT : [0-9a-fA-F] ;
-fragment ESCAPE    : '\\' ( [ntr0\\"'] | 'x' HEX_DIGIT HEX_DIGIT ) ;
+fragment ESCAPE    : '\\' ( [ntr0\\"'] | 'x' HEX_DIGIT HEX_DIGIT | 'u{' HEX_DIGIT+ '}' ) ;
