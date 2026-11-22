@@ -306,7 +306,12 @@ public enum Code {
             + "with lo > hi for clamp, an empty separator or pattern for split, split_once or replace, an empty list for "
             + "min(xs), max(xs), min_by or max_by, a count below 0 or text over 1048576 bytes for repeat, a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, or a "
             + "base outside 2 to 36 for to_base or parse_i64.",
-        "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap");
+        "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap"),
+    R0014("input is not JSON of its type",
+        "A fn main whose parameter is not a str, fn main(input: Config), receives its standard input as JSON for that type, "
+            + "mapped as a tool's arguments are (see from_json). Input that is not, or longer than 1048576 bytes, stops the "
+            + "program before main starts.",
+        "fn main(input: Config) { ... }  // with stdin {\"name\": 3} where name is a str: trap");
 
     public final String title;
     public final String explanation;

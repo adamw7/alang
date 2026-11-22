@@ -1,7 +1,7 @@
 error[E0202]: a multi-line string starts with a line break after its opening quotes
  --> tests/errors/E0202_text_block_start.al:3:11
   |
-3 |     print("""one line""");
-  |           ^^^^^^^^^^^^^^
-  = hint: write """ at the end of a line and the text from the next one, or use "..." for one line
+3 |     print("""first line
+  |           ^^^^^^^^^^^^^
+  = hint: write """ at the end of a line and the text from the next one
 

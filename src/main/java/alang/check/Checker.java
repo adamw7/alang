@@ -1004,10 +1004,10 @@ public final class Checker {
                 "declare it as fn main() { ... }, or as fn main(input: str[4096]) { ... } to receive the standard input");
         } else if (f.name.equals("main") && f.params.size() == 1) {
             Param p = f.params.get(0);
-            if (p.mut() || !(f.paramVars.get(0).type instanceof Type.Str) && f.paramVars.get(0).type != Type.ERROR) {
-                diags.error(Code.E0602, p.span(), "the parameter of `main` must be a read-only str: it receives the standard input",
-                    "declare it as " + p.name() + ": str[4096] (the most bytes of input the program accepts), and split "
-                        + "it as needed: let lines: list[str[80]; 64] = split(" + p.name() + ", '\\n');");
+            if (p.mut()) {
+                diags.error(Code.E0602, p.span(), "the parameter of `main` must be read-only: it receives the standard input",
+                    "declare it as " + p.name() + ": str[4096] (the most bytes of input the program accepts), or as a type "
+                        + "the input is JSON of: " + p.name() + ": Config");
             }
         }
         if (!f.ensures.isEmpty() && !(f.ret instanceof Type.Void)) {
@@ -2014,6 +2014,12 @@ public final class Checker {
             }
         } else if (f.inPlace) {
             Type ct = mutPlace(f.from);
+            if (rootName(f.from) == null && !Type.isError(ct = f.from.type)) {
+                diags.error(Code.E0206, f.from.span, "`for x in mut` changes the elements of a variable, and `"
+                        + exprText(f.from) + "` is not one",
+                    "copy it into a variable first: var xs: " + ct + " = " + exprText(f.from) + ";");
+                ct = Type.ERROR;
+            }
             varType = Type.elementOf(ct);
             if (ct instanceof Type.MapT mt) {
                 varType = mt.value();
@@ -4496,6 +4502,22 @@ public final class Checker {
                 Type t = textArg(b, args.get(0));
                 textPattern(b, args.get(1), b == Builtin.STRIP_PREFIX ? "the prefix" : "the suffix");
                 return t;
+            }
+            case FROM_JSON -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                textArg(b, args.get(0));
+                Type want = successType(expected);
+                if (fallible(expected) != 1 || want == null) {
+                    diags.error(Code.E0201, c.span, "from_json() takes its type from the Option<T> it is stored in",
+                        "store it in a variable of that type: let cfg: Option<Config> = from_json(text);");
+                    return Type.ERROR;
+                }
+                if (hasFunction(want) || Type.hasTypeVar(want) || Type.hasAnyCapacity(want)) {
+                    diags.error(Code.E0201, c.span, "from_json() makes values of types with JSON forms, and " + want + " has none",
+                        "JSON holds no functions, and the type needs constant capacities and no type parameters");
+                    return Type.ERROR;
+                }
+                return expected;
             }
             case RE_MATCH, RE_FIND -> {
                 if (!arity(c, 2)) return Type.ERROR;

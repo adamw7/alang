@@ -10,5 +10,5 @@ error[E0001]: `R0099` is not a trap code
   |
 6 | test "unknown" traps R0099 {
   |                      ^^^^^
-  = hint: the trap codes are R0001 to R0013; `alang explain --all` lists them
+  = hint: the trap codes are R0001 to R0014; `alang explain --all` lists them
 

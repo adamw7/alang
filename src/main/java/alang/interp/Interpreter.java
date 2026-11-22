@@ -166,13 +166,34 @@ public final class Interpreter {
         }
     }
 
+    /** The most bytes of JSON that a fn main(input: T) whose T is not a str reads from its standard input. */
+    public static final int MAX_JSON_INPUT = 1 << 20;
+
+    /** How many bytes of standard input fn main's parameter p takes: a str its capacity, any other type JSON. */
+    public static int inputCapacity(LocalVar p) {
+        return p.type instanceof Type.Str s ? s.cap() : MAX_JSON_INPUT;
+    }
+
     /**
      * Runs fn main. A main that takes a str receives {@code input}, the program's standard input; input
      * longer than its capacity traps (R0004) before main starts.
      */
     public void runMain(FnDecl main, byte[] input) {
         Object[] args = new Object[main.paramVars.size()];
-        if (args.length == 1) {
+        if (args.length == 1 && !(main.paramVars.get(0).type instanceof Type.Str)) {
+            // fn main(input: Config): the input is JSON for the type.
+            LocalVar p = main.paramVars.get(0);
+            Object v = input.length > MAX_JSON_INPUT ? null : JsonValues.decodeText(input, input.length, p.type);
+            if (v == null) {
+                Trap t = new Trap(input.length > MAX_JSON_INPUT ? Code.R0004 : Code.R0014, p.span, input.length > MAX_JSON_INPUT
+                    ? "standard input exceeds " + MAX_JSON_INPUT + " bytes of JSON for `" + p.name + "`"
+                    : "the standard input is not JSON of " + p.type + " for `" + p.name + "`");
+                callStack.push(new Frame("fn main", main.nameSpan, main, new Object[main.locals.size()]));
+                fillTrace(t);
+                throw t;
+            }
+            args[0] = v;
+        } else if (args.length == 1) {
             LocalVar p = main.paramVars.get(0);
             int cap = ((Type.Str) p.type).cap();
             if (input.length > cap) {
@@ -1830,6 +1851,14 @@ public final class Interpreter {
                 byte[] b = new byte[s.b.length];
                 System.arraycopy(s.b, from, b, 0, to - from);
                 return new StrV(b, to - from);
+            }
+            case FROM_JSON -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                meter.bytes(s.len);
+                Object v = JsonValues.decodeText(s.b, s.len, ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0));
+                if (v == null) return option(null);
+                meter.elements(1);
+                return option(v);
             }
             case RE_MATCH, RE_FIND -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);

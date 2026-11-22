@@ -162,6 +162,13 @@ public enum Builtin {
         "Where the regular expression pattern (see re_match) first matches in the str s: Option.Some((start, end)), the "
             + "byte positions of the match, s[start..end], or Option.None. Of the matches that start there it takes "
             + "the one Perl does: the left alternative first, each repetition as long as it can be."),
+    FROM_JSON(Group.TEXT, true, "from_json", "from_json(s) -> Option<T>",
+        "The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored "
+            + "in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to "
+            + "numbers (an integer type takes only whole numbers that fit), strings to strs of at most their capacity in "
+            + "UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default "
+            + "present, no other) and maps with str keys, \"Variant\" or {\"Variant\": [values]} to enums. "
+            + "Option.None for any other text."),
     SPLIT_ONCE(Group.TEXT, true, "split_once", "split_once(s, sep) -> Option<(str[N], str[N])>",
         "The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the "
             + "capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once(\"k=v=w\", '=') is Option.Some((\"k\", \"v=w\")). "

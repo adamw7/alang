@@ -83,6 +83,7 @@ Codes are never reused for a different meaning.
 | [R0011](#r0011) | step budget exhausted |
 | [R0012](#r0012) | invalid shift or empty pop |
 | [R0013](#r0013) | invalid argument |
+| [R0014](#r0014) | input is not JSON of its type |
 
 ## E0001
 
@@ -712,6 +713,14 @@ let p: i64 = pow(2, -1);  // trap
 let c: i64 = clamp(x, 10, 0);  // trap
 ```
 
+## R0014
+
+**input is not JSON of its type**: A fn main whose parameter is not a str, fn main(input: Config), receives its standard input as JSON for that type, mapped as a tool's arguments are (see from_json). Input that is not, or longer than 1048576 bytes, stops the program before main starts.
+
+```
+fn main(input: Config) { ... }  // with stdin {"name": 3} where name is a str: trap
+```
+
 ## Builtin functions and the standard library
 
 Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
@@ -813,6 +822,7 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `strip_suffix(s, suffix) -> str[N]` | s without suffix (a str or u8 byte) at its end, or s unchanged if it does not end with it: strip_suffix("a.txt", ".txt") is "a". |
 | `re_match(s, pattern) -> bool` | Whether the regular expression pattern matches all of the str s: re_match(s, r"\d{3}-\d{4}"). The syntax: a byte matches itself; . any byte but a newline; [abc], [a-z], [^...] a class; \d \w \s (and \D \W \S) digits, word characters and spaces; ^ and $ the start and end; ( ) a group; \| alternatives; * + ? and {m}, {m,}, {m,n} (up to 100) repetition, greedy; \ before a symbol the symbol. It runs in time linear in the length of s. Traps (R0013) if the pattern is not valid, or longer than 256 bytes. |
 | `re_find(s, pattern) -> Option<(i64, i64)>` | Where the regular expression pattern (see re_match) first matches in the str s: Option.Some((start, end)), the byte positions of the match, s[start..end], or Option.None. Of the matches that start there it takes the one Perl does: the left alternative first, each repetition as long as it can be. |
+| `from_json(s) -> Option<T>` | The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to numbers (an integer type takes only whole numbers that fit), strings to strs of at most their capacity in UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default present, no other) and maps with str keys, "Variant" or {"Variant": [values]} to enums. Option.None for any other text. |
 | `split_once(s, sep) -> Option<(str[N], str[N])>` | The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once("k=v=w", '=') is Option.Some(("k", "v=w")). Traps (R0013) if sep is empty. |
 | `repeat(s, n) -> str[N]` | The str or u8 byte s, n times over: repeat("ab", 3) is "ababab", repeat('-', 10) a rule of dashes. Its type is that of the variable it is stored in. Traps (R0013) if n < 0, and (R0004) if the result does not fit. |
 | `split(s, sep) -> list[str[K]; M]` | The pieces of s between occurrences of sep (a non-empty str or a u8 byte), empty pieces included. Its type is that of the variable it is stored in. Traps if a piece or the count does not fit; for p in split(s, sep) goes through the pieces one at a time instead, each a str of the capacity of s, and never traps on their size or number. |

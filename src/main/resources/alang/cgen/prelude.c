@@ -464,6 +464,27 @@ static void al_read_input(uint8_t *b, uint32_t *len, uint32_t cap, const char *p
     }
 }
 
+/* The standard input of a fn main(input: T) whose T is not a str: up to cap bytes of JSON, read once. */
+static void al_read_json_input(uint8_t *b, uint32_t *len, uint32_t cap, const char *param, int line, int col) {
+    uint8_t extra;
+    *len = 0;
+    for (;;) {
+        int64_t r = *len < cap ? al_read(0, b + *len, cap - *len) : al_read(0, &extra, 1);
+        if (r < 0) _Exit(2);
+        if (r == 0) return;
+        if (*len == cap) {
+            al_out e = al_trap_begin("R0004");
+            AL_PUTS(&e, "standard input exceeds ");
+            al_fmt_u64(&e, cap);
+            AL_PUTS(&e, " bytes of JSON for `");
+            al_puts_c(&e, param);
+            AL_PUTS(&e, "`");
+            al_trap_end(&e, line, col);
+        }
+        *len += (uint32_t)r;
+    }
+}
+
 static uint32_t al_idx_s(int64_t i, uint32_t len, int line, int col) {
     if (i < 0 || i >= (int64_t)len) {
         al_out e = al_trap_begin("R0003");
@@ -1159,6 +1180,471 @@ static int al_re_run(al_re *r, const uint8_t *s, uint32_t len, int whole, uint32
         if (matched && cn == 0) break;
     }
     return matched;
+}
+
+/*
+ * JSON text read as a value of an ALang type: from_json, and fn main(input: T). The generated al_json_ functions of
+ * each type call these; together they accept exactly the text that the interpreter's Json.parse and
+ * JsonValues.fromJson accept (as tool arguments), and give the same values. Each returns 1, or 0 when the text is
+ * not that type's JSON, which is all either backend says about it.
+ */
+typedef struct {
+    const uint8_t *s;
+    uint32_t n, pos;
+} al_json;
+
+static uint32_t al_utf8_next(const uint8_t *s, uint32_t n, uint32_t i, uint32_t *len, int *ok);
+
+static void al_json_ws(al_json *j) {
+    while (j->pos < j->n && (j->s[j->pos] == ' ' || j->s[j->pos] == '\t' || j->s[j->pos] == '\n' || j->s[j->pos] == '\r')) {
+        j->pos++;
+    }
+}
+
+/* The next byte after any whitespace, or -1 at the end. */
+static int al_json_peek(al_json *j) {
+    al_json_ws(j);
+    return j->pos < j->n ? j->s[j->pos] : -1;
+}
+
+/* Consumes c after any whitespace; 0 if it is not next. */
+static int al_json_eat(al_json *j, int c) {
+    if (al_json_peek(j) != c) return 0;
+    j->pos++;
+    return 1;
+}
+
+static int al_json_word(al_json *j, const char *w) {
+    uint32_t i;
+    al_json_ws(j);
+    for (i = 0; w[i] != 0; i++) {
+        if (j->pos + i >= j->n || j->s[j->pos + i] != (uint8_t)w[i]) return 0;
+    }
+    j->pos += i;
+    return 1;
+}
+
+static int al_json_bool(al_json *j, bool *out) {
+    if (al_json_word(j, "true")) {
+        *out = true;
+        return 1;
+    }
+    if (al_json_word(j, "false")) {
+        *out = false;
+        return 1;
+    }
+    return 0;
+}
+
+static int al_json_hex4(al_json *j, uint32_t *u) {
+    uint32_t k, v = 0;
+    if (j->pos + 4 > j->n) return 0;
+    for (k = 0; k < 4; k++) {
+        int c = j->s[j->pos + k], d;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else return 0;
+        v = v * 16u + (uint32_t)d;
+    }
+    j->pos += 4;
+    *u = v;
+    return 1;
+}
+
+/* Appends code point cp in UTF-8 to b, whose capacity is cap; 0 if it does not fit. */
+static int al_json_put_cp(uint8_t *b, uint32_t *len, uint32_t cap, uint32_t cp) {
+    uint8_t t[4];
+    uint32_t n, i;
+    if (cp < 0x80) {
+        t[0] = (uint8_t)cp;
+        n = 1;
+    } else if (cp < 0x800) {
+        t[0] = (uint8_t)(0xC0 | (cp >> 6));
+        t[1] = (uint8_t)(0x80 | (cp & 0x3F));
+        n = 2;
+    } else if (cp < 0x10000) {
+        t[0] = (uint8_t)(0xE0 | (cp >> 12));
+        t[1] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+        t[2] = (uint8_t)(0x80 | (cp & 0x3F));
+        n = 3;
+    } else {
+        t[0] = (uint8_t)(0xF0 | (cp >> 18));
+        t[1] = (uint8_t)(0x80 | ((cp >> 12) & 0x3F));
+        t[2] = (uint8_t)(0x80 | ((cp >> 6) & 0x3F));
+        t[3] = (uint8_t)(0x80 | (cp & 0x3F));
+        n = 4;
+    }
+    if (*len + n > cap) return 0;
+    for (i = 0; i < n; i++) b[(*len)++] = t[i];
+    return 1;
+}
+
+/* A JSON string into b, of capacity cap, as UTF-8; 0 for bad text, or for one longer than cap bytes. */
+static int al_json_str(al_json *j, uint8_t *b, uint32_t *len, uint32_t cap) {
+    *len = 0;
+    if (!al_json_eat(j, '"')) return 0;
+    for (;;) {
+        int c;
+        if (j->pos >= j->n) return 0;
+        c = j->s[j->pos];
+        if (c == '"') {
+            j->pos++;
+            return 1;
+        }
+        if (c < 0x20) return 0;
+        if (c == '\\') {
+            int e;
+            uint32_t u, lo;
+            if (j->pos + 1 >= j->n) return 0;
+            e = j->s[j->pos + 1];
+            j->pos += 2;
+            switch (e) {
+            case '"': case '\\': case '/': u = (uint32_t)e; break;
+            case 'b': u = 8; break;
+            case 'f': u = 12; break;
+            case 'n': u = 10; break;
+            case 'r': u = 13; break;
+            case 't': u = 9; break;
+            case 'u':
+                if (!al_json_hex4(j, &u)) return 0;
+                if (u >= 0xD800 && u <= 0xDBFF) {
+                    if (j->pos + 2 > j->n || j->s[j->pos] != '\\' || j->s[j->pos + 1] != 'u') return 0;
+                    j->pos += 2;
+                    if (!al_json_hex4(j, &lo) || lo < 0xDC00 || lo > 0xDFFF) return 0;
+                    u = 0x10000 + ((u - 0xD800) << 10) + (lo - 0xDC00);
+                } else if (u >= 0xDC00 && u <= 0xDFFF) {
+                    return 0;
+                }
+                break;
+            default: return 0;
+            }
+            if (!al_json_put_cp(b, len, cap, u)) return 0;
+            continue;
+        }
+        if (c < 0x80) {
+            if (*len >= cap) return 0;
+            b[(*len)++] = (uint8_t)c;
+            j->pos++;
+        } else {
+            uint32_t n, i;
+            int ok;
+            (void)al_utf8_next(j->s, j->n, j->pos, &n, &ok);
+            if (!ok || *len + n > cap) return 0;
+            for (i = 0; i < n; i++) b[(*len)++] = j->s[j->pos + i];
+            j->pos += n;
+        }
+    }
+}
+
+/*
+ * A JSON number, read as the interpreter's Json.parse reads one: its sign, where its integer and fraction digits
+ * are, and its exponent. A number with a fraction or an exponent is a BigDecimal there, whose exponent and scale
+ * must fit an int; 0 for any other text.
+ */
+typedef struct {
+    int neg, decimal;
+    uint32_t is, ie, fs, fe;
+    int64_t exp;
+} al_jnum;
+
+static int al_json_num(al_json *j, al_jnum *x) {
+    const uint8_t *s = j->s;
+    uint32_t n = j->n;
+    al_json_ws(j);
+    x->neg = j->pos < n && s[j->pos] == '-';
+    if (x->neg) j->pos++;
+    x->decimal = 0;
+    x->exp = 0;
+    x->is = j->pos;
+    if (j->pos < n && s[j->pos] == '0') {
+        j->pos++;
+        if (j->pos < n && s[j->pos] >= '0' && s[j->pos] <= '9') return 0;
+    } else {
+        if (j->pos >= n || s[j->pos] < '0' || s[j->pos] > '9') return 0;
+        while (j->pos < n && s[j->pos] >= '0' && s[j->pos] <= '9') j->pos++;
+    }
+    x->ie = j->pos;
+    x->fs = x->fe = j->pos;
+    if (j->pos < n && s[j->pos] == '.') {
+        x->decimal = 1;
+        j->pos++;
+        x->fs = j->pos;
+        if (j->pos >= n || s[j->pos] < '0' || s[j->pos] > '9') return 0;
+        while (j->pos < n && s[j->pos] >= '0' && s[j->pos] <= '9') j->pos++;
+        x->fe = j->pos;
+    }
+    if (j->pos < n && (s[j->pos] == 'e' || s[j->pos] == 'E')) {
+        int eneg = 0;
+        int64_t e = 0;
+        x->decimal = 1;
+        j->pos++;
+        if (j->pos < n && (s[j->pos] == '+' || s[j->pos] == '-')) eneg = s[j->pos++] == '-';
+        if (j->pos >= n || s[j->pos] < '0' || s[j->pos] > '9') return 0;
+        while (j->pos < n && s[j->pos] >= '0' && s[j->pos] <= '9') {
+            if (e <= 2147483647) e = e * 10 + (s[j->pos] - '0');
+            j->pos++;
+        }
+        /* The exponent of a BigDecimal is at most Integer.MAX_VALUE either way, and so is its scale. */
+        if (e > 2147483647) return 0;
+        x->exp = eneg ? -e : e;
+        if ((int64_t)(x->fe - x->fs) - x->exp > 2147483647 || (int64_t)(x->fe - x->fs) - x->exp < -2147483647 - 1) return 0;
+    }
+    return 1;
+}
+
+/* The k-th digit of the number's digits, its integer digits then its fraction digits. */
+static int al_jnum_digit(const al_json *j, const al_jnum *x, uint64_t k) {
+    uint64_t il = x->ie - x->is;
+    return k < il ? j->s[x->is + k] - '0' : j->s[x->fs + (k - il)] - '0';
+}
+
+/*
+ * The number as an integer whose magnitude is at most max (or with neg_ok, a negative one of magnitude at most
+ * max_neg), as JsonValues.fromJson takes one: a BigDecimal with no fraction left once its exponent applies, and no
+ * more than 20 integer digits. Sets *mag and *neg; 0 if it is no such integer.
+ */
+static int al_jnum_int(const al_json *j, const al_jnum *x, uint64_t max, uint64_t max_neg, uint64_t *mag, int *neg) {
+    uint64_t total = (uint64_t)(x->ie - x->is) + (x->fe - x->fs), first = 0, k;
+    int64_t int_digits;
+    uint64_t m = 0;
+    while (first < total && al_jnum_digit(j, x, first) == 0) first++;
+    *neg = 0;
+    *mag = 0;
+    if (first == total) return 1;
+    /* precision - scale: the digits of the unscaled value, from its first that is not 0, less those after the point. */
+    int_digits = (int64_t)(total - first) - ((int64_t)(x->fe - x->fs) - x->exp);
+    if (int_digits > 20 || int_digits <= 0) return 0;
+    for (k = 0; k < (uint64_t)int_digits; k++) {
+        int d = first + k < total ? al_jnum_digit(j, x, first + k) : 0;
+        if (m > (UINT64_MAX - (uint64_t)d) / 10u) return 0;
+        m = m * 10u + (uint64_t)d;
+    }
+    for (k = first + (uint64_t)int_digits; k < total; k++) {
+        if (al_jnum_digit(j, x, k) != 0) return 0;
+    }
+    if (x->neg ? m > max_neg : m > max) return 0;
+    *mag = m;
+    *neg = x->neg;
+    return 1;
+}
+
+/* The decimal of a number being converted to a float: up to 800 significant digits (Go's strconv algorithm). */
+typedef struct {
+    uint8_t d[800];
+    int nd, dp, trunc;
+} al_dec;
+
+static void al_dec_trim(al_dec *a) {
+    while (a->nd > 0 && a->d[a->nd - 1] == 0) a->nd--;
+    if (a->nd == 0) a->dp = 0;
+}
+
+/* a * 2^k, 0 < k <= 59. */
+static void al_dec_lshift(al_dec *a, int k) {
+    uint8_t t[820];
+    int w = 820, r, delta, i;
+    uint64_t n = 0;
+    for (r = a->nd - 1; r >= 0; r--) {
+        n += (uint64_t)a->d[r] << k;
+        t[--w] = (uint8_t)(n % 10u);
+        n /= 10u;
+    }
+    while (n > 0) {
+        t[--w] = (uint8_t)(n % 10u);
+        n /= 10u;
+    }
+    delta = (820 - w) - a->nd;
+    a->nd = 820 - w;
+    if (a->nd > 800) {
+        for (i = 800; i < a->nd; i++) {
+            if (t[w + i] != 0) a->trunc = 1;
+        }
+        a->nd = 800;
+    }
+    for (i = 0; i < a->nd; i++) a->d[i] = t[w + i];
+    a->dp += delta;
+    al_dec_trim(a);
+}
+
+/* a / 2^k, 0 < k <= 59, as Go's rightShift. */
+static void al_dec_rshift(al_dec *a, int k) {
+    int r = 0, w = 0;
+    uint64_t n = 0, mask = ((uint64_t)1 << k) - 1;
+    for (; (n >> k) == 0; r++) {
+        if (r >= a->nd) {
+            if (n == 0) {
+                a->nd = 0;
+                return;
+            }
+            while ((n >> k) == 0) {
+                n *= 10u;
+                r++;
+            }
+            break;
+        }
+        n = n * 10u + a->d[r];
+    }
+    a->dp -= r - 1;
+    for (; r < a->nd; r++) {
+        uint64_t dig = n >> k;
+        n &= mask;
+        a->d[w++] = (uint8_t)dig;
+        n = n * 10u + a->d[r];
+    }
+    while (n > 0) {
+        uint64_t dig = n >> k;
+        n &= mask;
+        if (w < 800) a->d[w++] = (uint8_t)dig;
+        else if (dig > 0) a->trunc = 1;
+        n *= 10u;
+    }
+    a->nd = w;
+    al_dec_trim(a);
+}
+
+static void al_dec_shift(al_dec *a, int k) {
+    if (a->nd == 0) return;
+    while (k > 59) {
+        al_dec_lshift(a, 59);
+        k -= 59;
+    }
+    while (k < -59) {
+        al_dec_rshift(a, 59);
+        k += 59;
+    }
+    if (k > 0) al_dec_lshift(a, k);
+    else if (k < 0) al_dec_rshift(a, -k);
+}
+
+static int al_dec_round_up(const al_dec *a, int nd) {
+    if (nd < 0 || nd >= a->nd) return 0;
+    if (a->d[nd] == 5 && nd + 1 == a->nd) {
+        if (a->trunc) return 1;
+        return nd > 0 && (a->d[nd - 1] % 2) == 1;
+    }
+    return a->d[nd] >= 5;
+}
+
+static uint64_t al_dec_integer(const al_dec *a) {
+    int i;
+    uint64_t n = 0;
+    if (a->dp > 20) return UINT64_MAX;
+    for (i = 0; i < a->dp && i < a->nd; i++) n = n * 10u + a->d[i];
+    for (; i < a->dp; i++) n *= 10u;
+    if (al_dec_round_up(a, a->dp)) n++;
+    return n;
+}
+
+/* The bits of the float nearest a (mantbits 52, expbits 11, bias -1023 for f64; 23, 8, -127 for f32); *inf when
+   it overflows. */
+static uint64_t al_dec_bits(al_dec *a, int mantbits, int expbits, int bias, int *inf) {
+    static const int powtab[9] = {1, 3, 6, 9, 13, 16, 19, 23, 26};
+    int exp = 0;
+    uint64_t mant;
+    *inf = 0;
+    if (a->nd == 0 || a->dp < -330) {
+        mant = 0;
+        exp = bias;
+    } else if (a->dp > 310) {
+        *inf = 1;
+        return 0;
+    } else {
+        while (a->dp > 0) {
+            int n = a->dp >= 9 ? 27 : powtab[a->dp];
+            al_dec_shift(a, -n);
+            exp += n;
+        }
+        while (a->dp < 0 || (a->dp == 0 && a->d[0] < 5)) {
+            int n = -a->dp >= 9 ? 27 : powtab[-a->dp];
+            al_dec_shift(a, n);
+            exp -= n;
+        }
+        exp--;
+        if (exp < bias + 1) {
+            int n = bias + 1 - exp;
+            al_dec_shift(a, -n);
+            exp += n;
+        }
+        if (exp - bias >= (1 << expbits) - 1) {
+            *inf = 1;
+            return 0;
+        }
+        al_dec_shift(a, 1 + mantbits);
+        mant = al_dec_integer(a);
+        if (mant == (uint64_t)2 << mantbits) {
+            mant >>= 1;
+            exp++;
+            if (exp - bias >= (1 << expbits) - 1) {
+                *inf = 1;
+                return 0;
+            }
+        }
+        if ((mant & ((uint64_t)1 << mantbits)) == 0) exp = bias;
+    }
+    return (mant & (((uint64_t)1 << mantbits) - 1)) | ((uint64_t)((exp - bias) & ((1 << expbits) - 1)) << mantbits);
+}
+
+/*
+ * The number as the nearest f64 (or with f32, the nearest f32, rounded once), as BigDecimal and BigInteger
+ * convert: 0 if it is too large for the type. -0.0 only for a number with a fraction or exponent, which
+ * Json.parse reads as a negative zero.
+ */
+static int al_jnum_float(const al_json *j, const al_jnum *x, int f32, double *out) {
+    al_dec a;
+    uint64_t total = (uint64_t)(x->ie - x->is) + (x->fe - x->fs), first = 0, k;
+    uint64_t bits;
+    int64_t dp;
+    int inf;
+    while (first < total && al_jnum_digit(j, x, first) == 0) first++;
+    if (first == total) {
+        *out = x->neg && x->decimal ? -0.0 : 0.0;
+        return 1;
+    }
+    a.nd = 0;
+    a.trunc = 0;
+    for (k = first; k < total; k++) {
+        int d = al_jnum_digit(j, x, k);
+        if (a.nd < 800) a.d[a.nd++] = (uint8_t)d;
+        else if (d != 0) a.trunc = 1;
+    }
+    dp = (int64_t)(x->ie - x->is) - (int64_t)first + x->exp;
+    if (dp > 100000) dp = 100000;
+    if (dp < -100000) dp = -100000;
+    a.dp = (int)dp;
+    al_dec_trim(&a);
+    if (f32) {
+        union { uint32_t u; float f; } b32;
+        bits = al_dec_bits(&a, 23, 8, -127, &inf);
+        if (inf) return 0;
+        b32.u = (uint32_t)bits | (x->neg ? 0x80000000u : 0u);
+        *out = (double)b32.f;
+    } else {
+        union { uint64_t u; double d; } b64;
+        bits = al_dec_bits(&a, 52, 11, -1023, &inf);
+        if (inf) return 0;
+        b64.u = bits | (x->neg ? (uint64_t)1 << 63 : 0);
+        *out = b64.d;
+    }
+    return 1;
+}
+
+/* The JSON of a key of a struct or variant: its name, of at most cap bytes (a longer one names none). */
+static int al_json_key(al_json *j, uint8_t *b, uint32_t *len, uint32_t cap) {
+    return al_json_str(j, b, len, cap);
+}
+
+static int al_json_name_is(const uint8_t *b, uint32_t len, const char *name) {
+    uint32_t i;
+    for (i = 0; i < len; i++) {
+        if (name[i] == 0 || name[i] != (char)b[i]) return 0;
+    }
+    return name[len] == 0;
+}
+
+/* Whether nothing but whitespace is left. */
+static int al_json_end(al_json *j) {
+    return al_json_peek(j) < 0;
 }
 
 /* isqrt: the largest r with r * r <= n, digit by digit, two bits at a time, as the interpreter does. */

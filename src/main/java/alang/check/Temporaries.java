@@ -255,6 +255,11 @@ final class Temporaries {
             }
             // The compiled pattern and the state of the machine that runs it: one al_re of the C prelude.
             case RE_MATCH, RE_FIND -> RE_STATE;
+            // The value read, and an element of each set or map in it on its way in: at most the value again.
+            case FROM_JSON -> {
+                Type t = ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0);
+                yield Layout.add(Layout.size(t), Layout.add(Layout.size(t), 1024));
+            }
             // The element on its way to its new place.
             case ROTATE, SORT_BY, HEAP_POP -> {
                 Type elem = Type.elementOf(args.get(0).expr().type);

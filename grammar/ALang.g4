@@ -378,9 +378,8 @@ primary
     | LIST LBRACK type SEMI expression RBRACK LPAREN expression RPAREN    # listResizeExpr
     | identifier LPAREN structInit (COMMA structInit)* COMMA? RPAREN      # structExpr
     | identifier DOT identifier LPAREN structInit (COMMA structInit)* COMMA? RPAREN   # qualifiedStructExpr
-    | identifier DOT identifier DOT identifier LPAREN argList? RPAREN    # qualifiedVariantExpr
-    | identifier DOT identifier LPAREN argList? RPAREN                  # variantExpr
-    | identifier LPAREN argList? RPAREN                                 # callExpr
+    // f(x), Enum.Variant(x), ns.f(x) and ns.Enum.Variant(x) are a name with postfix fields and a call (callAccess),
+    // which the AST builder turns into the call they are: one way to read them keeps prediction linear.
     | identifier                                                        # nameExpr
     | LPAREN expression RPAREN                                          # parenExpr
     | LPAREN expression (COMMA expression)+ COMMA? RPAREN               # tupleExpr

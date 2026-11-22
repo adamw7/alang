@@ -462,7 +462,7 @@ public final class Main {
         byte[] input = new byte[0];
         if (!main.paramVars.isEmpty()) {
             try {
-                input = in.readNBytes(((Type.Str) main.paramVars.get(0).type).cap() + 1);
+                input = in.readNBytes(Interpreter.inputCapacity(main.paramVars.get(0)) + 1);
             } catch (IOException e) {
                 throw new UsageException("cannot read stdin: " + e.getMessage());
             }
@@ -814,7 +814,7 @@ public final class Main {
             byte[] input = new byte[0];
             if (!main.paramVars.isEmpty() && inputFile != null) {
                 try (InputStream f = Files.newInputStream(Path.of(inputFile))) {
-                    input = f.readNBytes(((Type.Str) main.paramVars.get(0).type).cap() + 1);
+                    input = f.readNBytes(Interpreter.inputCapacity(main.paramVars.get(0)) + 1);
                 } catch (NoSuchFileException e) {
                     throw new UsageException("file not found: " + inputFile);
                 } catch (IOException e) {

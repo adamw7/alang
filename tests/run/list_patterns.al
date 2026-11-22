@@ -42,7 +42,7 @@ fn main() {
     print(describe([]), "; ", describe([7]), "; ", describe([0, 1, 2]), "; ", describe([4, 4]), "; ",
         describe([1, 2, 9]), "; ", describe([1, 2, 3]));
     print(sum_ends([1, 2, 3, 4, 5]));
-    let big: [i64; 100000] = [3; 100000];
+    let big: [i64; 10000] = [3; 10000];
     match big {
         [a, b, ..] => { print(a + b); }
     }

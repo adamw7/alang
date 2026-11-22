@@ -715,7 +715,30 @@ final class AstBuilder {
         }
         PostfixContext p = ctx.postfix();
         Expr e = primary(p.primary());
-        for (PostfixOpContext op : p.postfixOp()) {
+        List<PostfixOpContext> ops = p.postfixOp();
+        int first = 0;
+        // f(x), A.b(x) and a.B.c(x): a name, up to two plain fields, and a call are a call of a function, a variant or
+        // a function of an imported file (Call or VariantCall), as written; any further call is of a function value.
+        if (e instanceof Name n) {
+            int fields = 0;
+            while (fields < 2 && fields < ops.size() && ops.get(fields) instanceof FieldAccessContext) fields++;
+            if (fields < ops.size() && ops.get(fields) instanceof CallAccessContext c) {
+                Span sp = spanTo(e.span, c);
+                List<Arg> args = c.argList() == null ? new ArrayList<>() : args(c.argList());
+                if (fields == 0) {
+                    e = new Call(sp, n.name, n.span, args);
+                } else if (fields == 1) {
+                    e = new VariantCall(sp, n.name, ((FieldAccessContext) ops.get(0)).identifier().getText(), args);
+                } else {
+                    VariantCall vc = new VariantCall(sp, ((FieldAccessContext) ops.get(0)).identifier().getText(),
+                        ((FieldAccessContext) ops.get(1)).identifier().getText(), args);
+                    vc.qualifier = n.name;
+                    e = vc;
+                }
+                first = fields + 1;
+            }
+        }
+        for (PostfixOpContext op : ops.subList(first, ops.size())) {
             Span sp = spanTo(e.span, op);
             if (op instanceof FieldAccessContext f) {
                 e = new FieldAccess(sp, e, f.identifier().getText(), span(f.identifier()));
@@ -769,17 +792,6 @@ final class AstBuilder {
         if (ctx instanceof StructExprContext s) return structLit(sp, null, s.identifier().getText(), s.structInit());
         if (ctx instanceof QualifiedStructExprContext s) {
             return structLit(sp, s.identifier(0).getText(), s.identifier(1).getText(), s.structInit());
-        }
-        if (ctx instanceof QualifiedVariantExprContext v) {
-            VariantCall vc = new VariantCall(sp, v.identifier(1).getText(), v.identifier(2).getText(), args(v.argList()));
-            vc.qualifier = v.identifier(0).getText();
-            return vc;
-        }
-        if (ctx instanceof VariantExprContext v) {
-            return new VariantCall(sp, v.identifier(0).getText(), v.identifier(1).getText(), args(v.argList()));
-        }
-        if (ctx instanceof CallExprContext c) {
-            return new Call(sp, c.identifier().getText(), span(c.identifier()), args(c.argList()));
         }
         if (ctx instanceof NameExprContext n) return new Name(sp, n.identifier().getText());
         if (ctx instanceof ParenExprContext p) return expr(p.expression());
@@ -889,10 +901,12 @@ final class AstBuilder {
      */
     private static byte[] textBlock(String body, boolean escaped, Diagnostics diags, Span at) {
         String b = body.replace("\r\n", "\n").replace('\r', '\n');
+        // On one line, """...""" is the text between its quotes, which may hold quotes of its own.
+        if (!b.contains("\n")) return escaped ? escapes(b, diags, at) : b.getBytes(StandardCharsets.UTF_8);
         if (!b.startsWith("\n")) {
             if (diags != null) {
                 diags.error(Code.E0202, at, "a multi-line string starts with a line break after its opening quotes",
-                    "write \"\"\" at the end of a line and the text from the next one, or use \"...\" for one line");
+                    "write \"\"\" at the end of a line and the text from the next one");
             }
             return new byte[0];
         }

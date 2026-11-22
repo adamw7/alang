@@ -1,7 +1,7 @@
-error[E0602]: the parameter of `main` must be a read-only str: it receives the standard input
+error[E0602]: the parameter of `main` must be read-only: it receives the standard input
  --> tests/errors/main_input_not_str.al:2:9
   |
 2 | fn main(n: mut i64) {
   |         ^
-  = hint: declare it as n: str[4096] (the most bytes of input the program accepts), and split it as needed: let lines: list[str[80]; 64] = split(n, '\n');
+  = hint: declare it as n: str[4096] (the most bytes of input the program accepts), or as a type the input is JSON of: n: Config
 
