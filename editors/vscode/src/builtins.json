@@ -468,6 +468,12 @@
     "description": "Where the regular expression pattern (see re_match) first matches in the str s: Option.Some((start, end)), the byte positions of the match, s[start..end], or Option.None. Of the matches that start there it takes the one Perl does: the left alternative first, each repetition as long as it can be."
   },
   {
+    "name": "from_json",
+    "group": "text",
+    "signature": "from_json(s) -> Option<T>",
+    "description": "The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to numbers (an integer type takes only whole numbers that fit), strings to strs of at most their capacity in UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default present, no other) and maps with str keys, \"Variant\" or {\"Variant\": [values]} to enums. Option.None for any other text."
+  },
+  {
     "name": "split_once",
     "group": "text",
     "signature": "split_once(s, sep) -> Option<(str[N], str[N])>",
