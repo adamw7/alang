@@ -317,6 +317,7 @@ public final class Json {
                 if (peek() == '+' || peek() == '-') pos++;
                 digits();
             }
+            if (pos - start > MAX_DIGITS) return longNumber(start, negative, isFloat);
             String t = s.substring(start, pos);
             try {
                 if (!isFloat) return new BigInteger(t);
@@ -328,6 +329,74 @@ public final class Json {
                 // An exponent beyond the range of int; no ALang type holds such a number.
                 throw error("bad number '" + t + "'");
             }
+        }
+
+        /**
+         * The most characters of a number that are read exactly. BigInteger and BigDecimal read digits in time
+         * quadratic in their count, half a minute for a megabyte of them, before any step budget or timeout applies.
+         * A longer number keeps its first MAX_DIGITS significant digits and, for the rest, which are never all 0
+         * (trailing zeros go first, without changing the value), a 1 after them. Nothing that reads the number can
+         * tell the difference: its count of integer digits stays the same; with at most 20 of them, the most an
+         * integer type holds, it is still not an integer, the 1 being a fraction digit; and the nearest f64 or f32 of
+         * a decimal number depends only on its first 768 significant digits and on whether any digit after them is
+         * not 0.
+         */
+        static final int MAX_DIGITS = 800;
+
+        /** The number of more than MAX_DIGITS characters from start to pos, scanned already: see MAX_DIGITS. */
+        Object longNumber(int start, boolean negative, boolean isFloat) {
+            int intStart = negative ? start + 1 : start;
+            int intEnd = intStart;
+            while (intEnd < pos && isDigit(s.charAt(intEnd))) intEnd++;
+            int fracStart = intEnd;
+            int fracEnd = intEnd;
+            if (fracStart < pos && s.charAt(fracStart) == '.') {
+                fracStart++;
+                fracEnd = fracStart;
+                while (fracEnd < pos && isDigit(s.charAt(fracEnd))) fracEnd++;
+            }
+            long exp = 0;
+            if (fracEnd < pos) {
+                int i = fracEnd + 1;
+                boolean expNegative = s.charAt(i) == '-';
+                if (s.charAt(i) == '+' || s.charAt(i) == '-') i++;
+                // Saturated past the range of int, which is all that matters to the check below.
+                for (; i < pos && exp <= Integer.MAX_VALUE + 1L; i++) exp = exp * 10 + (s.charAt(i) - '0');
+                if (expNegative) exp = -exp;
+            }
+            int intLen = intEnd - intStart;
+            long scale = (long) (fracEnd - fracStart) - exp;
+            // As new BigDecimal(text) refuses them: no ALang type holds such a number.
+            if ((int) exp != exp || (int) scale != scale) {
+                throw error("bad number '" + s.substring(start, start + 20) + "...' (" + (pos - start) + " characters)");
+            }
+            int total = intLen + (fracEnd - fracStart);
+            int first = 0;
+            while (first < total && digitAt(first, intStart, intLen, fracStart) == '0') first++;
+            if (first == total) {
+                if (!isFloat) return BigInteger.ZERO;
+                return negative ? (Object) (-0.0) : BigDecimal.valueOf(0, (int) scale);
+            }
+            int last = total - 1;
+            while (digitAt(last, intStart, intLen, fracStart) == '0') last--;
+            int end = Math.min(last, first + MAX_DIGITS - 1);
+            StringBuilder digits = new StringBuilder(MAX_DIGITS + 2);
+            if (negative) digits.append('-');
+            for (int k = first; k <= end; k++) digits.append(digitAt(k, intStart, intLen, fracStart));
+            int lastKept = end;
+            if (end < last) {
+                digits.append('1');
+                lastKept++;
+            }
+            // The scale of the digits kept. It only shrinks, by at most the length of the text: below the range of
+            // int, the number is above 10^2147483647 either way, and no type holds it.
+            long keptScale = Math.max(Integer.MIN_VALUE, (long) lastKept - intLen + 1 - exp);
+            return new BigDecimal(new BigInteger(digits.toString()), (int) keptScale);
+        }
+
+        /** The k-th digit of a number: its integer digits, then its fraction digits. */
+        char digitAt(int k, int intStart, int intLen, int fracStart) {
+            return k < intLen ? s.charAt(intStart + k) : s.charAt(fracStart + k - intLen);
         }
 
         char peek() {
