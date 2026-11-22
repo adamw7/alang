@@ -8,3 +8,5 @@ false true false true
 true false Option.Some((6, 11))
 true false
 Option.Some((2, 3))
+true Option.Some((1, 2))
+true true

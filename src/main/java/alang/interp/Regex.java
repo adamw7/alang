@@ -87,6 +87,14 @@ public final class Regex {
         final int[] b;
         final int[] min;
         final int[] max;
+        /**
+         * Whether a node can only ever compile to instructions that consume nothing and lead to the next one: the
+         * empty pattern, a sequence of such nodes, a repetition of one, x{0}. The emitter leaves such a node out, which
+         * matches the same, and so every node it does write out adds an instruction: compiling takes time bounded
+         * by {@link #MAX_PROGRAM}, where ((((){100}){100}){100}){100} would otherwise loop 100^4 times writing
+         * out nothing.
+         */
+        final boolean[] blank;
         int nodes;
         final long[][] classes = new long[MAX_CLASSES][];
         int nclasses;
@@ -100,12 +108,14 @@ public final class Regex {
             b = new int[cap];
             min = new int[cap];
             max = new int[cap];
+            blank = new boolean[cap];
         }
 
         int node(int k, int na, int nb) {
             kind[nodes] = k;
             a[nodes] = na;
             b[nodes] = nb;
+            blank[nodes] = k == N_EMPTY || k == N_CAT && blank[na] && blank[nb] || k == N_REPEAT && blank[na];
             return nodes++;
         }
 
@@ -175,6 +185,7 @@ public final class Regex {
             int r = node(N_REPEAT, atom, 0);
             min[r] = lo;
             max[r] = hi;
+            if (hi == 0) blank[r] = true;  // x{0} is written out as nothing
             return r;
         }
 
@@ -349,13 +360,13 @@ public final class Regex {
 
         /** Emits node k; an explicit stack would do the same, but a pattern nests at most a few hundred nodes. */
         void node(int k) {
+            if (t.blank[k]) return;
             switch (t.kind[k]) {
                 case N_LIT -> emit(CHAR, t.a[k], 0);
                 case N_ANY -> emit(ANY, 0, 0);
                 case N_CLASS -> emit(CLASS, t.a[k], 0);
                 case N_BOL -> emit(BOL, 0, 0);
                 case N_EOL -> emit(EOL, 0, 0);
-                case N_EMPTY -> { }
                 case N_CAT -> {
                     node(t.a[k]);
                     node(t.b[k]);

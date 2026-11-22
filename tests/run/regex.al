@@ -25,6 +25,9 @@ fn main() {
     clear(mut pattern);
     append(mut pattern, "(()*)*x");
     print(re_find("yyx", pattern));
+    // A group that can only match the empty text compiles to nothing, however deeply it is repeated.
+    print(re_match("x", "((((((((){100}){100}){100}){100}){100}){100}){100}){100}x"), " ", re_find("yx", "(()*){0,100}x"));
+    print(re_match("ab", "((((((((a){0}){100}){100}){100}){100}){100}){100}){100}ab"), " ", re_match("a", "(a{0}|b)*a"));
 }
 
 test "a bad pattern traps" traps R0013 {

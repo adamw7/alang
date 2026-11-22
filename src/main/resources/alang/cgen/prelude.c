@@ -783,6 +783,8 @@ typedef struct {
     int16_t a[AL_RE_NODES], b[AL_RE_NODES];
     int8_t min[AL_RE_NODES];
     int16_t max[AL_RE_NODES];
+    /* Whether a node compiles to nothing but instructions that consume nothing (see Regex.Parser.blank): left out. */
+    uint8_t blank[AL_RE_NODES];
     int nodes;
     uint64_t classes[AL_RE_CLASSES][4];
     int nclasses;
@@ -812,6 +814,8 @@ static int al_re_node(al_re *r, int k, int a, int b) {
     r->kind[r->nodes] = (uint8_t)k;
     r->a[r->nodes] = (int16_t)a;
     r->b[r->nodes] = (int16_t)b;
+    r->blank[r->nodes] = (uint8_t)(k == AL_RN_EMPTY || (k == AL_RN_CAT && r->blank[a] && r->blank[b])
+        || (k == AL_RN_REPEAT && r->blank[a]));
     return r->nodes++;
 }
 
@@ -1015,6 +1019,7 @@ static int al_re_repeat(al_re *r) {
     node = al_re_node(r, AL_RN_REPEAT, atom, 0);
     r->min[node] = (int8_t)lo;
     r->max[node] = (int16_t)hi;
+    if (hi == 0) r->blank[node] = 1; /* x{0} is written out as nothing */
     return node;
 }
 
@@ -1051,13 +1056,13 @@ static int al_re_emit(al_re *r, int o, int a, int b) {
 
 static int al_re_code(al_re *r, int k) {
     int i, split, jmp;
+    if (r->blank[k]) return 0;
     switch (r->kind[k]) {
     case AL_RN_LIT: return al_re_emit(r, AL_RC_CHAR, r->a[k], 0) < 0 ? -1 : 0;
     case AL_RN_ANY: return al_re_emit(r, AL_RC_ANY, 0, 0) < 0 ? -1 : 0;
     case AL_RN_CLASS: return al_re_emit(r, AL_RC_CLASS, r->a[k], 0) < 0 ? -1 : 0;
     case AL_RN_BOL: return al_re_emit(r, AL_RC_BOL, 0, 0) < 0 ? -1 : 0;
     case AL_RN_EOL: return al_re_emit(r, AL_RC_EOL, 0, 0) < 0 ? -1 : 0;
-    case AL_RN_EMPTY: return 0;
     case AL_RN_CAT: return al_re_code(r, r->a[k]) < 0 || al_re_code(r, r->b[k]) < 0 ? -1 : 0;
     case AL_RN_ALT:
         split = al_re_emit(r, AL_RC_SPLIT, 0, 0);
