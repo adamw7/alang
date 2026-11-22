@@ -321,7 +321,8 @@ jobs:
           "$native_image" -jar target/alang.jar -o target/native/alang
 
       - name: Smoke test the binary
-        timeout-minutes: 3
+        # It takes 1.5 to 2.5 minutes, and a slow macOS runner more: 3 timed out with nothing wrong.
+        timeout-minutes: 6
         run: |
           alang="$GITHUB_WORKSPACE/target/native/alang$EXE"
           out="$RUNNER_TEMP/native"

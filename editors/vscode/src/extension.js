@@ -452,12 +452,14 @@ class Lenses {
 let terminal;
 
 /** Runs `alang args...` in the ALang terminal, from the file's directory. */
-function inTerminal(file, args, stdinFile) {
+async function inTerminal(file, args, stdinFile) {
   const windows = process.platform === 'win32';
   if (!terminal || terminal.exitStatus !== undefined) {
     terminal = vscode.window.createTerminal({ name: 'ALang' });
   }
   terminal.show(true);
+  // The command goes to the shell once it has started: processId resolves then (or to undefined if it never does).
+  await terminal.processId;
   const dir = path.dirname(file);
   // Windows terminals default to PowerShell, which runs a quoted command with `&` and has no `<`.
   let cmd = [alangCommand(file), ...args].map((a) => lib.shellQuote(a, windows)).join(' ');
@@ -496,7 +498,7 @@ function fileCommand(build) {
     const file = await targetFile(uri);
     if (!file) return;
     const args = await build(file, ...rest);
-    if (args) inTerminal(file, args.args || args, args.stdin);
+    if (args) await inTerminal(file, args.args || args, args.stdin);
   };
 }
 

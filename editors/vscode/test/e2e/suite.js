@@ -95,7 +95,16 @@ function nextCall() {
 function finishedCall(since, args, what) {
   return until(() => toolchainCalls().find((c) => c.n >= since && c.args === args && c.out !== undefined),
     () => `${what || `alang ${args}`}; the calls since: ${JSON.stringify(toolchainCalls().filter((c) => c.n >= since)
-      .map((c) => `${c.args}${c.out === undefined ? ' (running)' : ''}`))}`);
+      .map((c) => `${c.args}${c.out === undefined ? ' (running)' : ''}`))}; the terminals: ${terminalState()}`);
+}
+
+/** What became of the terminals, for a wait that timed out on a command sent to one. */
+function terminalState() {
+  return JSON.stringify(vscode.window.terminals.map((t) => ({
+    name: t.name,
+    exit: t.exitStatus ? t.exitStatus.code : null,
+    active: vscode.window.activeTerminal === t,
+  })));
 }
 
 /** Runs a command that asks for text in an input box, and accepts what the box offers. */
