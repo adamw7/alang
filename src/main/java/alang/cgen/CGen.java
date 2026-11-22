@@ -115,7 +115,8 @@ public final class CGen {
                 sb.append("        AL_PUTS(&al_e, ").append(cString(utf8("the standard input is not JSON of " + p.type + " for `" + p.name + "`")))
                     .append(");\n");
                 sb.append("        al_trap_end(&al_e, ").append(loc(p.span)).append(");\n    }\n");
-                args.add("&al_input");
+                // As signature() declares it: a number or bool by value, anything else by address.
+                args.add(Type.isAggregate(p.type) ? "&al_input" : "al_input");
             } else if (!main.paramVars.isEmpty()) {
                 // The standard input, in static storage: it is read once, before main runs.
                 LocalVar p = main.paramVars.get(0);

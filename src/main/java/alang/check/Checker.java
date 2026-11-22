@@ -3586,10 +3586,16 @@ public final class Checker {
 
     /** A name that occurs nowhere in {@code text}, so it is new in the function: {@code base}, else base2, base3... */
     private String freshName(String text, String base) {
+        String name = unusedName(text, base);
+        hoistedNames.add(name);
+        return name;
+    }
+
+    /** As freshName, without taking the name: for a hint that only suggests it. */
+    private String unusedName(String text, String base) {
         for (int i = 1; ; i++) {
             String name = i == 1 ? base : base + i;
             if (!hoistedNames.contains(name) && !java.util.regex.Pattern.compile("\\b" + name + "\\b").matcher(text).find()) {
-                hoistedNames.add(name);
                 return name;
             }
         }
@@ -3598,7 +3604,10 @@ public final class Checker {
     private void checkMutCallPosition(Call c, Type result) {
         if (c.hasMutArg() && ctx.mutCallAllowed != c) {
             List<Edit> fix = hoist(c, result);
-            String name = fix.isEmpty() ? "value" : fix.get(1).replacement();
+            // Without a fix, the hint still names a variable the function does not declare already.
+            String name = fix.isEmpty()
+                ? unusedName((c.span.file() == null ? diags.source() : c.span.file()).text, "value")
+                : fix.get(1).replacement();
             String hint = result instanceof Type.Void || Type.isError(result)
                 ? "make it a separate statement: " + exprText(c) + ";"
                 : "store the result first: let " + name + ": " + result + " = " + exprText(c) + "; then use `" + name + "`";
