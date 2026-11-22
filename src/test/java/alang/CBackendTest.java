@@ -28,16 +28,18 @@ class CBackendTest {
         "time", "clock", "rand", "srand", "getenv");
 
     /**
-     * Each test compiles the program with up to three C compilers and runs each build, then compiles it
-     * once more for the symbol check. That is far more than a typical test, and on a cold CI runner the
+     * Each test compiles the program with up to three C compilers (and once more for the symbol check), all at
+     * once, and runs each build. That is far more than a typical test, and on a cold CI runner the
      * first one took over Harness.TEST_TIMEOUT, so these tests (and each process) get this long.
      */
     private static final Duration COMPILE_AND_RUN_TIMEOUT = Duration.ofSeconds(60);
 
     private static final boolean WINDOWS = System.getProperty("os.name").startsWith("Windows");
 
-    /** The file name of the program the tests build. */
-    private static final String PROG = WINDOWS ? "prog.exe" : "prog";
+    /** The file name of the program the {@code i}th build makes: each build has its own, so builds can run at once. */
+    private static String prog(int i) {
+        return "prog" + i + (WINDOWS ? ".exe" : "");
+    }
 
     /** Targets that use the Microsoft toolchain (clang on Windows by default), by compiler. */
     private static final Map<String, Boolean> MSVC = new ConcurrentHashMap<>();
@@ -45,27 +47,63 @@ class CBackendTest {
     /** A finished process; {@code stderrBytes} keeps the bytes that are not UTF-8, which {@code stderr} replaces. */
     private record Proc(int exit, String stdout, String stderr, byte[] stderrBytes) {}
 
+    /** Numbers the files that hold each process's input and output, so processes can share a directory. */
+    private static final java.util.concurrent.atomic.AtomicInteger PROCESSES = new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * A started process. The tests start the builds of a program together (the compilers take most of this
+     * class's time, and a CI runner has several cores) and then wait for each one; {@link #close} stops any
+     * that are still running when a test fails or times out.
+     */
+    private static final class Pending implements AutoCloseable {
+        private final Process process;
+        private final String[] cmd;
+        private final Path out;
+        private final Path err;
+
+        Pending(Path dir, byte[] stdin, String... cmd) throws IOException {
+            int n = PROCESSES.incrementAndGet();
+            Path in = dir.resolve("in" + n + ".txt");
+            this.cmd = cmd;
+            this.out = dir.resolve("out" + n + ".txt");
+            this.err = dir.resolve("err" + n + ".txt");
+            Files.write(in, stdin);
+            this.process = new ProcessBuilder(cmd).directory(dir.toFile())
+                .redirectInput(in.toFile()).redirectOutput(out.toFile()).redirectError(err.toFile()).start();
+        }
+
+        Proc await() throws IOException, InterruptedException {
+            try {
+                assertTrue(process.waitFor(COMPILE_AND_RUN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), "timeout: " + String.join(" ", cmd));
+            } finally {
+                // Also when the test's own timeout interrupts the wait: never leave a compiler or program running.
+                close();
+            }
+            byte[] errBytes = Files.readAllBytes(err);
+            return new Proc(process.exitValue(), new String(Files.readAllBytes(out), StandardCharsets.UTF_8),
+                new String(errBytes, StandardCharsets.UTF_8), errBytes);
+        }
+
+        @Override
+        public void close() {
+            if (process.isAlive()) process.destroyForcibly();
+        }
+    }
+
+    /** Stops every process in {@code ps} that is still running. */
+    private static void closeAll(List<Pending> ps) {
+        for (Pending p : ps) p.close();
+    }
+
     private static Proc exec(Path dir, String... cmd) throws IOException, InterruptedException {
         return exec(dir, new byte[0], cmd);
     }
 
     /** Runs {@code cmd} in {@code dir} with {@code stdin} as its standard input. */
     private static Proc exec(Path dir, byte[] stdin, String... cmd) throws IOException, InterruptedException {
-        Path in = dir.resolve("in.txt");
-        Path out = dir.resolve("out.txt");
-        Path err = dir.resolve("err.txt");
-        Files.write(in, stdin);
-        Process p = new ProcessBuilder(cmd).directory(dir.toFile())
-            .redirectInput(in.toFile()).redirectOutput(out.toFile()).redirectError(err.toFile()).start();
-        try {
-            assertTrue(p.waitFor(COMPILE_AND_RUN_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS), "timeout: " + String.join(" ", cmd));
-        } finally {
-            // Also when the test's own timeout interrupts the wait: never leave a compiler or program running.
-            if (p.isAlive()) p.destroyForcibly();
+        try (Pending p = new Pending(dir, stdin, cmd)) {
+            return p.await();
         }
-        byte[] errBytes = Files.readAllBytes(err);
-        return new Proc(p.exitValue(), new String(Files.readAllBytes(out), StandardCharsets.UTF_8),
-            new String(errBytes, StandardCharsets.UTF_8), errBytes);
     }
 
     private static boolean available(String tool) {
@@ -136,57 +174,79 @@ class CBackendTest {
 
     /**
      * Builds the C for a checked program with each compiler, runs each build, and checks it behaves exactly
-     * like the interpreter. Returns the directory that holds prog.c.
+     * like the interpreter.
      */
-    private static Path buildEachAndCompare(Frontend.Result r, List<String[]> ccs) throws IOException, InterruptedException {
-        return buildEachAndCompare(r, new byte[0], ccs);
-    }
-
-    private static Path buildEachAndCompare(Frontend.Result r, byte[] input, List<String[]> ccs) throws IOException, InterruptedException {
-        return buildEachAndCompare(r, input, ccs, 0);
+    private static void buildEachAndCompare(Frontend.Result r, List<String[]> ccs) throws IOException, InterruptedException {
+        buildEachAndCompare(r, new byte[0], ccs, 0, false);
     }
 
     /**
-     * As above; a {@code stack} above 0 is the stack, in bytes, that the program is linked with on Windows, whose
-     * default of 1 MB is less than the checker allows (elsewhere the default, usually 8 MB, is enough).
+     * As above, with {@code input} on the standard input. A {@code stack} above 0 is the stack, in bytes, that the
+     * program is linked with on Windows, whose default of 1 MB is less than the checker allows (elsewhere the
+     * default, usually 8 MB, is enough). With {@code symbols}, gcc also compiles the C to an object file whose
+     * undefined symbols must not include an allocation, stdio, clock or environment function.
+     *
+     * <p>The compilers all start at once, and the interpreter runs while they work: the builds are most of
+     * this class's time, and they do not depend on each other. Each build writes its own program.
      */
-    private static Path buildEachAndCompare(Frontend.Result r, byte[] input, List<String[]> ccs, long stack)
+    private static void buildEachAndCompare(Frontend.Result r, byte[] input, List<String[]> ccs, long stack, boolean symbols)
             throws IOException, InterruptedException {
-        Harness.Run expected = Harness.runMain(r, input);
         Path dir = Files.createTempDirectory("alang-c");
-        Path c = dir.resolve("prog.c");
-        Files.writeString(c, CGen.generate(r.program()), StandardCharsets.UTF_8);
-        for (String[] cc : ccs) {
-            List<String> cmd = new ArrayList<>(List.of(cc));
-            cmd.addAll(List.of("-o", PROG, "prog.c"));
-            if (WINDOWS && stack > 0) cmd.add((msvc(cc[0]) ? "-Wl,/STACK:" : "-Wl,--stack,") + stack);
-            cmd.addAll(libm(cc[0]));
-            Proc build = exec(dir, cmd.toArray(new String[0]));
-            assertEquals(0, build.exit(), () -> String.join(" ", cc) + ":\n" + build.stderr());
-            Proc run = exec(dir, input, dir.resolve(PROG).toString());
-            String who = String.join(" ", cc) + " on " + r.diags().source().path;
-            assertEquals(expected.stdout(), run.stdout(), "stdout differs: " + who);
-            if (expected.trap() == null) {
-                assertEquals(0, run.exit(), who + "\n" + run.stderr());
-                assertEquals("", run.stderr(), who);
-            } else {
-                assertEquals(1, run.exit(), who);
-                // Byte for byte: the message holds the bytes of str values, which need not be UTF-8.
-                byte[] message = expected.trap().messageBytes();
-                byte[] head = ("trap[" + expected.trap().code + "]: ").getBytes(StandardCharsets.UTF_8);
-                byte[] line = new byte[head.length + message.length + 1];
-                System.arraycopy(head, 0, line, 0, head.length);
-                System.arraycopy(message, 0, line, head.length, message.length);
-                line[line.length - 1] = '\n';
-                byte[] got = Arrays.copyOf(run.stderrBytes(), Math.min(line.length, run.stderrBytes().length));
-                assertArrayEquals(line, got, () -> who + "\n" + run.stderr());
-                // In the file of the trap, which may be one the program imports.
-                Span at = expected.trap().span;
-                String where = (at.file() != null ? at.file() : r.diags().source()).path + ":" + at.line() + ":" + at.col();
-                assertTrue(run.stderr().contains("--> " + where), who + "\n" + run.stderr());
+        Files.writeString(dir.resolve("prog.c"), CGen.generate(r.program()), StandardCharsets.UTF_8);
+        List<Pending> started = new ArrayList<>();
+        try {
+            for (int i = 0; i < ccs.size(); i++) {
+                String[] cc = ccs.get(i);
+                List<String> cmd = new ArrayList<>(List.of(cc));
+                cmd.addAll(List.of("-o", prog(i), "prog.c"));
+                if (WINDOWS && stack > 0) cmd.add((msvc(cc[0]) ? "-Wl,/STACK:" : "-Wl,--stack,") + stack);
+                cmd.addAll(libm(cc[0]));
+                started.add(new Pending(dir, new byte[0], cmd.toArray(new String[0])));
             }
+            Pending object = symbols && available("nm") && available("gcc")
+                ? new Pending(dir, new byte[0], "gcc", "-std=c99", "-O2", "-c", "prog.c", "-o", "prog.o")
+                : null;
+            if (object != null) started.add(object);
+            Harness.Run expected = Harness.runMain(r, input);
+            for (int i = 0; i < ccs.size(); i++) {
+                String[] cc = ccs.get(i);
+                Proc build = started.get(i).await();
+                assertEquals(0, build.exit(), () -> String.join(" ", cc) + ":\n" + build.stderr());
+                Proc run = exec(dir, input, dir.resolve(prog(i)).toString());
+                String who = String.join(" ", cc) + " on " + r.diags().source().path;
+                assertEquals(expected.stdout(), run.stdout(), "stdout differs: " + who);
+                if (expected.trap() == null) {
+                    assertEquals(0, run.exit(), who + "\n" + run.stderr());
+                    assertEquals("", run.stderr(), who);
+                } else {
+                    assertEquals(1, run.exit(), who);
+                    // Byte for byte: the message holds the bytes of str values, which need not be UTF-8.
+                    byte[] message = expected.trap().messageBytes();
+                    byte[] head = ("trap[" + expected.trap().code + "]: ").getBytes(StandardCharsets.UTF_8);
+                    byte[] line = new byte[head.length + message.length + 1];
+                    System.arraycopy(head, 0, line, 0, head.length);
+                    System.arraycopy(message, 0, line, head.length, message.length);
+                    line[line.length - 1] = '\n';
+                    byte[] got = Arrays.copyOf(run.stderrBytes(), Math.min(line.length, run.stderrBytes().length));
+                    assertArrayEquals(line, got, () -> who + "\n" + run.stderr());
+                    // In the file of the trap, which may be one the program imports.
+                    Span at = expected.trap().span;
+                    String where = (at.file() != null ? at.file() : r.diags().source()).path + ":" + at.line() + ":" + at.col();
+                    assertTrue(run.stderr().contains("--> " + where), who + "\n" + run.stderr());
+                }
+            }
+            if (object != null) {
+                Proc compiled = object.await();
+                assertEquals(0, compiled.exit(), compiled::stderr);
+                Proc nm = exec(dir, "nm", "-u", "prog.o");
+                for (String line : nm.stdout().lines().toList()) {
+                    String sym = line.trim().replaceAll("^U\\s+", "").replaceAll("@.*", "");
+                    assertTrue(!FORBIDDEN.contains(sym), "generated code references " + sym);
+                }
+            }
+        } finally {
+            closeAll(started);
         }
-        return dir;
     }
 
     @TestFactory
@@ -198,15 +258,7 @@ class CBackendTest {
             assumeTrue(!ccs.isEmpty(), "no C compiler available");
             Frontend.Result r = Harness.compile(p);
             assertTrue(r.ok(), () -> r.diags().renderText());
-            Path dir = buildEachAndCompare(r, Harness.input(p), ccs);
-            if (available("nm") && available("gcc")) {
-                assertEquals(0, exec(dir, "gcc", "-std=c99", "-O2", "-c", "prog.c", "-o", "prog.o").exit());
-                Proc nm = exec(dir, "nm", "-u", "prog.o");
-                for (String line : nm.stdout().lines().toList()) {
-                    String sym = line.trim().replaceAll("^U\\s+", "").replaceAll("@.*", "");
-                    assertTrue(!FORBIDDEN.contains(sym), "generated code references " + sym);
-                }
-            }
+            buildEachAndCompare(r, Harness.input(p), ccs, 0, true);
         }));
     }
 
@@ -282,7 +334,7 @@ class CBackendTest {
             List<String[]> ccs = compilers();
             assumeTrue(!ccs.isEmpty(), "no C compiler available");
             // Three strs of a megabyte each: more than the 1 MB a Windows program gets unless it asks for more.
-            buildEachAndCompare(r, new byte[0], ccs, r.check().memory().maxStack() + STACK_SLACK_KB * 1024);
+            buildEachAndCompare(r, new byte[0], ccs, r.check().memory().maxStack() + STACK_SLACK_KB * 1024, false);
         }));
     }
 
@@ -329,20 +381,32 @@ class CBackendTest {
             long limitKb = r.check().memory().maxStack() / 1024 + STACK_SLACK_KB;
             Path dir = Files.createTempDirectory("alang-stack");
             Files.writeString(dir.resolve("prog.c"), CGen.generate(r.program()), StandardCharsets.UTF_8);
-            for (String cc : ccs) {
-                for (String opt : List.of("-O0", "-O2")) {
-                    List<String> cmd = new ArrayList<>(List.of(cc, opt, "-std=c99", "-o", PROG, "prog.c"));
-                    if (WINDOWS) cmd.add((msvc(cc) ? "-Wl,/STACK:" : "-Wl,--stack,") + limitKb * 1024);
-                    cmd.addAll(libm(cc));
-                    Proc build = exec(dir, cmd.toArray(new String[0]));
-                    assertEquals(0, build.exit(), () -> cc + " " + opt + ":\n" + build.stderr());
-                    Proc run = WINDOWS
-                        ? exec(dir, dir.resolve(PROG).toString())
-                        : exec(dir, "sh", "-c", "ulimit -s " + limitKb + " && exec ./prog");
-                    String who = cc + " " + opt + " on " + p + " with a stack of " + limitKb + " KB";
-                    assertEquals(0, run.exit(), who + "\n" + run.stderr());
-                    assertEquals(expected.stdout(), run.stdout(), who);
+            // Every build at once, as in buildEachAndCompare; each writes its own program.
+            List<String> who = new ArrayList<>();
+            List<Pending> builds = new ArrayList<>();
+            try {
+                for (String cc : ccs) {
+                    for (String opt : List.of("-O0", "-O2")) {
+                        List<String> cmd = new ArrayList<>(List.of(cc, opt, "-std=c99", "-o", prog(builds.size()), "prog.c"));
+                        if (WINDOWS) cmd.add((msvc(cc) ? "-Wl,/STACK:" : "-Wl,--stack,") + limitKb * 1024);
+                        cmd.addAll(libm(cc));
+                        who.add(cc + " " + opt);
+                        builds.add(new Pending(dir, new byte[0], cmd.toArray(new String[0])));
+                    }
                 }
+                for (int i = 0; i < builds.size(); i++) {
+                    String name = who.get(i);
+                    Proc build = builds.get(i).await();
+                    assertEquals(0, build.exit(), () -> name + ":\n" + build.stderr());
+                    Proc run = WINDOWS
+                        ? exec(dir, dir.resolve(prog(i)).toString())
+                        : exec(dir, "sh", "-c", "ulimit -s " + limitKb + " && exec ./" + prog(i));
+                    String what = name + " on " + p + " with a stack of " + limitKb + " KB";
+                    assertEquals(0, run.exit(), what + "\n" + run.stderr());
+                    assertEquals(expected.stdout(), run.stdout(), what);
+                }
+            } finally {
+                closeAll(builds);
             }
         }));
     }

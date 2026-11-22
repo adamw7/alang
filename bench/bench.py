@@ -125,10 +125,37 @@ def ensure_jar():
     if not JAR.exists() or max(f.stat().st_mtime for f in sources) > JAR.stat().st_mtime:
         print("bench: building target/alang.jar ...", file=sys.stderr)
         subprocess.run(["mvn", "-q", "-B", "-DskipTests", "package"], cwd=ROOT, check=True)
+    ensure_class_archive()
+
+
+# Every check and call starts a JVM, hundreds per run. A class-data sharing archive of the classes the
+# toolchain loads cuts the start-up time by about a quarter. It is made once per jar, and a JVM that
+# cannot use it runs without it. (-XX:TieredStopAtLevel=1 starts faster still, but without the C2
+# compiler's escape analysis the interpreter allocates at every step: a call that spends its whole
+# step budget takes 10 s instead of 0.7 s.)
+CLASS_ARCHIVE = JAR.with_suffix(".jsa")
+# JVM warnings (an archive made by another JDK, say) go to stderr: by default they go to stdout,
+# where `alang tools` and `alang call` write their JSON.
+JVM_LOGGING = ["-Xlog:disable", "-Xlog:all=warning:stderr"]
+_use_archive = False
+
+
+def ensure_class_archive():
+    global _use_archive
+    if not CLASS_ARCHIVE.exists() or CLASS_ARCHIVE.stat().st_mtime < JAR.stat().st_mtime:
+        CLASS_ARCHIVE.unlink(missing_ok=True)
+        # A call checks the program and runs it: it loads the classes that later checks and calls need.
+        program = "tool fn f(x: i64) -> i64 {\n    return x + 1;\n}\n"
+        with tempfile.TemporaryDirectory(prefix="alang-bench-") as tmp:
+            (Path(tmp) / "solution.al").write_text(program)
+            subprocess.run(["java", *JVM_LOGGING, f"-XX:ArchiveClassesAtExit={CLASS_ARCHIVE}", "-jar", str(JAR),
+                            "call", "solution.al", "f", '{"x": 1}'], cwd=tmp, capture_output=True)
+    _use_archive = CLASS_ARCHIVE.exists()
 
 
 def _alang(*args):
-    return ["java", "-XX:TieredStopAtLevel=1", "-jar", str(JAR), *args]
+    archive = [f"-XX:SharedArchiveFile={CLASS_ARCHIVE}"] if _use_archive else []
+    return ["java", *JVM_LOGGING, *archive, "-jar", str(JAR), *args]
 
 
 # The Python runner: imports the solution in a fresh interpreter, calls the function with the JSON
@@ -680,19 +707,25 @@ def cmd_selftest(a) -> int:
         if not cond:
             failures.append(message)
 
-    print("Reference solutions pass every example and hidden case:")
-    for t in tasks.values():
-        for lang in LANGS:
-            g = grade(lang, t, t.reference[lang], t.examples + t.hidden, "all")
+    # Every program is graded at once (grade() caps the processes at one per CPU); results print in order.
+    references = [(t, lang) for t in tasks.values() for lang in LANGS]
+    bad_programs = [(tasks[task], "alang" if file.endswith(".al") else "python", (SELFTEST_DIR / file).read_text())
+                    for task, file, _ in SELFTEST_PROGRAMS]
+    with concurrent.futures.ThreadPoolExecutor(os.cpu_count() or 2) as pool:
+        graded_references = [pool.submit(grade, lang, t, t.reference[lang], t.examples + t.hidden, "all")
+                             for t, lang in references]
+        graded_bad = [pool.submit(grade, lang, t, code, t.hidden, "hidden") for t, lang, code in bad_programs]
+
+        print("Reference solutions pass every example and hidden case:")
+        for (t, lang), future in zip(references, graded_references):
+            g = future.result()
             bad = [f"{k}: {short(x, 120)}" for k, x in zip(g.kinds, g.got) if k != "correct"]
             expect(g.passed, f"{t.name} {LANG_NAME[lang]}" + (f" -> {g.rejected or bad[:3]}" if not g.passed else ""))
 
-    print("Known-bad programs are graded as expected:")
-    for task, file, kinds in SELFTEST_PROGRAMS:
-        lang = "alang" if file.endswith(".al") else "python"
-        g = grade(lang, tasks[task], (SELFTEST_DIR / file).read_text(), tasks[task].hidden, "hidden")
-        seen = set(g.kinds) - {"correct"}
-        expect(seen == kinds, f"{file}: {sorted(seen)} (expected {sorted(kinds)})")
+        print("Known-bad programs are graded as expected:")
+        for (task, file, kinds), future in zip(SELFTEST_PROGRAMS, graded_bad):
+            seen = set(future.result().kinds) - {"correct"}
+            expect(seen == kinds, f"{file}: {sorted(seen)} (expected {sorted(kinds)})")
 
     print("The feedback loop:")
     bad = {("fnv1a_32", "python"): "fnv1a_32_no_mask.py", ("balanced", "alang"): "balanced_or_or.al",

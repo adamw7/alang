@@ -71,6 +71,10 @@ class FuzzTest {
             List<String> toks = tokens(Harness.read(p));
             SplittableRandom rnd = new SplittableRandom(p.getFileName().toString().hashCode());
             int n = toks.size();
+            // The mutations come from the seeded generator in order, and are then checked in parallel (each
+            // one on its own): the slowest part of CI was this test on one core. Of the mutations that crash
+            // the toolchain, the first is reported, so the result does not depend on the scheduling.
+            List<String[]> mutations = new ArrayList<>();
             for (int k = 0; k < iterations; k++) {
                 List<String> m = new ArrayList<>(toks);
                 int i = rnd.nextInt(n);
@@ -91,8 +95,17 @@ class FuzzTest {
                         what = "swap " + i + "," + j;
                     }
                 }
-                mustNotCrash(Harness.name(p), String.join(" ", m), what);
+                mutations.add(new String[] {String.join(" ", m), what});
             }
+            Optional<AssertionError> crash = mutations.parallelStream().map(m -> {
+                try {
+                    mustNotCrash(Harness.name(p), m[0], m[1]);
+                    return null;
+                } catch (AssertionError e) {
+                    return e;
+                }
+            }).filter(Objects::nonNull).findFirst();
+            if (crash.isPresent()) throw crash.get();
         }));
     }
 }
