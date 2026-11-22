@@ -55,6 +55,8 @@ async function main() {
     'terminal.integrated.profiles.linux': { sh: { path: '/bin/sh' } },
     'terminal.integrated.defaultProfile.osx': 'sh',
     'terminal.integrated.profiles.osx': { sh: { path: '/bin/sh' } },
+    // Saving is the extension's job here: "Run saves the file first" checks that it does.
+    'files.autoSave': 'off',
     'workbench.startupEditor': 'none',
     'extensions.ignoreRecommendations': true,
     'telemetry.telemetryLevel': 'off',

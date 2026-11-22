@@ -94,7 +94,8 @@ function nextCall() {
 /** Waits for a finished toolchain call made after `since` whose arguments are `args`. */
 function finishedCall(since, args, what) {
   return until(() => toolchainCalls().find((c) => c.n >= since && c.args === args && c.out !== undefined),
-    what || `alang ${args}`);
+    () => `${what || `alang ${args}`}; the calls since: ${JSON.stringify(toolchainCalls().filter((c) => c.n >= since)
+      .map((c) => `${c.args}${c.out === undefined ? ' (running)' : ''}`))}`);
 }
 
 /** Runs a command that asks for text in an input box, and accepts what the box offers. */
@@ -294,6 +295,8 @@ test('Fuzz and the stack table run in the terminal', async () => {
 
 test('Run saves the file first', async () => {
   const doc = await open('app.al');
+  await until(() => vscode.window.activeTextEditor && vscode.window.activeTextEditor.document === doc,
+    'app.al to be the active editor');
   const edit = new vscode.WorkspaceEdit();
   edit.replace(doc.uri, new vscode.Range(8, 0, 8, doc.lineAt(8).text.length), '    print("saved ", double(5));');
   assert.ok(await vscode.workspace.applyEdit(edit));

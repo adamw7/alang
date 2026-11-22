@@ -467,8 +467,8 @@ function inTerminal(file, args, stdinFile) {
       ? `Get-Content -Raw ${lib.shellQuote(stdinFile, true)} | ${cmd}`
       : `${cmd} < ${lib.shellQuote(stdinFile, false)}`;
   }
-  terminal.sendText(`cd ${lib.shellQuote(dir, windows)}`);
-  terminal.sendText(cmd);
+  // One line, so the cd and the command reach the shell together, however busy it still is.
+  terminal.sendText(`cd ${lib.shellQuote(dir, windows)}${windows ? ';' : ' &&'} ${cmd}`);
 }
 
 /** The file a command acts on: the one it was given, else the active editor's, saved first. */
