@@ -28,6 +28,10 @@ fn main() {
     // A group that can only match the empty text compiles to nothing, however deeply it is repeated.
     print(re_match("x", "((((((((){100}){100}){100}){100}){100}){100}){100}){100}x"), " ", re_find("yx", "(()*){0,100}x"));
     print(re_match("ab", "((((((((a){0}){100}){100}){100}){100}){100}){100}){100}ab"), " ", re_match("a", "(a{0}|b)*a"));
+    // An iteration of a repetition that matches the empty text ends it, as in Perl: the left alternative of
+    // (|a)* is taken once, and the loop stops there.
+    print(re_find("a", "(|a)*"), " ", re_find("aab", "(|a)+"), " ", re_find("b", "(a*|b)*"), " ", re_find("bab", "(b|a*)*"));
+    print(re_match("a", "(|a)*"), " ", re_match("aab", "(a*|b)*"), " ", re_find("ab", "(a|b*)*"), " ", re_find("aab", "(a|)*"));
 }
 
 test "a bad pattern traps" traps R0013 {

@@ -161,7 +161,11 @@ public enum Builtin {
     RE_FIND(Group.TEXT, true, "re_find", "re_find(s, pattern) -> Option<(i64, i64)>",
         "Where the regular expression pattern (see re_match) first matches in the str s: Option.Some((start, end)), the "
             + "byte positions of the match, s[start..end], or Option.None. Of the matches that start there it takes "
-            + "the one Perl does: the left alternative first, each repetition as long as it can be."),
+            + "the one Perl does: the left alternative first, each repetition as long as it can be, and a repetition "
+            + "ends at an iteration that matches the empty text (in \"a\", (|a)* finds (0, 0)). One case differs: an "
+            + "iteration that would match the empty text through a repetition inside the group that an earlier "
+            + "iteration already left at that byte is not tried first, so in \"ab\", (a*|b)* finds (0, 2) where Perl "
+            + "finds (0, 1)."),
     FROM_JSON(Group.TEXT, true, "from_json", "from_json(s) -> Option<T>",
         "The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored "
             + "in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to "
