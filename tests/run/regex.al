@@ -10,7 +10,14 @@ fn first_number(s: str[64]) -> i64 {
     return 0;
 }
 
+// Each part in a function of its own: at -O0 each call keeps its own al_re (32 KB) on the stack, and the
+// frames of the parts are never live at once, so none comes near the 1 MB a Windows program gets.
 fn main() {
+    patterns();
+    empty_iterations();
+}
+
+fn patterns() {
     print(phone("(555) 123-4567"), " ", phone("555-123-4567"), " ", phone("55-123-4567"));
     print(first_number("total: -42 items"), " ", first_number("none"));
     print(re_find("aaa", "a*"), " ", re_find("xaaay", "a+"), " ", re_find("abc", "x?"));
@@ -28,8 +35,11 @@ fn main() {
     // A group that can only match the empty text compiles to nothing, however deeply it is repeated.
     print(re_match("x", "((((((((){100}){100}){100}){100}){100}){100}){100}){100}x"), " ", re_find("yx", "(()*){0,100}x"));
     print(re_match("ab", "((((((((a){0}){100}){100}){100}){100}){100}){100}){100}ab"), " ", re_match("a", "(a{0}|b)*a"));
-    // An iteration of a repetition that matches the empty text ends it, as in Perl: the left alternative of
-    // (|a)* is taken once, and the loop stops there.
+}
+
+// An iteration of a repetition that matches the empty text ends it, as in Perl: the left alternative of
+// (|a)* is taken once, and the loop stops there.
+fn empty_iterations() {
     print(re_find("a", "(|a)*"), " ", re_find("aab", "(|a)+"), " ", re_find("b", "(a*|b)*"), " ", re_find("bab", "(b|a*)*"));
     print(re_match("a", "(|a)*"), " ", re_match("aab", "(a*|b)*"), " ", re_find("ab", "(a|b*)*"), " ", re_find("aab", "(a|)*"));
 }
