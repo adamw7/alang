@@ -35,6 +35,8 @@ class ArchitectureTest {
     private static final String MAIN = "alang.cli.Main";
     /** The HTTP transport of `serve --http`: the one class that serves the network, so it may read the clock. */
     private static final String HTTP = "alang.cli.HttpTransport";
+    /** It and its nested classes, such as the HttpsConfigurator that turns on TLS 1.3. */
+    private static final String HTTP_AND_NESTED = HTTP.replace(".", "\\.") + "(\\$.*)?";
     private static final String GENERATED_PARSER = "alang.parser..";
 
     // ---------------------------------------------------------------- structure
@@ -105,17 +107,18 @@ class ArchitectureTest {
 
     @ArchTest
     static final ArchRule only_the_jdk_and_antlr = noClasses()
-            .that().doNotHaveFullyQualifiedName(HTTP)
+            .that().haveNameNotMatching(HTTP_AND_NESTED)
             .should().dependOnClassesThat().resideOutsideOfPackages("java..", "alang..", "org.antlr.v4.runtime..")
             .because("target/alang.jar shades in every dependency, and the toolchain needs only the JDK and "
                     + "the ANTLR runtime; a new library is a decision for the pom, not a side effect of an import");
 
     @ArchTest
     static final ArchRule only_the_jdk_server = noClasses()
-            .that().haveFullyQualifiedName(HTTP)
-            .should().dependOnClassesThat().resideOutsideOfPackages("java..", "alang..", "com.sun.net.httpserver..")
-            .because("`serve --http` uses the JDK's own HTTP server (module jdk.httpserver), so the jar still "
-                    + "needs no web framework");
+            .that().haveNameMatching(HTTP_AND_NESTED)
+            .should().dependOnClassesThat().resideOutsideOfPackages("java..", "alang..", "com.sun.net.httpserver..",
+                    "javax.net.ssl..")
+            .because("`serve --http` uses the JDK's own HTTP server (module jdk.httpserver) and TLS (javax.net.ssl), so "
+                    + "the jar still needs no web framework");
 
     @ArchTest
     static final ArchRule entry_point_is_cli_main = methods()

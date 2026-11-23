@@ -196,10 +196,11 @@ that compiles and notifies the host. Up to four calls run at once (`--workers N`
 within its step budget and `--timeout`, cancellable with `notifications/cancelled`.
 
 `--http` serves MCP's Streamable HTTP transport instead, with sessions, bearer auth (`--token-file`;
-without it, loopback only), `/health`, Prometheus `/metrics`, a JSON log line per call, and graceful SIGTERM:
+without it, loopback only), HTTPS with TLS 1.3 only (`--tls-cert`, `--tls-key`: PEM), `/health`, Prometheus
+`/metrics`, a JSON log line per call, and graceful SIGTERM:
 
 ```sh
-alang serve bill.al --http 0.0.0.0:8080 --token-file token.txt --workers 8
+alang serve bill.al --http 0.0.0.0:8443 --token-file token.txt --tls-cert fullchain.pem --tls-key key.pem --workers 8
 ```
 
 Details: [SPEC.md §10](docs/SPEC.md#10-tools-calling-alang-from-an-agent).

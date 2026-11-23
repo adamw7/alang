@@ -6,10 +6,14 @@ import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
+import java.security.cert.*;
+import java.security.spec.*;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
+import java.util.regex.*;
+import javax.net.ssl.*;
 
 /**
  * `alang serve --http`: the tools of {@link McpServer} over MCP's Streamable HTTP transport, for a host that
@@ -25,6 +29,9 @@ import java.util.concurrent.atomic.*;
  *   <li>{@code GET /health} says the server is up, without authentication, for a load balancer.</li>
  *   <li>{@code GET /metrics} gives counters in the Prometheus text format.</li>
  * </ul>
+ *
+ * <p>With a certificate and its key ({@code --tls-cert}, {@code --tls-key}) the server speaks HTTPS, and only
+ * TLS 1.3: a client that offers nothing newer is refused in the handshake.
  *
  * <p>With a token ({@code --token-file}), every request but {@code /health} needs
  * {@code Authorization: Bearer TOKEN}. Without one the server only listens on a loopback address. A request
@@ -52,14 +59,27 @@ final class HttpTransport implements McpServer.Observer {
     /** How long (s) stopping waits for requests in progress. */
     private static final int DRAIN_SECONDS = 5;
 
-    /** How the server is set up: where it listens, the token (null: none), the origins allowed besides its own. */
-    record Config(String host, int port, String token, List<String> allowedOrigins) {}
+    /** The one TLS version spoken with --tls-cert and --tls-key. */
+    static final String TLS_PROTOCOL = "TLSv1.3";
+
+    /**
+     * How the server is set up: where it listens, the token (null: none), the origins allowed besides its own, and
+     * for HTTPS the PEM text of the certificate chain and of its private key (both null: plain HTTP).
+     */
+    record Config(String host, int port, String token, List<String> allowedOrigins, String tlsCert, String tlsKey) {
+        /** Plain HTTP. */
+        Config(String host, int port, String token, List<String> allowedOrigins) {
+            this(host, port, token, allowedOrigins, null, null);
+        }
+    }
 
     private final McpServer mcp;
     private final Config config;
     private final PrintStream log;
     private final boolean loopbackOnly;
     private final byte[] token;
+    /** What serves HTTPS, or null for plain HTTP. */
+    private final SSLContext tls;
     private final SecureRandom random = new SecureRandom();
     private final Map<String, Entry> sessions = new ConcurrentHashMap<>();
     private final CountDownLatch stopped = new CountDownLatch(1);
@@ -95,6 +115,10 @@ final class HttpTransport implements McpServer.Observer {
             throw new IllegalArgumentException("listening on " + config.host() + " needs a token (--token-file): "
                 + "without one, anyone who can reach the port could call the tools");
         }
+        if ((config.tlsCert() == null) != (config.tlsKey() == null)) {
+            throw new IllegalArgumentException("--tls-cert and --tls-key go together: HTTPS needs the certificate and its key");
+        }
+        this.tls = config.tlsCert() == null ? null : tls(config.tlsCert(), config.tlsKey());
         mcp.observe(this);
     }
 
@@ -113,7 +137,21 @@ final class HttpTransport implements McpServer.Observer {
     /** Starts listening; returns the port, which is the one asked for unless that was 0. */
     int start() throws IOException {
         mcp.start();
-        server = HttpServer.create(new InetSocketAddress(config.host(), config.port()), 64);
+        InetSocketAddress address = new InetSocketAddress(config.host(), config.port());
+        if (tls == null) {
+            server = HttpServer.create(address, 64);
+        } else {
+            HttpsServer https = HttpsServer.create(address, 64);
+            https.setHttpsConfigurator(new HttpsConfigurator(tls) {
+                @Override
+                public void configure(HttpsParameters params) {
+                    SSLParameters p = tls.getDefaultSSLParameters();
+                    p.setProtocols(new String[] {TLS_PROTOCOL});
+                    params.setSSLParameters(p);
+                }
+            });
+            server = https;
+        }
         // A request waiting for its call holds a thread; virtual ones make that cheap, and the calls themselves
         // are bounded by McpServer's workers and queue.
         handlers = Executors.newVirtualThreadPerTaskExecutor();
@@ -121,8 +159,13 @@ final class HttpTransport implements McpServer.Observer {
         server.createContext("/", this::exchange);
         server.start();
         int port = server.getAddress().getPort();
-        logEvent(Json.obj("event", "listening", "host", config.host(), "port", port, "endpoint", ENDPOINT,
-            "auth", token != null, "tools", mcp.toolCount()));
+        Map<String, Object> listening = Json.obj("event", "listening", "host", config.host(), "port", port, "endpoint", ENDPOINT,
+            "auth", token != null, "tls", tls == null ? false : TLS_PROTOCOL, "tools", mcp.toolCount());
+        if (tls == null && !loopbackOnly) {
+            listening.put("warning", "the token crosses the network in plain text: give --tls-cert and --tls-key, "
+                + "or serve behind a proxy that terminates TLS");
+        }
+        logEvent(listening);
         return port;
     }
 
@@ -311,6 +354,106 @@ final class HttpTransport implements McpServer.Observer {
         String id = HexFormat.of().formatHex(bytes);
         sessions.put(id, new Entry(mcp.newSession(null), now));
         return id;
+    }
+
+    // =================================================================== TLS
+
+    private static final Pattern PEM = Pattern.compile("-----BEGIN ([A-Z0-9 ]+)-----([A-Za-z0-9+/=\\s]*)-----END \\1-----");
+
+    /**
+     * The context that serves HTTPS with TLS 1.3 from the PEM text of a certificate chain (the server's own
+     * certificate first, as in a fullchain.pem) and of its private key, unencrypted PKCS#8 ("BEGIN PRIVATE KEY"):
+     * RSA, EC or EdDSA. Throws IllegalArgumentException, saying what is wrong, when they cannot serve.
+     */
+    static SSLContext tls(String certPem, String keyPem) {
+        List<X509Certificate> chain = new ArrayList<>();
+        try {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            for (String[] block : pem(certPem)) {
+                if (!block[0].equals("CERTIFICATE")) continue;
+                chain.add((X509Certificate) cf.generateCertificate(new ByteArrayInputStream(block[1].getBytes(StandardCharsets.US_ASCII))));
+            }
+        } catch (CertificateException | IllegalArgumentException e) {
+            throw new IllegalArgumentException("--tls-cert: not a valid PEM certificate: " + e.getMessage());
+        }
+        if (chain.isEmpty()) {
+            throw new IllegalArgumentException("--tls-cert: no \"-----BEGIN CERTIFICATE-----\" block: give the server's "
+                + "certificate in PEM, followed by any intermediate certificates");
+        }
+        PublicKey pub = chain.get(0).getPublicKey();
+        PrivateKey key = privateKey(keyPem, pub.getAlgorithm());
+        if (!pairs(key, pub)) {
+            throw new IllegalArgumentException("--tls-key is not the private key of the first certificate in --tls-cert");
+        }
+        try {
+            char[] password = "alang".toCharArray();  // the store lives only in memory
+            KeyStore store = KeyStore.getInstance("PKCS12");
+            store.load(null, null);
+            store.setKeyEntry("server", key, password, chain.toArray(new X509Certificate[0]));
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(store, password);
+            SSLContext context = SSLContext.getInstance(TLS_PROTOCOL);
+            context.init(kmf.getKeyManagers(), null, null);
+            return context;
+        } catch (GeneralSecurityException | IOException e) {
+            throw new IllegalArgumentException("cannot serve TLS with --tls-cert and --tls-key: " + e.getMessage());
+        }
+    }
+
+    /** Each PEM block of {@code text}: its label and its whole text, BEGIN and END lines included. */
+    private static List<String[]> pem(String text) {
+        List<String[]> blocks = new ArrayList<>();
+        Matcher m = PEM.matcher(text);
+        while (m.find()) blocks.add(new String[] {m.group(1), m.group()});
+        return blocks;
+    }
+
+    /** The private key in {@code text}, of the algorithm of the certificate's public key. */
+    private static PrivateKey privateKey(String text, String algorithm) {
+        String convert = "; write it as unencrypted PKCS#8 with: openssl pkey -in KEY -out key.pem";
+        for (String[] block : pem(text)) {
+            switch (block[0]) {
+                case "PRIVATE KEY" -> {
+                    String base64 = block[1].replaceAll("-----[A-Z0-9 ]+-----", "");
+                    try {
+                        byte[] der = Base64.getMimeDecoder().decode(base64);
+                        return KeyFactory.getInstance(algorithm).generatePrivate(new PKCS8EncodedKeySpec(der));
+                    } catch (GeneralSecurityException | IllegalArgumentException e) {
+                        throw new IllegalArgumentException("--tls-key: not a valid " + algorithm + " private key, as the certificate's "
+                            + "public key is: " + e.getMessage());
+                    }
+                }
+                case "ENCRYPTED PRIVATE KEY" -> throw new IllegalArgumentException("--tls-key: the key is encrypted" + convert);
+                case "RSA PRIVATE KEY", "EC PRIVATE KEY" ->
+                    throw new IllegalArgumentException("--tls-key: the key is in the older " + block[0] + " format" + convert);
+                default -> { }
+            }
+        }
+        throw new IllegalArgumentException("--tls-key: no \"-----BEGIN PRIVATE KEY-----\" block" + convert);
+    }
+
+    /** Whether {@code key} signs what {@code pub} verifies; true for a kind of key this cannot test, as the handshake will. */
+    private static boolean pairs(PrivateKey key, PublicKey pub) {
+        String algorithm = switch (key.getAlgorithm()) {
+            case "RSA" -> "SHA256withRSA";
+            case "EC" -> "SHA256withECDSA";
+            case "EdDSA", "Ed25519", "Ed448" -> "EdDSA";
+            default -> null;
+        };
+        if (algorithm == null) return true;
+        try {
+            byte[] probe = "alang tls".getBytes(StandardCharsets.US_ASCII);
+            Signature signer = Signature.getInstance(algorithm);
+            signer.initSign(key);
+            signer.update(probe);
+            byte[] signature = signer.sign();
+            Signature verifier = Signature.getInstance(algorithm);
+            verifier.initVerify(pub);
+            verifier.update(probe);
+            return verifier.verify(signature);
+        } catch (GeneralSecurityException e) {
+            return false;
+        }
     }
 
     // =================================================================== checks

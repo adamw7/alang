@@ -376,6 +376,25 @@ jobs:
             wait "$server" || true
             grep -q '"event": "stopped"' "$out/http.log"
             trap - ERR
+            # `serve --http` with --tls-cert and --tls-key: HTTPS, TLS 1.3 only, with a certificate made here.
+            openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost -addext subjectAltName=IP:127.0.0.1 \
+              -keyout "$out/key.pem" -out "$out/cert.pem" 2> /dev/null
+            "$alang" serve examples/inventory.al --http 127.0.0.1:18766 --token-file "$out/token" \
+              --tls-cert "$out/cert.pem" --tls-key "$out/key.pem" 2> "$out/https.log" &
+            server=$!
+            trap 'echo "--- serve --http (TLS) log:"; cat "$out/https.log"; kill "$server" 2> /dev/null || true' ERR
+            for i in $(seq 100); do curl -fs --cacert "$out/cert.pem" https://127.0.0.1:18766/health > /dev/null && break; sleep 0.2; done
+            curl -fsS --cacert "$out/cert.pem" -H "$auth" https://127.0.0.1:18766/metrics | grep -q 'alang_sessions'
+            # The version negotiated, from curl's verbose output: macOS's curl, built on LibreSSL, has no --tlsv1.3.
+            curl -fsSv --cacert "$out/cert.pem" https://127.0.0.1:18766/health 2>&1 > /dev/null | grep -q 'SSL connection using TLSv1.3'
+            # A client that offers at most TLS 1.2 fails the handshake: exit 35, not just any error.
+            code=0
+            curl -fsS --cacert "$out/cert.pem" --tls-max 1.2 https://127.0.0.1:18766/health > /dev/null 2>&1 || code=$?
+            test "$code" = 35
+            grep -q '"tls": "TLSv1.3"' "$out/https.log"
+            kill "$server"
+            wait "$server" || true
+            trap - ERR
           fi
           "$alang" build examples/shapes.al -o "$out/shapes.c"
           grep -q 'int main' "$out/shapes.c"
