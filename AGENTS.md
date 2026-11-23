@@ -520,7 +520,7 @@ parameters. A trap returns `{"ok": false, "error": {"code": "R....", ...}}`. A f
 infinity fails with `bad_result`; return raw bytes as `list[u8; N]`, not `str`.
 
 `bin/alang serve prog.al [--watch]` serves every tool over MCP on stdio (`--http 8080 --token-file token.txt`
-for HTTP at `/mcp`). Tools have no file, network, clock or random access, and run within a deterministic
+for HTTP at `/mcp`, with `--tls-cert cert.pem --tls-key key.pem` for HTTPS, TLS 1.3 only). Tools have no file, network, clock or random access, and run within a deterministic
 step budget (`steps`: one per statement plus about one per 128 bytes touched; the default 100 million is a
 few seconds), backed by `--timeout` (60 s).
 

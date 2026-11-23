@@ -104,6 +104,9 @@ public final class Main {
                              but /health; needed to listen on anything but a loopback address (serve)
           --allow-origin O   accept HTTP requests from browser origin O, e.g. https://app.example.com
                              (serve; may be given more than once)
+          --tls-cert FILE    serve HTTPS, TLS 1.3 only, at https://HOST:PORT/mcp with the PEM certificate
+                             chain in FILE, the server's certificate first (serve; with --tls-key)
+          --tls-key FILE     the certificate's private key: PEM, unencrypted PKCS#8 (serve; with --tls-cert)
 
         exit codes: 0 success, 1 errors / traps / failed tests, 2 usage error
         """;
@@ -120,7 +123,7 @@ public final class Main {
         Map.entry("call", Set.of("--json", "--max-steps", "--max-stack", "--timeout")),
         Map.entry("fuzz", Set.of("--json", "--max-steps", "--max-stack")),
         Map.entry("serve", Set.of("--max-steps", "--max-stack", "--timeout", "--watch", "--workers", "--max-queued",
-            "--http", "--token-file", "--allow-origin")),
+            "--http", "--token-file", "--allow-origin", "--tls-cert", "--tls-key")),
         Map.entry("build", Set.of("-o", "--max-stack")),
         Map.entry("fmt", Set.of("--write", "--check")),
         Map.entry("fix", Set.of("--write", "--json", "--max-stack")),
@@ -135,11 +138,11 @@ public final class Main {
     /** The options that take a value, the next argument. */
     private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--timeout", "--filter", "-o",
         "--break", "--input", "--test", "--call", "--max-stops", "--workers", "--max-queued", "--http", "--token-file",
-        "--allow-origin");
+        "--allow-origin", "--tls-cert", "--tls-key");
 
     private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--timeout",
         "--filter", "-o", "--write", "--check", "--lock", "--watch", "--break", "--input", "--test", "--call", "--max-stops",
-        "--workers", "--max-queued", "--http", "--token-file", "--allow-origin");
+        "--workers", "--max-queued", "--http", "--token-file", "--allow-origin", "--tls-cert", "--tls-key");
 
     private final PrintStream out;
     private final PrintStream err;
@@ -165,6 +168,8 @@ public final class Main {
     private int maxQueued = McpServer.MAX_QUEUED;
     private String http;
     private String tokenFile;
+    private String tlsCert;
+    private String tlsKey;
     private final List<String> allowOrigins = new ArrayList<>();
 
     /** How many stops `alang debug` shows once its commands have run out. */
@@ -234,6 +239,8 @@ public final class Main {
                         case "--http" -> http = next(args, ++i, a);
                         case "--token-file" -> tokenFile = next(args, ++i, a);
                         case "--allow-origin" -> allowOrigins.add(next(args, ++i, a));
+                        case "--tls-cert" -> tlsCert = next(args, ++i, a);
+                        case "--tls-key" -> tlsKey = next(args, ++i, a);
                         default -> throw new IllegalStateException(a);
                     }
                 } else {
@@ -1004,8 +1011,11 @@ public final class Main {
             line(err, "check failed: " + r.diags().errorCount() + " error(s)");
             return 1;
         }
-        if (http == null && (tokenFile != null || !allowOrigins.isEmpty())) {
-            throw new UsageException("--token-file and --allow-origin go with --http");
+        if (http == null && (tokenFile != null || !allowOrigins.isEmpty() || tlsCert != null || tlsKey != null)) {
+            throw new UsageException("--token-file, --allow-origin, --tls-cert and --tls-key go with --http");
+        }
+        if ((tlsCert == null) != (tlsKey == null)) {
+            throw new UsageException("--tls-cert and --tls-key go together: HTTPS needs the certificate and its key");
         }
         HttpTransport.Config config = http == null ? null : httpConfig();
         try (Watchdog watchdog = new Watchdog(timeoutMillis)) {
@@ -1066,7 +1076,19 @@ public final class Main {
             }
             if (token.length() < 16) throw new UsageException("--token-file: the token must be at least 16 characters");
         }
-        return new HttpTransport.Config(host, p, token, List.copyOf(allowOrigins));
+        return new HttpTransport.Config(host, p, token, List.copyOf(allowOrigins), readOption("--tls-cert", tlsCert),
+            readOption("--tls-key", tlsKey));
+    }
+
+    /** The text of the file an option names, or null without the option. */
+    private static String readOption(String option, String file) {
+        if (file == null) return null;
+        try {
+            // PEM is ASCII; Latin-1 reads any bytes, so a DER file is told it has no PEM block, not that it is not UTF-8.
+            return Files.readString(Path.of(file), StandardCharsets.ISO_8859_1);
+        } catch (IOException | RuntimeException e) {
+            throw new UsageException(option + ": cannot read " + file + ": " + e.getMessage());
+        }
     }
 
     /**

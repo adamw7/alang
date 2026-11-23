@@ -986,6 +986,16 @@ and the server listens only locally. `GET /health` returns `{"status": "ok", "ve
 line (`"event": "request"` or `"call"`). SIGINT or SIGTERM stops accepting requests and finishes the calls
 under way.
 
+`--tls-cert FILE --tls-key FILE` serve HTTPS at `https://HOST:PORT/mcp`, TLS 1.3 only: a client that offers
+nothing newer fails the handshake. The certificate file holds the PEM certificate chain, the server's own
+certificate first (a `fullchain.pem`); the key file its private key in unencrypted PKCS#8 PEM
+(`-----BEGIN PRIVATE KEY-----`): RSA, EC or Ed25519. A key in another format (encrypted, `RSA PRIVATE KEY`,
+`EC PRIVATE KEY`) is refused with the command that converts it, `openssl pkey -in KEY -out key.pem`, and a
+key that is not the certificate's is refused too, both before the server starts. Both files are read once, at
+start: restart the server to serve a renewed certificate. The `"listening"` log line says `"tls": "TLSv1.3"`
+(or `false`); listening beyond loopback without TLS adds a `"warning"`, as the token then crosses the network
+in plain text (unless a proxy in front terminates TLS).
+
 ## 11. Runtime errors (traps)
 
 A trap stops the program (or the current test or tool call) and reports a code `R0001`–`R0013`, a
