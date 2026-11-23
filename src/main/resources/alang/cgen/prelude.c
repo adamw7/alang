@@ -1125,7 +1125,11 @@ static uint32_t al_re_add(al_re *r, uint16_t *lpc, uint32_t *lstart, uint32_t ln
         if (r->mark[pc] == gen) continue;
         r->mark[pc] = gen;
         switch (r->op[pc]) {
-        case AL_RC_JMP: r->stack[sp++] = r->x[pc]; break;
+        case AL_RC_JMP:
+            /* The end of an iteration of x* whose loop was already entered here matched empty: leave the loop
+               (see Regex.add). */
+            r->stack[sp++] = r->x[pc] < pc && r->mark[r->x[pc]] == gen ? r->y[r->x[pc]] : r->x[pc];
+            break;
         case AL_RC_SPLIT:
             r->stack[sp++] = r->y[pc];
             r->stack[sp++] = r->x[pc];

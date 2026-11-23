@@ -10,7 +10,10 @@ package alang.interp;
  * `\D \W \S` the usual classes (ASCII); `\n \t \r \0` and `\` before any other character that is not a letter or a
  * digit that character; `^` and `$` the start and end of the text; `( )` a group; `|` alternatives; `*`, `+`, `?`
  * and `{m}`, `{m,}`, `{m,n}` (m and n at most 100) repetition, greedy. A match is leftmost, and among the matches
- * that start there the one that prefers the left alternative and repeats as often as it can, as in Perl.
+ * that start there the one that prefers the left alternative and repeats as often as it can, as in Perl; as in
+ * Perl, too, an iteration that matches the empty text ends its repetition. One case differs from Perl: a later
+ * iteration that would match the empty text through an inner repetition that an earlier one already left at the
+ * same byte is not tried first, as each instruction runs once per byte ({@code (a*|b)*} finds 0..2 in "ab", Perl 0..1).
  */
 public final class Regex {
     private Regex() {}
@@ -483,8 +486,8 @@ public final class Regex {
 
     /**
      * Adds the thread at {@code pc} that started at {@code start} to the list of position {@code pos}, following jumps,
-     * splits (the first branch first) and anchors, each instruction at most once per position; returns the list's new
-     * length.
+     * splits (the first branch first) and anchors, each instruction at most once per position, and leaving a loop whose
+     * iteration matched the empty text; returns the list's new length.
      */
     private static int add(Program prog, int[] lpc, int[] lstart, int ln, int pc0, int start, int pos, int len, int[] mark,
                            int[] stack, Meter meter) {
@@ -497,7 +500,14 @@ public final class Regex {
             mark[pc] = gen;
             meter.elements(1);
             switch (prog.op[pc]) {
-                case JMP -> stack[sp++] = prog.x[pc];
+                case JMP -> {
+                    // A jump back is the end of an iteration of x*. If its loop was already entered at this
+                    // position, this iteration matched the empty text: as in Perl, the loop ends here, so the
+                    // thread goes on after it, at the priority it has now, rather than dying (when the loop was
+                    // entered by an earlier thread, what follows it is already on the list, and this adds nothing).
+                    int to = prog.x[pc];
+                    stack[sp++] = to < pc && mark[to] == gen ? prog.y[to] : to;
+                }
                 case SPLIT -> {
                     // The second branch waits under the first, which is followed first.
                     stack[sp++] = prog.y[pc];

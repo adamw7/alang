@@ -303,9 +303,12 @@ public enum Code {
         "let x: u32 = 1 << 32;  // trap"),
     R0013("invalid argument",
         "A standard library function received an argument outside its domain: a negative exponent for pow, bounds "
-            + "with lo > hi for clamp, an empty separator or pattern for split, split_once or replace, an empty list for "
-            + "min(xs), max(xs), min_by or max_by, a count below 0 or text over 1048576 bytes for repeat, a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, or a "
-            + "base outside 2 to 36 for to_base or parse_i64.",
+            + "with lo > hi for clamp, a negative number for isqrt, an empty separator or pattern for split, split_once, "
+            + "replace or count, an empty list for min(xs), max(xs), min_index, max_index, min_by or max_by, a count below "
+            + "0 or text over 1048576 bytes for repeat, a width over 1048576 for pad_left or pad_right, decimals outside 0 "
+            + "to 20 for fixed, a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for "
+            + "push_char, a base outside 2 to 36 for to_base or parse_i64, a pattern that is not valid for re_match or "
+            + "re_find, or a step of a range that is not positive.",
         "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap"),
     R0014("input is not JSON of its type",
         "A fn main whose parameter is not a str, fn main(input: Config), receives its standard input as JSON for that type, "
