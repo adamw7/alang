@@ -531,7 +531,7 @@
     "name": "pad_left",
     "group": "text",
     "signature": "pad_left(value, width, fill) -> str[N]",
-    "description": "The text of a number, bool, str or fixed(...) as print writes it, with the u8 byte fill added in front until it is width bytes long: pad_left(7, 3, '0') is \"007\", pad_left(\"ab\", 4, ' ') is \"  ab\". Longer text is kept whole; a width above 1048576 traps (R0013). Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
+    "description": "The text of a number, bool, str or fixed(...) as print writes it, with the u8 byte fill added in front until it is width bytes long: pad_left(7, 3, '0') is \"007\", pad_left(\"ab\", 4, ' ') is \"  ab\". Zeros padding a negative number, fixed(...) or to_base(...) go after its sign: pad_left(-42, 6, '0') is \"-00042\". Longer text is kept whole; a width above 1048576 traps (R0013). Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
   },
   {
     "name": "pad_right",

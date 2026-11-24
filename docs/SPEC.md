@@ -882,7 +882,7 @@ Five functions make text: with a width, a number of decimals or a base, or a pat
 | Function | Text |
 |----------|------|
 | `fixed(x, n)` | The f32 or f64 `x` with exactly `n` digits after the point, 0 to 20 (otherwise R0013), and no point for 0: its exact binary value rounded half to even, as above. `fixed(3.14159, 2)` is `3.14`, `fixed(2.5, 0)` is `2`, `fixed(2.675, 2)` is `2.67` (2.675 is stored as 2.67499...); `nan`, `inf`, `-inf`. |
-| `pad_left(v, w, fill)` | The text of the number, bool, str or `fixed(...)` `v`, as `print` writes it, with the `u8` byte `fill` in front up to `w` bytes; longer text is kept whole. `pad_left(7, 3, '0')` is `007`, `pad_left(-42, 6, '0')` is `000-42`. A width above 1 048 576 traps (R0013). |
+| `pad_left(v, w, fill)` | The text of the number, bool, str or `fixed(...)` `v`, as `print` writes it, with the `u8` byte `fill` in front up to `w` bytes; longer text is kept whole. `pad_left(7, 3, '0')` is `007`, `pad_left(-42, 6, '0')` is `-00042`: zeros padding a negative number, `fixed(...)` or `to_base(...)` go after its sign. A width above 1 048 576 traps (R0013). |
 | `pad_right(v, w, fill)` | The same with the fill after the text: `pad_right("ab", 4, '.')` is `ab..`. |
 | `to_base(n, base)` | The integer `n` in a base from 2 to 36 (otherwise R0013), with the digits `0`-`9` then `a`-`z`, no prefix, and a `-` before a negative `n`: `to_base(255, 16)` is `ff`, `to_base(-5, 2)` is `-101`. `pad_left(to_base(b, 16), 2, '0')` gives two hex digits. |
 | `repeat(p, n)` | The pattern `p`, a str or `u8` byte, `n` times: `repeat("ab", 3)` is `ababab`, `repeat('-', 20)` a rule. Traps (R0013) unless `0 <= n <= 1048576` (`n` of any integer type), and when the text would be longer than 1 048 576 bytes. |

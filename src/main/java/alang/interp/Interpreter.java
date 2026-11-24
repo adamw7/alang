@@ -1703,6 +1703,10 @@ public final class Interpreter {
                 int at = c.builtin == Builtin.PAD_LEFT ? pad : 0;
                 System.arraycopy(t, 0, out, at, t.length);
                 Arrays.fill(out, at == 0 ? t.length : 0, at == 0 ? out.length : pad, fill);
+                if (pad > 0 && at > 0 && fill == '0' && t[0] == '-' && Builtin.zeroPadsAfterSign(value)) {
+                    out[0] = '-';
+                    out[pad] = '0';
+                }
                 return text(c, out);
             }
             case IS_FLOAT -> {
