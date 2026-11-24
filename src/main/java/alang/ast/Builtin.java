@@ -208,8 +208,9 @@ public enum Builtin {
             + "\"2\", fixed(0.125, 2) is \"0.12\". " + Builtin.TEXT_USE),
     PAD_LEFT(Group.TEXT, true, "pad_left", "pad_left(value, width, fill) -> str[N]",
         "The text of a number, bool, str or fixed(...) as print writes it, with the u8 byte fill added in front until it "
-            + "is width bytes long: pad_left(7, 3, '0') is \"007\", pad_left(\"ab\", 4, ' ') is \"  ab\". Longer text is "
-            + "kept whole; a width above 1048576 traps (R0013). " + Builtin.TEXT_USE),
+            + "is width bytes long: pad_left(7, 3, '0') is \"007\", pad_left(\"ab\", 4, ' ') is \"  ab\". Zeros padding a "
+            + "negative number, fixed(...) or to_base(...) go after its sign: pad_left(-42, 6, '0') is \"-00042\". Longer "
+            + "text is kept whole; a width above 1048576 traps (R0013). " + Builtin.TEXT_USE),
     PAD_RIGHT(Group.TEXT, true, "pad_right", "pad_right(value, width, fill) -> str[N]",
         "As pad_left, with the fill added after the text: pad_right(\"ab\", 4, '.') is \"ab..\". " + Builtin.TEXT_USE),
     COUNT(Group.TEXT, true, "count", "count(xs, x) -> i64",
@@ -446,6 +447,16 @@ public enum Builtin {
      */
     public boolean formats() {
         return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT || this == TO_BASE || this == REPEAT;
+    }
+
+    /**
+     * Whether pad_left with the fill '0' puts its zeros after the '-' that starts the text of {@code value}, as
+     * zero-padding a number does elsewhere (pad_left(-42, 6, '0') is "-00042"): a number, or fixed(...) or
+     * to_base(...), whose text is a number's. Any other value, a str included, is padded in front of its first byte.
+     */
+    public static boolean zeroPadsAfterSign(Ast.Expr value) {
+        if (value instanceof Ast.Call c && c.builtin != null) return c.builtin == FIXED || c.builtin == TO_BASE;
+        return alang.types.Type.isNumeric(value.type);
     }
 
     /** Whether the first argument is modified, and so passed as `mut`. */

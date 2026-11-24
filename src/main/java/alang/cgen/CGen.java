@@ -2114,6 +2114,19 @@ public final class CGen {
                 c.name + "() width must be at most " + Format.MAX_PAD + ", found ", wt, w, at);
         }
         boolean left = c.builtin == Builtin.PAD_LEFT;
+        if (left && Builtin.zeroPadsAfterSign(args.get(0).expr())) {
+            // A number's text is short (at most 331 bytes, fixed(-1e308, 20)): kept here, so that zeros can go after
+            // its '-', as the interpreter puts them.
+            return sink -> {
+                String m = "al_m" + ++tmpCount;
+                open("{");
+                emit("uint8_t " + m + "_b[400];");
+                emit("al_out " + m + " = {0, " + m + "_b, 400u, 0u};");
+                value.accept("&" + m);
+                emit("al_pad_num(" + sink + ", " + fill + ", (int64_t)(" + w + "), " + m + "_b, " + m + ".len);");
+                close("}");
+            };
+        }
         return sink -> {
             String m = "al_m" + ++tmpCount;
             open("{");

@@ -343,6 +343,18 @@ static void al_pad(al_out *o, uint8_t fill, int64_t width, uint32_t n) {
     for (i = (int64_t)n; i < width; i++) al_put(o, &fill, 1);
 }
 
+/* pad_left of a number's text t of n bytes: as al_pad then t, but zeros go after a leading '-'. */
+static void al_pad_num(al_out *o, uint8_t fill, int64_t width, const uint8_t *t, uint32_t n) {
+    if (fill == '0' && n > 0 && t[0] == '-' && (int64_t)n < width) {
+        al_put(o, t, 1);
+        al_pad(o, fill, width, n);
+        al_put(o, t + 1, n - 1);
+        return;
+    }
+    al_pad(o, fill, width, n);
+    al_put(o, t, n);
+}
+
 static const char al_hex[] = "0123456789abcdef";
 
 static void al_fmt_str(al_out *o, const uint8_t *b, uint32_t n, int nested) {
