@@ -1158,14 +1158,15 @@ static uint32_t al_re_add(al_re *r, uint16_t *lpc, uint32_t *lstart, uint32_t ln
 }
 
 /* Runs the program of r on s: with whole, 1 if it matches all of s, else 0; otherwise whether it matches somewhere,
-   and where its leftmost match starts and ends. */
-static int al_re_run(al_re *r, const uint8_t *s, uint32_t len, int whole, uint32_t *from, uint32_t *to) {
+   at begin or after it, and where its leftmost match starts and ends; an empty match at no_empty_at is passed over. */
+static int al_re_run(al_re *r, const uint8_t *s, uint32_t len, int whole, uint32_t begin, int64_t no_empty_at, uint32_t *from,
+                     uint32_t *to) {
     uint16_t *cpc = r->cpc, *npc = r->npc, *tp;
     uint32_t *cstart = r->cstart, *nstart = r->nstart, *ts;
     uint32_t cn = 0, pos, i;
     int matched = 0;
     for (i = 0; i < (uint32_t)r->n; i++) r->mark[i] = 0;
-    for (pos = 0; pos <= len; pos++) {
+    for (pos = begin; pos <= len; pos++) {
         uint32_t nn = 0;
         if (!matched && (!whole || pos == 0)) cn = al_re_add(r, cpc, cstart, cn, 0, pos, pos, len);
         if (cn == 0) {
@@ -1178,6 +1179,8 @@ static int al_re_run(al_re *r, const uint8_t *s, uint32_t len, int whole, uint32
             switch (r->op[pc]) {
             case AL_RC_MATCH:
                 if (whole && pos != len) continue;
+                /* re_replace and re_split pass over an empty match where the last one ended empty (see Regex.run). */
+                if ((int64_t)pos == no_empty_at && cstart[i] == pos) continue;
                 *from = cstart[i];
                 *to = pos;
                 matched = 1;
@@ -1669,6 +1672,82 @@ static int al_json_end(al_json *j) {
 }
 
 /* isqrt: the largest r with r * r <= n, digit by digit, two bits at a time, as the interpreter does. */
+/* Dates in the Gregorian calendar, years 1 to 9999, as days since 1970-01-01, as the interpreter's Stdlib counts them. */
+static int al_date_exists(int64_t y, int64_t m, int64_t d) {
+    int leap;
+    int64_t days;
+    if (y < 1 || y > 9999 || m < 1 || m > 12 || d < 1) return 0;
+    leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    days = m == 2 ? (leap ? 29 : 28) : (m == 4 || m == 6 || m == 9 || m == 11) ? 30 : 31;
+    return d <= days;
+}
+
+static int64_t al_days_of(int64_t y, int64_t m, int64_t d) {
+    int64_t era, yoe, doy, doe;
+    y -= m <= 2 ? 1 : 0;
+    era = y / 400;
+    yoe = y - era * 400;
+    doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+static int64_t al_days_from_date(int64_t y, int64_t m, int64_t d, int line, int col) {
+    if (!al_date_exists(y, m, d)) {
+        al_out e = al_trap_begin("R0013");
+        AL_PUTS(&e, "days_from_date() needs a date that exists, in the years 1 to 9999, found year ");
+        al_fmt_i64(&e, y);
+        AL_PUTS(&e, ", month ");
+        al_fmt_i64(&e, m);
+        AL_PUTS(&e, ", day ");
+        al_fmt_i64(&e, d);
+        al_trap_end(&e, line, col);
+    }
+    return al_days_of(y, m, d);
+}
+
+static void al_date_from_days(int64_t z, int64_t *y, int64_t *m, int64_t *d, int line, int col) {
+    int64_t era, doe, yoe, doy, mp;
+    if (z < -719162 || z > 2932896) {
+        al_out e = al_trap_begin("R0013");
+        AL_PUTS(&e, "date_from_days() needs -719162 to 2932896 days, the years 1 to 9999, found ");
+        al_fmt_i64(&e, z);
+        al_trap_end(&e, line, col);
+    }
+    z += 719468;
+    era = z / 146097;
+    doe = z - era * 146097;
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    mp = (5 * doy + 2) / 153;
+    *d = doy - (153 * mp + 2) / 5 + 1;
+    *m = mp < 10 ? mp + 3 : mp - 9;
+    *y = yoe + era * 400 + (*m <= 2 ? 1 : 0);
+}
+
+static int64_t al_weekday(int64_t z) {
+    int64_t r = z % 7;
+    if (r < 0) r += 7;
+    return (r + 3) % 7 + 1;
+}
+
+/* parse_date: YYYY-MM-DD, a date that exists. */
+static int al_parse_date(const uint8_t *b, uint32_t n, int64_t *out) {
+    int64_t parts[3] = {0, 0, 0};
+    static const int from[3] = {0, 5, 8}, to[3] = {4, 7, 10};
+    int p, i;
+    if (n != 10 || b[4] != '-' || b[7] != '-') return 0;
+    for (p = 0; p < 3; p++) {
+        for (i = from[p]; i < to[p]; i++) {
+            if (b[i] < '0' || b[i] > '9') return 0;
+            parts[p] = parts[p] * 10 + (b[i] - '0');
+        }
+    }
+    if (!al_date_exists(parts[0], parts[1], parts[2])) return 0;
+    *out = al_days_of(parts[0], parts[1], parts[2]);
+    return 1;
+}
+
 static uint64_t al_isqrt(uint64_t n) {
     uint64_t rem = n, root = 0, bit = (uint64_t)1 << 62;
     while (bit > rem) bit >>= 2;
@@ -2701,6 +2780,247 @@ static bool al_is_utf8(const uint8_t *s, uint32_t n) {
     return true;
 }
 
+/*
+ * to_json. A str as a JSON string: " \ and control bytes escaped, every other byte as it is; one that is not UTF-8
+ * traps, as the interpreter's JsonText does.
+ */
+static void al_json_quote(al_out *o, const uint8_t *b, uint32_t n, int line, int col) {
+    uint32_t i;
+    if (!al_is_utf8(b, n)) {
+        al_out e = al_trap_begin("R0013");
+        AL_PUTS(&e, "to_json() cannot write a str that is not UTF-8 text; to write its bytes, make it a list[u8; N]");
+        al_trap_end(&e, line, col);
+    }
+    AL_PUTS(o, "\"");
+    for (i = 0; i < n; i++) {
+        uint8_t c = b[i];
+        if (c == '"') AL_PUTS(o, "\\\"");
+        else if (c == '\\') AL_PUTS(o, "\\\\");
+        else if (c == '\n') AL_PUTS(o, "\\n");
+        else if (c == '\r') AL_PUTS(o, "\\r");
+        else if (c == '\t') AL_PUTS(o, "\\t");
+        else if (c < 0x20) {
+            char u[6];
+            u[0] = '\\';
+            u[1] = 'u';
+            u[2] = '0';
+            u[3] = '0';
+            u[4] = al_hex[c >> 4];
+            u[5] = al_hex[c & 15];
+            al_put(o, u, 6);
+        } else {
+            al_put(o, &c, 1);
+        }
+    }
+    AL_PUTS(o, "\"");
+}
+
+/* The exact decimal digits of n * 2^e2 (e2 >= 0) or of n * 5^-e2 (e2 < 0, the digits of n * 2^e2 * 10^-e2), most
+   significant first, for n >= 1: at most 790 of them for a double. Returns how many. */
+#define AL_JD 900
+static int al_json_digits(uint64_t n, int e2, char *out) {
+    uint32_t d[AL_JD / 9 + 2];
+    int len = 0, nd = 0, i;
+    while (n != 0) {
+        d[nd++] = (uint32_t)(n % 1000000000u);
+        n /= 1000000000u;
+    }
+    for (i = e2 >= 0 ? e2 : -e2; i > 0;) {
+        int s = e2 >= 0 ? (i > 29 ? 29 : i) : (i > 13 ? 13 : i), t, k;
+        uint64_t m = 1, carry = 0;
+        for (t = 0; t < s; t++) m *= e2 >= 0 ? 2u : 5u;
+        for (k = 0; k < nd; k++) {
+            uint64_t v = (uint64_t)d[k] * m + carry;
+            d[k] = (uint32_t)(v % 1000000000u);
+            carry = v / 1000000000u;
+        }
+        while (carry != 0) {
+            d[nd++] = (uint32_t)(carry % 1000000000u);
+            carry /= 1000000000u;
+        }
+        i -= s;
+    }
+    {
+        uint32_t top = d[nd - 1];
+        char tmp[10];
+        int t = 0;
+        do {
+            tmp[t++] = (char)('0' + top % 10);
+            top /= 10;
+        } while (top != 0);
+        while (t > 0) out[len++] = tmp[--t];
+        for (i = nd - 2; i >= 0; i--) {
+            uint32_t limb = d[i];
+            int k;
+            for (k = 8; k >= 0; k--) {
+                out[len + k] = (char)('0' + limb % 10);
+                limb /= 10;
+            }
+            len += 9;
+        }
+    }
+    return len;
+}
+
+/* Compares two whole numbers written as digits without leading zeros. */
+static int al_json_dcmp(const char *a, int an, const char *b, int bn) {
+    int i;
+    if (an != bn) return an < bn ? -1 : 1;
+    for (i = 0; i < an; i++) {
+        if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;
+    }
+    return 0;
+}
+
+static int al_json_inside(const char *x, int xn, const char *lo, int ln, const char *hi, int hn, int inclusive) {
+    int a = al_json_dcmp(x, xn, lo, ln), b = al_json_dcmp(x, xn, hi, hn);
+    return inclusive ? a >= 0 && b <= 0 : a > 0 && b < 0;
+}
+
+/*
+ * A finite float as JSON, as JsonText.floatText writes it: the fewest significant digits that read back as the same
+ * f64 (f32 with f32), the closest of those, the even one of two as close; plain from 1e-7 to below 1e21, with ".0"
+ * when whole, otherwise with an exponent. NaN and infinity trap. The three numbers compared, the float and the
+ * midpoints to its neighbours, are written out in full with the same power of ten, so comparing them is comparing
+ * their digits.
+ */
+static void al_json_float(al_out *o, double d, int f32, int line, int col) {
+    char lo[AL_JD], hi[AL_JD], v[AL_JD], c[AL_JD + 1];
+    int ln, hn, vn, cn, e, expf, p, i, q, x, k, inclusive, lower;
+    uint64_t m, frac;
+    if (isnan(d) || isinf(d)) {
+        al_out t = al_trap_begin("R0013");
+        AL_PUTS(&t, "to_json() cannot write ");
+        if (isnan(d)) AL_PUTS(&t, "nan");
+        else if (d > 0) AL_PUTS(&t, "inf");
+        else AL_PUTS(&t, "-inf");
+        AL_PUTS(&t, ": JSON has no NaN or infinity");
+        al_trap_end(&t, line, col);
+    }
+    if (d == 0) {
+        if (signbit(d)) AL_PUTS(o, "-0.0");
+        else AL_PUTS(o, "0.0");
+        return;
+    }
+    if (d < 0) {
+        AL_PUTS(o, "-");
+        d = -d;
+    }
+    if (f32) {
+        union { float f; uint32_t u; } b32;
+        b32.f = (float)d;
+        expf = (int)((b32.u >> 23) & 0xFFu);
+        frac = b32.u & 0x7FFFFFu;
+        m = expf != 0 ? frac | 0x800000u : frac;
+        e = (expf != 0 ? expf : 1) - 150;
+    } else {
+        union { double f; uint64_t u; } b64;
+        b64.f = d;
+        expf = (int)((b64.u >> 52) & 0x7FFu);
+        frac = b64.u & 0xFFFFFFFFFFFFFull;
+        m = expf != 0 ? frac | ((uint64_t)1 << 52) : frac;
+        e = (expf != 0 ? expf : 1) - 1075;
+    }
+    lower = frac == 0 && expf > 1;
+    inclusive = (m & 1u) == 0;
+    if (lower) {
+        ln = al_json_digits(4 * m - 1, e - 2, lo);
+        vn = al_json_digits(4 * m, e - 2, v);
+        hn = al_json_digits(4 * m + 2, e - 2, hi);
+        q = e - 2 < 0 ? e - 2 : 0;
+    } else {
+        ln = al_json_digits(2 * m - 1, e - 1, lo);
+        vn = al_json_digits(2 * m, e - 1, v);
+        hn = al_json_digits(2 * m + 1, e - 1, hi);
+        q = e - 1 < 0 ? e - 1 : 0;
+    }
+    /* v * 10^q is the float. Try p significant digits, from 1: the p-digit numbers below and above it. */
+    for (p = 1;; p++) {
+        int zero = 1, in_down, in_up, carry;
+        char up[AL_JD + 1];
+        int un = vn;
+        if (p >= vn) {
+            for (i = 0; i < vn; i++) c[i] = v[i];
+            cn = vn;
+            break;
+        }
+        for (i = p; i < vn; i++) {
+            if (v[i] != '0') zero = 0;
+        }
+        for (i = 0; i < vn; i++) c[i] = i < p ? v[i] : '0';
+        cn = vn;
+        if (zero) break;
+        /* up: the first p digits plus one, then zeros */
+        carry = 1;
+        for (i = vn - 1; i >= 0; i--) {
+            if (i >= p) {
+                up[i] = '0';
+                continue;
+            }
+            up[i] = (char)(v[i] + carry);
+            carry = 0;
+            if (up[i] > '9') {
+                up[i] = '0';
+                carry = 1;
+            }
+        }
+        if (carry) {
+            for (i = vn; i > 0; i--) up[i] = up[i - 1];
+            up[0] = '1';
+            un = vn + 1;
+        }
+        in_down = al_json_inside(c, cn, lo, ln, hi, hn, inclusive);
+        in_up = al_json_inside(up, un, lo, ln, hi, hn, inclusive);
+        if (!in_down && !in_up) continue;
+        if (in_down && in_up) {
+            /* the nearer: compare what is cut off with half of the last place */
+            int cmp = 0;
+            if (v[p] != '5') cmp = v[p] > '5' ? 1 : -1;
+            for (i = p + 1; cmp == 0 && i < vn; i++) {
+                if (v[i] != '0') cmp = 1;
+            }
+            if (cmp == 0) cmp = ((v[p - 1] - '0') & 1) ? 1 : -1;
+            in_down = cmp < 0;
+        }
+        if (!in_down) {
+            for (i = 0; i < un; i++) c[i] = up[i];
+            cn = un;
+        }
+        break;
+    }
+    /* c * 10^q, without its trailing zeros */
+    while (cn > 1 && c[cn - 1] == '0') {
+        cn--;
+        q++;
+    }
+    k = cn;
+    x = q + k - 1;
+    if (x >= -7 && x < 21) {
+        if (q >= 0) {
+            al_put(o, c, (uint32_t)k);
+            for (i = 0; i < q; i++) AL_PUTS(o, "0");
+            AL_PUTS(o, ".0");
+        } else if (x >= 0) {
+            al_put(o, c, (uint32_t)(k + q));
+            AL_PUTS(o, ".");
+            al_put(o, c + k + q, (uint32_t)(-q));
+        } else {
+            AL_PUTS(o, "0.");
+            for (i = 0; i < -x - 1; i++) AL_PUTS(o, "0");
+            al_put(o, c, (uint32_t)k);
+        }
+    } else {
+        al_put(o, c, 1);
+        if (k > 1) {
+            AL_PUTS(o, ".");
+            al_put(o, c + 1, (uint32_t)(k - 1));
+        }
+        if (x < 0) AL_PUTS(o, "e-");
+        else AL_PUTS(o, "e+");
+        al_fmt_u64(o, (uint64_t)(x < 0 ? -x : x));
+    }
+}
+
 static int64_t al_char_count(const uint8_t *s, uint32_t n) {
     uint32_t i = 0, l;
     int ok;
@@ -2770,10 +3090,11 @@ static uint32_t al_slice_chars(uint8_t *dst, const uint8_t *s, uint32_t n, al_po
     return al_copy_bytes(dst, s + start, i - start);
 }
 
-static uint32_t al_trim_into(uint8_t *dst, const uint8_t *s, uint32_t n) {
+/* trim (both ends), trim_start (front only) or trim_end (back only) of s into dst. */
+static uint32_t al_trim_into(uint8_t *dst, const uint8_t *s, uint32_t n, int front, int back) {
     uint32_t start = 0;
-    while (start < n && al_is_space(s[start])) start++;
-    while (n > start && al_is_space(s[n - 1])) n--;
+    while (front && start < n && al_is_space(s[start])) start++;
+    while (back && n > start && al_is_space(s[n - 1])) n--;
     return al_copy_bytes(dst, s + start, n - start);
 }
 
@@ -2889,6 +3210,90 @@ static void al_piece_trap(int words, uint32_t n, uint32_t k, int line, int col) 
     AL_PUTS(&e, " bytes exceeds str capacity ");
     al_fmt_u64(&e, k);
     al_trap_end(&e, line, col);
+}
+
+/* A piece of re_split or split_csv (name) of n bytes, more than the k of the strs of its list. */
+static void al_named_piece_trap(const char *name, uint32_t n, uint32_t k, int line, int col) {
+    al_out e = al_trap_begin("R0004");
+    al_puts_c(&e, name);
+    AL_PUTS(&e, " piece of ");
+    al_fmt_u64(&e, n);
+    AL_PUTS(&e, " bytes exceeds str capacity ");
+    al_fmt_u64(&e, k);
+    al_trap_end(&e, line, col);
+}
+
+/*
+ * The next field of the CSV record s[0..n) at *pos (at most n), as the interpreter's Stdlib.csv reads it: decoded into
+ * out, of which only the first cap bytes are written, with *flen its whole length. Moves *pos past the separator after
+ * it, or to n + 1 after the last field. Returns 0, or -1 when a quoted field has no closing quote (*bad is where the
+ * field starts) and -2 when text follows the closing quote (*bad is that byte).
+ */
+static int al_csv_field(const uint8_t *s, uint32_t n, uint32_t *pos, uint8_t sep, uint8_t *out, uint32_t cap,
+                        uint32_t *flen, uint32_t *bad) {
+    uint32_t i = *pos, len = 0;
+    if (i < n && s[i] == '"') {
+        i++;
+        for (;;) {
+            if (i >= n) {
+                *bad = *pos;
+                return -1;
+            }
+            if (s[i] == '"') {
+                if (i + 1 < n && s[i + 1] == '"') {
+                    if (len < cap) out[len] = '"';
+                    len++;
+                    i += 2;
+                    continue;
+                }
+                i++;
+                break;
+            }
+            if (len < cap) out[len] = s[i];
+            len++;
+            i++;
+        }
+        if (i < n && s[i] != sep) {
+            *bad = i;
+            return -2;
+        }
+    } else {
+        while (i < n && s[i] != sep) {
+            if (len < cap) out[len] = s[i];
+            len++;
+            i++;
+        }
+    }
+    *flen = len;
+    *pos = i < n ? i + 1 : n + 1;
+    return 0;
+}
+
+static void al_csv_trap(int st, uint32_t at, int line, int col) {
+    al_out e = al_trap_begin("R0013");
+    if (st == -1) {
+        AL_PUTS(&e, "split_csv: the quoted field at byte ");
+        al_fmt_u64(&e, at);
+        AL_PUTS(&e, " has no closing quote");
+    } else {
+        AL_PUTS(&e, "split_csv: text after the closing quote of a field, at byte ");
+        al_fmt_u64(&e, at);
+    }
+    al_trap_end(&e, line, col);
+}
+
+/* More pieces than the list holds: the message says which function and list. */
+static void al_pieces_trap(const char *message, int line, int col) {
+    al_out e = al_trap_begin("R0004");
+    al_puts_c(&e, message);
+    al_trap_end(&e, line, col);
+}
+
+/* Writes n bytes of src at *need in dst, as many as fit its cap, and adds n to *need, the length of all the text. */
+static void al_put_counted(uint8_t *dst, uint32_t cap, uint64_t *need, const uint8_t *src, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n && *need + i < cap; i++) dst[*need + i] = src[i];
+    *need += n;
 }
 
 static void al_need_trap(const char *what, uint64_t need, uint32_t cap, int line, int col) {

@@ -386,12 +386,13 @@ final class Stdlib {
         return k;
     }
 
-    static StrV trim(StrV s, Meter cost) {
+    /** trim (both ends), trim_start (only the start) or trim_end (only the end). */
+    static StrV trim(StrV s, boolean front, boolean back, Meter cost) {
         cost.bytes((long) s.b.length + s.len);
         int start = 0;
         int end = s.len;
-        while (start < end && isSpace(s.b[start] & 0xFF)) start++;
-        while (end > start && isSpace(s.b[end - 1] & 0xFF)) end--;
+        while (front && start < end && isSpace(s.b[start] & 0xFF)) start++;
+        while (back && end > start && isSpace(s.b[end - 1] & 0xFF)) end--;
         byte[] b = new byte[s.b.length];
         System.arraycopy(s.b, start, b, 0, end - start);
         return new StrV(b, end - start);
@@ -480,7 +481,7 @@ final class Stdlib {
         return true;
     }
 
-    private static boolean piece(String name, ListV r, StrV s, int from, int to, int k, Type.ListT t, boolean tryOnly, Span at,
+    static boolean piece(String name, ListV r, StrV s, int from, int to, int k, Type.ListT t, boolean tryOnly, Span at,
             Meter cost) {
         if (tryOnly && (r.len == r.items.length || to - from > k)) {
             r.len = 0;
@@ -497,6 +498,70 @@ final class Stdlib {
         System.arraycopy(s.b, from, b, 0, to - from);
         r.items[r.len++] = new StrV(b, to - from);
         return true;
+    }
+
+    /**
+     * split_csv and try_split_csv (tryOnly): the fields of the CSV record s into r, replacing what it held. False, with r
+     * empty, where split_csv traps: when a field or the count does not fit, or the quotes are not well formed. The C
+     * prelude's al_csv_field reads the same fields, and the generated code checks them in the same order.
+     */
+    static boolean csv(String name, ListV r, StrV s, byte sep, Type.ListT t, boolean tryOnly, Span at, Meter cost) {
+        int k = ((Type.Str) t.elem()).cap();
+        int n = s.len > 0 && s.b[s.len - 1] == '\r' ? s.len - 1 : s.len;
+        r.len = 0;
+        int pos = 0;
+        byte[] field = new byte[n];
+        while (pos <= n) {
+            String bad = null;
+            if (r.len == r.items.length) {
+                if (tryOnly) return emptied(r);
+                throw new Trap(Code.R0004, at, name + " makes more than " + r.items.length + " pieces, the capacity of " + t);
+            }
+            int i = pos;
+            int len = 0;
+            if (i < n && s.b[i] == '"') {
+                i++;
+                while (true) {
+                    if (i >= n) {
+                        bad = "the quoted field at byte " + pos + " has no closing quote";
+                        break;
+                    }
+                    if (s.b[i] == '"') {
+                        if (i + 1 < n && s.b[i + 1] == '"') {
+                            field[len++] = '"';
+                            i += 2;
+                            continue;
+                        }
+                        i++;
+                        break;
+                    }
+                    field[len++] = s.b[i++];
+                }
+                if (bad == null && i < n && s.b[i] != sep) bad = "text after the closing quote of a field, at byte " + i;
+            } else {
+                while (i < n && s.b[i] != sep) field[len++] = s.b[i++];
+            }
+            cost.bytes(i - pos);
+            if (bad != null) {
+                if (tryOnly) return emptied(r);
+                throw new Trap(Code.R0013, at, name + ": " + bad);
+            }
+            if (len > k) {
+                if (tryOnly) return emptied(r);
+                throw new Trap(Code.R0004, at, name + " piece of " + len + " bytes exceeds str capacity " + k);
+            }
+            cost.units(Meter.ELEMENT + k);
+            byte[] b = new byte[k];
+            System.arraycopy(field, 0, b, 0, len);
+            r.items[r.len++] = new StrV(b, len);
+            pos = i < n ? i + 1 : n + 1;
+        }
+        return true;
+    }
+
+    private static boolean emptied(ListV r) {
+        r.len = 0;
+        return false;
     }
 
     static StrV join(Object parts, byte[] sep, Type.Str t, Span at, Meter cost) {
@@ -848,6 +913,58 @@ final class Stdlib {
     }
 
     /** The integer square root of n, an unsigned 64-bit value: the largest r with r * r <= n. */
+    // ------------------------------------------------------------------ dates
+
+    /** days_from_date of 0001-01-01 and 9999-12-31: the range of date_from_days. */
+    static final long MIN_DAYS = -719162;
+    static final long MAX_DAYS = 2932896;
+
+    static boolean dateExists(long y, long m, long d) {
+        if (y < 1 || y > 9999 || m < 1 || m > 12 || d < 1) return false;
+        boolean leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+        long days = m == 2 ? (leap ? 29 : 28) : m == 4 || m == 6 || m == 9 || m == 11 ? 30 : 31;
+        return d <= days;
+    }
+
+    /** Days since 1970-01-01 of a date that exists (Howard Hinnant's days_from_civil; the C prelude's is the same). */
+    static long daysFromDate(long y, long m, long d) {
+        y -= m <= 2 ? 1 : 0;
+        long era = y / 400;
+        long yoe = y - era * 400;
+        long doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+        long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        return era * 146097 + doe - 719468;
+    }
+
+    /** The {year, month, day} of a day within MIN_DAYS..MAX_DAYS (civil_from_days). */
+    static long[] dateFromDays(long z) {
+        z += 719468;
+        long era = z / 146097;
+        long doe = z - era * 146097;
+        long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        long mp = (5 * doy + 2) / 153;
+        long d = doy - (153 * mp + 2) / 5 + 1;
+        long m = mp < 10 ? mp + 3 : mp - 9;
+        return new long[] {yoe + era * 400 + (m <= 2 ? 1 : 0), m, d};
+    }
+
+    /** parse_date: the days of a YYYY-MM-DD date that exists, or Long.MIN_VALUE. */
+    static long parseDate(StrV s) {
+        if (s.len != 10 || s.b[4] != '-' || s.b[7] != '-') return Long.MIN_VALUE;
+        long[] parts = new long[3];
+        int[][] at = {{0, 4}, {5, 7}, {8, 10}};
+        for (int p = 0; p < 3; p++) {
+            for (int i = at[p][0]; i < at[p][1]; i++) {
+                int c = s.b[i] & 0xFF;
+                if (c < '0' || c > '9') return Long.MIN_VALUE;
+                parts[p] = parts[p] * 10 + (c - '0');
+            }
+        }
+        if (!dateExists(parts[0], parts[1], parts[2])) return Long.MIN_VALUE;
+        return daysFromDate(parts[0], parts[1], parts[2]);
+    }
+
     static long isqrt(long n) {
         // Digit by digit, two bits at a time, as the C backend does: exact for every u64.
         long rem = n;

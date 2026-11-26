@@ -200,6 +200,13 @@ test "counts repeated words" {
 | `zip(xs, ys)` | `for (x, y) in zip(xs, ys) { }`: a list of pairs, as long as the shorter |
 | a callback of your own | a parameter `f: fn(T) -> U`, passed by name: `fn apply(xs: list[i64; _], f: fn(i64) -> i64)`; no closures or lambdas |
 | `s[a:b]`, `s[a:]`, `&s[a..b]`, `s.strip()`, `s.upper()` | `s[a..b]`, `s[a..]` (read in place, not copied, where it is only read), `trim(s)`, `to_upper(s)` |
+| `s.lstrip()`, `s.trim_end()`, `trimStart` | `trim_start(s)`, `trim_end(s)` |
+| `re.sub(p, r, s)`, `re.split(p, s)`, `re.fullmatch`, `re.search` | `re_replace(s, r"\d+", "#")`, `re_split(s, r"[,;] *")` (both typed by their variable, as `replace` and `split` are), `re_match(s, p)`, `re_find(s, p)` (`Option.Some((start, end))`) |
+| `next(csv.reader([line]))`, a CSV line with quoted fields | `var fields: list[str[32]; 8] = []; let ok: bool = try_split_csv(mut fields, line);` (`split_csv(line)` traps instead); `try_split_csv(mut fields, line, ';')` for another separator |
+| `json.dumps(x)`, `JSON.stringify(x)`, `serde_json::to_string(&x)` | `print(to_json(x));` or `let j: str[256] = to_json(x);`: structs as objects, enums as `"Name"` or `{"Name": [...]}`; `from_json(j)` reads it back |
+| `json.loads(s)` into a type, `serde_json::from_str::<T>(s)` | `let cfg: Option<Config> = from_json(text);` |
+| `c.name` (Python Enum), `format!("{:?}", c)`, `Color[s]`, `Color.valueOf(s)` | `variant_name(c)` is `"Red"`; `let c: Option<Color> = parse_variant(s);` |
+| `date.fromisoformat(s)`, `(d2 - d1).days`, `d + timedelta(days=30)`, `d.isoweekday()` | `parse_date("2026-11-26")` (an `Option` of days since 1970-01-01), `days_from_date(y, m, d)`, then subtract or add days; `date_from_days(n)` gives `(y, m, d)`, `weekday(n)` 1 (Monday) to 7 |
 | `s.removeprefix("v")`, `s.strip_suffix(".txt")` | `strip_prefix(s, 'v')`, `strip_suffix(s, ".txt")`: `s` unchanged when it does not start (end) with it |
 | `k, _, v = s.partition("=")`, `s.split_once('=')` | `split_once(s, '=')`: `Option.Some((before, after))`, or `Option.None` |
 | `"-" * 20`, `"ab".repeat(3)` | `repeat('-', 20)`, `repeat("ab", 3)`, in `print`/`append` or a typed str |
@@ -241,20 +248,21 @@ adds tested helpers (pseudo-random numbers, an insertion-ordered map).
 |------|-----------|
 | Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `product(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` (an `Option`) `rem_euclid` `div_euclid` `mul_mod(a, b, m)` `count_ones` `leading_zeros` `trailing_zeros` `rotl(x, n)` `rotr(x, n)` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
 | Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `strip_prefix` `strip_suffix` `split(s, sep)` `split_once(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `join(parts, sep)` `replace(s, from, to)` `repeat(s, n)` `is_int` `is_float` `parse_i64(s)` `parse_i64(s, base)` `parse_f64` (an `Option`) `str[N](n)` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` `to_base(n, base)` `hash(s)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
+| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `trim_start` `trim_end` `strip_prefix` `strip_suffix` `split(s, sep)` `split_once(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `split_csv(s, sep)` `try_split_csv(mut fields, s, sep)` `join(parts, sep)` `replace(s, from, to)` `repeat(s, n)` `is_int` `is_float` `parse_i64(s)` `parse_i64(s, base)` `parse_f64` (an `Option`) `str[N](n)` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` `to_base(n, base)` `hash(s)`; regular expressions: `re_match(s, p)` `re_find(s, p)` `re_replace(s, p, to)` `re_split(s, p)`; JSON: `to_json(v)` `from_json(s)`; enums: `variant_name(e)` `parse_variant(s)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
+| Dates (days since 1970-01-01) | `days_from_date(y, m, d)` `date_from_days(n)` (a `(y, m, d)` tuple) `weekday(n)` (1 Monday to 7 Sunday) `parse_date(s)` (`YYYY-MM-DD`, an `Option`) |
 | Option, Result | `unwrap_or(o, d)` `is_some` `is_none` `is_ok` `is_err`; `e?`; `assert_eq(a, b);` |
 | Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `is_sorted(xs)` `binary_search(xs, x)` `lower_bound(xs, x)` `upper_bound(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `pop_front(mut xs)` `extend(mut xs, ys)` `fill(mut xs, v)` `rotate(mut xs, k)` `swap(mut xs, i, j)` `swap(mut a, mut b)` `retain(mut xs, keep)` `min_index(xs)` `max_index(xs)` `zip(a, b)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` `min_by(xs, before)` `max_by(xs, before)` `fold(xs, init, f)` `transform(xs, f)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get(m, k)` (an `Option`), `get_or(m, k, d)`, `keys(m)`, `values(m)`, `first_key(m)` `last_key(m)` `floor_key(m, k)` `ceil_key(m, k)` (an `Option`), `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear`, `union(a, b)`, `intersection(a, b)`, `difference(a, b)`, `symmetric_difference(a, b)`, `is_subset(a, b)`; enums: `variants(E)` |
 
-- `split`, `words`, `join`, `replace` take their type from the typed `let`/`var`/assignment/`return` they
-  are the whole right side of: `let parts: list[str[16]; 8] = split(line, ",");`. Pieces that do not fit
+- `split`, `words`, `join`, `replace`, `split_csv`, `re_replace`, `re_split` take their type from the typed
+  `let`/`var`/assignment/`return` they are the whole right side of: `let parts: list[str[16]; 8] = split(line, ",");`. Pieces that do not fit
   trap (R0004; `check` warns W0307), so for input use `try_split`/`try_words` (false, list left empty) or
   iterate: `for p in split(s, sep) { }` builds no list and never traps; each piece has the capacity of
   `s`, so check `len(p)` and narrow with `str[16](p)`.
 - A separator or pattern is a str or a character. `index_of` and friends return -1 when absent.
 - `parse_i64`/`parse_f64` give an `Option`; `i64(s)`/`f64(s)` trap on bad text, so check `is_int`/`is_float`
   first, after `trim`. Floats accept `19.99`, `-0.5`, `.25`, `1e5`, `2.5E-3`.
-- `fixed(x, 2)`, `pad_left(v, width, fill)`, `pad_right` make text for `print`, `append` or a typed str;
-  widths count bytes.
+- `fixed(x, 2)`, `pad_left(v, width, fill)`, `pad_right`, `variant_name(e)` and `to_json(v)` make text for
+  `print`, `append` or a typed str; widths count bytes.
 - `sort` orders every type: numbers, strs by bytes, structs field by field (put the key first), enums by
   variant; `reverse` for descending, `sort_by(mut xs, before)` for any other order (stable).
 - Functions passed by name must have exactly the wanted type: `fn adult(e: Entry) -> bool`.

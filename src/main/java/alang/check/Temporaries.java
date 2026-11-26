@@ -223,7 +223,7 @@ final class Temporaries {
     }
 
     /** What the C backend of some builtins keeps besides their arguments and result, all of it on the stack at once. */
-    /** An upper bound on sizeof(al_re) in the C prelude: what re_match and re_find keep on the stack. */
+    /** An upper bound on sizeof(al_re) in the C prelude: what re_match, re_find, re_replace and re_split keep on the stack. */
     static final long RE_STATE = 65536;
 
     private static long builtin(Call c) {
@@ -254,7 +254,9 @@ final class Temporaries {
                 yield Layout.add(Type.isAggregate(elem) ? Layout.size(elem) : 0, keys);
             }
             // The compiled pattern and the state of the machine that runs it: one al_re of the C prelude.
-            case RE_MATCH, RE_FIND -> RE_STATE;
+            case RE_MATCH, RE_FIND, RE_REPLACE, RE_SPLIT -> RE_STATE;
+            // The exact decimal digits of a float and of the midpoints to its neighbours (al_json_float).
+            case TO_JSON -> 8192;
             // The value read, and an element of each set or map in it on its way in: at most the value again.
             case FROM_JSON -> {
                 Type t = ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0);

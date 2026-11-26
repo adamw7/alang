@@ -3,7 +3,7 @@ error[E0214]: cannot convert [i64; 3] to str[8]
   |
 5 |     print(str[8](arr));
   |           ^^^^^^^^^^^
-  = hint: str[8](x) changes the capacity of a str, or makes the text of a number or bool; to turn another value into text, append it: var s: str[8] = ""; append(mut s, arr);
+  = hint: str[8](x) changes the capacity of a str, or makes the text of a number or bool; to turn another value into text, append it: var s: str[8] = ""; append(mut s, arr); or make its JSON: let s: str[8] = to_json(arr);
 
 error[E0214]: cannot convert [i64; 3] to list[i64; 4]
  --> tests/errors/E0214_resize.al:6:11

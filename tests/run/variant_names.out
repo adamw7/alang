@@ -1,0 +1,7 @@
+Red ...Red
+Green .Green
+Blue ..Blue
+Square 6
+shape: Circle
+Option.Some(Color.Green) Option.None Option.None
+Color.Blue Color.Red

@@ -146,6 +146,10 @@ public enum Builtin {
         "A copy of the elements from..to (half-open) of a str, list or array, of the same type (a list for an array). "
             + "Traps (R0003) unless 0 <= from <= to <= len(xs)."),
     TRIM(Group.TEXT, true, "trim", "trim(s) -> str[N]", "s without the ASCII whitespace at its start and end."),
+    TRIM_START(Group.TEXT, true, "trim_start", "trim_start(s) -> str[N]",
+        "s without the ASCII whitespace at its start: trim_start(\"  a \") is \"a \"."),
+    TRIM_END(Group.TEXT, true, "trim_end", "trim_end(s) -> str[N]",
+        "s without the ASCII whitespace at its end: trim_end(\"  a \") is \"  a\"."),
     STRIP_PREFIX(Group.TEXT, true, "strip_prefix", "strip_prefix(s, prefix) -> str[N]",
         "s without prefix (a str or u8 byte) at its start, or s unchanged if it does not start with it, as a str of the "
             + "capacity of s: strip_prefix(\"v1.2\", 'v') is \"1.2\". starts_with(s, prefix) tells which."),
@@ -166,6 +170,24 @@ public enum Builtin {
             + "iteration that would match the empty text through a repetition inside the group that an earlier "
             + "iteration already left at that byte is not tried first, so in \"ab\", (a*|b)* finds (0, 2) where Perl "
             + "finds (0, 1)."),
+    RE_REPLACE(Group.TEXT, true, "re_replace", "re_replace(s, pattern, to) -> str[N]",
+        "s with every match of the regular expression pattern (see re_match) replaced by to, a str or u8 byte put in as "
+            + "it is: re_replace(\"a1b22\", r\"\\d+\", \"#\") is \"a#b#\". Matches are found left to right, each where the "
+            + "last ended, as re_find finds them; an empty match is replaced too, but not where the last match ended empty, "
+            + "as in Python: re_replace(\"ab\", \"x*\", \"-\") is \"-a-b-\". Its type is that of the variable it is "
+            + "stored in. Traps (R0013) if the pattern is not valid, and (R0004) if the result does not fit."),
+    RE_SPLIT(Group.TEXT, true, "re_split", "re_split(s, pattern) -> list[str[K]; M]",
+        "The pieces of s between the matches of the regular expression pattern, found as re_replace finds them, empty "
+            + "pieces included: re_split(\"a, b;c\", r\"[,;] *\") is [\"a\", \"b\", \"c\"]. Its type is that of the "
+            + "variable it is stored in. Traps (R0013) if the pattern is not valid, and (R0004) if a piece or the count does "
+            + "not fit."),
+    TO_JSON(Group.TEXT, true, "to_json", "to_json(v) -> str[N]",
+        "The JSON text of the value v, on one line, in the forms tool results and from_json use: numbers, bools, strs as "
+            + "strings (\" \\ and control bytes escaped), arrays, lists, sets and tuples as arrays, structs as objects, "
+            + "maps with str keys as objects (others as [[key, value], ...]), enum variants as \"Name\" or {\"Name\": "
+            + "[values]}: to_json(Point(x: 1, y: 2)) is {\"x\": 1, \"y\": 2}. A float is written with the fewest digits "
+            + "that read back as the same value (0.1, 100.0, 1e+21). from_json reads it back. Traps (R0013) on NaN, "
+            + "infinity or a str that is not UTF-8, which JSON cannot hold. " + Builtin.TEXT_USE),
     FROM_JSON(Group.TEXT, true, "from_json", "from_json(s) -> Option<T>",
         "The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored "
             + "in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to "
@@ -173,6 +195,14 @@ public enum Builtin {
             + "UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default "
             + "present, no other) and maps with str keys, \"Variant\" or {\"Variant\": [values]} to enums. "
             + "Option.None for any other text."),
+    VARIANT_NAME(Group.TEXT, true, "variant_name", "variant_name(e) -> str[N]",
+        "The name of the variant of the enum value e, without the enum's name or the values it carries: "
+            + "variant_name(Color.Red) is \"Red\", variant_name(Shape.Circle(2.0)) is \"Circle\". parse_variant reads it "
+            + "back. " + Builtin.TEXT_USE),
+    PARSE_VARIANT(Group.TEXT, true, "parse_variant", "parse_variant(s) -> Option<E>",
+        "The variant of the enum E named by the str s, E being the type of the Option<E> that the result is stored in: "
+            + "let c: Option<Color> = parse_variant(\"Red\"); is Option.Some(Color.Red). The name must match exactly, "
+            + "case included; Option.None for any other text. E's variants must carry no values."),
     SPLIT_ONCE(Group.TEXT, true, "split_once", "split_once(s, sep) -> Option<(str[N], str[N])>",
         "The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the "
             + "capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once(\"k=v=w\", '=') is Option.Some((\"k\", \"v=w\")). "
@@ -196,6 +226,17 @@ public enum Builtin {
     TRY_WORDS(Group.TEXT, false, "try_words", "try_words(mut parts, s) -> bool",
         "words(s) into the list parts, replacing what it held: true if every word fits, otherwise false with parts left "
             + "empty, never a trap."),
+    SPLIT_CSV(Group.TEXT, true, "split_csv", "split_csv(s, sep = ',') -> list[str[K]; M]",
+        "The fields of the CSV record s, between the u8 byte sep, as RFC 4180 writes them: a field in double quotes may "
+            + "hold sep, and two double quotes inside it stand for one. For the text a,\"b,c\",\"x \"\"y\"\"\" the fields are "
+            + "a, then b,c, then x \"y\". Spaces are kept; a double quote inside a field without quotes is an ordinary byte, "
+            + "and one \\r at the end of s is left out, so lines of a file with CRLF line ends need nothing more. Its type is "
+            + "that of the variable it is stored in. Traps (R0013) if a quoted field has no closing quote or text follows it "
+            + "before sep, and (R0004) if a field or the count does not fit; try_split_csv returns false instead."),
+    TRY_SPLIT_CSV(Group.TEXT, false, "try_split_csv", "try_split_csv(mut fields, s, sep = ',') -> bool",
+        "split_csv(s, sep) into the list fields, replacing what it held: true if s is a well-formed record and every field "
+            + "fits, otherwise false with fields left empty, never a trap. For input: var fields: list[str[32]; 8] = []; "
+            + "let ok: bool = try_split_csv(mut fields, line);"),
     JOIN(Group.TEXT, true, "join", "join(parts, sep) -> str[N]",
         "The strs of an array or list with sep (a str or u8 byte) between them. Its type is that of the variable "
             + "it is stored in. Traps if the result does not fit."),
@@ -236,6 +277,21 @@ public enum Builtin {
     PARSE_F64(Group.TEXT, true, "parse_f64", "parse_f64(s) -> Option<f64>",
         "The str as an f64, Option.Some(x), when is_float(s) holds (19.99, -0.5, 3, .25, 2.5e3); otherwise Option.None. "
             + "Strict: no spaces, so trim(s) first. Never traps, unlike f64(s)."),
+
+    DAYS_FROM_DATE(Group.DATES, true, "days_from_date", "days_from_date(year, month, day) -> i64",
+        "The number of days from 1970-01-01 to the date, in the Gregorian calendar (negative before 1970), for three "
+            + "i64: days_from_date(1970, 1, 2) is 1. Subtract two of them for the days between dates, add to one to move "
+            + "it. Traps (R0013) unless the date exists and the year is 1 to 9999."),
+    DATE_FROM_DAYS(Group.DATES, true, "date_from_days", "date_from_days(days) -> (i64, i64, i64)",
+        "The date (year, month, day) that many days after 1970-01-01, as days_from_date counts them: "
+            + "date_from_days(31) is (1970, 2, 1). Traps (R0013) outside the years 1 to 9999 (-719162 to 2932896)."),
+    WEEKDAY(Group.DATES, true, "weekday", "weekday(days) -> i64",
+        "The day of the week of the date that many days after 1970-01-01, as ISO 8601 numbers them: 1 for Monday to 7 "
+            + "for Sunday. weekday(0) is 4, a Thursday."),
+    PARSE_DATE(Group.DATES, true, "parse_date", "parse_date(s) -> Option<i64>",
+        "The date written YYYY-MM-DD in the str s, as days_from_date counts it: parse_date(\"1970-01-31\") is "
+            + "Option.Some(30). Option.None for any other text, or a date that does not exist (2026-02-30). Strict: "
+            + "exactly ten bytes, so trim(s) first."),
 
     HASH(Group.TEXT, true, "hash", "hash(s) -> u64",
         "The 64-bit FNV-1a hash of the bytes of a str, or of an array or list of u8: the same number on every run and "
@@ -400,6 +456,7 @@ public enum Builtin {
         MATH("Math"),
         CHARS("Characters"),
         TEXT("Text"),
+        DATES("Dates"),
         COLLECTIONS("Collections");
 
         public final String title;
@@ -439,14 +496,17 @@ public enum Builtin {
      * text that fixed, pad_left and pad_right make when it is not written out at once (see {@link #formats}).
      */
     public boolean typedByTarget() {
-        return this == SPLIT || this == WORDS || this == CHARS || this == JOIN || this == REPLACE || formats();
+        return this == SPLIT || this == WORDS || this == CHARS || this == JOIN || this == REPLACE || this == RE_REPLACE
+            || this == RE_SPLIT || this == SPLIT_CSV || formats();
     }
 
     /**
-     * Whether it makes text: fixed, pad_left, pad_right, to_base and repeat, which print and append write out directly.
+     * Whether it makes text: fixed, pad_left, pad_right, to_base, repeat, variant_name and to_json, which print and
+     * append write out directly.
      */
     public boolean formats() {
-        return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT || this == TO_BASE || this == REPEAT;
+        return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT || this == TO_BASE || this == REPEAT || this == VARIANT_NAME
+            || this == TO_JSON;
     }
 
     /**
@@ -463,7 +523,7 @@ public enum Builtin {
     public boolean modifiesFirst() {
         return switch (this) {
             case PUSH, POP, POP_FRONT, CLEAR, APPEND, PUSH_CHAR, SORT, SORT_BY, SORT_BY_KEY, HEAP_PUSH, HEAP_POP, RETAIN,
-                 REVERSE, DEDUP, INSERT, REMOVE, SWAP, TRY_SPLIT, TRY_WORDS, EXTEND, FILL, ROTATE -> true;
+                 REVERSE, DEDUP, INSERT, REMOVE, SWAP, TRY_SPLIT, TRY_WORDS, TRY_SPLIT_CSV, EXTEND, FILL, ROTATE -> true;
             default -> false;
         };
     }

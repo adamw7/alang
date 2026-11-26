@@ -3333,8 +3333,28 @@ public final class Checker {
             case "startswith", "startsWith", "has_prefix" -> "use starts_with(s, prefix)";
             case "endswith", "endsWith", "has_suffix" -> "use ends_with(s, suffix)";
             case "substr", "substring", "sub", "mid", "subslice" -> "slice it: s[from..to], s[from..] or s[..to]";
-            case "strip", "trim_start", "trim_end", "lstrip", "rstrip", "trim_left", "trim_right", "trimStart", "trimEnd" ->
-                "use trim(s), which removes ASCII whitespace at both ends";
+            case "strip" -> "use trim(s), which removes ASCII whitespace at both ends";
+            case "re_sub", "regex_replace", "gsub", "replace_regex", "re_gsub" ->
+                "use re_replace(s, pattern, to), stored in a typed str: let t: str[64] = re_replace(s, r\"\\d+\", \"#\");";
+            case "regex_split", "split_regex", "re_splitn" -> "use re_split(s, pattern), stored in a typed list of strs";
+            case "re_search", "regex_find", "search_regex" -> "use re_find(s, pattern): Option.Some((start, end)) of the first match";
+            case "regex_match", "re_fullmatch", "is_match" -> "use re_match(s, pattern), true when the pattern matches all of s";
+            case "dumps", "stringify", "json_encode", "encode_json", "toJSON", "to_json_string", "serialize" ->
+                "use to_json(v): print(to_json(v)); or let j: str[256] = to_json(v);";
+            case "loads", "json_decode", "decode_json", "parse_json", "deserialize" ->
+                "use from_json(s), stored in an Option of the type: let v: Option<Config> = from_json(s);";
+            case "csv_split", "parse_csv", "split_csv_line", "csv_fields" ->
+                "use try_split_csv(mut fields, line), false when the record does not fit, or split_csv(line)";
+            case "name_of", "enum_name", "variant_of", "nameof" -> "use variant_name(e): variant_name(Color.Red) is \"Red\"";
+            case "value_of", "valueOf", "enum_from_str", "parse_enum", "from_name" ->
+                "use parse_variant(s), stored in an Option of the enum: let c: Option<Color> = parse_variant(s);";
+            case "fromisoformat", "parse_iso_date", "date_parse", "to_date" ->
+                "use parse_date(s) for YYYY-MM-DD: Option.Some(days since 1970-01-01)";
+            case "days_between", "date_diff", "datediff", "days_since" ->
+                "subtract two days_from_date(y, m, d) values: the days between the dates";
+            case "isoweekday", "day_of_week", "dayofweek", "weekday_of" -> "use weekday(days): 1 for Monday to 7 for Sunday";
+            case "lstrip", "trim_left", "trimStart", "trimLeft", "ltrim" -> "use trim_start(s), which removes ASCII whitespace at the start";
+            case "rstrip", "trim_right", "trimEnd", "trimRight", "rtrim" -> "use trim_end(s), which removes ASCII whitespace at the end";
             case "upper", "uppercase", "toUpperCase", "toupper" -> "use to_upper(x), for a u8 byte or a str";
             case "lower", "lowercase", "toLowerCase", "tolower" -> "use to_lower(x), for a u8 byte or a str";
             case "capitalize" -> "change the first byte of a var: s[0] = to_upper(s[0]);";
@@ -4075,7 +4095,7 @@ public final class Checker {
                 diags.error(Code.E0203, args.get(0).span(), "slice() needs a str, list or array, found " + t);
                 return Type.ERROR;
             }
-            case TRIM -> {
+            case TRIM, TRIM_START, TRIM_END -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 return textArg(b, args.get(0));
             }
@@ -4163,9 +4183,16 @@ public final class Checker {
                 for (int i = 1; i < 3; i++) indexArg(b, args.get(i));
                 return t;
             }
-            case TRY_SPLIT, TRY_WORDS -> {
+            case SPLIT_CSV -> {
+                if (args.size() != 1 && !arity(c, 2)) return Type.ERROR;
+                textArg(b, args.get(0));
+                if (args.size() == 2) byteArg(b, args.get(1), "the separator");
+                return storedType(c, b, expected);
+            }
+            case TRY_SPLIT, TRY_WORDS, TRY_SPLIT_CSV -> {
                 boolean split = b == Builtin.TRY_SPLIT;
-                if (!arity(c, split ? 3 : 2)) return Type.BOOL;
+                boolean csv = b == Builtin.TRY_SPLIT_CSV;
+                if (!(csv && args.size() == 2) && !arity(c, split || csv ? 3 : 2)) return Type.BOOL;
                 Arg target = args.get(0);
                 Type t;
                 if (!target.mut()) {
@@ -4181,6 +4208,7 @@ public final class Checker {
                 }
                 textArg(b, args.get(1));
                 if (split) textPattern(b, args.get(2), "the separator");
+                if (csv && args.size() == 3) byteArg(b, args.get(2), "the separator");
                 return Type.BOOL;
             }
             case JOIN -> {
@@ -4381,6 +4409,22 @@ public final class Checker {
                 }
                 return Type.ERROR;
             }
+            case DAYS_FROM_DATE, WEEKDAY -> {
+                if (!arity(c, b == Builtin.WEEKDAY ? 1 : 3)) return Type.I64;
+                for (Arg a : args) i64Arg(b, a);
+                return Type.I64;
+            }
+            case DATE_FROM_DAYS -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                i64Arg(b, args.get(0));
+                return new Type.TupleT(List.of(Type.I64, Type.I64, Type.I64));
+            }
+            case PARSE_DATE -> {
+                Type ret = optionOf(Type.I64);
+                if (!arity(c, 1)) return ret;
+                textArg(b, args.get(0));
+                return ret;
+            }
             case HASH -> {
                 if (!arity(c, 1)) return Type.U64;
                 Type t = readArg(args.get(0));
@@ -4512,6 +4556,48 @@ public final class Checker {
                 textPattern(b, args.get(1), b == Builtin.STRIP_PREFIX ? "the prefix" : "the suffix");
                 return t;
             }
+            case VARIANT_NAME -> {
+                boolean asText = ctx.text == c;
+                if (!arity(c, 1)) return Type.ERROR;
+                Type t = value(args.get(0), null);
+                if (!(t instanceof Type.EnumT) && !Type.isError(t)) {
+                    diags.error(Code.E0203, args.get(0).span(), "variant_name() needs an enum value, found " + t,
+                        "for the text of any other value, append it: var s: str[32] = \"\"; append(mut s, "
+                            + exprText(args.get(0).expr()) + ");");
+                }
+                return formatted(c, b, expected, asText);
+            }
+            case TO_JSON -> {
+                boolean asText = ctx.text == c;
+                if (!arity(c, 1)) return Type.ERROR;
+                Type t = value(args.get(0), null);
+                readInPlace(args.get(0).expr());
+                if (!Type.isError(t) && (hasFunction(t) || Type.hasTypeVar(t) || Type.hasAnyCapacity(t))) {
+                    diags.error(Code.E0201, args.get(0).span(), "to_json() writes values of types with JSON forms, and " + t + " has none",
+                        "JSON holds no functions, and the type needs constant capacities and no type parameters");
+                    return Type.ERROR;
+                }
+                return formatted(c, b, expected, asText);
+            }
+            case PARSE_VARIANT -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                textArg(b, args.get(0));
+                Type want = successType(expected);
+                if (fallible(expected) != 1 || !(want instanceof Type.EnumT et)) {
+                    diags.error(Code.E0201, c.span, "parse_variant() takes its enum type from the Option<E> it is stored in",
+                        "store it in a variable of that type: let c: Option<Color> = parse_variant(text);");
+                    return Type.ERROR;
+                }
+                for (Variant v : et.decl().variants) {
+                    if (!v.payload.isEmpty()) {
+                        diags.error(Code.E0203, c.span, "parse_variant() needs an enum whose variants carry no values, but `"
+                            + et.decl().name + "." + v.name + "` carries " + v.payload.size(),
+                            "match the name yourself: if text == \"" + v.name + "\" { ... }");
+                        return Type.ERROR;
+                    }
+                }
+                return expected;
+            }
             case FROM_JSON -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 textArg(b, args.get(0));
@@ -4531,20 +4617,16 @@ public final class Checker {
             case RE_MATCH, RE_FIND -> {
                 if (!arity(c, 2)) return Type.ERROR;
                 textArg(b, args.get(0));
-                Type pt = textArg(b, args.get(1));
-                // A pattern written out is compiled now, so that a mistake in it is an error, not a trap.
-                if (args.get(1).expr() instanceof StrLit lit) {
-                    try {
-                        alang.interp.Regex.compile(lit.value, lit.value.length);
-                    } catch (alang.interp.Regex.BadPattern e) {
-                        diags.error(Code.E0202, lit.span, "this pattern is not a valid regular expression: " + e.getMessage()
-                                + " at byte " + e.at,
-                            "special characters are . [ ] ( ) | * + ? { } ^ $ and \\; put a \\ before one to match it, and "
-                                + "write the pattern as a raw string, r\"...\", so that each \\ reaches it as it is");
-                    }
-                }
+                Type pt = regexArg(b, args.get(1));
                 if (Type.isError(pt)) return b == Builtin.RE_MATCH ? Type.BOOL : Type.ERROR;
                 return b == Builtin.RE_MATCH ? Type.BOOL : optionOf(new Type.TupleT(List.of(Type.I64, Type.I64)));
+            }
+            case RE_REPLACE, RE_SPLIT -> {
+                if (!arity(c, b == Builtin.RE_REPLACE ? 3 : 2)) return Type.ERROR;
+                textArg(b, args.get(0));
+                regexArg(b, args.get(1));
+                if (b == Builtin.RE_REPLACE) textPattern(b, args.get(2), "the replacement");
+                return storedType(c, b, expected);
             }
             case SPLIT_ONCE -> {
                 if (!arity(c, 2)) return Type.ERROR;
@@ -4882,6 +4964,41 @@ public final class Checker {
     }
 
     /** An integer argument, such as a width or a number of decimals. */
+    /** A regular expression: a str, compiled now when it is written out, so that a mistake in it is an error, not a trap. */
+    private Type regexArg(Builtin b, Arg a) {
+        Type t = textArg(b, a);
+        if (a.expr() instanceof StrLit lit) {
+            try {
+                alang.interp.Regex.compile(lit.value, lit.value.length);
+            } catch (alang.interp.Regex.BadPattern e) {
+                diags.error(Code.E0202, lit.span, "this pattern is not a valid regular expression: " + e.getMessage()
+                        + " at byte " + e.at,
+                    "special characters are . [ ] ( ) | * + ? { } ^ $ and \\; put a \\ before one to match it, and "
+                        + "write the pattern as a raw string, r\"...\", so that each \\ reaches it as it is");
+            }
+        }
+        return t;
+    }
+
+    /** A single u8 byte, such as a character literal. */
+    private void byteArg(Builtin b, Arg a, String what) {
+        Type t = value(a, Type.U8);
+        readInPlace(a.expr());
+        if (!Type.isError(t) && !t.equals(Type.U8)) {
+            diags.error(Code.E0201, a.span(), b.name + "() needs a u8 byte for " + what + ", found " + t,
+                t instanceof Type.Str ? "write the character in single quotes: ';'" : null);
+        }
+    }
+
+    /** An i64, as the date functions take: a narrower integer is converted with i64(x), as elsewhere. */
+    private void i64Arg(Builtin b, Arg a) {
+        Type t = value(a, Type.I64);
+        if (!Type.isError(t) && !t.equals(Type.I64)) {
+            diags.error(Code.E0201, a.span(), b.name + "() needs an i64, found " + t,
+                Type.isInt(t) ? "convert it: i64(" + exprText(a.expr()) + ")" : null);
+        }
+    }
+
     private void intArg(Builtin b, Arg a, String what) {
         Type t = value(a, Type.I64);
         if (!Type.isInt(t) && !Type.isError(t)) {
@@ -5190,13 +5307,16 @@ public final class Checker {
      * or of the function's return value, since the capacity of what they build cannot be computed.
      */
     private Type storedType(Call c, Builtin b, Type expected) {
-        boolean list = b == Builtin.SPLIT || b == Builtin.WORDS || b == Builtin.CHARS;
+        boolean list = b == Builtin.SPLIT || b == Builtin.WORDS || b == Builtin.CHARS || b == Builtin.RE_SPLIT || b == Builtin.SPLIT_CSV;
+        boolean loops = b == Builtin.SPLIT || b == Builtin.WORDS;
         String example = switch (b) {
-            case SPLIT -> "let parts: list[str[32]; 16] = ";
+            case SPLIT, RE_SPLIT -> "let parts: list[str[32]; 16] = ";
+            case SPLIT_CSV -> "let fields: list[str[32]; 16] = ";
             case WORDS -> "let ws: list[str[32]; 16] = ";
             case CHARS -> "let cs: list[u32; 64] = ";
             case JOIN -> "let line: str[256] = ";
-            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE, REPEAT -> "let text: str[32] = ";
+            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE, REPEAT, VARIANT_NAME -> "let text: str[32] = ";
+            case TO_JSON -> "let json: str[256] = ";
             default -> "let text: str[256] = ";
         } + exprText(c) + ";";
         if (b.formats() && (ctx.stored != c || expected == null)) {
@@ -5210,7 +5330,7 @@ public final class Checker {
             diags.error(Code.E0216, c.span, b.name + "() takes its type, and so its capacity, from the variable it is stored in",
                 "make the call the whole right-hand side of a typed let/var, an assignment or a return: " + example
                     + (b == Builtin.CHARS ? " or, to go through the code points one at a time without a list: for c in " + exprText(c) + " { }"
-                    : list ? " or, to go through the pieces one at a time without a list: for p in " + exprText(c) + " { }" : ""));
+                    : loops ? " or, to go through the pieces one at a time without a list: for p in " + exprText(c) + " { }" : ""));
             return Type.ERROR;
         }
         boolean ok = b == Builtin.CHARS ? expected instanceof Type.ListT l && l.elem().equals(Type.U32)
@@ -5759,8 +5879,12 @@ public final class Checker {
             // str[N](42), str[N](x), str[N](true): the text print writes for a number or bool.
             if (!(t instanceof Type.Str) && !Type.isNumeric(t) && !Type.isBool(t)) {
                 diags.error(Code.E0214, r.span, "cannot convert " + t + " to " + target,
-                    target + "(x) changes the capacity of a str, or makes the text of a number or bool; to turn another "
-                        + "value into text, append it: var s: " + target + " = \"\"; append(mut s, " + exprText(r.arg) + ");");
+                    t instanceof Type.EnumT
+                        ? "for the name of its variant, use variant_name: let name: " + target + " = variant_name("
+                            + exprText(r.arg) + "); and parse_variant(name) reads it back"
+                        : target + "(x) changes the capacity of a str, or makes the text of a number or bool; to turn another "
+                            + "value into text, append it: var s: " + target + " = \"\"; append(mut s, " + exprText(r.arg) + "); "
+                            + "or make its JSON: let s: " + target + " = to_json(" + exprText(r.arg) + ");");
             }
             return target;
         }
