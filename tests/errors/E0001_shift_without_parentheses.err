@@ -1,0 +1,7 @@
+error[E0001]: unexpected '+', expected one of '[', ';', an operator
+ --> tests/errors/E0001_shift_without_parentheses.al:4:25
+  |
+4 |     let y: i64 = x << 2 + 1;
+  |                         ^
+  = hint: bitwise operators (& | ^ << >>) cannot be combined with other operators without parentheses: (a & b) | c, (x << 2) + 1
+

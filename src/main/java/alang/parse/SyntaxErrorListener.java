@@ -580,8 +580,10 @@ final class SyntaxErrorListener extends BaseErrorListener {
             && (t == ALangLexer.COMMA || t == ALangLexer.RPAREN) && p == ALangLexer.IDENT) {
             return "parameters need explicit types: fn f(x: i32, ys: mut list[i32; 8])";
         }
-        // Only where an operator could follow: elsewhere (`fn id<T>`, `1 | 2 =>`) it is not about precedence.
-        if (isBinaryOperator(t) && prev != null && expectsOperator(expected)) {
+        // Only where an operator could follow, or right after an expression that has one: elsewhere (`fn id<T>`,
+        // `1 | 2 =>`) it is not about precedence. A shift does not chain (`x << 2 + 1`) and an assert's expression is
+        // followed only by `,` or `;` (`assert x & 1 == 1;`), so there the operator before is what tells.
+        if (isBinaryOperator(t) && prev != null && (expectsOperator(expected) || operatorBefore(ts, tok))) {
             if (t == ALangLexer.AND || t == ALangLexer.OR) {
                 return "`and` and `or` cannot be mixed without parentheses: (a and b) or c";
             }
@@ -846,6 +848,31 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (expected == null) return false;
         for (int t : expected.toList()) {
             if (isBinaryOperator(t)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether a binary operator comes before {@code tok} in the expression it ends, outside any brackets: the scan
+     * goes back to the start of the statement, an `=`, a `,` or `:` between arguments or fields, or a bracket that
+     * opens around it.
+     */
+    private static boolean operatorBefore(TokenStream ts, Token tok) {
+        int depth = 0;
+        for (int i = tok.getTokenIndex() - 1; i >= 0; i--) {
+            Token tk = ts.get(i);
+            if (tk.getChannel() != Token.DEFAULT_CHANNEL) continue;
+            int k = tk.getType();
+            if (k == ALangLexer.RPAREN || k == ALangLexer.RBRACK) {
+                depth++;
+            } else if (k == ALangLexer.LPAREN || k == ALangLexer.LBRACK) {
+                if (depth-- == 0) return false;
+            } else if (k == ALangLexer.SEMI || k == ALangLexer.LBRACE || k == ALangLexer.RBRACE || k == ALangLexer.ASSIGN) {
+                return false;
+            } else if (depth == 0) {
+                if (k == ALangLexer.COMMA || k == ALangLexer.COLON) return false;
+                if (isBinaryOperator(k)) return true;
+            }
         }
         return false;
     }
