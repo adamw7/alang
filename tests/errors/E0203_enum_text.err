@@ -1,0 +1,21 @@
+error[E0203]: variant_name() needs an enum value, found i64
+ --> tests/errors/E0203_enum_text.al:8:24
+  |
+8 |     print(variant_name(5));
+  |                        ^
+  = hint: for the text of any other value, append it: var s: str[32] = ""; append(mut s, 5);
+
+error[E0203]: parse_variant() needs an enum whose variants carry no values, but `Shape.Circle` carries 1
+ --> tests/errors/E0203_enum_text.al:9:28
+  |
+9 |     let s: Option<Shape> = parse_variant("Dot");
+  |                            ^^^^^^^^^^^^^^^^^^^^
+  = hint: match the name yourself: if text == "Circle" { ... }
+
+error[E0214]: cannot convert Shape to str[8]
+  --> tests/errors/E0203_enum_text.al:10:21
+   |
+10 |     let n: str[8] = str[8](Shape.Dot);
+   |                     ^^^^^^^^^^^^^^^^^
+  = hint: for the name of its variant, use variant_name: let name: str[8] = variant_name(Shape.Dot); and parse_variant(name) reads it back
+

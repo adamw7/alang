@@ -1,0 +1,8 @@
+0 11017 -719162 2932896
+(1970, 1, 1) (1969, 12, 31) (1, 1, 1) (9999, 12, 31)
+2024-02-29 2024-03-01 Wed
+4 3 1 4
+Option.Some(20783) Option.None Option.Some(19782) Option.None
+Option.None Option.Some(2932896) Option.None Option.None
+days to Christmas: 29
+7328704348

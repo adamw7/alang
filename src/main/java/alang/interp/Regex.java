@@ -427,6 +427,15 @@ public final class Regex {
      * steps costs an element of the meter.
      */
     public static long run(Program prog, byte[] s, int len, boolean whole, Meter meter) {
+        return run(prog, s, len, whole, 0, -1, meter);
+    }
+
+    /**
+     * As {@link #run}, looking for a match that starts at {@code begin} or after it (^ still matches only at 0), and
+     * passing over an empty match at {@code noEmptyAt}, as re_replace and re_split do after an empty match there: the
+     * thread that made it is dropped, so the match of the next priority, or one further on, is found instead.
+     */
+    public static long run(Program prog, byte[] s, int len, boolean whole, int begin, int noEmptyAt, Meter meter) {
         int n = prog.n;
         int[] cpc = new int[n];
         int[] cstart = new int[n];
@@ -437,7 +446,7 @@ public final class Regex {
         long best = -1;
         boolean matched = false;
         int cn = 0;
-        for (int pos = 0; pos <= len; pos++) {
+        for (int pos = begin; pos <= len; pos++) {
             if (!matched && (!whole || pos == 0)) cn = add(prog, cpc, cstart, cn, 0, pos, pos, len, mark, stack, meter);
             if (cn == 0) {
                 if (matched || whole) break;
@@ -450,6 +459,7 @@ public final class Regex {
                 switch (prog.op[pc]) {
                     case MATCH -> {
                         if (whole && pos != len) continue;
+                        if (pos == noEmptyAt && cstart[i] == pos) continue;
                         best = ((long) cstart[i] << 32) | pos;
                         matched = true;
                         // The threads after this one have lower priority: drop them.

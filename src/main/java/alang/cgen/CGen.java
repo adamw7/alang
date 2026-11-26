@@ -2011,6 +2011,104 @@ public final class CGen {
         return name;
     }
 
+    /**
+     * The function that writes the JSON of a value of type t, as JsonText.write does: al_je_T(o, &x, line, col), which
+     * traps where that does (NaN, infinity, a str that is not UTF-8).
+     */
+    private String toJsonFn(Type t) {
+        String name = "al_je_" + mangle(t);
+        if (!doneHelpers.add(name)) return name;
+        String ty = ct(t);
+        StringBuilder b = new StringBuilder();
+        b.append("static void ").append(name).append("(al_out *o, const ").append(ty).append(" *x, int line, int col) {\n")
+            .append("    (void)x;\n    (void)line;\n    (void)col;\n");
+        switch (t) {
+            case Type.Prim p when p.kind() == PrimKind.BOOL -> b.append("    if (*x) AL_PUTS(o, \"true\");\n    else AL_PUTS(o, \"false\");\n");
+            case Type.Prim p when p.kind().isFloat ->
+                b.append("    al_json_float(o, (double)*x, ").append(p.kind() == PrimKind.F32 ? 1 : 0).append(", line, col);\n");
+            case Type.Prim p -> b.append(p.kind().signed ? "    al_fmt_i64(o, (int64_t)*x);\n" : "    al_fmt_u64(o, (uint64_t)*x);\n");
+            case Type.Str s -> b.append("    al_json_quote(o, x->b, x->len, line, col);\n");
+            case Type.ArrayT a -> elementsJson(b, toJsonFn(a.elem()), a.len() + "u");
+            case Type.ListT l -> elementsJson(b, toJsonFn(l.elem()), "x->len");
+            case Type.SetT st -> elementsJson(b, toJsonFn(st.elem()), "x->len");
+            case Type.TupleT tt -> {
+                List<String> fns = new ArrayList<>();
+                for (Type e : tt.elems()) fns.add(toJsonFn(e));
+                b.append("    AL_PUTS(o, \"[\");\n");
+                for (int i = 0; i < fns.size(); i++) {
+                    if (i > 0) b.append("    AL_PUTS(o, \", \");\n");
+                    b.append("    ").append(fns.get(i)).append("(o, &x->e").append(i).append(", line, col);\n");
+                }
+                b.append("    AL_PUTS(o, \"]\");\n");
+            }
+            case Type.StructT st -> {
+                List<Field> fields = st.decl().fields;
+                List<String> fns = new ArrayList<>();
+                for (Field f : fields) fns.add(toJsonFn(f.type));
+                b.append("    AL_PUTS(o, \"{\");\n");
+                for (int i = 0; i < fields.size(); i++) {
+                    String key = (i > 0 ? ", " : "") + "\"" + fields.get(i).name + "\": ";
+                    b.append("    AL_PUTS(o, ").append(cString(utf8(key))).append(");\n");
+                    b.append("    ").append(fns.get(i)).append("(o, &x->f_").append(fields.get(i).name).append(", line, col);\n");
+                }
+                b.append("    AL_PUTS(o, \"}\");\n");
+            }
+            case Type.MapT mt -> {
+                boolean strKeys = mt.key() instanceof Type.Str;
+                String kf = strKeys ? null : toJsonFn(mt.key());
+                String vf = toJsonFn(mt.value());
+                b.append("    uint32_t i;\n    AL_PUTS(o, \"").append(strKeys ? "{" : "[").append("\");\n")
+                    .append("    for (i = 0; i < x->len; i++) {\n        if (i > 0) AL_PUTS(o, \", \");\n");
+                if (strKeys) {
+                    b.append("        al_json_quote(o, x->k[i].b, x->k[i].len, line, col);\n        AL_PUTS(o, \": \");\n")
+                        .append("        ").append(vf).append("(o, &x->v[i], line, col);\n");
+                } else {
+                    b.append("        AL_PUTS(o, \"[\");\n        ").append(kf).append("(o, &x->k[i], line, col);\n")
+                        .append("        AL_PUTS(o, \", \");\n        ").append(vf).append("(o, &x->v[i], line, col);\n")
+                        .append("        AL_PUTS(o, \"]\");\n");
+                }
+                b.append("    }\n    AL_PUTS(o, \"").append(strKeys ? "}" : "]").append("\");\n");
+            }
+            case Type.EnumT et -> {
+                List<Variant> vs = et.decl().variants;
+                List<List<String>> fns = new ArrayList<>();
+                for (Variant v : vs) {
+                    List<String> pf = new ArrayList<>();
+                    for (Type p : v.payload) pf.add(toJsonFn(p));
+                    fns.add(pf);
+                }
+                b.append("    switch (x->tag) {\n");
+                for (Variant v : vs) {
+                    b.append("    case ").append(v.index).append("u:\n");
+                    if (v.payload.isEmpty()) {
+                        b.append("        AL_PUTS(o, ").append(cString(utf8("\"" + v.name + "\""))).append(");\n");
+                    } else {
+                        b.append("        AL_PUTS(o, ").append(cString(utf8("{\"" + v.name + "\": ["))).append(");\n");
+                        for (int i = 0; i < v.payload.size(); i++) {
+                            if (i > 0) b.append("        AL_PUTS(o, \", \");\n");
+                            b.append("        ").append(fns.get(v.index).get(i)).append("(o, &x->u.v_").append(v.name).append(".p").append(i)
+                                .append(", line, col);\n");
+                        }
+                        b.append("        AL_PUTS(o, \"]}\");\n");
+                    }
+                    b.append("        break;\n");
+                }
+                b.append("    default:\n        break;\n    }\n");
+            }
+            default -> throw new IllegalStateException("no JSON for " + t);
+        }
+        b.append("}\n\n");
+        helpers.append(b);
+        return name;
+    }
+
+    /** The body of a JSON writer of n elements x->v[i], each written by fn. */
+    private static void elementsJson(StringBuilder b, String fn, String n) {
+        b.append("    uint32_t i;\n    AL_PUTS(o, \"[\");\n    for (i = 0; i < ").append(n).append("; i++) {\n")
+            .append("        if (i > 0) AL_PUTS(o, \", \");\n        ").append(fn).append("(o, &x->v[i], line, col);\n    }\n")
+            .append("    AL_PUTS(o, \"]\");\n");
+    }
+
     /** The variant of an Option or Result type that holds a value: Option.Some or Result.Ok. */
     private static Variant success(Type t) {
         for (Variant v : ((Type.EnumT) t).decl().variants) {
@@ -2089,6 +2187,25 @@ public final class CGen {
             String mag = signed ? "al_mag((int64_t)" + n + ")" : "(uint64_t)" + n;
             String neg = signed ? "(" + n + " < 0)" : "0";
             return sink -> emit("al_fmt_base(" + sink + ", " + mag + ", " + neg + ", (int)" + base + ");");
+        }
+        if (c.builtin == Builtin.TO_JSON) {
+            Expr e = args.get(0).expr();
+            String v = Type.isAggregate(e.type) ? lowerLvalue(e) : tmp(e.type, lower(e));
+            String fn = toJsonFn(e.type);
+            return sink -> emit(fn + "(" + sink + ", &(" + v + "), " + at + ");");
+        }
+        if (c.builtin == Builtin.VARIANT_NAME) {
+            Expr e = args.get(0).expr();
+            String v = lowerLvalue(e);
+            List<Variant> vs = ((Type.EnumT) e.type).decl().variants;
+            return sink -> {
+                open("switch ((" + v + ").tag) {");
+                for (Variant var : vs) {
+                    emit("case " + var.index + "u: AL_PUTS(" + sink + ", " + cString(utf8(var.name)) + "); break;");
+                }
+                emit("default: break;");
+                close("}");
+            };
         }
         if (c.builtin == Builtin.REPEAT) {
             String[] p = pattern(args.get(0).expr());
@@ -2886,13 +3003,14 @@ public final class CGen {
                 }
                 return r;
             }
-            case TRIM -> {
+            case TRIM, TRIM_START, TRIM_END -> {
                 String v = lowerLvalue(args.get(0).expr());
                 String r = tmp(c.type, "{0}");
-                emit(r + ".len = al_trim_into(" + r + ".b, (" + v + ").b, (" + v + ").len);");
+                emit(r + ".len = al_trim_into(" + r + ".b, (" + v + ").b, (" + v + ").len, " + (c.builtin != Builtin.TRIM_END ? 1 : 0)
+                    + ", " + (c.builtin != Builtin.TRIM_START ? 1 : 0) + ");");
                 return r;
             }
-            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE, REPEAT -> {
+            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE, REPEAT, VARIANT_NAME, TO_JSON -> {
                 // Stored in a str: the text is written into it, and must fit.
                 String target = into;
                 into = null;
@@ -2949,6 +3067,22 @@ public final class CGen {
                 String r = tmp(c.type, "{0}");
                 emit(r + ".len = al_slice_chars(" + r + ".b, (" + v + ").b, (" + v + ").len, " + from + ", " + to + ", " + at + ");");
                 return r;
+            }
+            case SPLIT_CSV -> {
+                String target = into;
+                into = null;
+                String v = lowerLvalue(args.get(0).expr());
+                String sep = args.size() > 1 ? tmp(Type.U8, lower(args.get(1).expr())) : "(uint8_t)','";
+                String r = dest(c.type, target);
+                csvFields((Type.ListT) c.type, r, v, sep, false, at);
+                return r;
+            }
+            case TRY_SPLIT_CSV -> {
+                Type.ListT lt = (Type.ListT) args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String v = lowerLvalue(args.get(1).expr());
+                String sep = args.size() > 2 ? tmp(Type.U8, lower(args.get(2).expr())) : "(uint8_t)','";
+                return csvFields(lt, "(" + place + ")", v, sep, true, at);
             }
             case TRY_SPLIT, TRY_WORDS -> {
                 Type.ListT lt = (Type.ListT) args.get(0).expr().type;
@@ -3092,6 +3226,29 @@ public final class CGen {
                 close("}");
                 return r;
             }
+            case DAYS_FROM_DATE -> {
+                String y = tmp(Type.I64, lower(args.get(0).expr()));
+                String m = tmp(Type.I64, lower(args.get(1).expr()));
+                String d = tmp(Type.I64, lower(args.get(2).expr()));
+                return tmp(Type.I64, "al_days_from_date(" + y + ", " + m + ", " + d + ", " + at + ")");
+            }
+            case DATE_FROM_DAYS -> {
+                String z = tmp(Type.I64, lower(args.get(0).expr()));
+                String r = tmp(c.type, "{0}");
+                emit("al_date_from_days(" + z + ", &" + r + ".e0, &" + r + ".e1, &" + r + ".e2, " + at + ");");
+                return r;
+            }
+            case WEEKDAY -> {
+                return tmp(Type.I64, "al_weekday(" + lower(args.get(0).expr()) + ")");
+            }
+            case PARSE_DATE -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String d = "t" + ++tmpCount;
+                String ok = "t" + ++tmpCount;
+                emit("int64_t " + d + " = 0;");
+                emit("int " + ok + " = al_parse_date((" + v + ").b, (" + v + ").len, &" + d + ");");
+                return optionValue(c.type, ok, d);
+            }
             case HASH -> {
                 Expr x = args.get(0).expr();
                 String v = lowerLvalue(x);
@@ -3139,6 +3296,20 @@ public final class CGen {
                     + (c.builtin == Builtin.STRIP_PREFIX ? 1 : 0) + ");");
                 return r;
             }
+            case PARSE_VARIANT -> {
+                String v = lowerLvalue(args.get(0).expr());
+                Type et = ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0);
+                String r = tmp(et, "{0}");
+                String ok = "t" + ++tmpCount;
+                emit("int " + ok + " = 0;");
+                for (Variant var : ((Type.EnumT) et).decl().variants) {
+                    open("if (!" + ok + " && al_json_name_is((" + v + ").b, (" + v + ").len, " + cString(utf8(var.name)) + ")) {");
+                    emit(r + ".tag = " + var.index + "u;");
+                    emit(ok + " = 1;");
+                    close("}");
+                }
+                return optionValue(c.type, ok, r);
+            }
             case FROM_JSON -> {
                 String v = lowerLvalue(args.get(0).expr());
                 Type t = ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0);
@@ -3165,17 +3336,8 @@ public final class CGen {
                 emit("uint32_t " + from + " = 0, " + to + " = 0;");
                 emit("int " + ok + ";");
                 open("{");
-                emit("al_re " + re + ";");
-                open("if (al_re_compile(&" + re + ", (" + p + ").b, (" + p + ").len) < 0) {");
-                emit("al_out al_e = al_trap_begin(\"R0013\");");
-                emit("AL_PUTS(&al_e, \"" + c.name + "() pattern is not valid: \");");
-                emit("al_puts_c(&al_e, " + re + ".why);");
-                emit("if (" + re + ".esc != 0) { char al_c = (char)" + re + ".esc; al_put(&al_e, &al_c, 1); }");
-                emit("AL_PUTS(&al_e, \" at byte \");");
-                emit("al_fmt_u64(&al_e, " + re + ".at);");
-                emit("al_trap_end(&al_e, " + at + ");");
-                close("}");
-                emit(ok + " = al_re_run(&" + re + ", (" + v + ").b, (" + v + ").len, " + (c.builtin == Builtin.RE_MATCH ? 1 : 0) + ", &"
+                compileRegex(c, re, p, at);
+                emit(ok + " = al_re_run(&" + re + ", (" + v + ").b, (" + v + ").len, " + (c.builtin == Builtin.RE_MATCH ? 1 : 0) + ", 0u, -1, &"
                     + from + ", &" + to + ");");
                 close("}");
                 if (c.builtin == Builtin.RE_MATCH) return tmp(Type.BOOL, "(" + ok + " != 0)");
@@ -3184,6 +3346,51 @@ public final class CGen {
                 emit(r + ".e0 = (int64_t)" + from + ";");
                 emit(r + ".e1 = (int64_t)" + to + ";");
                 return optionValue(c.type, ok + " != 0", r);
+            }
+            case RE_REPLACE, RE_SPLIT -> {
+                String target = into;
+                into = null;
+                String v = lowerLvalue(args.get(0).expr());
+                String p = lowerLvalue(args.get(1).expr());
+                String[] t = c.builtin == Builtin.RE_REPLACE ? pattern(args.get(2).expr()) : null;
+                String r = dest(c.type, target);
+                String re = "t" + ++tmpCount;
+                String pos = "t" + ++tmpCount;
+                String from = "t" + ++tmpCount;
+                String end = "t" + ++tmpCount;
+                String noEmpty = "t" + ++tmpCount;
+                String found = "t" + ++tmpCount;
+                String need = "t" + ++tmpCount;
+                open("{");
+                compileRegex(c, re, p, at);
+                emit("uint32_t " + pos + " = 0, " + from + " = 0, " + end + " = 0;");
+                emit("int64_t " + noEmpty + " = -1;");
+                emit("uint64_t " + need + " = 0;");
+                emit("int " + found + ";");
+                emit("(void)" + need + ";");
+                if (t == null) emit(r + ".len = 0;");
+                open("for (;;) {");
+                emit(found + " = al_re_run(&" + re + ", (" + v + ").b, (" + v + ").len, 0, " + pos + ", " + noEmpty + ", &" + from
+                    + ", &" + end + ");");
+                emit("if (!" + found + ") " + from + " = (" + v + ").len;");
+                if (t == null) {
+                    pushPiece(c, (Type.ListT) c.type, r, v, pos, from, at);
+                } else {
+                    int cap = ((Type.Str) c.type).cap();
+                    emit("al_put_counted(" + r + ".b, " + cap + "u, &" + need + ", (" + v + ").b + " + pos + ", " + from + " - " + pos + ");");
+                    emit("if (" + found + ") al_put_counted(" + r + ".b, " + cap + "u, &" + need + ", " + t[0] + ", " + t[1] + ");");
+                }
+                emit("if (!" + found + ") break;");
+                emit(noEmpty + " = " + from + " == " + end + " ? (int64_t)" + end + " : -1;");
+                emit(pos + " = " + end + ";");
+                close("}");
+                if (t != null) {
+                    int cap = ((Type.Str) c.type).cap();
+                    emit("if (" + need + " > " + cap + "u) al_need_trap(\"re_replace\", " + need + ", " + cap + "u, " + at + ");");
+                    emit(r + ".len = (uint32_t)" + need + ";");
+                }
+                close("}");
+                return r;
             }
             case SPLIT_ONCE -> {
                 String v = lowerLvalue(args.get(0).expr());
@@ -3572,6 +3779,67 @@ public final class CGen {
     // =================================================================== standard library helpers
 
     /** A str or a u8 byte as a C pointer and length: the str's bytes, or the byte in a temporary. */
+    /** Declares the al_re re in the block open now and compiles the pattern in the lvalue p into it; traps if it is not valid. */
+    private void compileRegex(Call c, String re, String p, String at) {
+        emit("al_re " + re + ";");
+        open("if (al_re_compile(&" + re + ", (" + p + ").b, (" + p + ").len) < 0) {");
+        emit("al_out al_e = al_trap_begin(\"R0013\");");
+        emit("AL_PUTS(&al_e, \"" + c.name + "() pattern is not valid: \");");
+        emit("al_puts_c(&al_e, " + re + ".why);");
+        emit("if (" + re + ".esc != 0) { char al_c = (char)" + re + ".esc; al_put(&al_e, &al_c, 1); }");
+        emit("AL_PUTS(&al_e, \" at byte \");");
+        emit("al_fmt_u64(&al_e, " + re + ".at);");
+        emit("al_trap_end(&al_e, " + at + ");");
+        close("}");
+    }
+
+    /**
+     * Adds the bytes [from, to) of the str in the lvalue s to the list of strs r, as split and the functions like it do:
+     * traps (R0004) if the list is full or the piece does not fit a str of the list.
+     */
+    private void pushPiece(Call c, Type.ListT lt, String r, String s, String from, String to, String at) {
+        int k = ((Type.Str) lt.elem()).cap();
+        emit("if (" + r + ".len >= " + lt.cap() + "u) al_pieces_trap(" + cString(utf8(c.name + " makes more than " + lt.cap()
+            + " pieces, the capacity of " + lt)) + ", " + at + ");");
+        emit("if (" + to + " - " + from + " > " + k + "u) al_named_piece_trap(\"" + c.name + "\", " + to + " - " + from + ", " + k
+            + "u, " + at + ");");
+        emit(r + ".v[" + r + ".len].len = al_copy_bytes(" + r + ".v[" + r + ".len].b, (" + s + ").b + " + from + ", " + to + " - "
+            + from + ");");
+        emit(r + ".len++;");
+    }
+
+    /**
+     * split_csv (try_ false) or try_split_csv: the fields of the str in the lvalue v into the list r, as Stdlib.csv reads
+     * them and in the order it checks them. Returns a temporary that is 1, or 0 when try_split_csv gave up.
+     */
+    private String csvFields(Type.ListT lt, String r, String v, String sep, boolean try_, String at) {
+        int k = ((Type.Str) lt.elem()).cap();
+        String ok = try_ ? tmp(Type.BOOL, "1") : null;
+        String n = "t" + ++tmpCount;
+        String pos = "t" + ++tmpCount;
+        String flen = "t" + ++tmpCount;
+        String bad = "t" + ++tmpCount;
+        String st = "t" + ++tmpCount;
+        String full = cString(utf8("split_csv makes more than " + lt.cap() + " pieces, the capacity of " + lt));
+        open("{");
+        emit("uint32_t " + n + " = (" + v + ").len, " + pos + " = 0, " + flen + " = 0, " + bad + " = 0;");
+        emit("int " + st + ";");
+        emit("if (" + n + " > 0 && (" + v + ").b[" + n + " - 1] == 13) " + n + "--;");
+        emit(r + ".len = 0;");
+        open("while (" + pos + " <= " + n + ") {");
+        String fail = try_ ? "{ " + r + ".len = 0; " + ok + " = 0; break; }" : null;
+        emit("if (" + r + ".len >= " + lt.cap() + "u) " + (try_ ? fail : "al_pieces_trap(" + full + ", " + at + ");"));
+        emit(st + " = al_csv_field((" + v + ").b, " + n + ", &" + pos + ", " + sep + ", " + r + ".v[" + r + ".len].b, " + k + "u, &"
+            + flen + ", &" + bad + ");");
+        emit("if (" + st + " != 0) " + (try_ ? fail : "al_csv_trap(" + st + ", " + bad + ", " + at + ");"));
+        emit("if (" + flen + " > " + k + "u) " + (try_ ? fail : "al_named_piece_trap(\"split_csv\", " + flen + ", " + k + "u, " + at + ");"));
+        emit(r + ".v[" + r + ".len].len = " + flen + ";");
+        emit(r + ".len++;");
+        close("}");
+        close("}");
+        return ok;
+    }
+
     private String[] pattern(Expr e) {
         if (e.type instanceof Type.Str) return strPattern(lowerLvalue(e));
         String t = tmp(Type.U8, lower(e));

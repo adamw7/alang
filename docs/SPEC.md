@@ -619,7 +619,7 @@ for byte with the interpreter under several compilers and optimization levels.
 Builtin functions come with the language. They are polymorphic where a user function cannot be (a user
 function takes any capacity, §5, but not any element type): `len` takes any array, list or str, `sort`
 any list. The core builtins print and change
-lists and strings; the rest are the standard library: math, characters, text and collections. Each
+lists and strings; the rest are the standard library: math, characters, text, dates and collections. Each
 behaves the same in the interpreter and the C backend, traps and messages included, and each checks its
 arguments in a fixed order, so the same bad call always gives the same trap. `alang explain --all` lists
 them all.
@@ -704,6 +704,7 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `starts_with(s, p) -> bool`, `ends_with(s, p) -> bool` | Whether the str `s` begins or ends with the pattern `p`. |
 | `slice(xs, from, to) -> T` | The elements `from..to` (half-open) of a str or list, of the same type, or of an array, as a `list[T; N]`. Traps (R0003) unless `0 <= from <= to <= len(xs)`. `xs[from..to]` is the same, and either end may be left out: `s[1..]`, `xs[..n]`, `xs[..]` (§6). |
 | `trim(s) -> str[N]` | `s` without the ASCII whitespace at its start and end. |
+| `trim_start(s) -> str[N]`, `trim_end(s) -> str[N]` | `s` without the ASCII whitespace at its start (end) only. |
 | `strip_prefix(s, p) -> str[N]`, `strip_suffix(s, p) -> str[N]` | `s` without the pattern `p` at its start (end), or `s` unchanged when it does not start (end) with it, as a str of the capacity of `s`: `strip_prefix("v1.2", 'v')` is `"1.2"`. |
 | `split_once(s, sep) -> Option<(str[N], str[N])>` | The text before and after the first occurrence of the pattern `sep`, each a str of the capacity N of `s` (or of the wider strs of the `Option` it is stored as), or `Option.None` when there is none: `split_once("k=v=w", '=')` is `Option.Some(("k", "v=w"))`. Traps if `sep` is empty (R0013). |
 | `split(s, sep) -> list[str[K]; M]` | The pieces of `s` between occurrences of the pattern `sep`, left to right, empty pieces included: `split("a,,b", ",")` is `["a", "", "b"]`, `split("", ",")` is `[""]`. Traps if `sep` is empty (R0013). |
@@ -712,6 +713,16 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `replace(s, from, to) -> str[N]` | `s` with every occurrence of the pattern `from`, left to right and not overlapping, replaced by the pattern `to`. Traps if `from` is empty (R0013). |
 | `try_split(mut parts, s, sep) -> bool` | `split(s, sep)` into the list `parts`, replacing what it held: true if every piece fits, otherwise false with `parts` left empty, never a trap. |
 | `try_words(mut parts, s) -> bool` | `words(s)` into the list `parts`, as `try_split` does. |
+| `split_csv(s, sep = ',') -> list[str[K]; M]` | The fields of the CSV record `s` between the `u8` byte `sep`, as RFC 4180 writes them: a field in double quotes may hold `sep`, and `""` inside it stands for one `"`. `split_csv("1,\"Smith, Jo\",\"say \"\"hi\"\"\"")` is `["1", "Smith, Jo", "say \"hi\""]`. Spaces are kept, a `"` inside a field without quotes is an ordinary byte, and one `\r` at the end of `s` is left out (a line of a CRLF file). Each field is checked in turn: that the list has room (R0004), that its quotes are well formed (R0013: no closing quote, or text between the closing quote and `sep`), that it fits a `str[K]` (R0004). |
+| `try_split_csv(mut fields, s, sep = ',') -> bool` | `split_csv(s, sep)` into the list `fields`: false, with `fields` left empty, where `split_csv` would trap. |
+| `re_match(s, pattern) -> bool` | Whether the regular expression `pattern` matches all of `s`. A byte matches itself; `.` any byte but a newline; `[abc]`, `[a-z]`, `[^...]` a class; `\d \w \s` (and `\D \W \S`); `^` and `$` the start and end of `s`; `( )` a group; `\|` alternatives; `* + ?` and `{m}`, `{m,}`, `{m,n}` (up to 100), greedy; `\` before a symbol the symbol. Write patterns as raw strings, `r"\d+"`. Time is linear in the length of `s`. A pattern written out that is not valid is E0202; one computed traps (R0013), as does one over 256 bytes. |
+| `re_find(s, pattern) -> Option<(i64, i64)>` | Where `pattern` first matches: `Option.Some((start, end))`, `s[start..end]` the match, leftmost and then as Perl chooses (left alternative first, repetitions as long as they go), or `Option.None`. |
+| `re_replace(s, pattern, to) -> str[N]` | `s` with every match of `pattern` replaced by the pattern `to`, put in as it is: `re_replace("a1b22", r"\d+", "#")` is `"a#b#"`. Matches are found left to right, each from where the last ended; an empty match is replaced too, except where the last match ended empty, as Python's `re.sub` does: `re_replace("abxd", "x*", "-")` is `"-a-b--d-"`. The whole length is checked once it is known (R0004). |
+| `re_split(s, pattern) -> list[str[K]; M]` | The pieces of `s` between the matches of `pattern`, found as `re_replace` finds them, empty pieces included, as Python's `re.split`: `re_split("a, b;c", r"[,;] *")` is `["a", "b", "c"]`. Checked as `split` is. |
+| `to_json(v) -> str[N]` | The JSON text of any value whose type has no function, type parameter or `_` capacity, on one line with a space after each `,` and `:`, in the forms of tool results and `from_json` (§10): `to_json(Point(x: 1, y: 2))` is `{"x": 1, "y": 2}`. Strs are strings (`"` `\` and control bytes escaped, other bytes as they are); a float has the fewest significant digits that read back as the same value, the nearest of those, and is plain from 1e-7 to below 1e21 with `.0` when whole (`0.1`, `100.0`, `-0.0`) and otherwise has an exponent (`1e+21`, `5e-324`). Traps (R0013) on NaN, an infinity or a str that is not UTF-8. Makes text (§9.6). |
+| `from_json(s) -> Option<T>` | The value of type `T` that the JSON text `s` stands for, `T` that of the `Option<T>` it is stored in: `let cfg: Option<Config> = from_json(text);`. Read as a tool's arguments are (§10); `Option.None` for any other text. `from_json(to_json(v))` is `Option.Some(v)`. |
+| `variant_name(e) -> str[N]` | The name of the variant of the enum value `e`, without the enum or its values: `variant_name(Shape.Circle(2.0))` is `Circle`. Makes text (§9.6). |
+| `parse_variant(s) -> Option<E>` | The variant of the enum `E` named exactly by `s`, `E` that of the `Option<E>` it is stored in, or `Option.None`: `let c: Option<Color> = parse_variant("Red");`. `E`'s variants must carry no values. |
 | `is_int(s) -> bool` | Whether `i64(s)` would succeed: decimal text that fits an `i64`. |
 | `is_float(s) -> bool` | Whether `f64(s)` would succeed: decimal text that converts exactly (§6). |
 | `parse_i64(s) -> Option<i64>` | `Option.Some(i64(s))` when `is_int(s)`, else `Option.None`: never traps. Strict, as `i64(s)` is: `trim` first. |
@@ -720,8 +731,9 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `parse_f64(s) -> Option<f64>` | `Option.Some(f64(s))` when `is_float(s)`, else `Option.None`: never traps. |
 | `fixed(x, n)`, `pad_left(v, w, fill)`, `pad_right(v, w, fill)` | Formatted text (§9.6). |
 
-**Results typed by where they are stored.** The size of what `split`, `words`, `join` and `replace`
-(and `fixed`, `pad_left`, `pad_right`, `to_base` and `repeat` when they are not written out at once, §9.6) build depends on the data, so each takes its type, capacities included, from the variable it initializes
+**Results typed by where they are stored.** The size of what `split`, `words`, `join`, `replace`,
+`split_csv`, `re_replace` and `re_split` (and `fixed`, `pad_left`, `pad_right`, `to_base`, `repeat`,
+`variant_name` and `to_json` when they are not written out at once, §9.6) build depends on the data, so each takes its type, capacities included, from the variable it initializes
 or is assigned to, or from the function's return type. The call must be the whole right-hand side of a
 typed `let`/`var`, a constant, an assignment with `=`, or a `return`, or for `split` and `words`, what a
 `for` loop goes through; anywhere else is E0216. A result that does not fit traps (R0004): `split` and
@@ -877,7 +889,8 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
 - a `u8` (a character literal too) as a number: add a character to a string with `push(mut s, 'a')`;
   `append(mut s, 'a')` appends `97` (warning W0303).
 
-Five functions make text: with a width, a number of decimals or a base, or a pattern repeated:
+Seven functions make text: with a width, a number of decimals or a base, a pattern repeated, the name of a
+variant, or JSON:
 
 | Function | Text |
 |----------|------|
@@ -885,13 +898,42 @@ Five functions make text: with a width, a number of decimals or a base, or a pat
 | `pad_left(v, w, fill)` | The text of the number, bool, str or `fixed(...)` `v`, as `print` writes it, with the `u8` byte `fill` in front up to `w` bytes; longer text is kept whole. `pad_left(7, 3, '0')` is `007`, `pad_left(-42, 6, '0')` is `-00042`: zeros padding a negative number, `fixed(...)` or `to_base(...)` go after its sign. A width above 1 048 576 traps (R0013). |
 | `pad_right(v, w, fill)` | The same with the fill after the text: `pad_right("ab", 4, '.')` is `ab..`. |
 | `to_base(n, base)` | The integer `n` in a base from 2 to 36 (otherwise R0013), with the digits `0`-`9` then `a`-`z`, no prefix, and a `-` before a negative `n`: `to_base(255, 16)` is `ff`, `to_base(-5, 2)` is `-101`. `pad_left(to_base(b, 16), 2, '0')` gives two hex digits. |
+| `variant_name(e)` | The name of the variant of the enum value `e`: `variant_name(Color.Red)` is `Red` (§9.4). |
+| `to_json(v)` | The JSON text of `v` (§9.4): `print(to_json(order));`. |
 | `repeat(p, n)` | The pattern `p`, a str or `u8` byte, `n` times: `repeat("ab", 3)` is `ababab`, `repeat('-', 20)` a rule. Traps (R0013) unless `0 <= n <= 1048576` (`n` of any integer type), and when the text would be longer than 1 048 576 bytes. |
 
 They build no str when they are an argument of `print` or `append`, or the value `pad_left` or
-`pad_right` pads (`to_base` and `repeat` too): the text is written straight out, `append(mut s, "$", c / 100, ".", pad_left(c % 100, 2, '0'))`.
+`pad_right` pads (the others too): the text is written straight out, `append(mut s, "$", c / 100, ".", pad_left(c % 100, 2, '0'))`.
 Anywhere else they take the type of a typed str they are stored in, as `join` does (§9.4), and trap
 (R0004) when the text does not fit it: `let cell: str[8] = pad_left(n, 6, ' ');`. Elsewhere they are
 E0216. Their arguments are evaluated and checked before any of the text is written.
+
+### 9.7 Dates
+
+Dates are counted in days since 1970-01-01, an `i64`, in the Gregorian calendar, years 1 to 9999. Days
+subtract to give the days between two dates and add to move one; nothing reads a clock (§8).
+
+| Function | Description |
+|----------|-------------|
+| `days_from_date(year, month, day) -> i64` | The days of a date, three `i64`: `days_from_date(1970, 1, 2)` is 1, `days_from_date(1969, 12, 31)` is -1. Traps (R0013) unless the date exists: `days_from_date(2026, 2, 29)` traps. |
+| `date_from_days(days) -> (i64, i64, i64)` | The date `(year, month, day)` of a day: `let (y, m, d): (i64, i64, i64) = date_from_days(n);`. Traps (R0013) outside -719162 (0001-01-01) to 2932896 (9999-12-31). |
+| `weekday(days) -> i64` | The day of the week, as ISO 8601 numbers them: 1 for Monday to 7 for Sunday; `weekday(0)` is 4, a Thursday. Any `i64`. |
+| `parse_date(s) -> Option<i64>` | The days of the date written `YYYY-MM-DD` in `s`, exactly ten bytes, or `Option.None` for other text or a date that does not exist. |
+
+```alang
+fn iso(days: i64) -> str[10] {
+    let (y, m, d): (i64, i64, i64) = date_from_days(days);
+    var s: str[10] = "";
+    append(mut s, pad_left(y, 4, '0'), "-", pad_left(m, 2, '0'), "-", pad_left(d, 2, '0'));
+    return s;
+}
+
+test "thirty days after a date" {
+    let start: Option<i64> = parse_date("2024-02-15");
+    assert iso(unwrap_or(start, 0) + 30) == "2024-03-16";
+    assert weekday(days_from_date(2024, 3, 16)) == 6;
+}
+```
 
 ## 10. Tools: calling ALang from an agent
 

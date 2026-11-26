@@ -1087,6 +1087,22 @@ public final class Interpreter {
         return (int) base;
     }
 
+    /** The compiled pattern of a regular expression builtin; traps (R0013) if it is not valid. */
+    private Regex.Program regex(Call c, StrV p) {
+        try {
+            meter.bytes(p.len);
+            return Regex.compile(p.b, p.len);
+        } catch (Regex.BadPattern e) {
+            throw new Trap(Code.R0013, c.span, c.name + "() pattern is not valid: " + e.getMessage() + " at byte " + e.at);
+        }
+    }
+
+    /** Writes n bytes of src at need in out, as many as fit, and returns need + n: the length of all the text. */
+    private static long put(byte[] out, long need, byte[] src, int from, int n) {
+        for (int i = 0; i < n && need + i < out.length; i++) out[(int) need + i] = src[from + i];
+        return need + n;
+    }
+
     private StrV text(Call c, byte[] bytes) {
         meter.bytes(bytes.length);
         if (c.asText) return new StrV(bytes, bytes.length);
@@ -1637,8 +1653,9 @@ public final class Interpreter {
                 return Stdlib.slice(xs, c.type, from, Type.kind(args.get(1).expr().type), to,
                     Type.kind(args.get(2).expr().type), c.span, meter);
             }
-            case TRIM -> {
-                return Stdlib.trim((StrV) eval(args.get(0).expr(), slots), meter);
+            case TRIM, TRIM_START, TRIM_END -> {
+                return Stdlib.trim((StrV) eval(args.get(0).expr(), slots), c.builtin != Builtin.TRIM_END,
+                    c.builtin != Builtin.TRIM_START, meter);
             }
             case IS_UTF8 -> {
                 return Stdlib.isUtf8((StrV) eval(args.get(0).expr(), slots), meter);
@@ -1661,6 +1678,21 @@ public final class Interpreter {
                 long to = (Long) eval(args.get(2).expr(), slots);
                 return Stdlib.sliceChars(xs, from, Type.kind(args.get(1).expr().type), to, Type.kind(args.get(2).expr().type),
                     c.span, meter);
+            }
+            case SPLIT_CSV -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                byte sep = args.size() > 1 ? (byte) (long) (Long) eval(args.get(1).expr(), slots) : (byte) ',';
+                Type.ListT lt = (Type.ListT) c.type;
+                meter.slots(lt.cap());
+                ListV r = new ListV(new Object[lt.cap()], 0);
+                Stdlib.csv("split_csv", r, s, sep, lt, false, c.span, meter);
+                return r;
+            }
+            case TRY_SPLIT_CSV -> {
+                ListV parts = (ListV) ref(args.get(0).expr(), slots).get();
+                StrV s = (StrV) eval(args.get(1).expr(), slots);
+                byte sep = args.size() > 2 ? (byte) (long) (Long) eval(args.get(2).expr(), slots) : (byte) ',';
+                return Stdlib.csv("split_csv", parts, s, sep, (Type.ListT) args.get(0).expr().type, true, c.span, meter);
             }
             case TRY_SPLIT, TRY_WORDS -> {
                 ListV parts = (ListV) ref(args.get(0).expr(), slots).get();
@@ -1796,6 +1828,36 @@ public final class Interpreter {
                 for (int i = 0; i < m.len; i++) out[i] = Values.copy(from[i], meter);
                 return new ListV(out, m.len);
             }
+            case DAYS_FROM_DATE -> {
+                long y = (Long) eval(args.get(0).expr(), slots);
+                long m = (Long) eval(args.get(1).expr(), slots);
+                long d = (Long) eval(args.get(2).expr(), slots);
+                if (!Stdlib.dateExists(y, m, d)) {
+                    throw new Trap(Code.R0013, c.span, "days_from_date() needs a date that exists, in the years 1 to 9999, "
+                        + "found year " + y + ", month " + m + ", day " + d);
+                }
+                return Stdlib.daysFromDate(y, m, d);
+            }
+            case DATE_FROM_DAYS -> {
+                long z = (Long) eval(args.get(0).expr(), slots);
+                if (z < Stdlib.MIN_DAYS || z > Stdlib.MAX_DAYS) {
+                    throw new Trap(Code.R0013, c.span, "date_from_days() needs " + Stdlib.MIN_DAYS + " to " + Stdlib.MAX_DAYS
+                        + " days, the years 1 to 9999, found " + z);
+                }
+                meter.elements(1);
+                long[] ymd = Stdlib.dateFromDays(z);
+                return new StructV(new Object[] {ymd[0], ymd[1], ymd[2]});
+            }
+            case WEEKDAY -> {
+                long z = (Long) eval(args.get(0).expr(), slots);
+                return (Math.floorMod(z, 7L) + 3) % 7 + 1;
+            }
+            case PARSE_DATE -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                meter.bytes(Math.min(s.len, 10));
+                long d = Stdlib.parseDate(s);
+                return option(d == Long.MIN_VALUE ? null : d);
+            }
             case HASH -> {
                 Object v = eval(args.get(0).expr(), slots);
                 long h = 0xcbf29ce484222325L;
@@ -1856,6 +1918,29 @@ public final class Interpreter {
                 System.arraycopy(s.b, from, b, 0, to - from);
                 return new StrV(b, to - from);
             }
+            case TO_JSON -> {
+                Expr e = args.get(0).expr();
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                JsonText.write(out, eval(e, slots), e.type, c.span, meter);
+                return text(c, out.toByteArray());
+            }
+            case VARIANT_NAME -> {
+                Expr e = args.get(0).expr();
+                EnumV ev = (EnumV) eval(e, slots);
+                return text(c, ((Type.EnumT) e.type).decl().variants.get(ev.tag).name.getBytes(StandardCharsets.UTF_8));
+            }
+            case PARSE_VARIANT -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                meter.bytes(s.len);
+                List<Variant> vs = ((Type.EnumT) ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0)).decl().variants;
+                for (Variant v : vs) {
+                    byte[] name = v.name.getBytes(StandardCharsets.UTF_8);
+                    if (Arrays.equals(s.b, 0, s.len, name, 0, name.length)) {
+                        return option(new EnumV(v.index, new Object[0]));
+                    }
+                }
+                return option(null);
+            }
             case FROM_JSON -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);
                 meter.bytes(s.len);
@@ -1864,16 +1949,43 @@ public final class Interpreter {
                 meter.elements(1);
                 return option(v);
             }
+            case RE_REPLACE, RE_SPLIT -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                Regex.Program prog = regex(c, (StrV) eval(args.get(1).expr(), slots));
+                byte[] to = c.builtin == Builtin.RE_REPLACE ? Stdlib.pattern(eval(args.get(2).expr(), slots), meter) : null;
+                int cap = c.type instanceof Type.Str st ? st.cap() : 0;
+                byte[] out = to != null ? new byte[cap] : null;
+                long need = 0;
+                Type.ListT lt = c.type instanceof Type.ListT l ? l : null;
+                ListV parts = null;
+                if (lt != null) {
+                    meter.slots(lt.cap());
+                    parts = new ListV(new Object[lt.cap()], 0);
+                }
+                int pos = 0;
+                int noEmpty = -1;
+                while (true) {
+                    long m = Regex.run(prog, s.b, s.len, false, pos, noEmpty, meter);
+                    int from = m < 0 ? s.len : (int) (m >>> 32);
+                    int end = m < 0 ? s.len : (int) (m & 0xFFFFFFFFL);
+                    if (parts != null) {
+                        Stdlib.piece("re_split", parts, s, pos, from, ((Type.Str) lt.elem()).cap(), lt, false, c.span, meter);
+                    } else {
+                        need = put(out, need, s.b, pos, from - pos);
+                        if (m >= 0) need = put(out, need, to, 0, to.length);
+                    }
+                    if (m < 0) break;
+                    noEmpty = from == end ? end : -1;
+                    pos = end;
+                }
+                if (parts != null) return parts;
+                if (need > cap) throw new Trap(Code.R0004, c.span, "re_replace needs " + need + " bytes, more than str capacity " + cap);
+                meter.bytes(cap + need);
+                return new StrV(out, (int) need);
+            }
             case RE_MATCH, RE_FIND -> {
                 StrV s = (StrV) eval(args.get(0).expr(), slots);
-                StrV p = (StrV) eval(args.get(1).expr(), slots);
-                Regex.Program prog;
-                try {
-                    meter.bytes(p.len);
-                    prog = Regex.compile(p.b, p.len);
-                } catch (Regex.BadPattern e) {
-                    throw new Trap(Code.R0013, c.span, c.name + "() pattern is not valid: " + e.getMessage() + " at byte " + e.at);
-                }
+                Regex.Program prog = regex(c, (StrV) eval(args.get(1).expr(), slots));
                 long r = Regex.run(prog, s.b, s.len, c.builtin == Builtin.RE_MATCH, meter);
                 if (c.builtin == Builtin.RE_MATCH) return r >= 0;
                 if (r < 0) return option(null);
