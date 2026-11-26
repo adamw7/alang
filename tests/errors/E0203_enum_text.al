@@ -1,4 +1,4 @@
-// expect: E0203
+// expect: E0203 E0214
 enum Shape {
     Circle(f64),
     Dot,
