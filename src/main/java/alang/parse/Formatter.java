@@ -61,7 +61,7 @@ public final class Formatter {
             || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t == ALangLexer.TYPE;
     }
 
-    private static boolean nameLike(int t) {
+    static boolean nameLike(int t) {
         return t == ALangLexer.IDENT || contextual(t);
     }
 

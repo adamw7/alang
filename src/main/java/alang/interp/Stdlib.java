@@ -523,19 +523,27 @@ final class Stdlib {
      * binary_search(xs, x): the first position whose element is not before x in the order of sort, if that element
      * is equal to x; otherwise -1. The C backend searches the same positions in the same order.
      */
-    static long binarySearch(Object xs, Object x, Type elem, Meter cost) {
-        Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-        int n = xs instanceof ListV l ? l.len : items.length;
+    static long binarySearch(Object[] items, int n, Object x, Type elem, Meter cost) {
+        int lo = bound(items, n, x, elem, false, cost);
+        cost.elements(1);
+        return lo < n && compare(items[lo], x, elem, cost) == 0 ? lo : -1;
+    }
+
+    /**
+     * lower_bound(xs, x), or upper_bound with {@code upper}: the first of the n positions whose element is not before x
+     * (is after x) in the order of sort.
+     */
+    static int bound(Object[] items, int n, Object x, Type elem, boolean upper, Meter cost) {
         int lo = 0;
         int hi = n;
         while (lo < hi) {
             int mid = lo + (hi - lo) / 2;
             cost.elements(1);
-            if (compare(items[mid], x, elem, cost) < 0) lo = mid + 1;
+            int cmp = compare(items[mid], x, elem, cost);
+            if (upper ? cmp <= 0 : cmp < 0) lo = mid + 1;
             else hi = mid;
         }
-        cost.elements(1);
-        return lo < n && compare(items[lo], x, elem, cost) == 0 ? lo : -1;
+        return lo;
     }
 
     /** The non-overlapping occurrences of p in s, left to right; R0013 if p is empty. */

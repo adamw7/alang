@@ -3307,7 +3307,7 @@ public final class CGen {
                     : "(" + eqExpr(elem, elem, sp + "->v[" + w + " - 1]", sp + "->v[" + i + "]") + " != 0)"));
                 return null;
             }
-            case BINARY_SEARCH -> {
+            case BINARY_SEARCH, LOWER_BOUND, UPPER_BOUND -> {
                 Expr xs = args.get(0).expr();
                 Type elem = Type.elementOf(xs.type);
                 String h = lowerLvalue(xs);
@@ -3317,18 +3317,24 @@ public final class CGen {
                 String lo = "t" + ++tmpCount;
                 String hi = "t" + ++tmpCount;
                 String mid = "t" + ++tmpCount;
-                String found = tmp(Type.I64, "-1");
+                boolean search = c.builtin == Builtin.BINARY_SEARCH;
+                String r = tmp(Type.I64, search ? "-1" : "0");
                 open("{");
                 emit("uint32_t " + lo + " = 0, " + hi + " = " + n + ", " + mid + ";");
                 open("while (" + lo + " < " + hi + ") {");
                 emit(mid + " = " + lo + " + (" + hi + " - " + lo + ") / 2u;");
-                emit("if (" + cmpExpr(elem, "(" + h + ").v[" + mid + "]", x) + " < 0) " + lo + " = " + mid + " + 1u;");
+                emit("if (" + cmpExpr(elem, "(" + h + ").v[" + mid + "]", x) + (c.builtin == Builtin.UPPER_BOUND ? " <= 0" : " < 0")
+                    + ") " + lo + " = " + mid + " + 1u;");
                 emit("else " + hi + " = " + mid + ";");
                 close("}");
-                emit("if (" + lo + " < " + n + " && " + cmpExpr(elem, "(" + h + ").v[" + lo + "]", x) + " == 0) " + found
-                    + " = (int64_t)" + lo + ";");
+                if (search) {
+                    emit("if (" + lo + " < " + n + " && " + cmpExpr(elem, "(" + h + ").v[" + lo + "]", x) + " == 0) " + r
+                        + " = (int64_t)" + lo + ";");
+                } else {
+                    emit(r + " = (int64_t)" + lo + ";");
+                }
                 close("}");
-                return found;
+                return r;
             }
             case INSERT -> {
                 Type t = args.get(0).expr().type;
@@ -3691,28 +3697,6 @@ public final class CGen {
                 emit("if (" + (str ? prev + " > " + cur : cmpExpr(Type.elementOf(xs.type), prev, cur) + " > 0") + ") { " + r
                     + " = false; break; }");
                 close(2);
-                return r;
-            }
-            case LOWER_BOUND, UPPER_BOUND -> {
-                Expr xs = args.get(0).expr();
-                Type elem = Type.elementOf(xs.type);
-                String h = lowerLvalue(xs);
-                String x = elem instanceof Type.Str ? lowerLvalue(args.get(1).expr()) : keyLvalue(args.get(1).expr(), elem);
-                String n = lenOf(xs.type, h);
-                String lo = "t" + ++tmpCount;
-                String hi = "t" + ++tmpCount;
-                String mid = "t" + ++tmpCount;
-                String r = tmp(Type.I64, "0");
-                open("{");
-                emit("uint32_t " + lo + " = 0, " + hi + " = " + n + ", " + mid + ";");
-                open("while (" + lo + " < " + hi + ") {");
-                emit(mid + " = " + lo + " + (" + hi + " - " + lo + ") / 2u;");
-                emit("if (" + cmpExpr(elem, "(" + h + ").v[" + mid + "]", x) + (c.builtin == Builtin.UPPER_BOUND ? " <= 0" : " < 0")
-                    + ") " + lo + " = " + mid + " + 1u;");
-                emit("else " + hi + " = " + mid + ";");
-                close("}");
-                emit(r + " = (int64_t)" + lo + ";");
-                close("}");
                 return r;
             }
             case EXTEND -> {

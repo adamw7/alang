@@ -1898,13 +1898,14 @@ public final class Interpreter {
                 Stdlib.dedup(ref(args.get(0).expr(), slots).get(), args.get(0).expr().type, meter);
                 return null;
             }
-            case BINARY_SEARCH -> {
+            case BINARY_SEARCH, LOWER_BOUND, UPPER_BOUND -> {
                 Object xs = eval(args.get(0).expr(), slots);
                 Type elem = Type.elementOf(args.get(0).expr().type);
                 Object x = eval(args.get(1).expr(), slots);
                 // A str is compared as it is, whatever its capacity: copying it to the element's could cut it short.
                 if (!(elem instanceof Type.Str)) x = Values.coerce(x, elem, meter);
-                return Stdlib.binarySearch(xs, x, elem, meter);
+                if (c.builtin == Builtin.BINARY_SEARCH) return Stdlib.binarySearch(items(xs), length(xs), x, elem, meter);
+                return (long) Stdlib.bound(items(xs), length(xs), x, elem, c.builtin == Builtin.UPPER_BOUND, meter);
             }
             case INSERT -> {
                 if (args.get(0).expr().type instanceof Type.MapT mt) {
@@ -2209,24 +2210,6 @@ public final class Interpreter {
                     if (Stdlib.compare(items[i - 1], items[i], elem, meter) > 0) return false;
                 }
                 return true;
-            }
-            case LOWER_BOUND, UPPER_BOUND -> {
-                Object xs = eval(args.get(0).expr(), slots);
-                Type elem = Type.elementOf(args.get(0).expr().type);
-                Object x = eval(args.get(1).expr(), slots);
-                if (!(elem instanceof Type.Str)) x = Values.coerce(x, elem, meter);
-                Object[] items = items(xs);
-                int lo = 0;
-                int hi = length(xs);
-                boolean upper = c.builtin == Builtin.UPPER_BOUND;
-                while (lo < hi) {
-                    int mid = lo + (hi - lo) / 2;
-                    meter.elements(1);
-                    int cmp = Stdlib.compare(items[mid], x, elem, meter);
-                    if (upper ? cmp <= 0 : cmp < 0) lo = mid + 1;
-                    else hi = mid;
-                }
-                return (long) lo;
             }
             case EXTEND -> {
                 ListV l = (ListV) ref(args.get(0).expr(), slots).get();
@@ -2623,13 +2606,7 @@ public final class Interpreter {
      * result. Like a call written in the program, it is charged where it is made.
      */
     private boolean test(Call c, Object... values) {
-        FnDecl f = c.fnArg != null ? c.fnArg : fnArgValue;
-        Object[] a = new Object[f.params.size()];
-        for (int i = 0; i < a.length; i++) a[i] = Values.coerce(values[i], f.paramVars.get(i).type, meter);
-        Span caller = meter.at();
-        Object result = invoke(f, a, c.span);
-        meter.at(caller);
-        return (Boolean) result;
+        return (Boolean) apply(c, values);
     }
 
     /**

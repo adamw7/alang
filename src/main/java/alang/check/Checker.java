@@ -3818,12 +3818,7 @@ public final class Checker {
             }
             case PUSH -> {
                 if (!arity(c, 2)) return Type.VOID;
-                Type t = collectionArg(c, args.get(0));
-                Arg v = args.get(1);
-                noMut(v);
-                Type elem = Type.isError(t) ? null : Type.elementOf(t);
-                Type vt = expr(v.expr(), elem);
-                if (elem != null) requireAssignable(v.expr(), vt, elem);
+                elementArg(args.get(1), collectionArg(c, args.get(0)));
                 return Type.VOID;
             }
             case POP, POP_FRONT -> {
@@ -4298,11 +4293,7 @@ public final class Checker {
                 if (!arity(c, 3)) return Type.VOID;
                 Type t = collectionArg(c, args.get(0));
                 indexArg(b, args.get(1));
-                Arg v = args.get(2);
-                noMut(v);
-                Type elem = Type.isError(t) ? null : Type.elementOf(t);
-                Type vt = expr(v.expr(), elem);
-                if (elem != null) requireAssignable(v.expr(), vt, elem);
+                elementArg(args.get(2), t);
                 return Type.VOID;
             }
             case REMOVE -> {
@@ -4687,12 +4678,7 @@ public final class Checker {
             }
             case FILL -> {
                 if (!arity(c, 2)) return Type.VOID;
-                Type t = sequenceArg(c, args.get(0));
-                Arg v = args.get(1);
-                noMut(v);
-                Type elem = Type.isError(t) ? null : Type.elementOf(t);
-                Type vt = expr(v.expr(), elem);
-                if (elem != null) requireAssignable(v.expr(), vt, elem);
+                elementArg(args.get(1), sequenceArg(c, args.get(0)));
                 return Type.VOID;
             }
             case ROTATE -> {
@@ -5333,6 +5319,14 @@ public final class Checker {
         Span at = a.span();
         List<Edit> fix = a.expr().isPlace() ? List.of(new Edit(new Span(at.line(), at.col(), 0, at.file()), "mut ")) : List.of();
         diags.fixable(Code.E0207, at, message, hint, fix);
+    }
+
+    /** v, a value stored as an element of t (a list, array or str) unless t is an error. */
+    private void elementArg(Arg v, Type t) {
+        noMut(v);
+        Type elem = Type.isError(t) ? null : Type.elementOf(t);
+        Type vt = expr(v.expr(), elem);
+        if (elem != null) requireAssignable(v.expr(), vt, elem);
     }
 
     /** The type of an argument a builtin modifies: a `mut` place, or else E0207 with the message and hint. */
