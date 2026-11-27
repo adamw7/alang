@@ -943,8 +943,13 @@ public final class Checker {
                     "callers send JSON values; have the tool call a generic function of your own");
                 t = Type.ERROR;
             }
-            // An instance's parameters have the capacities of the call that made it in place of their `_`s.
-            if (f.origin != null) t = Type.substitute(t, f.capacities);
+            // An instance's parameters have the capacities of the call that made it in place of their `_`s. One the
+            // function as written got wrong, such as a tool's `_` (E0217, reported for it), gives the call no capacity
+            // to put there: it stays wrong.
+            if (f.origin != null) {
+                Type written = f.origin.paramVars.get(f.paramVars.size()).type;
+                t = Type.isError(written) ? Type.ERROR : Type.substitute(t, f.capacities);
+            }
             if (Type.hasAnyCapacity(t) && (f.tool || f.name.equals("main"))) {
                 diags.error(Code.E0217, p.typeRef().span(), (f.tool ? "a tool's parameters need" : "the input of `main` needs")
                         + " a constant capacity, not `_`",
