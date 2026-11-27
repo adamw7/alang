@@ -54,6 +54,13 @@ public final class CGen {
     private String into;
     private FnDecl fn;
 
+    /** {@link #into}, which the builtin being lowered takes, leaving none for its arguments. */
+    private String takeInto() {
+        String target = into;
+        into = null;
+        return target;
+    }
+
     private CGen(Program program) {
         this.program = program;
         this.source = program.source;
@@ -911,6 +918,19 @@ public final class CGen {
     /** The C length of the array or list {@code h} of type {@code t}. */
     private static String lenOf(Type t, String h) {
         return t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + h + ").len";
+    }
+
+    /** The length of xs, an array or list given to the builtin c (lowered to h), after a trap (R0013) if it is empty. */
+    private String nonEmpty(Call c, Expr xs, String h, String at) {
+        String n = lenOf(xs.type, h);
+        String kind = xs.type instanceof Type.ArrayT ? "array" : "list";
+        emit("if (" + n + " == 0) AL_TRAP(\"R0013\", \"" + c.builtin.name + "() of an empty " + kind + "\", " + at + ");");
+        return n;
+    }
+
+    /** The elements of t, an array, list or str, at place: its v or b. */
+    private static String elems(Type t, String place) {
+        return "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
     }
 
     /**
@@ -2655,7 +2675,7 @@ public final class CGen {
                 int cap = Type.capacity(t);
                 String kind = t instanceof Type.Str ? "str" : "list";
                 emit("if ((" + place + ").len >= " + cap + "u) AL_TRAP(\"R0004\", \"push to a full " + kind + " (capacity " + cap + ")\", " + at + ");");
-                emit("(" + place + ")." + (t instanceof Type.Str ? "b" : "v") + "[(" + place + ").len++] = " + vt + ";");
+                emit(elems(t, place) + "[(" + place + ").len++] = " + vt + ";");
                 return null;
             }
             case POP -> {
@@ -2663,7 +2683,7 @@ public final class CGen {
                 String place = lower(args.get(0).expr());
                 String kind = t instanceof Type.Str ? "str" : "list";
                 emit("if ((" + place + ").len == 0) AL_TRAP(\"R0012\", \"pop from an empty " + kind + "\", " + at + ");");
-                return tmp(Type.elementOf(t), "(" + place + ")." + (t instanceof Type.Str ? "b" : "v") + "[--(" + place + ").len]");
+                return tmp(Type.elementOf(t), elems(t, place) + "[--(" + place + ").len]");
             }
             case CLEAR -> {
                 String place = lower(args.get(0).expr());
@@ -2775,46 +2795,6 @@ public final class CGen {
                 compactInPlace(args.get(0).expr(), (sp, w, i) -> fnArgCall(c, sp + "->v[" + i + "]"));
                 return null;
             }
-            case SORT_BY_KEY -> {
-                // sort_by's binary insertion sort, by key: key(x) once per element and key(v[mid]) at each probe.
-                Type t = args.get(0).expr().type;
-                Type elem = Type.elementOf(t);
-                Type key = c.fnArgResult();
-                String place = lower(args.get(0).expr());
-                String sp = "t" + ++tmpCount;
-                String n = "t" + ++tmpCount;
-                String i = "t" + ++tmpCount;
-                String lo = "t" + ++tmpCount;
-                String hi = "t" + ++tmpCount;
-                String mid = "t" + ++tmpCount;
-                String x = "t" + ++tmpCount;
-                String kx = "t" + ++tmpCount;
-                String km = "t" + ++tmpCount;
-                open("{");
-                emit(ct(t) + " *" + sp + " = &(" + place + ");");
-                emit("uint32_t " + n + " = " + (t instanceof Type.ArrayT arr ? arr.len() + "u" : sp + "->len") + ", " + i + ", "
-                    + lo + ", " + hi + ", " + mid + ";");
-                open("for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
-                emit(ct(elem) + " " + x + " = " + sp + "->v[" + i + "];");
-                emit(ct(key) + " " + kx + " = " + fnArgCall(c, x) + ";");
-                emit(lo + " = 0;");
-                emit(hi + " = " + i + ";");
-                open("while (" + lo + " < " + hi + ") {");
-                emit(mid + " = " + lo + " + (" + hi + " - " + lo + ") / 2u;");
-                open("{");
-                emit(ct(key) + " " + km + " = " + fnArgCall(c, sp + "->v[" + mid + "]") + ";");
-                emit("if (" + cmpExpr(key, kx, km) + " < 0) " + hi + " = " + mid + ";");
-                emit("else " + lo + " = " + mid + " + 1u;");
-                close("}");
-                close("}");
-                open("if (" + lo + " < " + i + ") {");
-                emit("uint32_t " + mid + "2;");
-                emit("for (" + mid + "2 = " + i + "; " + mid + "2 > " + lo + "; " + mid + "2--) " + sp + "->v[" + mid + "2] = "
-                    + sp + "->v[" + mid + "2 - 1];");
-                emit(sp + "->v[" + lo + "] = " + x + ";");
-                close(3);
-                return null;
-            }
             case HEAP_PUSH -> {
                 // Sift up, as the interpreter does: swap with the parent while it comes after the element.
                 Type t = args.get(0).expr().type;
@@ -2875,10 +2855,12 @@ public final class CGen {
                 close(2);
                 return top;
             }
-            case SORT_BY -> {
-                // A binary insertion sort, as the interpreter's: before is called with the same elements in the same order.
+            case SORT_BY, SORT_BY_KEY -> {
+                // A binary insertion sort, as the interpreter's: before is called with the same elements in the same order;
+                // sort_by_key calls key(x) once per element and key(v[mid]) at each probe.
                 Type t = args.get(0).expr().type;
                 Type elem = Type.elementOf(t);
+                Type key = c.builtin == Builtin.SORT_BY_KEY ? c.fnArgResult() : null;
                 String place = lower(args.get(0).expr());
                 String sp = "t" + ++tmpCount;
                 String n = "t" + ++tmpCount;
@@ -2887,18 +2869,28 @@ public final class CGen {
                 String hi = "t" + ++tmpCount;
                 String mid = "t" + ++tmpCount;
                 String x = "t" + ++tmpCount;
+                String kx = key != null ? "t" + ++tmpCount : null;
+                String km = key != null ? "t" + ++tmpCount : null;
                 open("{");
                 emit(ct(t) + " *" + sp + " = &(" + place + ");");
                 emit("uint32_t " + n + " = " + (t instanceof Type.ArrayT arr ? arr.len() + "u" : sp + "->len") + ", " + i + ", "
                     + lo + ", " + hi + ", " + mid + ";");
                 open("for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
                 emit(ct(elem) + " " + x + " = " + sp + "->v[" + i + "];");
+                if (key != null) emit(ct(key) + " " + kx + " = " + fnArgCall(c, x) + ";");
                 emit(lo + " = 0;");
                 emit(hi + " = " + i + ";");
                 open("while (" + lo + " < " + hi + ") {");
                 emit(mid + " = " + lo + " + (" + hi + " - " + lo + ") / 2u;");
-                emit("if (" + fnArgCall(c, x, sp + "->v[" + mid + "]") + ") " + hi + " = " + mid + ";");
+                if (key != null) {
+                    open("{");
+                    emit(ct(key) + " " + km + " = " + fnArgCall(c, sp + "->v[" + mid + "]") + ";");
+                    emit("if (" + cmpExpr(key, kx, km) + " < 0) " + hi + " = " + mid + ";");
+                } else {
+                    emit("if (" + fnArgCall(c, x, sp + "->v[" + mid + "]") + ") " + hi + " = " + mid + ";");
+                }
                 emit("else " + lo + " = " + mid + " + 1u;");
+                if (key != null) close("}");
                 close("}");
                 open("if (" + lo + " < " + i + ") {");
                 emit("uint32_t " + mid + "2;");
@@ -2914,36 +2906,45 @@ public final class CGen {
                 if (k.isFloat) return "((" + cPrim(k) + ")fabs(" + v + "))";
                 return tmp(c.type, "al_abs_" + k.name + "(" + v + ", " + at + ")");
             }
-            case MIN, MAX -> {
-                String op = c.builtin == Builtin.MIN ? "<" : ">";
-                if (args.size() == 1) {
-                    Expr xs = args.get(0).expr();
-                    String h = lowerLvalue(xs);
-                    String n = lenOf(xs.type, h);
-                    String kind = xs.type instanceof Type.ArrayT ? "array" : "list";
-                    emit("if (" + n + " == 0) AL_TRAP(\"R0013\", \"" + c.builtin.name + "() of an empty " + kind + "\", " + at + ");");
-                    String best = tmp(c.type, "(" + h + ").v[0]");
-                    String i = "t" + ++tmpCount;
-                    openLoop(i, "for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
-                    emit("if ((" + h + ").v[" + i + "] " + op + " " + best + ") " + best + " = (" + h + ").v[" + i + "];");
-                    close(2);
-                    return best;
+            case MIN, MAX, MIN_INDEX, MAX_INDEX -> {
+                // An element replaces the best only when it is smaller (larger), so a NaN stays only when it is first, and
+                // the first of equal ones is kept.
+                String op = c.builtin == Builtin.MIN || c.builtin == Builtin.MIN_INDEX ? "<" : ">";
+                if (args.size() == 2) {
+                    String a = tmp(c.type, lower(args.get(0).expr()));
+                    String b = tmp(c.type, lower(args.get(1).expr()));
+                    return "(" + b + " " + op + " " + a + " ? " + b + " : " + a + ")";
                 }
-                String a = tmp(c.type, lower(args.get(0).expr()));
-                String b = tmp(c.type, lower(args.get(1).expr()));
-                return "(" + b + " " + op + " " + a + " ? " + b + " : " + a + ")";
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String n = nonEmpty(c, xs, h, at);
+                boolean index = c.builtin == Builtin.MIN_INDEX || c.builtin == Builtin.MAX_INDEX;
+                String best = index ? "t" + ++tmpCount : tmp(c.type, "(" + h + ").v[0]");
+                String i = "t" + ++tmpCount;
+                if (index) emit("uint32_t " + best + " = 0;");
+                openLoop(i, "for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
+                String x = "(" + h + ").v[" + i + "]";
+                emit(index ? "if (" + x + " " + op + " (" + h + ").v[" + best + "]) " + best + " = " + i + ";"
+                    : "if (" + x + " " + op + " " + best + ") " + best + " = " + x + ";");
+                close(2);
+                return index ? tmp(Type.I64, "(int64_t)" + best) : best;
             }
-            case SUM -> {
+            case SUM, PRODUCT, PREFIX_SUMS -> {
                 Expr xs = args.get(0).expr();
                 String h = lowerLvalue(xs);
                 String n = lenOf(xs.type, h);
-                PrimKind k = Type.kind(c.type);
-                String total = tmp(c.type, k.isFloat ? "0.0" : "0");
+                Type elem = Type.elementOf(xs.type);
+                PrimKind k = Type.kind(elem);
+                String r = c.builtin == Builtin.PREFIX_SUMS ? tmp(c.type, "{0}") : null;
+                if (r != null && c.type instanceof Type.ListT) emit(r + ".len = " + n + ";");
+                boolean product = c.builtin == Builtin.PRODUCT;
+                String total = tmp(elem, (product ? "1" : "0") + (k.isFloat ? ".0" : ""));
                 String i = "t" + ++tmpCount;
                 openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
-                emit(total + " = " + arith(BinOp.ADD, k, k, total, "(" + h + ").v[" + i + "]", c.span) + ";");
+                emit(total + " = " + arith(product ? BinOp.MUL : BinOp.ADD, k, k, total, "(" + h + ").v[" + i + "]", c.span) + ";");
+                if (r != null) emit(r + ".v[" + i + "] = " + total + ";");
                 close(2);
-                return total;
+                return r != null ? r : total;
             }
             case SQRT, FLOOR, CEIL -> {
                 PrimKind k = Type.kind(c.type);
@@ -3192,8 +3193,7 @@ public final class CGen {
             case FIXED, PAD_LEFT, PAD_RIGHT, PAD_CENTER, TO_BASE, REPEAT, VARIANT_NAME, TO_JSON, GROUP_DIGITS, BASE64_ENCODE, HEX_ENCODE,
                  URL_ENCODE -> {
                 // Stored in a str: the text is written into it, and must fit.
-                String target = into;
-                into = null;
+                String target = takeInto();
                 Consumer<String> w = format(c);
                 int cap = ((Type.Str) c.type).cap();
                 String r = dest(c.type, target);
@@ -3210,8 +3210,7 @@ public final class CGen {
                 return tmp(Type.BOOL, (c.builtin == Builtin.IS_INT ? "al_is_int((" : "al_is_float((") + v + ").b, (" + v + ").len)");
             }
             case SPLIT, WORDS -> {
-                String target = into;
-                into = null;
+                String target = takeInto();
                 String v = lowerLvalue(args.get(0).expr());
                 boolean words = c.builtin == Builtin.WORDS;
                 String[] p = words ? new String[] {"0", "0u"} : pattern(args.get(1).expr());
@@ -3226,8 +3225,7 @@ public final class CGen {
                     : tmp(Type.I64, "al_char_count((" + v + ").b, (" + v + ").len)");
             }
             case CHARS -> {
-                String target = into;
-                into = null;
+                String target = takeInto();
                 String v = lowerLvalue(args.get(0).expr());
                 String r = dest(c.type, target);
                 emit(charsFn((Type.ListT) c.type) + "(&" + r + ", (" + v + ").b, (" + v + ").len, " + at + ");");
@@ -3249,8 +3247,7 @@ public final class CGen {
                 return r;
             }
             case SPLIT_CSV -> {
-                String target = into;
-                into = null;
+                String target = takeInto();
                 String v = lowerLvalue(args.get(0).expr());
                 String sep = args.size() > 1 ? tmp(Type.U8, lower(args.get(1).expr())) : "(uint8_t)','";
                 String r = dest(c.type, target);
@@ -3274,8 +3271,7 @@ public final class CGen {
                     + p[1] + ", " + (words ? 1 : 0) + ", 1, " + at + ")");
             }
             case JOIN -> {
-                String target = into;
-                into = null;
+                String target = takeInto();
                 Type pt = args.get(0).expr().type;
                 String parts = lowerLvalue(args.get(0).expr());
                 String[] p = pattern(args.get(1).expr());
@@ -3284,8 +3280,7 @@ public final class CGen {
                 return r;
             }
             case REPLACE -> {
-                String target = into;
-                into = null;
+                String target = takeInto();
                 String v = lowerLvalue(args.get(0).expr());
                 String[] f = pattern(args.get(1).expr());
                 String[] t = pattern(args.get(2).expr());
@@ -3297,8 +3292,8 @@ public final class CGen {
             case SORT, REVERSE -> {
                 Type t = args.get(0).expr().type;
                 String place = lower(args.get(0).expr());
-                String base = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
-                String n = t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + place + ").len";
+                String base = elems(t, place);
+                String n = lenOf(t, place);
                 String size = "sizeof " + base + "[0]";
                 if (c.builtin == Builtin.REVERSE) emit("al_reverse(" + base + ", " + n + ", " + size + ");");
                 else emit("al_heapsort(" + base + ", " + n + ", " + size + ", " + ordFn(Type.elementOf(t)) + ");");
@@ -3312,7 +3307,7 @@ public final class CGen {
                     : "(" + eqExpr(elem, elem, sp + "->v[" + w + " - 1]", sp + "->v[" + i + "]") + " != 0)"));
                 return null;
             }
-            case BINARY_SEARCH -> {
+            case BINARY_SEARCH, LOWER_BOUND, UPPER_BOUND -> {
                 Expr xs = args.get(0).expr();
                 Type elem = Type.elementOf(xs.type);
                 String h = lowerLvalue(xs);
@@ -3322,18 +3317,24 @@ public final class CGen {
                 String lo = "t" + ++tmpCount;
                 String hi = "t" + ++tmpCount;
                 String mid = "t" + ++tmpCount;
-                String found = tmp(Type.I64, "-1");
+                boolean search = c.builtin == Builtin.BINARY_SEARCH;
+                String r = tmp(Type.I64, search ? "-1" : "0");
                 open("{");
                 emit("uint32_t " + lo + " = 0, " + hi + " = " + n + ", " + mid + ";");
                 open("while (" + lo + " < " + hi + ") {");
                 emit(mid + " = " + lo + " + (" + hi + " - " + lo + ") / 2u;");
-                emit("if (" + cmpExpr(elem, "(" + h + ").v[" + mid + "]", x) + " < 0) " + lo + " = " + mid + " + 1u;");
+                emit("if (" + cmpExpr(elem, "(" + h + ").v[" + mid + "]", x) + (c.builtin == Builtin.UPPER_BOUND ? " <= 0" : " < 0")
+                    + ") " + lo + " = " + mid + " + 1u;");
                 emit("else " + hi + " = " + mid + ";");
                 close("}");
-                emit("if (" + lo + " < " + n + " && " + cmpExpr(elem, "(" + h + ").v[" + lo + "]", x) + " == 0) " + found
-                    + " = (int64_t)" + lo + ";");
+                if (search) {
+                    emit("if (" + lo + " < " + n + " && " + cmpExpr(elem, "(" + h + ").v[" + lo + "]", x) + " == 0) " + r
+                        + " = (int64_t)" + lo + ";");
+                } else {
+                    emit(r + " = (int64_t)" + lo + ";");
+                }
                 close("}");
-                return found;
+                return r;
             }
             case INSERT -> {
                 Type t = args.get(0).expr().type;
@@ -3358,7 +3359,7 @@ public final class CGen {
                 String vt = Type.isAggregate(elem) ? v : tmp(elem, v);
                 int cap = Type.capacity(t);
                 String kind = t instanceof Type.Str ? "str" : "list";
-                String arr = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
+                String arr = elems(t, place);
                 String i = tmp(Type.U32, "al_insert_pos(" + pos + ", (" + place + ").len, " + at + ")");
                 emit("if ((" + place + ").len >= " + cap + "u) AL_TRAP(\"R0004\", \"insert into a full " + kind + " (capacity " + cap + ")\", " + at + ");");
                 String k = "t" + ++tmpCount;
@@ -3381,7 +3382,7 @@ public final class CGen {
                 String check = Type.kind(ie.type).signed ? "al_idx_s((int64_t)(" + idx + "), (" + place + ").len, " + at + ")"
                     : "al_idx_u((uint64_t)(" + idx + "), (" + place + ").len, " + at + ")";
                 String i = tmp(Type.U32, check);
-                String arr = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
+                String arr = elems(t, place);
                 String r = tmp(Type.elementOf(t), arr + "[" + i + "]");
                 String k = "t" + ++tmpCount;
                 scopedLoop(k, "for (" + k + " = " + i + "; " + k + " + 1 < (" + place + ").len; " + k + "++) " + arr + "[" + k + "] = " + arr + "[" + k + " + 1];");
@@ -3528,8 +3529,7 @@ public final class CGen {
                 return optionValue(c.type, ok + " != 0", r);
             }
             case RE_REPLACE, RE_SPLIT -> {
-                String target = into;
-                into = null;
+                String target = takeInto();
                 String v = lowerLvalue(args.get(0).expr());
                 String p = lowerLvalue(args.get(1).expr());
                 String[] t = c.builtin == Builtin.RE_REPLACE ? pattern(args.get(2).expr()) : null;
@@ -3592,9 +3592,7 @@ public final class CGen {
             case MIN_BY, MAX_BY -> {
                 Expr xs = args.get(0).expr();
                 String h = lowerLvalue(xs);
-                String n = lenOf(xs.type, h);
-                String kind = xs.type instanceof Type.ArrayT ? "array" : "list";
-                emit("if (" + n + " == 0) AL_TRAP(\"R0013\", \"" + c.builtin.name + "() of an empty " + kind + "\", " + at + ");");
+                String n = nonEmpty(c, xs, h, at);
                 String best = "t" + ++tmpCount;
                 String i = "t" + ++tmpCount;
                 String x = "(" + h + ").v[" + i + "]";
@@ -3609,7 +3607,7 @@ public final class CGen {
                 Type t = args.get(0).expr().type;
                 String place = lower(args.get(0).expr());
                 String kind = t instanceof Type.Str ? "str" : "list";
-                String arr = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
+                String arr = elems(t, place);
                 emit("if ((" + place + ").len == 0) AL_TRAP(\"R0012\", \"pop_front from an empty " + kind + "\", " + at + ");");
                 String r = tmp(Type.elementOf(t), arr + "[0]");
                 String k = "t" + ++tmpCount;
@@ -3686,35 +3684,6 @@ public final class CGen {
                 close(2);
                 return r;
             }
-            case PRODUCT -> {
-                Expr xs = args.get(0).expr();
-                String h = lowerLvalue(xs);
-                String n = lenOf(xs.type, h);
-                PrimKind k = Type.kind(c.type);
-                String total = tmp(c.type, k.isFloat ? "1.0" : "1");
-                String i = "t" + ++tmpCount;
-                openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
-                emit(total + " = " + arith(BinOp.MUL, k, k, total, "(" + h + ").v[" + i + "]", c.span) + ";");
-                close(2);
-                return total;
-            }
-            case MIN_INDEX, MAX_INDEX -> {
-                // As min(xs) and max(xs): an element replaces the best only when it is smaller (larger), so a NaN stays only
-                // when it is first, and the first of equal ones is kept.
-                Expr xs = args.get(0).expr();
-                String h = lowerLvalue(xs);
-                String n = lenOf(xs.type, h);
-                String kind = xs.type instanceof Type.ArrayT ? "array" : "list";
-                emit("if (" + n + " == 0) AL_TRAP(\"R0013\", \"" + c.builtin.name + "() of an empty " + kind + "\", " + at + ");");
-                String best = "t" + ++tmpCount;
-                String i = "t" + ++tmpCount;
-                String op = c.builtin == Builtin.MIN_INDEX ? "<" : ">";
-                emit("uint32_t " + best + " = 0;");
-                openLoop(i, "for (" + i + " = 1; " + i + " < " + n + "; " + i + "++) {");
-                emit("if ((" + h + ").v[" + i + "] " + op + " (" + h + ").v[" + best + "]) " + best + " = " + i + ";");
-                close(2);
-                return tmp(Type.I64, "(int64_t)" + best);
-            }
             case IS_SORTED -> {
                 Expr xs = args.get(0).expr();
                 String h = lowerLvalue(xs);
@@ -3728,28 +3697,6 @@ public final class CGen {
                 emit("if (" + (str ? prev + " > " + cur : cmpExpr(Type.elementOf(xs.type), prev, cur) + " > 0") + ") { " + r
                     + " = false; break; }");
                 close(2);
-                return r;
-            }
-            case LOWER_BOUND, UPPER_BOUND -> {
-                Expr xs = args.get(0).expr();
-                Type elem = Type.elementOf(xs.type);
-                String h = lowerLvalue(xs);
-                String x = elem instanceof Type.Str ? lowerLvalue(args.get(1).expr()) : keyLvalue(args.get(1).expr(), elem);
-                String n = lenOf(xs.type, h);
-                String lo = "t" + ++tmpCount;
-                String hi = "t" + ++tmpCount;
-                String mid = "t" + ++tmpCount;
-                String r = tmp(Type.I64, "0");
-                open("{");
-                emit("uint32_t " + lo + " = 0, " + hi + " = " + n + ", " + mid + ";");
-                open("while (" + lo + " < " + hi + ") {");
-                emit(mid + " = " + lo + " + (" + hi + " - " + lo + ") / 2u;");
-                emit("if (" + cmpExpr(elem, "(" + h + ").v[" + mid + "]", x) + (c.builtin == Builtin.UPPER_BOUND ? " <= 0" : " < 0")
-                    + ") " + lo + " = " + mid + " + 1u;");
-                emit("else " + hi + " = " + mid + ";");
-                close("}");
-                emit(r + " = (int64_t)" + lo + ";");
-                close("}");
                 return r;
             }
             case EXTEND -> {
@@ -3970,9 +3917,7 @@ public final class CGen {
             case MEAN, MEDIAN, VARIANCE, STDDEV -> {
                 Expr xs = args.get(0).expr();
                 String h = lowerLvalue(xs);
-                String n = lenOf(xs.type, h);
-                String kind = xs.type instanceof Type.ArrayT ? "array" : "list";
-                emit("if (" + n + " == 0) AL_TRAP(\"R0013\", \"" + c.builtin.name + "() of an empty " + kind + "\", " + at + ");");
+                String n = nonEmpty(c, xs, h, at);
                 String i = "t" + ++tmpCount;
                 if (c.builtin == Builtin.MEDIAN) {
                     String buf = "t" + ++tmpCount;
@@ -4016,8 +3961,8 @@ public final class CGen {
             case SHUFFLE -> {
                 Type t = args.get(0).expr().type;
                 String place = lower(args.get(0).expr());
-                String base = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
-                String n = t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + place + ").len";
+                String base = elems(t, place);
+                String n = lenOf(t, place);
                 String rng = "(uint64_t *)&(" + lower(args.get(1).expr()) + ")";
                 emit("al_shuffle(" + base + ", " + n + ", sizeof " + base + "[0], " + rng + ");");
                 return null;
@@ -4067,14 +4012,14 @@ public final class CGen {
             case NEXT_PERMUTATION -> {
                 Type t = args.get(0).expr().type;
                 String place = lower(args.get(0).expr());
-                String base = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
-                String n = t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + place + ").len";
+                String base = elems(t, place);
+                String n = lenOf(t, place);
                 return tmp(Type.BOOL, "al_next_perm(" + base + ", " + n + ", sizeof " + base + "[0], " + ordFn(Type.elementOf(t)) + ")");
             }
             case NEXT_COMBINATION -> {
                 Type t = args.get(0).expr().type;
                 String place = lower(args.get(0).expr());
-                String n = t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + place + ").len";
+                String n = lenOf(t, place);
                 String total = tmp(Type.I64, lower(args.get(1).expr()));
                 return tmp(Type.BOOL, "al_next_comb((" + place + ").v, " + n + ", " + total + ", " + at + ")");
             }
@@ -4107,8 +4052,7 @@ public final class CGen {
                 return null;
             }
             case FREQUENCIES -> {
-                String target = into;
-                into = null;
+                String target = takeInto();
                 Expr xs = args.get(0).expr();
                 String h = lowerLvalue(xs);
                 Type.MapT mt = (Type.MapT) c.type;
@@ -4124,21 +4068,6 @@ public final class CGen {
                 emit("uint32_t al_at = al_find_" + m + "(&" + r + ", &al_k, &al_found);");
                 emit("if (al_found) " + r + ".v[al_at] += 1;");
                 emit("else *al_put_" + m + "(&" + r + ", &al_k, " + at + ") = 1;");
-                close(2);
-                return r;
-            }
-            case PREFIX_SUMS -> {
-                Expr xs = args.get(0).expr();
-                String h = lowerLvalue(xs);
-                String n = lenOf(xs.type, h);
-                PrimKind k = Type.kind(Type.elementOf(c.type));
-                String r = tmp(c.type, "{0}");
-                if (c.type instanceof Type.ListT) emit(r + ".len = " + n + ";");
-                String total = tmp(Type.elementOf(c.type), k.isFloat ? "0.0" : "0");
-                String i = "t" + ++tmpCount;
-                openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
-                emit(total + " = " + arith(BinOp.ADD, k, k, total, "(" + h + ").v[" + i + "]", c.span) + ";");
-                emit(r + ".v[" + i + "] = " + total + ";");
                 close(2);
                 return r;
             }

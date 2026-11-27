@@ -114,7 +114,21 @@ public final class Diagnostics {
     public static void renderOne(StringBuilder sb, Source source, Diagnostic d) {
         String kind = d.isError() ? "error" : "warning";
         sb.append(kind).append('[').append(d.code().name()).append("]: ").append(d.message()).append('\n');
-        Span s = d.span();
+        source = excerpt(sb, source, d.span());
+        if (d.hint() != null) sb.append("  = hint: ").append(d.hint()).append('\n');
+        if (!d.fixes().isEmpty()) {
+            List<String> parts = new ArrayList<>();
+            for (Edit e : d.fixes()) parts.add(e.describe(source));
+            sb.append("  = fix: ").append(String.join(", then ", parts)).append('\n');
+        }
+        sb.append('\n');
+    }
+
+    /**
+     * Where s is, for a diagnostic or a trap: its file (else {@code source}), line and column, the line itself, and a
+     * marker under the span (tabs kept, columns counted in code points). Returns the source it shows.
+     */
+    public static Source excerpt(StringBuilder sb, Source source, Span s) {
         if (s.file() != null) source = s.file();
         if (s.line() > 0) {
             String lineNo = String.valueOf(s.line());
@@ -124,13 +138,7 @@ public final class Diagnostics {
             sb.append(lineNo).append(" | ").append(source.line(s.line())).append('\n');
             sb.append(pad).append(" | ").append(source.caret(s)).append('\n');
         }
-        if (d.hint() != null) sb.append("  = hint: ").append(d.hint()).append('\n');
-        if (!d.fixes().isEmpty()) {
-            List<String> parts = new ArrayList<>();
-            for (Edit e : d.fixes()) parts.add(e.describe(source));
-            sb.append("  = fix: ").append(String.join(", then ", parts)).append('\n');
-        }
-        sb.append('\n');
+        return source;
     }
 
     public List<Object> toJson() {

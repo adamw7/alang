@@ -523,19 +523,27 @@ final class Stdlib {
      * binary_search(xs, x): the first position whose element is not before x in the order of sort, if that element
      * is equal to x; otherwise -1. The C backend searches the same positions in the same order.
      */
-    static long binarySearch(Object xs, Object x, Type elem, Meter cost) {
-        Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-        int n = xs instanceof ListV l ? l.len : items.length;
+    static long binarySearch(Object[] items, int n, Object x, Type elem, Meter cost) {
+        int lo = bound(items, n, x, elem, false, cost);
+        cost.elements(1);
+        return lo < n && compare(items[lo], x, elem, cost) == 0 ? lo : -1;
+    }
+
+    /**
+     * lower_bound(xs, x), or upper_bound with {@code upper}: the first of the n positions whose element is not before x
+     * (is after x) in the order of sort.
+     */
+    static int bound(Object[] items, int n, Object x, Type elem, boolean upper, Meter cost) {
         int lo = 0;
         int hi = n;
         while (lo < hi) {
             int mid = lo + (hi - lo) / 2;
             cost.elements(1);
-            if (compare(items[mid], x, elem, cost) < 0) lo = mid + 1;
+            int cmp = compare(items[mid], x, elem, cost);
+            if (upper ? cmp <= 0 : cmp < 0) lo = mid + 1;
             else hi = mid;
         }
-        cost.elements(1);
-        return lo < n && compare(items[lo], x, elem, cost) == 0 ? lo : -1;
+        return lo;
     }
 
     /** The non-overlapping occurrences of p in s, left to right; R0013 if p is empty. */
@@ -811,14 +819,18 @@ final class Stdlib {
     static long parseInt(StrV s, PrimKind to, Span at, Meter cost) {
         BigInteger v = decimal(s, cost);
         if (v == null || !to.fits(v)) {
-            ByteArrayOutputStream msg = new ByteArrayOutputStream();
-            msg.writeBytes("cannot convert ".getBytes(StandardCharsets.UTF_8));
-            Format.format(ByteSink.of(msg), s, new Type.Str(s.b.length), true);
-            msg.writeBytes((" to " + to.name + (v == null ? ": not a decimal integer" : ": out of range"))
-                .getBytes(StandardCharsets.UTF_8));
-            throw new Trap(Code.R0009, at, msg.toByteArray());
+            throw cannotConvert(s, " to " + to.name + (v == null ? ": not a decimal integer" : ": out of range"), at);
         }
         return v.longValue();
+    }
+
+    /** R0009: cannot convert s (quoted) and then {@code why}. */
+    private static Trap cannotConvert(StrV s, String why, Span at) {
+        ByteArrayOutputStream msg = new ByteArrayOutputStream();
+        msg.writeBytes("cannot convert ".getBytes(StandardCharsets.UTF_8));
+        Format.format(ByteSink.of(msg), s, new Type.Str(s.b.length), true);
+        msg.writeBytes(why.getBytes(StandardCharsets.UTF_8));
+        return new Trap(Code.R0009, at, msg.toByteArray());
     }
 
     /** 2^53: every integer up to it is an f64. */
@@ -959,12 +971,8 @@ final class Stdlib {
         double[] v = new double[1];
         int kind = decimalFloat(s, v, cost);
         if (kind != EXACT) {
-            ByteArrayOutputStream msg = new ByteArrayOutputStream();
-            msg.writeBytes("cannot convert ".getBytes(StandardCharsets.UTF_8));
-            Format.format(ByteSink.of(msg), s, new Type.Str(s.b.length), true);
-            msg.writeBytes((" to f64" + (kind == NOT_DECIMAL ? ": not a decimal number"
-                : ": too many digits, or too large or small, for an f64 to convert exactly")).getBytes(StandardCharsets.UTF_8));
-            throw new Trap(Code.R0009, at, msg.toByteArray());
+            throw cannotConvert(s, " to f64" + (kind == NOT_DECIMAL ? ": not a decimal number"
+                : ": too many digits, or too large or small, for an f64 to convert exactly"), at);
         }
         return v[0];
     }
@@ -1186,16 +1194,7 @@ final class Stdlib {
             }
             case Type.ArrayT at -> compareAll(((ArrV) a).items, ((ArrV) b).items, at.len(), at.len(), at.elem(), cost);
             case Type.ListT l -> compareAll(((ListV) a).items, ((ListV) b).items, ((ListV) a).len, ((ListV) b).len, l.elem(), cost);
-            case Type.StructT st -> {
-                Object[] x = ((StructV) a).fields;
-                Object[] y = ((StructV) b).fields;
-                for (int i = 0; i < x.length; i++) {
-                    cost.elements(1);
-                    int c = compare(x[i], y[i], st.decl().fields.get(i).type, cost);
-                    if (c != 0) yield c;
-                }
-                yield 0;
-            }
+            case Type.StructT st -> compareFields((StructV) a, (StructV) b, i -> st.decl().fields.get(i).type, cost);
             case Type.SetT st -> compareAll(((ListV) a).items, ((ListV) b).items, ((ListV) a).len, ((ListV) b).len, st.elem(), cost);
             case Type.MapT mt -> {
                 // Entry by entry, key then value; a map that is a prefix of the other first.
@@ -1209,16 +1208,7 @@ final class Stdlib {
                 }
                 yield Integer.compare(x.len, y.len);
             }
-            case Type.TupleT tt -> {
-                Object[] x = ((StructV) a).fields;
-                Object[] y = ((StructV) b).fields;
-                for (int i = 0; i < x.length; i++) {
-                    cost.elements(1);
-                    int c = compare(x[i], y[i], tt.elems().get(i), cost);
-                    if (c != 0) yield c;
-                }
-                yield 0;
-            }
+            case Type.TupleT tt -> compareFields((StructV) a, (StructV) b, tt.elems()::get, cost);
             case Type.EnumT et -> {
                 EnumV x = (EnumV) a;
                 EnumV y = (EnumV) b;
@@ -1233,6 +1223,16 @@ final class Stdlib {
             }
             default -> throw new IllegalStateException();
         };
+    }
+
+    /** Two structs or tuples, field by field, the i-th of type {@code type.apply(i)}. */
+    private static int compareFields(StructV a, StructV b, java.util.function.IntFunction<Type> type, Meter cost) {
+        for (int i = 0; i < a.fields.length; i++) {
+            cost.elements(1);
+            int c = compare(a.fields[i], b.fields[i], type.apply(i), cost);
+            if (c != 0) return c;
+        }
+        return 0;
     }
 
     private static int compareAll(Object[] x, Object[] y, int xn, int yn, Type elem, Meter cost) {

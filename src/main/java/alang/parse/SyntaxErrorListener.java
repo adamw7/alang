@@ -854,9 +854,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
     }
 
     private static boolean isNameLike(int t) {
-        return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
-            || t == ALangLexer.HOST || t == ALangLexer.WITH
-            || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t == ALangLexer.TYPE || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
+        return Formatter.nameLike(t) || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 
     private static boolean expectsOperator(IntervalSet expected) {

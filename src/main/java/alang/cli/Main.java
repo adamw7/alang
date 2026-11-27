@@ -551,17 +551,7 @@ public final class Main {
         bytes.writeBytes(t.messageBytes());
         StringBuilder sb = new StringBuilder();
         sb.append('\n');
-        Span s = t.span;
-        if (s.file() != null) src = s.file();
-        if (s.line() > 0) {
-            String lineNo = String.valueOf(s.line());
-            String pad = " ".repeat(lineNo.length());
-            sb.append(pad).append("--> ").append(src.path).append(':').append(s.line()).append(':').append(s.col()).append('\n');
-            sb.append(pad).append(" |\n");
-            sb.append(lineNo).append(" | ").append(src.line(s.line())).append('\n');
-            // The same marker line as diagnostics: tabs kept, columns counted in code points.
-            sb.append(pad).append(" | ").append(src.caret(s)).append('\n');
-        }
+        Diagnostics.excerpt(sb, src, t.span);
         for (String frame : t.trace) sb.append("  in ").append(frame).append('\n');
         sb.append("  = hint: ").append(t.code.explanation).append('\n');
         bytes.writeBytes(sb.toString().getBytes(StandardCharsets.UTF_8));

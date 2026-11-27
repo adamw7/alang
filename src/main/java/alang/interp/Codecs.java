@@ -1,6 +1,7 @@
 package alang.interp;
 
 import alang.interp.Values.*;
+import alang.util.Json;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -100,20 +101,13 @@ final class Codecs {
         return out;
     }
 
-    private static int hexDigit(int c) {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    }
-
     /** The bytes that pairs of hexadecimal digits stand for, or null. */
     static byte[] hexDecode(StrV s) {
         if (s.len % 2 != 0) return null;
         byte[] out = new byte[s.len / 2];
         for (int i = 0; i < out.length; i++) {
-            int hi = hexDigit(s.b[2 * i] & 0xff);
-            int lo = hexDigit(s.b[2 * i + 1] & 0xff);
+            int hi = Json.hexDigit(s.b[2 * i] & 0xff);
+            int lo = Json.hexDigit(s.b[2 * i + 1] & 0xff);
             if (hi < 0 || lo < 0) return null;
             out[i] = (byte) (hi << 4 | lo);
         }
@@ -149,8 +143,8 @@ final class Codecs {
                 continue;
             }
             if (i + 2 >= s.len) return null;
-            int hi = hexDigit(s.b[i + 1] & 0xff);
-            int lo = hexDigit(s.b[i + 2] & 0xff);
+            int hi = Json.hexDigit(s.b[i + 1] & 0xff);
+            int lo = Json.hexDigit(s.b[i + 2] & 0xff);
             if (hi < 0 || lo < 0) return null;
             out.write(hi << 4 | lo);
             i += 2;

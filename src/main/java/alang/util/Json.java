@@ -100,6 +100,14 @@ public final class Json {
 
     // ------------------------------------------------------------------ reading
 
+    /** The value of an ASCII hexadecimal digit, or -1: Character.digit would also accept non-ASCII digits. */
+    public static int hexDigit(int c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    }
+
     public static final class ParseException extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
@@ -274,14 +282,6 @@ public final class Json {
             }
             pos += 4;
             return (char) code;
-        }
-
-        /** Character.digit would also accept non-ASCII digits; JSON allows only [0-9a-fA-F]. */
-        static int hexDigit(char c) {
-            if (c >= '0' && c <= '9') return c - '0';
-            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-            return -1;
         }
 
         /** Only ASCII digits: Character.isDigit and BigInteger would also read an Arabic-Indic three as 3. */
