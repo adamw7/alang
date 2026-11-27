@@ -1298,20 +1298,25 @@ public final class Checker {
             }
             return Type.ERROR;
         }
-        if (c.args.size() != ft.params().size()) {
-            diags.error(Code.E0204, c.span, "`" + exprText(c.callee) + "` takes " + ft.params().size() + " argument(s) but "
-                + c.args.size() + " were given", "its type: " + ft);
-            for (Arg a : c.args) expr(a.expr(), null);
-            return ft.ret();
+        if (fnTypeArgs(c.args, c.span, exprText(c.callee), ft) && ctx.routine != null) ctx.routine.dynamicCalls.add(ft);
+        return ft.ret();
+    }
+
+    /** The arguments of a call (at span) of `name`, a function value of type ft: false after E0204 if there are too few or many. */
+    private boolean fnTypeArgs(List<Arg> args, Span span, String name, Type.FnT ft) {
+        if (args.size() != ft.params().size()) {
+            diags.error(Code.E0204, span, "`" + name + "` takes " + ft.params().size() + " argument(s) but " + args.size()
+                + " were given", "its type: " + ft);
+            for (Arg a : args) expr(a.expr(), null);
+            return false;
         }
-        for (int i = 0; i < c.args.size(); i++) {
-            Arg a = c.args.get(i);
+        for (int i = 0; i < args.size(); i++) {
+            Arg a = args.get(i);
             noMut(a);
             Type want = ft.params().get(i);
             requireAssignable(a.expr(), expr(a.expr(), want), want);
         }
-        if (ctx.routine != null) ctx.routine.dynamicCalls.add(ft);
-        return ft.ret();
+        return true;
     }
 
     /** E0203 for a builtin that orders values given values with functions in them, which have no order. */
@@ -2874,32 +2879,11 @@ public final class Checker {
                 diags.error(Code.E0103, q.span, "`" + n.name + "` has no enum `" + q.name + "`");
                 return Type.ERROR;
             }
-            Variant v = d.variant(f.name);
-            if (v == null) {
-                diags.error(Code.E0107, f.nameSpan, "enum `" + d.name + "` has no variant `" + f.name + "`", didYouMean(f.name, variantNames(d)));
-                return Type.ERROR;
-            }
-            if (!v.payload.isEmpty()) {
-                diags.error(Code.E0204, f.span, d.name + "." + v.name + " needs " + v.payload.size() + " value(s)",
-                    "write " + n.name + "." + d.name + "." + v.name + "(" + joinTypes(v.payload) + ")");
-            }
-            return unitVariant(f, d, v, expected);
+            return variantRef(f, d, n.name + ".", expected);
         }
         if (f.target instanceof Name n && lookupLocal(n.name) == null && !consts.containsKey(n.name)) {
             EnumDecl d = enums.get(n.name);
-            if (d != null) {
-                Variant v = d.variant(f.name);
-                if (v == null) {
-                    diags.error(Code.E0107, f.nameSpan, "enum `" + d.name + "` has no variant `" + f.name + "`",
-                        didYouMean(f.name, variantNames(d)));
-                    return Type.ERROR;
-                }
-                if (!v.payload.isEmpty()) {
-                    diags.error(Code.E0204, f.span, d.name + "." + v.name + " needs " + v.payload.size() + " value(s)",
-                        "write " + d.name + "." + v.name + "(" + joinTypes(v.payload) + ")");
-                }
-                return unitVariant(f, d, v, expected);
-            }
+            if (d != null) return variantRef(f, d, "", expected);
         }
         Type t = expr(f.target, null);
         if (Type.isError(t)) return Type.ERROR;
@@ -3008,19 +2992,7 @@ public final class Checker {
         c.fnParam = fv;
         if (ctx.routine != null) ctx.routine.dynamicCalls.add(ft);
         checkMutCallPosition(c, ft.ret());
-        if (c.args.size() != ft.params().size()) {
-            diags.error(Code.E0204, c.span, "`" + c.name + "` takes " + ft.params().size() + " argument(s) but " + c.args.size()
-                + " were given", "its type: " + ft);
-            for (Arg a : c.args) expr(a.expr(), null);
-            return ft.ret();
-        }
-        for (int i = 0; i < c.args.size(); i++) {
-            Arg a = c.args.get(i);
-            noMut(a);
-            Type want = ft.params().get(i);
-            requireAssignable(a.expr(), expr(a.expr(), want), want);
-        }
-        checkAliasing(c.args);
+        if (fnTypeArgs(c.args, c.span, c.name, ft)) checkAliasing(c.args);
         return ft.ret();
     }
 
@@ -3203,16 +3175,7 @@ public final class Checker {
                     "pass a function by its name: f(is_even), where fn is_even(x: i64) -> bool");
                 return null;
             }
-            boolean ok = want.params().size() == given.params().size();
-            for (int i = 0; ok && i < want.params().size(); i++) {
-                ok = Type.bind(want.params().get(i), given.params().get(i), true, caps, owner, types);
-            }
-            ok = ok && Type.bind(want.ret(), given.ret(), true, caps, owner, types);
-            if (!ok) {
-                diags.error(Code.E0201, a.span(), "`" + exprText(a.expr()) + "` is " + given + ", but "
-                    + Type.substituteTypes(want, owner, types) + " is expected");
-                return null;
-            }
+            if (!bindFn(a, exprText(a.expr()), want, given, owner, caps, types)) return null;
             if (ctx.routine != null) ctx.routine.dynamicCalls.add(given);
             return DYNAMIC;
         }
@@ -3259,17 +3222,20 @@ public final class Checker {
         }
         n.type = given;
         a.expr().type = given;
+        return bindFn(a, n.name, want, given, owner, caps, types) ? fn : null;
+    }
+
+    /** Whether the function `name` of type given, passed as a, fits want, binding its type parameters; else E0201. */
+    private boolean bindFn(Arg a, String name, Type.FnT want, Type.FnT given, FnDecl owner, Map<Integer, Integer> caps,
+                           Map<Integer, Type> types) {
         boolean ok = want.params().size() == given.params().size();
         for (int i = 0; ok && i < want.params().size(); i++) {
             ok = Type.bind(want.params().get(i), given.params().get(i), true, caps, owner, types);
         }
-        ok = ok && Type.bind(want.ret(), given.ret(), true, caps, owner, types);
-        if (!ok) {
-            diags.error(Code.E0201, a.span(), "`" + n.name + "` is " + given + ", but " + Type.substituteTypes(want, owner, types)
-                + " is expected");
-            return null;
-        }
-        return fn;
+        if (ok && Type.bind(want.ret(), given.ret(), true, caps, owner, types)) return true;
+        diags.error(Code.E0201, a.span(), "`" + name + "` is " + given + ", but " + Type.substituteTypes(want, owner, types)
+            + " is expected");
+        return false;
     }
 
     /**
@@ -3860,7 +3826,7 @@ public final class Checker {
                 if (elem != null) requireAssignable(v.expr(), vt, elem);
                 return Type.VOID;
             }
-            case POP -> {
+            case POP, POP_FRONT -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 Type t = collectionArg(c, args.get(0));
                 return Type.isError(t) ? Type.ERROR : Type.elementOf(t);
@@ -3876,18 +3842,7 @@ public final class Checker {
                         "append(mut s, \"text\", 42)");
                     return Type.VOID;
                 }
-                Arg target = args.get(0);
-                if (!target.mut()) {
-                    expr(target.expr(), null);
-                    missingMut(target, "append() modifies its first argument",
-                        "write append(mut " + exprText(target.expr()) + ", ...)");
-                } else {
-                    Type t = mutPlace(target.expr());
-                    if (!(t instanceof Type.Str) && !Type.isError(t)) {
-                        diags.error(Code.E0203, target.span(), "append() needs a str[N] target, found " + t,
-                            t instanceof Type.ListT ? "use push(mut xs, value) for lists" : null);
-                    }
-                }
+                strTarget(b, args.get(0), ", ...)");
                 if (args.size() < 2) diags.error(Code.E0204, c.span, "append() needs at least one value to append");
                 for (int i = 1; i < args.size(); i++) printable(args.get(i));
                 return Type.VOID;
@@ -3923,7 +3878,7 @@ public final class Checker {
                 }
                 return ts[0];
             }
-            case SUM -> {
+            case SUM, PRODUCT -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 return numbersArg(b, args.get(0));
             }
@@ -4101,22 +4056,7 @@ public final class Checker {
                     keyArg(b, args.get(1), t instanceof Type.MapT mt ? mt.key() : ((Type.SetT) t).elem());
                     return ret;
                 }
-                if (t instanceof Type.Str) {
-                    textPattern(b, args.get(1), "what it looks for");
-                } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
-                    noMut(args.get(1));
-                    Type elem = Type.elementOf(t);
-                    Type x = expr(args.get(1).expr(), elem);
-                    if (!Type.comparable(x, elem)) {
-                        diags.error(Code.E0201, args.get(1).span(), b.name + "() looks for an element of type " + elem
-                            + ", found " + x);
-                    }
-                } else {
-                    expr(args.get(1).expr(), null);
-                    if (!Type.isError(t)) {
-                        diags.error(Code.E0203, args.get(0).span(), b.name + "() needs a str, array or list, found " + t);
-                    }
-                }
+                needleArg(b, t, args, "what it looks for", "looks for an element");
                 if (from) indexArg(b, args.get(2));
                 return ret;
             }
@@ -4129,29 +4069,15 @@ public final class Checker {
                     return Type.I64;
                 }
                 if (!arity(c, 2)) return Type.I64;
-                Type t = readArg(args.get(0));
-                if (t instanceof Type.Str) {
-                    textPattern(b, args.get(1), "what it counts");
-                } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
-                    noMut(args.get(1));
-                    Type elem = Type.elementOf(t);
-                    Type x = expr(args.get(1).expr(), elem);
-                    if (!Type.comparable(x, elem)) {
-                        diags.error(Code.E0201, args.get(1).span(), "count() counts elements of type " + elem + ", found " + x);
-                    }
-                } else {
-                    expr(args.get(1).expr(), null);
-                    if (!Type.isError(t)) {
-                        diags.error(Code.E0203, args.get(0).span(), "count() needs a str, array or list, found " + t);
-                    }
-                }
+                needleArg(b, readArg(args.get(0)), args, "what it counts", "counts elements");
                 return Type.I64;
             }
-            case STARTS_WITH, ENDS_WITH -> {
-                if (!arity(c, 2)) return Type.BOOL;
-                textArg(b, args.get(0));
-                textPattern(b, args.get(1), b == Builtin.STARTS_WITH ? "the prefix" : "the suffix");
-                return Type.BOOL;
+            case STARTS_WITH, ENDS_WITH, STRIP_PREFIX, STRIP_SUFFIX -> {
+                boolean strip = b == Builtin.STRIP_PREFIX || b == Builtin.STRIP_SUFFIX;
+                if (!arity(c, 2)) return strip ? Type.ERROR : Type.BOOL;
+                Type t = textArg(b, args.get(0));
+                textPattern(b, args.get(1), b == Builtin.STARTS_WITH || b == Builtin.STRIP_PREFIX ? "the prefix" : "the suffix");
+                return strip ? t : Type.BOOL;
             }
             case SLICE -> {
                 if (!arity(c, 3)) return Type.ERROR;
@@ -4163,17 +4089,18 @@ public final class Checker {
                 diags.error(Code.E0203, args.get(0).span(), "slice() needs a str, list or array, found " + t);
                 return Type.ERROR;
             }
-            case TRIM, TRIM_START, TRIM_END -> {
+            case TRIM, TRIM_START, TRIM_END, CAPITALIZE -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 return textArg(b, args.get(0));
             }
-            case IS_INT, IS_FLOAT -> {
-                if (!arity(c, 1)) return Type.BOOL;
+            case IS_INT, IS_FLOAT, IS_UTF8, CHAR_COUNT -> {
+                Type ret = b == Builtin.CHAR_COUNT ? Type.I64 : Type.BOOL;
+                if (!arity(c, 1)) return ret;
                 textArg(b, args.get(0));
-                return Type.BOOL;
+                return ret;
             }
-            case PARSE_I64, PARSE_F64 -> {
-                Type ret = optionOf(b == Builtin.PARSE_I64 ? Type.I64 : Type.F64);
+            case PARSE_I64, PARSE_F64, PARSE_DATE, PARSE_DATETIME -> {
+                Type ret = optionOf(b == Builtin.PARSE_F64 ? Type.F64 : Type.I64);
                 if (b == Builtin.PARSE_I64 && args.size() == 2) {
                     textArg(b, args.get(0));
                     intArg(b, args.get(1), "the base");
@@ -4204,16 +4131,6 @@ public final class Checker {
                 }
                 return stored;
             }
-            case IS_UTF8 -> {
-                if (!arity(c, 1)) return Type.BOOL;
-                textArg(b, args.get(0));
-                return Type.BOOL;
-            }
-            case CHAR_COUNT -> {
-                if (!arity(c, 1)) return Type.I64;
-                textArg(b, args.get(0));
-                return Type.I64;
-            }
             case CHARS -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 Type text = textArg(b, args.get(0));
@@ -4225,18 +4142,7 @@ public final class Checker {
             }
             case PUSH_CHAR -> {
                 if (!arity(c, 2)) return Type.VOID;
-                Arg target = args.get(0);
-                if (!target.mut()) {
-                    expr(target.expr(), null);
-                    missingMut(target, "push_char() modifies its first argument",
-                        "write push_char(mut " + exprText(target.expr()) + ", c)");
-                } else {
-                    Type t = mutPlace(target.expr());
-                    if (!(t instanceof Type.Str) && !Type.isError(t)) {
-                        diags.error(Code.E0203, target.span(), "push_char() needs a str[N] target, found " + t,
-                            t instanceof Type.ListT ? "use push(mut xs, value) for lists" : null);
-                    }
-                }
+                strTarget(b, args.get(0), ", c)");
                 Arg v = args.get(1);
                 Type vt = value(v, Type.U32);
                 if (!Type.isInt(vt) && !Type.isError(vt)) {
@@ -4262,14 +4168,7 @@ public final class Checker {
                 boolean csv = b == Builtin.TRY_SPLIT_CSV;
                 if (!(csv && args.size() == 2) && !arity(c, split || csv ? 3 : 2)) return Type.BOOL;
                 Arg target = args.get(0);
-                Type t;
-                if (!target.mut()) {
-                    t = expr(target.expr(), null);
-                    missingMut(target, b.name + "() fills its first argument",
-                        "write " + b.name + "(mut " + exprText(target.expr()) + ", ...)");
-                } else {
-                    t = mutPlace(target.expr());
-                }
+                Type t = mutArg(target, b.name + "() fills its first argument", "write " + b.name + "(mut " + exprText(target.expr()) + ", ...)");
                 if (!Type.isError(t) && !(t instanceof Type.ListT l && l.elem() instanceof Type.Str)) {
                     diags.error(Code.E0203, target.span(), b.name + "() fills a list of str, found " + t,
                         "declare one: var parts: list[str[32]; 16] = [];");
@@ -4295,10 +4194,11 @@ public final class Checker {
                 textPattern(b, args.get(2), "the replacement");
                 return storedType(c, b, expected);
             }
-            case SORT, REVERSE -> {
-                if (!arity(c, 1)) return Type.VOID;
+            case SORT, REVERSE, NEXT_PERMUTATION -> {
+                Type ret = b == Builtin.NEXT_PERMUTATION ? Type.BOOL : Type.VOID;
+                if (!arity(c, 1)) return ret;
                 sequenceArg(c, args.get(0));
-                return Type.VOID;
+                return ret;
             }
             case ANY, ALL, COUNT_IF, FIND_INDEX -> {
                 Type ret = b == Builtin.ANY || b == Builtin.ALL ? Type.BOOL : Type.I64;
@@ -4319,13 +4219,7 @@ public final class Checker {
             case SORT_BY_KEY -> {
                 if (!arity(c, 2)) return Type.VOID;
                 Arg xs = args.get(0);
-                Type t;
-                if (!xs.mut()) {
-                    t = expr(xs.expr(), null);
-                    missingMut(xs, "sort_by_key() modifies its first argument", "write sort_by_key(mut " + exprText(xs.expr()) + ", key)");
-                } else {
-                    t = mutPlace(xs.expr());
-                }
+                Type t = mutArg(xs, "sort_by_key() modifies its first argument", "write sort_by_key(mut " + exprText(xs.expr()) + ", key)");
                 if (!(t instanceof Type.ListT) && !(t instanceof Type.ArrayT)) {
                     if (!Type.isError(t)) diags.error(Code.E0203, xs.span(), "sort_by_key() needs a list or array, found " + t);
                     return Type.VOID;
@@ -4345,14 +4239,8 @@ public final class Checker {
                     return b == Builtin.HEAP_PUSH ? Type.VOID : Type.ERROR;
                 }
                 Arg xs = args.get(0);
-                Type t;
-                if (!xs.mut()) {
-                    t = expr(xs.expr(), null);
-                    missingMut(xs, b.name + "() modifies its first argument", "write " + b.name + "(mut " + exprText(xs.expr())
-                        + (b == Builtin.HEAP_PUSH ? ", x)" : ")"));
-                } else {
-                    t = mutPlace(xs.expr());
-                }
+                Type t = mutArg(xs, b.name + "() modifies its first argument", "write " + b.name + "(mut " + exprText(xs.expr())
+                    + (b == Builtin.HEAP_PUSH ? ", x)" : ")"));
                 Type ret = b == Builtin.HEAP_PUSH ? Type.VOID : Type.ERROR;
                 if (!(t instanceof Type.ListT lt)) {
                     if (!Type.isError(t)) {
@@ -4374,14 +4262,8 @@ public final class Checker {
             case RETAIN, SORT_BY -> {
                 if (!arity(c, 2)) return Type.VOID;
                 Arg xs = args.get(0);
-                Type t;
-                if (!xs.mut()) {
-                    t = expr(xs.expr(), null);
-                    missingMut(xs, c.name + "() modifies its first argument",
-                        "write " + c.name + "(mut " + exprText(xs.expr()) + ", " + (b == Builtin.RETAIN ? "keep" : "before") + ")");
-                } else {
-                    t = mutPlace(xs.expr());
-                }
+                Type t = mutArg(xs, c.name + "() modifies its first argument",
+                    "write " + c.name + "(mut " + exprText(xs.expr()) + ", " + (b == Builtin.RETAIN ? "keep" : "before") + ")");
                 boolean ok = t instanceof Type.ListT || b == Builtin.SORT_BY && t instanceof Type.ArrayT;
                 if (!ok) {
                     if (!Type.isError(t)) {
@@ -4395,32 +4277,10 @@ public final class Checker {
                 fnArg(c, args.get(1), new Type.FnT(b == Builtin.RETAIN ? List.of(elem) : List.of(elem, elem), Type.BOOL));
                 return Type.VOID;
             }
-            case DEDUP -> {
+            case DEDUP, UNIQUE -> {
                 if (!arity(c, 1)) return Type.VOID;
                 collectionArg(c, args.get(0));
                 return Type.VOID;
-            }
-            case BINARY_SEARCH -> {
-                if (!arity(c, 2)) return Type.I64;
-                Type t = readArg(args.get(0));
-                noMut(args.get(1));
-                if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
-                    Type elem = Type.elementOf(t);
-                    Type x = expr(args.get(1).expr(), elem);
-                    // A str of any capacity is compared byte by byte, as index_of and contains take it.
-                    boolean text = x instanceof Type.Str && elem instanceof Type.Str;
-                    if (!Type.isError(x) && !text && !Type.assignable(x, elem)) {
-                        diags.error(Code.E0201, args.get(1).span(), "binary_search() looks for an element of type " + elem
-                            + ", found " + x);
-                    }
-                } else {
-                    expr(args.get(1).expr(), null);
-                    if (!Type.isError(t)) {
-                        diags.error(Code.E0203, args.get(0).span(), "binary_search() needs a sorted array or list, found " + t,
-                            t instanceof Type.Str ? "to find text in a str, use index_of" : null);
-                    }
-                }
-                return Type.I64;
             }
             case INSERT -> {
                 Type keyed = args.isEmpty() ? null : keyedArg(c, args.get(0));
@@ -4477,21 +4337,16 @@ public final class Checker {
                 }
                 return Type.ERROR;
             }
-            case DAYS_FROM_DATE, WEEKDAY -> {
-                if (!arity(c, b == Builtin.WEEKDAY ? 1 : 3)) return Type.I64;
+            case DAYS_FROM_DATE, WEEKDAY, DAYS_IN_MONTH, ADD_MONTHS, IS_LEAP_YEAR -> {
+                Type ret = b == Builtin.IS_LEAP_YEAR ? Type.BOOL : Type.I64;
+                if (!arity(c, b == Builtin.DAYS_FROM_DATE ? 3 : b == Builtin.WEEKDAY || b == Builtin.IS_LEAP_YEAR ? 1 : 2)) return ret;
                 for (Arg a : args) i64Arg(b, a);
-                return Type.I64;
+                return ret;
             }
             case DATE_FROM_DAYS -> {
                 if (!arity(c, 1)) return Type.ERROR;
                 i64Arg(b, args.get(0));
                 return new Type.TupleT(List.of(Type.I64, Type.I64, Type.I64));
-            }
-            case PARSE_DATE -> {
-                Type ret = optionOf(Type.I64);
-                if (!arity(c, 1)) return ret;
-                textArg(b, args.get(0));
-                return ret;
             }
             case HASH -> {
                 if (!arity(c, 1)) return Type.U64;
@@ -4535,16 +4390,17 @@ public final class Checker {
                 intArg(b, args.get(1), "the number of decimals");
                 return formatted(c, b, expected, asText);
             }
-            case TO_BASE -> {
+            case TO_BASE, GROUP_DIGITS -> {
                 boolean asText = ctx.text == c;
                 if (!arity(c, 2)) return Type.ERROR;
                 Type n = value(args.get(0), Type.I64);
                 if (!Type.isInt(n) && !Type.isError(n)) {
-                    diags.error(Code.E0201, args.get(0).span(), "to_base() needs an integer, found " + n,
-                        Type.isFloat(n) ? "convert it: to_base(i64(" + exprText(args.get(0).expr()) + "), "
+                    diags.error(Code.E0201, args.get(0).span(), b.name + "() needs an integer, found " + n,
+                        Type.isFloat(n) ? "convert it: " + b.name + "(i64(" + exprText(args.get(0).expr()) + "), "
                             + exprText(args.get(1).expr()) + ")" : null);
                 }
-                intArg(b, args.get(1), "the base");
+                if (b == Builtin.TO_BASE) intArg(b, args.get(1), "the base");
+                else textPattern(b, args.get(1), "the separator");
                 return formatted(c, b, expected, asText);
             }
             case PAD_LEFT, PAD_RIGHT, PAD_CENTER -> {
@@ -4617,12 +4473,6 @@ public final class Checker {
                             : null);
                 }
                 return Type.BOOL;
-            }
-            case STRIP_PREFIX, STRIP_SUFFIX -> {
-                if (!arity(c, 2)) return Type.ERROR;
-                Type t = textArg(b, args.get(0));
-                textPattern(b, args.get(1), b == Builtin.STRIP_PREFIX ? "the prefix" : "the suffix");
-                return t;
             }
             case VARIANT_NAME -> {
                 boolean asText = ctx.text == c;
@@ -4731,23 +4581,12 @@ public final class Checker {
                 fnArg(c, args.get(1), new Type.FnT(List.of(elem, elem), Type.BOOL));
                 return elem;
             }
-            case POP_FRONT -> {
-                if (!arity(c, 1)) return Type.ERROR;
-                Type t = collectionArg(c, args.get(0));
-                return Type.isError(t) ? Type.ERROR : Type.elementOf(t);
-            }
             case SWAP -> {
                 if (args.size() == 2 && (args.get(1).mut() || !args.get(0).mut())) {
                     Type[] ts = new Type[2];
                     for (int i = 0; i < 2; i++) {
-                        Arg a = args.get(i);
-                        if (!a.mut()) {
-                            ts[i] = expr(a.expr(), null);
-                            missingMut(a, "swap() modifies both of its arguments", "write swap(mut "
-                                + exprText(args.get(0).expr()) + ", mut " + exprText(args.get(1).expr()) + ")");
-                        } else {
-                            ts[i] = mutPlace(a.expr());
-                        }
+                        ts[i] = mutArg(args.get(i), "swap() modifies both of its arguments", "write swap(mut "
+                            + exprText(args.get(0).expr()) + ", mut " + exprText(args.get(1).expr()) + ")");
                     }
                     if (!Type.isError(ts[0]) && !Type.isError(ts[1]) && !ts[0].equals(ts[1])) {
                         diags.error(Code.E0201, c.span, "swap() needs two values of the same type, found " + ts[0] + " and " + ts[1]);
@@ -4782,10 +4621,6 @@ public final class Checker {
                 }
                 return a;
             }
-            case PRODUCT -> {
-                if (!arity(c, 1)) return Type.ERROR;
-                return numbersArg(b, args.get(0));
-            }
             case MIN_INDEX, MAX_INDEX -> {
                 if (!arity(c, 1)) return Type.I64;
                 numbersArg(b, args.get(0));
@@ -4800,13 +4635,14 @@ public final class Checker {
                 }
                 return Type.BOOL;
             }
-            case LOWER_BOUND, UPPER_BOUND -> {
+            case BINARY_SEARCH, LOWER_BOUND, UPPER_BOUND -> {
                 if (!arity(c, 2)) return Type.I64;
                 Type t = readArg(args.get(0));
                 noMut(args.get(1));
                 if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
                     Type elem = Type.elementOf(t);
                     Type x = expr(args.get(1).expr(), elem);
+                    // A str of any capacity is compared byte by byte, as index_of and contains take it.
                     boolean text = x instanceof Type.Str && elem instanceof Type.Str;
                     if (!Type.isError(x) && !text && !Type.assignable(x, elem)) {
                         diags.error(Code.E0201, args.get(1).span(), b.name + "() looks for an element of type " + elem + ", found " + x);
@@ -4815,7 +4651,8 @@ public final class Checker {
                     expr(args.get(1).expr(), null);
                     if (!Type.isError(t)) {
                         diags.error(Code.E0203, args.get(0).span(), b.name + "() needs a sorted array or list, found " + t,
-                            t instanceof Type.SetT || t instanceof Type.MapT ? "for a set or map, use floor_key or ceil_key" : null);
+                            b == Builtin.BINARY_SEARCH ? (t instanceof Type.Str ? "to find text in a str, use index_of" : null)
+                                : t instanceof Type.SetT || t instanceof Type.MapT ? "for a set or map, use floor_key or ceil_key" : null);
                     }
                 }
                 return Type.I64;
@@ -4823,14 +4660,8 @@ public final class Checker {
             case EXTEND -> {
                 if (!arity(c, 2)) return Type.VOID;
                 Arg xs = args.get(0);
-                Type t;
-                if (!xs.mut()) {
-                    t = expr(xs.expr(), null);
-                    missingMut(xs, "extend() modifies its first argument", "write extend(mut " + exprText(xs.expr()) + ", "
-                        + exprText(args.get(1).expr()) + ")");
-                } else {
-                    t = mutPlace(xs.expr());
-                }
+                Type t = mutArg(xs, "extend() modifies its first argument", "write extend(mut " + exprText(xs.expr()) + ", "
+                    + exprText(args.get(1).expr()) + ")");
                 boolean list = t instanceof Type.ListT;
                 if (!list && !Type.isError(t)) {
                     diags.error(Code.E0203, xs.span(), "extend() needs a list to add to, found " + t,
@@ -5058,28 +4889,11 @@ public final class Checker {
                 rngArg(c, args.get(1));
                 return Type.VOID;
             }
-            case GROUP_DIGITS -> {
-                boolean asText = ctx.text == c;
-                if (!arity(c, 2)) return Type.ERROR;
-                Type n = value(args.get(0), Type.I64);
-                if (!Type.isInt(n) && !Type.isError(n)) {
-                    diags.error(Code.E0201, args.get(0).span(), "group_digits() needs an integer, found " + n,
-                        Type.isFloat(n) ? "convert it: group_digits(i64(" + exprText(args.get(0).expr()) + "), "
-                            + exprText(args.get(1).expr()) + ")" : null);
-                }
-                textPattern(b, args.get(1), "the separator");
-                return formatted(c, b, expected, asText);
-            }
-            case BASE64_ENCODE, HEX_ENCODE -> {
+            case BASE64_ENCODE, HEX_ENCODE, URL_ENCODE -> {
                 boolean asText = ctx.text == c;
                 if (!arity(c, 1)) return Type.ERROR;
-                bytesArg(b, args.get(0));
-                return formatted(c, b, expected, asText);
-            }
-            case URL_ENCODE -> {
-                boolean asText = ctx.text == c;
-                if (!arity(c, 1)) return Type.ERROR;
-                textArg(b, args.get(0));
+                if (b == Builtin.URL_ENCODE) textArg(b, args.get(0));
+                else bytesArg(b, args.get(0));
                 return formatted(c, b, expected, asText);
             }
             case BASE64_DECODE, HEX_DECODE, URL_DECODE -> {
@@ -5094,44 +4908,17 @@ public final class Checker {
                 bytesArg(b, args.get(0));
                 return ret;
             }
-            case IS_LEAP_YEAR -> {
-                if (!arity(c, 1)) return Type.BOOL;
-                i64Arg(b, args.get(0));
-                return Type.BOOL;
-            }
-            case DAYS_IN_MONTH, ADD_MONTHS -> {
-                if (!arity(c, 2)) return Type.I64;
-                for (Arg a : args) i64Arg(b, a);
-                return Type.I64;
-            }
             case FORMAT_DATE, FORMAT_DATETIME -> {
                 Type ret = new Type.Str(b == Builtin.FORMAT_DATE ? 10 : 20);
                 if (!arity(c, 1)) return ret;
                 i64Arg(b, args.get(0));
                 return ret;
             }
-            case PARSE_DATETIME -> {
-                Type ret = optionOf(Type.I64);
-                if (!arity(c, 1)) return ret;
-                textArg(b, args.get(0));
-                return ret;
-            }
-            case NEXT_PERMUTATION -> {
-                if (!arity(c, 1)) return Type.BOOL;
-                sequenceArg(c, args.get(0));
-                return Type.BOOL;
-            }
             case NEXT_COMBINATION -> {
                 if (!arity(c, 2)) return Type.BOOL;
                 Arg idx = args.get(0);
-                Type t;
-                if (!idx.mut()) {
-                    t = expr(idx.expr(), null);
-                    missingMut(idx, "next_combination() changes its first argument",
-                        "write next_combination(mut " + exprText(idx.expr()) + ", " + exprText(args.get(1).expr()) + ")");
-                } else {
-                    t = mutPlace(idx.expr());
-                }
+                Type t = mutArg(idx, "next_combination() changes its first argument",
+                    "write next_combination(mut " + exprText(idx.expr()) + ", " + exprText(args.get(1).expr()) + ")");
                 if (!Type.isError(t) && !((t instanceof Type.ListT || t instanceof Type.ArrayT) && Type.I64.equals(Type.elementOf(t)))) {
                     diags.error(Code.E0203, idx.span(), "next_combination() needs a list or array of i64 positions, found " + t,
                         "start from the first combination: var idx: [i64; 3] = [0, 1, 2];");
@@ -5156,11 +4943,6 @@ public final class Checker {
                 }
                 // The list type is nominal: the loop never builds it.
                 return new Type.ListT(piece, 1);
-            }
-            case UNIQUE -> {
-                if (!arity(c, 1)) return Type.VOID;
-                collectionArg(c, args.get(0));
-                return Type.VOID;
             }
             case FREQUENCIES -> {
                 if (!arity(c, 1)) return Type.ERROR;
@@ -5226,10 +5008,6 @@ public final class Checker {
                 textArg(b, args.get(1));
                 return Type.BOOL;
             }
-            case CAPITALIZE -> {
-                if (!arity(c, 1)) return Type.ERROR;
-                return textArg(b, args.get(0));
-            }
             case PANIC -> {
                 if (!arity(c, 1)) return Type.VOID;
                 Type t = value(args.get(0), null);
@@ -5240,6 +5018,26 @@ public final class Checker {
             }
         }
         throw new IllegalStateException();
+    }
+
+    /**
+     * The second argument of contains, index_of, last_index_of or count (b), whose first, of type t, is a str, array or
+     * list: a pattern in a str ({@code pattern} names it), or an element.
+     */
+    private void needleArg(Builtin b, Type t, List<Arg> args, String pattern, String what) {
+        if (t instanceof Type.Str) {
+            textPattern(b, args.get(1), pattern);
+        } else if (t instanceof Type.ArrayT || t instanceof Type.ListT) {
+            noMut(args.get(1));
+            Type elem = Type.elementOf(t);
+            Type x = expr(args.get(1).expr(), elem);
+            if (!Type.comparable(x, elem)) {
+                diags.error(Code.E0201, args.get(1).span(), b.name + "() " + what + " of type " + elem + ", found " + x);
+            }
+        } else {
+            expr(args.get(1).expr(), null);
+            if (!Type.isError(t)) diags.error(Code.E0203, args.get(0).span(), b.name + "() needs a str, array or list, found " + t);
+        }
     }
 
     private void printable(Arg a) {
@@ -5535,6 +5333,23 @@ public final class Checker {
         Span at = a.span();
         List<Edit> fix = a.expr().isPlace() ? List.of(new Edit(new Span(at.line(), at.col(), 0, at.file()), "mut ")) : List.of();
         diags.fixable(Code.E0207, at, message, hint, fix);
+    }
+
+    /** The type of an argument a builtin modifies: a `mut` place, or else E0207 with the message and hint. */
+    private Type mutArg(Arg a, String message, String hint) {
+        if (a.mut()) return mutPlace(a.expr());
+        Type t = expr(a.expr(), null);
+        missingMut(a, message, hint);
+        return t;
+    }
+
+    /** The str that append or push_char (b) adds to: a `mut` str place, the rest of whose example call is {@code rest}. */
+    private void strTarget(Builtin b, Arg target, String rest) {
+        Type t = mutArg(target, b.name + "() modifies its first argument", "write " + b.name + "(mut " + exprText(target.expr()) + rest);
+        if (target.mut() && !(t instanceof Type.Str) && !Type.isError(t)) {
+            diags.error(Code.E0203, target.span(), b.name + "() needs a str[N] target, found " + t,
+                t instanceof Type.ListT ? "use push(mut xs, value) for lists" : null);
+        }
     }
 
     /** E0207 for `mut` on a read-only argument; the fix deletes it. */
@@ -5904,6 +5719,20 @@ public final class Checker {
      * `Enum.Variant` without a payload, as a value: of an enum with type parameters, the instance the expected type
      * names, as nothing else says what they stand for (E0216).
      */
+    /** f, Enum.Variant (written after {@code prefix}, an import's name and a dot, or nothing): a variant with no values. */
+    private Type variantRef(FieldAccess f, EnumDecl d, String prefix, Type expected) {
+        Variant v = d.variant(f.name);
+        if (v == null) {
+            diags.error(Code.E0107, f.nameSpan, "enum `" + d.name + "` has no variant `" + f.name + "`", didYouMean(f.name, variantNames(d)));
+            return Type.ERROR;
+        }
+        if (!v.payload.isEmpty()) {
+            diags.error(Code.E0204, f.span, d.name + "." + v.name + " needs " + v.payload.size() + " value(s)",
+                "write " + prefix + d.name + "." + v.name + "(" + joinTypes(v.payload) + ")");
+        }
+        return unitVariant(f, d, v, expected);
+    }
+
     private Type unitVariant(FieldAccess f, EnumDecl d, Variant v, Type expected) {
         if (d.generics.generic()) {
             if (!(expected instanceof Type.EnumT et && Ast.origin(et.decl()) == d && ownTypeVarsOnly(expected))) {

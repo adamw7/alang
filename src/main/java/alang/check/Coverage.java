@@ -97,16 +97,9 @@ final class Coverage {
             return useful(specialize(rows, c, t), prepend(args(q0, c, t), qRest), prepend(subTypes(c, t), tRest));
         }
         List<Object> sigma = heads(rows);
-        if (byLength(rows, t)) {
-            for (Object c : lengths(rows, null, t)) {
-                if (useful(specialize(rows, c, t), prepend(wilds(arity(c, t)), qRest), prepend(subTypes(c, t), tRest))) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        if (complete(sigma, t)) {
-            for (Object c : allCtors(t)) {
+        List<Object> ctors = byLength(rows, t) ? lengths(rows, null, t) : complete(sigma, t) ? allCtors(t) : null;
+        if (ctors != null) {
+            for (Object c : ctors) {
                 if (useful(specialize(rows, c, t), prepend(wilds(arity(c, t)), qRest), prepend(subTypes(c, t), tRest))) {
                     return true;
                 }

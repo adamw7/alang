@@ -780,7 +780,7 @@ public final class Interpreter {
                 System.arraycopy(str.b, pos, b, 0, len);
                 piece = new StrV(b, len);
             } else {
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                Object[] items = items(xs);
                 Object[] out = new Object[cap];
                 System.arraycopy(items, pos, out, 0, len);
                 piece = new ListV(out, len);
@@ -965,6 +965,27 @@ public final class Interpreter {
             }
             default -> throw new IllegalStateException("not a place");
         }
+    }
+
+    /** z, a number of days that date_from_days, format_date or add_months (the builtin c) takes, or a trap (R0013). */
+    private static long days(Call c, long z) {
+        if (z < Stdlib.MIN_DAYS || z > Stdlib.MAX_DAYS) {
+            throw new Trap(Code.R0013, c.span, c.builtin.name + "() needs " + Stdlib.MIN_DAYS + " to " + Stdlib.MAX_DAYS
+                + " days, the years 1 to 9999, found " + z);
+        }
+        return z;
+    }
+
+    /** The storage of an array or list, whose first {@link #length} elements are in use. */
+    private static Object[] items(Object xs) {
+        return xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+    }
+
+    /** The length of xs, an array or list given to the builtin c, after a trap (R0013) if it is empty. */
+    private static int nonEmpty(Call c, Object xs) {
+        int n = length(xs);
+        if (n == 0) throw new Trap(Code.R0013, c.span, c.builtin.name + "() of an empty " + (xs instanceof ListV ? "list" : "array"));
+        return n;
     }
 
     private static int length(Object container) {
@@ -1446,37 +1467,41 @@ public final class Interpreter {
                 if (Type.isFloat(t)) return Math.abs((Double) v);
                 return IntOps.abs(Type.kind(t), (Long) v, c.span);
             }
-            case MIN, MAX -> {
-                if (args.size() == 1) {
-                    Object xs = eval(args.get(0).expr(), slots);
-                    Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                    int n = xs instanceof ListV l ? l.len : items.length;
-                    if (n == 0) {
-                        throw new Trap(Code.R0013, c.span, c.builtin.name + "() of an empty "
-                            + (xs instanceof ListV ? "list" : "array"));
-                    }
-                    Object best = items[0];
-                    for (int i = 1; i < n; i++) {
-                        meter.elements(1);
-                        if (takesSecond(c.builtin, c.type, best, items[i])) best = items[i];
-                    }
-                    return best;
+            case MIN, MAX, MIN_INDEX, MAX_INDEX -> {
+                if (args.size() == 2) {
+                    Object a = eval(args.get(0).expr(), slots);
+                    Object b = eval(args.get(1).expr(), slots);
+                    return takesSecond(c.builtin, c.type, a, b) ? b : a;
                 }
-                Object a = eval(args.get(0).expr(), slots);
-                Object b = eval(args.get(1).expr(), slots);
-                return takesSecond(c.builtin, c.type, a, b) ? b : a;
-            }
-            case SUM -> {
                 Object xs = eval(args.get(0).expr(), slots);
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
-                PrimKind k = Type.kind(c.type);
-                Object total = k.isFloat ? (Object) 0.0 : (Object) 0L;
+                Object[] items = items(xs);
+                int n = nonEmpty(c, xs);
+                boolean index = c.builtin == Builtin.MIN_INDEX || c.builtin == Builtin.MAX_INDEX;
+                Builtin which = c.builtin == Builtin.MIN || c.builtin == Builtin.MIN_INDEX ? Builtin.MIN : Builtin.MAX;
+                Type elem = Type.elementOf(args.get(0).expr().type);
+                int best = 0;
+                for (int i = 1; i < n; i++) {
+                    meter.elements(1);
+                    if (takesSecond(which, elem, items[best], items[i])) best = i;
+                }
+                return index ? (Object) (long) best : items[best];
+            }
+            case SUM, PRODUCT, PREFIX_SUMS -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object[] items = items(xs);
+                int n = length(xs);
+                PrimKind k = Type.kind(Type.elementOf(args.get(0).expr().type));
+                boolean sum = c.builtin != Builtin.PRODUCT;
+                Object total = k.isFloat ? (Object) (sum ? 0.0 : 1.0) : (Object) (sum ? 0L : 1L);
+                Object[] out = c.builtin == Builtin.PREFIX_SUMS ? new Object[items.length] : null;
+                if (out != null) meter.slots(items.length);
                 for (int i = 0; i < n; i++) {
                     meter.elements(1);
-                    total = arith(BinOp.ADD, k, k, total, items[i], c.span);
+                    total = arith(sum ? BinOp.ADD : BinOp.MUL, k, k, total, items[i], c.span);
+                    if (out != null) out[i] = total;
                 }
-                return total;
+                if (out == null) return total;
+                return xs instanceof ListV ? new ListV(out, n) : new ArrV(out);
             }
             case SQRT, FLOOR, CEIL, ROUND, TRUNC, EXP, LOG, LOG2, LOG10, SIN, COS, TAN, ASIN, ACOS, ATAN -> {
                 double d = (Double) eval(args.get(0).expr(), slots);
@@ -1585,8 +1610,8 @@ public final class Interpreter {
             }
             case ANY, ALL, COUNT_IF, FIND_INDEX -> {
                 Object xs = eval(args.get(0).expr(), slots);
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
+                Object[] items = items(xs);
+                int n = length(xs);
                 long count = 0;
                 for (int i = 0; i < n; i++) {
                     meter.elements(1);
@@ -1624,46 +1649,23 @@ public final class Interpreter {
                 l.len = w;
                 return null;
             }
-            case SORT_BY -> {
+            case SORT_BY, SORT_BY_KEY -> {
                 Object xs = ref(args.get(0).expr(), slots).get();
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
+                Object[] items = items(xs);
+                int n = length(xs);
+                Type key = c.builtin == Builtin.SORT_BY_KEY ? c.fnArgResult() : null;
                 // A binary insertion sort, as the C backend's: each element goes after every one it does not come
-                // before, so equal ones keep their order; before is called in the same order in both.
+                // before, so equal ones keep their order; before is called in the same order in both. sort_by_key puts x
+                // before y when key(x) comes before key(y): key(x) once per element, and key(items[mid]) at each probe.
                 for (int i = 1; i < n; i++) {
                     Object x = items[i];
+                    Object kx = key != null ? apply(c, x) : null;
                     int lo = 0;
                     int hi = i;
                     while (lo < hi) {
                         int mid = lo + (hi - lo) / 2;
                         meter.elements(1);
-                        if (test(c, x, items[mid])) hi = mid;
-                        else lo = mid + 1;
-                    }
-                    if (lo < i) {
-                        meter.elements(i - lo);
-                        System.arraycopy(items, lo, items, lo + 1, i - lo);
-                        items[lo] = x;
-                    }
-                }
-                return null;
-            }
-            case SORT_BY_KEY -> {
-                Object xs = ref(args.get(0).expr(), slots).get();
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
-                Type key = c.fnArgResult();
-                // The binary insertion sort of sort_by, with x before y when key(x) comes before key(y): key(x) once per
-                // element, and key(items[mid]) at each probe, in the same order as the C backend.
-                for (int i = 1; i < n; i++) {
-                    Object x = items[i];
-                    Object kx = apply(c, x);
-                    int lo = 0;
-                    int hi = i;
-                    while (lo < hi) {
-                        int mid = lo + (hi - lo) / 2;
-                        meter.elements(1);
-                        if (Stdlib.compare(kx, apply(c, items[mid]), key, meter) < 0) hi = mid;
+                        if (key != null ? Stdlib.compare(kx, apply(c, items[mid]), key, meter) < 0 : test(c, x, items[mid])) hi = mid;
                         else lo = mid + 1;
                     }
                     if (lo < i) {
@@ -1962,11 +1964,7 @@ public final class Interpreter {
                 return Stdlib.daysFromDate(y, m, d);
             }
             case DATE_FROM_DAYS -> {
-                long z = (Long) eval(args.get(0).expr(), slots);
-                if (z < Stdlib.MIN_DAYS || z > Stdlib.MAX_DAYS) {
-                    throw new Trap(Code.R0013, c.span, "date_from_days() needs " + Stdlib.MIN_DAYS + " to " + Stdlib.MAX_DAYS
-                        + " days, the years 1 to 9999, found " + z);
-                }
+                long z = days(c, (Long) eval(args.get(0).expr(), slots));
                 meter.elements(1);
                 long[] ymd = Stdlib.dateFromDays(z);
                 return new StructV(new Object[] {ymd[0], ymd[1], ymd[2]});
@@ -1988,8 +1986,8 @@ public final class Interpreter {
                     meter.bytes(s.len);
                     for (int i = 0; i < s.len; i++) h = (h ^ (s.b[i] & 0xff)) * 0x100000001b3L;
                 } else {
-                    Object[] items = v instanceof ListV l ? l.items : ((ArrV) v).items;
-                    int n = v instanceof ListV l ? l.len : items.length;
+                    Object[] items = items(v);
+                    int n = length(v);
                     meter.bytes(n);
                     for (int i = 0; i < n; i++) h = (h ^ ((Long) items[i] & 0xff)) * 0x100000001b3L;
                 }
@@ -2153,11 +2151,8 @@ public final class Interpreter {
             case MIN_BY, MAX_BY -> {
                 Expr xs = args.get(0).expr();
                 Object v = eval(xs, slots);
-                Object[] items = v instanceof ListV l ? l.items : ((ArrV) v).items;
-                int n = v instanceof ListV l ? l.len : items.length;
-                if (n == 0) {
-                    throw new Trap(Code.R0013, c.span, c.builtin.name + "() of an empty " + (v instanceof ListV ? "list" : "array"));
-                }
+                Object[] items = items(v);
+                int n = nonEmpty(c, v);
                 boolean min = c.builtin == Builtin.MIN_BY;
                 Object best = items[0];
                 for (int i = 1; i < n; i++) {
@@ -2191,39 +2186,11 @@ public final class Interpreter {
                 Stdlib.swap(xs, i, Type.kind(args.get(1).expr().type), j, Type.kind(args.get(2).expr().type), c.span, meter);
                 return null;
             }
-            case UNION, INTERSECTION, DIFFERENCE -> {
+            case UNION, INTERSECTION, DIFFERENCE, SYMMETRIC_DIFFERENCE -> {
                 Type.SetT st = (Type.SetT) c.type;
                 ListV a = (ListV) eval(args.get(0).expr(), slots);
                 ListV b = (ListV) eval(args.get(1).expr(), slots);
                 return Stdlib.setOp(c.builtin, a, b, st, c.span, meter);
-            }
-            case PRODUCT -> {
-                Object xs = eval(args.get(0).expr(), slots);
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
-                PrimKind k = Type.kind(c.type);
-                Object total = k.isFloat ? (Object) 1.0 : (Object) 1L;
-                for (int i = 0; i < n; i++) {
-                    meter.elements(1);
-                    total = arith(BinOp.MUL, k, k, total, items[i], c.span);
-                }
-                return total;
-            }
-            case MIN_INDEX, MAX_INDEX -> {
-                Object xs = eval(args.get(0).expr(), slots);
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
-                if (n == 0) {
-                    throw new Trap(Code.R0013, c.span, c.builtin.name + "() of an empty " + (xs instanceof ListV ? "list" : "array"));
-                }
-                Builtin which = c.builtin == Builtin.MIN_INDEX ? Builtin.MIN : Builtin.MAX;
-                Type elem = Type.elementOf(args.get(0).expr().type);
-                int best = 0;
-                for (int i = 1; i < n; i++) {
-                    meter.elements(1);
-                    if (takesSecond(which, elem, items[best], items[i])) best = i;
-                }
-                return (long) best;
             }
             case IS_SORTED -> {
                 Object xs = eval(args.get(0).expr(), slots);
@@ -2234,8 +2201,8 @@ public final class Interpreter {
                     }
                     return true;
                 }
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
+                Object[] items = items(xs);
+                int n = length(xs);
                 Type elem = Type.elementOf(args.get(0).expr().type);
                 for (int i = 1; i < n; i++) {
                     meter.elements(1);
@@ -2248,9 +2215,9 @@ public final class Interpreter {
                 Type elem = Type.elementOf(args.get(0).expr().type);
                 Object x = eval(args.get(1).expr(), slots);
                 if (!(elem instanceof Type.Str)) x = Values.coerce(x, elem, meter);
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                Object[] items = items(xs);
                 int lo = 0;
-                int hi = xs instanceof ListV l ? l.len : items.length;
+                int hi = length(xs);
                 boolean upper = c.builtin == Builtin.UPPER_BOUND;
                 while (lo < hi) {
                     int mid = lo + (hi - lo) / 2;
@@ -2265,8 +2232,8 @@ public final class Interpreter {
                 ListV l = (ListV) ref(args.get(0).expr(), slots).get();
                 Expr ys = args.get(1).expr();
                 Object v = eval(ys, slots);
-                Object[] items = v instanceof ListV yl ? yl.items : ((ArrV) v).items;
-                int n = v instanceof ListV yl ? yl.len : items.length;
+                Object[] items = items(v);
+                int n = length(v);
                 if (n > l.items.length - l.len) {
                     throw new Trap(Code.R0004, c.span, "extend exceeds list capacity " + l.items.length + " (length " + l.len
                         + ", adding " + n + ")");
@@ -2289,8 +2256,8 @@ public final class Interpreter {
                     Arrays.fill(str.b, 0, str.len, (byte) (long) (Long) v);
                     return null;
                 }
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
+                Object[] items = items(xs);
+                int n = length(xs);
                 for (int i = 0; i < n; i++) {
                     meter.elements(1);
                     items[i] = i == 0 ? v : Values.copy(v, meter);
@@ -2301,7 +2268,7 @@ public final class Interpreter {
                 Object xs = ref(args.get(0).expr(), slots).get();
                 long k = (Long) eval(args.get(1).expr(), slots);
                 PrimKind kk = Type.kind(args.get(1).expr().type);
-                int n = xs instanceof StrV str ? str.len : xs instanceof ListV l ? l.len : ((ArrV) xs).items.length;
+                int n = length(xs);
                 if (n == 0) return null;
                 int r = (int) (kk.signed ? Math.floorMod(k, (long) n) : Long.remainderUnsigned(k, n));
                 if (r == 0) return null;
@@ -2312,7 +2279,7 @@ public final class Interpreter {
                     System.arraycopy(head, 0, str.b, n - r, r);
                     return null;
                 }
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                Object[] items = items(xs);
                 meter.elements(n);
                 Object[] head = Arrays.copyOfRange(items, 0, r);
                 System.arraycopy(items, r, items, 0, n - r);
@@ -2364,17 +2331,11 @@ public final class Interpreter {
                 }
                 return true;
             }
-            case SYMMETRIC_DIFFERENCE -> {
-                Type.SetT st = (Type.SetT) c.type;
-                ListV a = (ListV) eval(args.get(0).expr(), slots);
-                ListV b = (ListV) eval(args.get(1).expr(), slots);
-                return Stdlib.setOp(c.builtin, a, b, st, c.span, meter);
-            }
             case FOLD -> {
                 Object xs = eval(args.get(0).expr(), slots);
                 Object acc = Values.coerce(owned(args.get(1).expr(), slots), c.type, meter);
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
+                Object[] items = items(xs);
+                int n = length(xs);
                 for (int i = 0; i < n; i++) {
                     meter.elements(1);
                     acc = apply(c, acc, items[i]);
@@ -2383,8 +2344,8 @@ public final class Interpreter {
             }
             case TRANSFORM -> {
                 Object xs = eval(args.get(0).expr(), slots);
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
+                Object[] items = items(xs);
+                int n = length(xs);
                 meter.slots(items.length);
                 Object[] out = new Object[items.length];
                 for (int i = 0; i < n; i++) {
@@ -2396,9 +2357,9 @@ public final class Interpreter {
             case ZIP -> {
                 Object a = eval(args.get(0).expr(), slots);
                 Object b = eval(args.get(1).expr(), slots);
-                Object[] xa = a instanceof ListV l ? l.items : ((ArrV) a).items;
-                Object[] xb = b instanceof ListV l ? l.items : ((ArrV) b).items;
-                int n = Math.min(a instanceof ListV l ? l.len : xa.length, b instanceof ListV l ? l.len : xb.length);
+                Object[] xa = items(a);
+                Object[] xb = items(b);
+                int n = Math.min(length(a), length(b));
                 int cap = ((Type.ListT) c.type).cap();
                 meter.slots(cap);
                 Object[] out = new Object[cap];
@@ -2434,11 +2395,8 @@ public final class Interpreter {
             }
             case MEAN, MEDIAN, VARIANCE, STDDEV -> {
                 Object xs = eval(args.get(0).expr(), slots);
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
-                if (n == 0) {
-                    throw new Trap(Code.R0013, c.span, c.builtin.name + "() of an empty " + (xs instanceof ListV ? "list" : "array"));
-                }
+                Object[] items = items(xs);
+                int n = nonEmpty(c, xs);
                 PrimKind k = Type.kind(Type.elementOf(args.get(0).expr().type));
                 double[] d = new double[n];
                 for (int i = 0; i < n; i++) d[i] = Stdlib.toF64(k, items[i]);
@@ -2520,22 +2478,14 @@ public final class Interpreter {
             case ADD_MONTHS -> {
                 long z = (Long) eval(args.get(0).expr(), slots);
                 long n = (Long) eval(args.get(1).expr(), slots);
-                if (z < Stdlib.MIN_DAYS || z > Stdlib.MAX_DAYS) {
-                    throw new Trap(Code.R0013, c.span, "add_months() needs " + Stdlib.MIN_DAYS + " to " + Stdlib.MAX_DAYS
-                        + " days, the years 1 to 9999, found " + z);
-                }
-                long r = Codecs.addMonths(z, n);
+                long r = Codecs.addMonths(days(c, z), n);
                 if (r == Long.MIN_VALUE) {
                     throw new Trap(Code.R0013, c.span, "add_months() of " + n + " months leaves the years 1 to 9999");
                 }
                 return r;
             }
             case FORMAT_DATE -> {
-                long z = (Long) eval(args.get(0).expr(), slots);
-                if (z < Stdlib.MIN_DAYS || z > Stdlib.MAX_DAYS) {
-                    throw new Trap(Code.R0013, c.span, "format_date() needs " + Stdlib.MIN_DAYS + " to " + Stdlib.MAX_DAYS
-                        + " days, the years 1 to 9999, found " + z);
-                }
+                long z = days(c, (Long) eval(args.get(0).expr(), slots));
                 meter.bytes(10);
                 return new StrV(Codecs.formatDate(z), 10);
             }
@@ -2561,8 +2511,8 @@ public final class Interpreter {
             case NEXT_COMBINATION -> {
                 Object idx = ref(args.get(0).expr(), slots).get();
                 long n = (Long) eval(args.get(1).expr(), slots);
-                Object[] items = idx instanceof ListV l ? l.items : ((ArrV) idx).items;
-                int k = idx instanceof ListV l ? l.len : items.length;
+                Object[] items = items(idx);
+                int k = length(idx);
                 if (n < 0 || k > n) {
                     throw new Trap(Code.R0013, c.span, "next_combination() needs 0 <= len(idx) <= n, found " + k + " positions and n " + n);
                 }
@@ -2585,21 +2535,6 @@ public final class Interpreter {
                 Object xs = eval(args.get(0).expr(), slots);
                 Type.MapT mt = (Type.MapT) c.type;
                 return Stdlib.frequencies(xs, mt, c.span, meter);
-            }
-            case PREFIX_SUMS -> {
-                Object xs = eval(args.get(0).expr(), slots);
-                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
-                int n = xs instanceof ListV l ? l.len : items.length;
-                PrimKind k = Type.kind(Type.elementOf(c.type));
-                Object[] out = new Object[items.length];
-                Object total = k.isFloat ? (Object) 0.0 : (Object) 0L;
-                meter.slots(items.length);
-                for (int i = 0; i < n; i++) {
-                    meter.elements(1);
-                    total = arith(BinOp.ADD, k, k, total, items[i], c.span);
-                    out[i] = total;
-                }
-                return xs instanceof ListV ? new ListV(out, n) : new ArrV(out);
             }
             case FIRST, LAST -> {
                 Object xs = eval(args.get(0).expr(), slots);

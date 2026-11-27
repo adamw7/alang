@@ -229,8 +229,9 @@ final class Temporaries {
     private static long builtin(Call c) {
         List<Arg> args = c.args;
         return switch (c.builtin) {
-            // The value, widened, and the copy every element is set to.
-            case FILL -> {
+            // fill: the value, widened, and the copy every element is set to. heap_push: the value pushed, stored as an
+            // element, and the element on its way up or down when two are exchanged.
+            case FILL, HEAP_PUSH -> {
                 Type elem = Type.elementOf(args.get(0).expr().type);
                 Expr v = args.get(1).expr();
                 yield Type.isAggregate(elem) ? Layout.add(stored(v, elem), Layout.size(elem)) : 0;
@@ -240,12 +241,6 @@ final class Temporaries {
                 Type to = Type.elementOf(args.get(0).expr().type);
                 Type from = Type.elementOf(args.get(1).expr().type);
                 yield Type.isAggregate(to) && !to.equals(from) ? Layout.size(to) : 0;
-            }
-            // The value pushed, stored as an element, and the element on its way up or down when two are exchanged.
-            case HEAP_PUSH -> {
-                Type elem = Type.elementOf(args.get(0).expr().type);
-                Expr v = args.get(1).expr();
-                yield Type.isAggregate(elem) ? Layout.add(stored(v, elem), Layout.size(elem)) : 0;
             }
             // The element moving into its place, and the two keys a probe compares.
             case SORT_BY_KEY -> {
