@@ -10,7 +10,7 @@ enum Color {
     Blue,
 }
 
-fn first(m: MaybeI64) -> i64 {
+fn front(m: MaybeI64) -> i64 {
     match m {
         MaybeI64.Some(0) => { return 0; }
         MaybeI64.None => { return -1; }
@@ -26,5 +26,5 @@ fn pick(c: Color, on: bool) -> i64 {
 }
 
 fn main() {
-    print(first(MaybeI64.None), pick(Color.Red, true));
+    print(front(MaybeI64.None), pick(Color.Red, true));
 }

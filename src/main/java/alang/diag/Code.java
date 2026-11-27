@@ -120,7 +120,7 @@ public enum Code {
     // ---- control flow ----
     E0301("missing return",
         "A function with a return type must return a value on every path. Loops are not considered to always return.",
-        "fn sign(x: i32) -> i32 { if x > 0 { return 1; } }  // error: add a final return"),
+        "fn signum(x: i32) -> i32 { if x > 0 { return 1; } }  // error: add a final return"),
     E0302("break/continue outside loop",
         "`break` and `continue` can only be used inside `while` or `for` loops.",
         "fn f() { break; }  // error"),
@@ -275,7 +275,8 @@ public enum Code {
         "Integer division or remainder by zero, with /, %, div_euclid or rem_euclid.",
         "let z: i32 = 1 / n;  // trap when n == 0"),
     R0003("index out of bounds",
-        "An index is negative or not smaller than the length of the array, list or string.",
+        "An index is negative or not smaller than the length of the array, list or string; or a position given to "
+            + "slice, insert or index_of is outside 0 to the length.",
         "let a: [i32; 3] = [1, 2, 3];\nlet x: i32 = a[3];  // trap"),
     R0004("capacity exceeded",
         "A push/append does not fit in the list or string capacity, a union of sets does not fit in the capacity of the "
@@ -319,7 +320,10 @@ public enum Code {
             + "0 or text over 1048576 bytes for repeat, a width over 1048576 for pad_left or pad_right, decimals outside 0 "
             + "to 20 for fixed, a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for "
             + "push_char, a base outside 2 to 36 for to_base or parse_i64, a pattern that is not valid for re_match or "
-            + "re_find, or a step of a range that is not positive.",
+            + "re_find, an exponent below 0 or a modulus not above 0 for pow_mod, lo > hi for random_int, an empty list for "
+            + "mean, median, variance or stddev, a size below 1 for windows or chunks, more positions than n for "
+            + "next_combination, a month outside 1 to 12 for days_in_month, a date or time outside the years 1 to 9999 for "
+            + "date_from_days, add_months, format_date or format_datetime, or a step of a range that is not positive.",
         "let p: i64 = pow(2, -1);  // trap\nlet c: i64 = clamp(x, 10, 0);  // trap"),
     R0014("input is not JSON of its type",
         "A fn main whose parameter is not a str, fn main(input: Config), receives its standard input as JSON for that type, "

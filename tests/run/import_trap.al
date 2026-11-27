@@ -3,5 +3,5 @@ import "lib/units.al";
 
 fn main() {
     let none: list[i64; 4] = [];
-    print(first(none));
+    print(front(none));
 }

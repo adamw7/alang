@@ -653,7 +653,8 @@ public final class Ast {
          */
         public Call pieces() {
             if (to != null || !(from instanceof Call c)) return null;
-            int arity = c.builtin == Builtin.SPLIT ? 2 : c.builtin == Builtin.WORDS || c.builtin == Builtin.CHARS ? 1 : -1;
+            int arity = c.builtin == Builtin.SPLIT || c.builtin == Builtin.WINDOWS || c.builtin == Builtin.CHUNKS ? 2
+                : c.builtin == Builtin.WORDS || c.builtin == Builtin.CHARS ? 1 : -1;
             return c.args.size() == arity ? c : null;
         }
 
@@ -1037,6 +1038,8 @@ public final class Ast {
         public final double value;
         /** The literal rounded to f32 directly from its decimal text (not via f64, which would round twice). */
         public final float f32Value;
+        /** The value of a type constant, f64.INFINITY or f64.NAN, which is no decimal literal and may be any value. */
+        public boolean named;
 
         public FloatLit(Span span, double value, float f32Value) {
             super(span);

@@ -240,6 +240,66 @@
     "description": "The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps."
   },
   {
+    "name": "abs_diff",
+    "group": "math",
+    "signature": "abs_diff(a, b) -> T",
+    "description": "The distance between two numbers of the same type, abs(a - b), computed without the subtraction first: never traps for unsigned integers (abs_diff(u8(3), 5) is 2, where u8(3) - 5 traps) or floats; for signed ones, traps (R0001) if it does not fit, as abs_diff(i64.MIN, 0) does."
+  },
+  {
+    "name": "sign",
+    "group": "math",
+    "signature": "sign(x) -> T",
+    "description": "-1, 0 or 1 as the number x is negative, zero or positive, in its type: 0 or 1 for an unsigned integer; for a float -1.0 or 1.0, and x itself when it is 0.0, -0.0 or NaN."
+  },
+  {
+    "name": "pow_mod",
+    "group": "math",
+    "signature": "pow_mod(b, e, m) -> T",
+    "description": "b to the power e, mod m, for three integers of the same type: computed exactly however large the power is (by squaring with mul_mod), from 0 to m - 1, b reduced as rem_euclid reduces it; pow_mod(x, 0, m) is 1 % m. Traps (R0013) unless e >= 0 and m > 0."
+  },
+  {
+    "name": "mean",
+    "group": "math",
+    "signature": "mean(xs) -> f64",
+    "description": "The arithmetic mean of a non-empty array or list of numbers, as an f64: the elements converted with f64(x), added first to last, then divided by their number. Traps (R0013) if it is empty."
+  },
+  {
+    "name": "median",
+    "group": "math",
+    "signature": "median(xs) -> f64",
+    "description": "The middle value of a non-empty array or list of numbers in the order of sort, as an f64; for an even number of them, the mean of the two in the middle, (a + b) / 2.0. xs is left as it is. Traps (R0013) if it is empty."
+  },
+  {
+    "name": "variance",
+    "group": "math",
+    "signature": "variance(xs) -> f64",
+    "description": "The population variance of a non-empty array or list of numbers, as an f64: the mean of (x - mean(xs))^2, each term added first to last (divide by n, not n - 1). Traps (R0013) if it is empty."
+  },
+  {
+    "name": "stddev",
+    "group": "math",
+    "signature": "stddev(xs) -> f64",
+    "description": "The population standard deviation of a non-empty array or list of numbers: sqrt(variance(xs)). Traps (R0013) if it is empty."
+  },
+  {
+    "name": "random_u64",
+    "group": "math",
+    "signature": "random_u64(mut rng) -> u64",
+    "description": "The next pseudo-random u64 of the generator whose state is the u64 or i64 variable rng, which it advances: SplitMix64, the same numbers for the same seed on every run and backend. var rng: u64 = 42; let x: u64 = random_u64(mut rng);"
+  },
+  {
+    "name": "random_int",
+    "group": "math",
+    "signature": "random_int(mut rng, lo, hi) -> i64",
+    "description": "A pseudo-random i64 from lo to hi, both included, every value equally likely (numbers that would favour some are drawn again), from the generator of random_u64: random_int(mut rng, 1, 6) rolls a die. Traps (R0013) unless lo <= hi."
+  },
+  {
+    "name": "random_f64",
+    "group": "math",
+    "signature": "random_f64(mut rng) -> f64",
+    "description": "A pseudo-random f64 from 0.0 (included) to 1.0 (excluded), a multiple of 2^-53, from the generator of random_u64."
+  },
+  {
     "name": "isqrt",
     "group": "math",
     "signature": "isqrt(n) -> T",
@@ -390,6 +450,24 @@
     "description": "Whether the u8 byte c is an ASCII lowercase letter a-z."
   },
   {
+    "name": "is_hex_digit",
+    "group": "chars",
+    "signature": "is_hex_digit(c) -> bool",
+    "description": "Whether the u8 byte c is a hexadecimal digit: 0-9, a-f or A-F."
+  },
+  {
+    "name": "is_punct",
+    "group": "chars",
+    "signature": "is_punct(c) -> bool",
+    "description": "Whether the u8 byte c is ASCII punctuation, a printable character that is no letter, digit or space: !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+  },
+  {
+    "name": "is_ascii",
+    "group": "chars",
+    "signature": "is_ascii(c) -> bool",
+    "description": "Whether the u8 byte c is ASCII, below 128; is_ascii(s) of a str, whether every byte is."
+  },
+  {
     "name": "to_upper",
     "group": "chars",
     "signature": "to_upper(x) -> T",
@@ -411,7 +489,7 @@
     "name": "index_of",
     "group": "text",
     "signature": "index_of(xs, x) -> i64",
-    "description": "Position of the first occurrence of x (as for contains), or -1 if there is none."
+    "description": "Position of the first occurrence of x (as for contains), or -1 if there is none. index_of(xs, x, from) looks from the position from on, and still counts from the start: index_of(\"abab\", \"b\", 2) is 3. Traps (R0003) unless 0 <= from <= len(xs)."
   },
   {
     "name": "last_index_of",
@@ -504,6 +582,60 @@
     "description": "The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to numbers (an integer type takes only whole numbers that fit), strings to strs of at most their capacity in UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default present, no other) and maps with str keys, \"Variant\" or {\"Variant\": [values]} to enums. Option.None for any other text."
   },
   {
+    "name": "group_digits",
+    "group": "text",
+    "signature": "group_digits(n, sep) -> str[N]",
+    "description": "The decimal text of the integer n with sep (a str or a u8 byte) between each group of three digits, counted from the right: group_digits(1234567, ',') is \"1,234,567\", group_digits(-1000, ' ') is \"-1 000\". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
+  },
+  {
+    "name": "base64_encode",
+    "group": "text",
+    "signature": "base64_encode(data) -> str[N]",
+    "description": "The Base64 text (RFC 4648, with + and /, padded with =) of the bytes of a str, or of an array or list of u8: base64_encode(\"hi\") is \"aGk=\". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
+  },
+  {
+    "name": "base64_decode",
+    "group": "text",
+    "signature": "base64_decode(s) -> Option<str[N]>",
+    "description": "The bytes that the Base64 text s (RFC 4648, with + and /, padded with = to a multiple of 4) encodes, as Option.Some of a str of the capacity of s, or Option.None if s is not such text (no spaces or newlines)."
+  },
+  {
+    "name": "hex_encode",
+    "group": "text",
+    "signature": "hex_encode(data) -> str[N]",
+    "description": "Two lowercase hexadecimal digits for each byte of a str, or of an array or list of u8: hex_encode(\"Hi\") is \"4869\". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
+  },
+  {
+    "name": "hex_decode",
+    "group": "text",
+    "signature": "hex_decode(s) -> Option<str[N]>",
+    "description": "The bytes that the hexadecimal digits of s (two for each byte, either case) stand for, as Option.Some of a str of the capacity of s, or Option.None if s has an odd length or another character."
+  },
+  {
+    "name": "url_encode",
+    "group": "text",
+    "signature": "url_encode(s) -> str[N]",
+    "description": "s with every byte other than A-Z, a-z, 0-9 and - . _ ~ written as %XX (two uppercase hexadecimal digits), as a URL query or path part needs it (RFC 3986): url_encode(\"a b&c\") is \"a%20b%26c\". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
+  },
+  {
+    "name": "url_decode",
+    "group": "text",
+    "signature": "url_decode(s) -> Option<str[N]>",
+    "description": "s with each %XX (either case) replaced by the byte it stands for, as Option.Some of a str of the capacity of s, or Option.None if a % is not followed by two hexadecimal digits. A + stays a +."
+  },
+  {
+    "name": "sha256",
+    "group": "text",
+    "signature": "sha256(data) -> str[64]",
+    "description": "The SHA-256 digest (FIPS 180-4) of the bytes of a str, or of an array or list of u8, as 64 lowercase hexadecimal digits."
+  },
+  {
+    "name": "crc32",
+    "group": "text",
+    "signature": "crc32(data) -> u32",
+    "description": "The CRC-32 checksum of the bytes of a str, or of an array or list of u8, as zlib, gzip and PNG compute it: crc32(\"123456789\") is 3421780262 (0xcbf43926)."
+  },
+  {
     "name": "variant_name",
     "group": "text",
     "signature": "variant_name(e) -> str[N]",
@@ -594,6 +726,24 @@
     "description": "As pad_left, with the fill added after the text: pad_right(\"ab\", 4, '.') is \"ab..\". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
   },
   {
+    "name": "pad_center",
+    "group": "text",
+    "signature": "pad_center(value, width, fill) -> str[N]",
+    "description": "As pad_left, with the fill split around the text, the odd one after it: pad_center(\"ab\", 5, '*') is \"*ab**\". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit)."
+  },
+  {
+    "name": "eq_ignore_case",
+    "group": "text",
+    "signature": "eq_ignore_case(a, b) -> bool",
+    "description": "Whether two strs are the same but for the case of ASCII letters: eq_ignore_case(\"Yes\", \"YES\") is true."
+  },
+  {
+    "name": "capitalize",
+    "group": "text",
+    "signature": "capitalize(s) -> str[N]",
+    "description": "s with its first byte made uppercase and the rest lowercase (ASCII letters only), of the type of s: capitalize(\"hELLO\") is \"Hello\"."
+  },
+  {
     "name": "count",
     "group": "text",
     "signature": "count(xs, x) -> i64",
@@ -646,6 +796,42 @@
     "group": "dates",
     "signature": "weekday(days) -> i64",
     "description": "The day of the week of the date that many days after 1970-01-01, as ISO 8601 numbers them: 1 for Monday to 7 for Sunday. weekday(0) is 4, a Thursday."
+  },
+  {
+    "name": "is_leap_year",
+    "group": "dates",
+    "signature": "is_leap_year(y) -> bool",
+    "description": "Whether the year y (an i64) of the Gregorian calendar has a February 29: divisible by 4, and by 400 if by 100."
+  },
+  {
+    "name": "days_in_month",
+    "group": "dates",
+    "signature": "days_in_month(y, m) -> i64",
+    "description": "The number of days, 28 to 31, of the month m (1 to 12) of the year y. Traps (R0013) unless 1 <= m <= 12."
+  },
+  {
+    "name": "add_months",
+    "group": "dates",
+    "signature": "add_months(days, n) -> i64",
+    "description": "The date n months after (before, for a negative n) the date days, as days since 1970-01-01, the day of the month kept, or made the last day of a shorter month: add_months of 2026-01-31 and 1 is 2026-02-28. Traps (R0013) unless both dates are in the years 1 to 9999."
+  },
+  {
+    "name": "format_date",
+    "group": "dates",
+    "signature": "format_date(days) -> str[10]",
+    "description": "The date days (since 1970-01-01) as YYYY-MM-DD, as parse_date reads it: format_date(0) is \"1970-01-01\". Traps (R0013) unless it is in the years 1 to 9999."
+  },
+  {
+    "name": "parse_datetime",
+    "group": "dates",
+    "signature": "parse_datetime(s) -> Option<i64>",
+    "description": "The seconds since 1970-01-01T00:00:00Z of an ISO 8601 date and time: YYYY-MM-DD, T or a space, HH:MM or HH:MM:SS (with any fraction of a second, which is dropped), then Z, +HH:MM or -HH:MM, or nothing for UTC: parse_datetime(\"2026-11-27T10:30:00+01:00\"). Option.None for any other text, or a date or time that does not exist."
+  },
+  {
+    "name": "format_datetime",
+    "group": "dates",
+    "signature": "format_datetime(seconds) -> str[20]",
+    "description": "The instant seconds (since 1970-01-01T00:00:00Z) as YYYY-MM-DDTHH:MM:SSZ, in UTC: format_datetime(0) is \"1970-01-01T00:00:00Z\". Traps (R0013) unless it is in the years 1 to 9999."
   },
   {
     "name": "parse_date",
@@ -730,6 +916,66 @@
     "group": "collections",
     "signature": "heap_pop(mut heap) -> T",
     "description": "Removes and returns the smallest element of a list kept as a heap by heap_push (pass the same before, if it was given one): the next in priority order. Traps (R0012) if it is empty."
+  },
+  {
+    "name": "shuffle",
+    "group": "collections",
+    "signature": "shuffle(mut xs, mut rng)",
+    "description": "Puts the elements of a list or array (bytes of a str) in a pseudo-random order, every order equally likely, with the generator of random_u64 (Fisher-Yates, from the last element down): the same order for the same seed on every run and backend."
+  },
+  {
+    "name": "next_permutation",
+    "group": "collections",
+    "signature": "next_permutation(mut xs) -> bool",
+    "description": "Rearranges a list, array or str into the next permutation in the order of sort, element by element, and returns true; from the last one (descending) it goes back to the first (ascending) and returns false. Sort first; then var more: bool = true; while more limit N { ...; more = next_permutation(mut xs); } visits each distinct order once."
+  },
+  {
+    "name": "next_combination",
+    "group": "collections",
+    "signature": "next_combination(mut idx, n) -> bool",
+    "description": "Advances idx, a list or array of k increasing i64 positions from 0 to n - 1, to the next k of n in lexicographic order, and returns true; from the last one it goes back to the first, [0, 1, ..., k - 1], and returns false. Traps (R0013) unless 0 <= k <= n."
+  },
+  {
+    "name": "windows",
+    "group": "collections",
+    "signature": "windows(xs, k)",
+    "description": "In a for loop, each run of k elements of an array, list or str that follow one another, first to last: for w in windows([1, 2, 3], 2) { } gives [1, 2] and [2, 3]; none if k > len(xs). Each is a list (a str for a str) of the capacity of xs, and no list of them is built. Traps (R0013) unless k >= 1."
+  },
+  {
+    "name": "chunks",
+    "group": "collections",
+    "signature": "chunks(xs, k)",
+    "description": "In a for loop, the elements of an array, list or str in pieces of k, first to last, the last one shorter if they do not divide evenly: for c in chunks([1, 2, 3], 2) { } gives [1, 2] and [3]. Each is a list (a str for a str) of the capacity of xs, and no list of them is built. Traps (R0013) unless k >= 1."
+  },
+  {
+    "name": "unique",
+    "group": "collections",
+    "signature": "unique(mut xs)",
+    "description": "Removes from a list (a str) every element (byte) that is == to one before it, wherever it is, keeping the first of each and their order: [3, 1, 3, 2, 1] becomes [3, 1, 2]. Unlike dedup, it needs no sort. About n * k comparisons, for k values kept."
+  },
+  {
+    "name": "frequencies",
+    "group": "collections",
+    "signature": "frequencies(xs) -> map[T, i64; N]",
+    "description": "How many times each element of an array or list (byte of a str) occurs, as a map from the element to its count, in key order: let c: map[str[16], i64; 32] = frequencies(words);. Its type is that of the variable it is stored in; traps (R0004) if there are more distinct elements than the map holds."
+  },
+  {
+    "name": "prefix_sums",
+    "group": "collections",
+    "signature": "prefix_sums(xs) -> T",
+    "description": "The running totals of an array or list of numbers, of its type: element i is xs[0] + ... + xs[i], added as + adds them: prefix_sums([1, 2, 3]) is [1, 3, 6]. An integer total that does not fit traps (R0001)."
+  },
+  {
+    "name": "first",
+    "group": "collections",
+    "signature": "first(xs) -> Option<T>",
+    "description": "Option.Some of the first element of an array or list (byte of a str), or Option.None if it is empty."
+  },
+  {
+    "name": "last",
+    "group": "collections",
+    "signature": "last(xs) -> Option<T>",
+    "description": "Option.Some of the last element of an array or list (byte of a str), or Option.None if it is empty."
   },
   {
     "name": "any",

@@ -789,6 +789,7 @@ final class AstBuilder {
         if (ctx instanceof ConversionExprContext c) {
             return new Convert(sp, PrimKind.byName(c.primitiveType().getText()), expr(c.expression()));
         }
+        if (ctx instanceof TypeConstExprContext t) return typeConst(sp, t);
         if (ctx instanceof StrResizeExprContext s) {
             Span ts = span(s.STR().getSymbol(), s.RBRACK().getSymbol());
             return new Resize(sp, new StrRef(ts, expr(s.expression(0))), expr(s.expression(1)));
@@ -813,6 +814,53 @@ final class AstBuilder {
         List<Expr> elems = new ArrayList<>();
         for (ExpressionContext e : a.expression()) elems.add(expr(e));
         return new ArrayLit(sp, elems);
+    }
+
+    /** The names of the constants of the integer types, and of the float types. */
+    static final List<String> INT_CONSTS = List.of("MIN", "MAX");
+    static final List<String> FLOAT_CONSTS = List.of("PI", "TAU", "E", "INFINITY", "NAN", "EPSILON", "MAX", "MIN", "MIN_POSITIVE");
+
+    /**
+     * `i64.MAX`, `f64.PI`: a constant of a number type, which is that type's conversion of its exact value, so that it
+     * has the type it names (a bare literal would take the type of where it goes).
+     */
+    private Expr typeConst(Span sp, TypeConstExprContext t) {
+        PrimKind k = PrimKind.byName(t.primitiveType().getText());
+        String name = t.identifier().getText();
+        Span at = span(t.identifier());
+        if (k.isFloat) {
+            boolean f32 = k == PrimKind.F32;
+            Double v = switch (name) {
+                case "PI" -> Math.PI;
+                case "TAU" -> 2 * Math.PI;
+                case "E" -> Math.E;
+                case "INFINITY" -> Double.POSITIVE_INFINITY;
+                case "NAN" -> Double.NaN;
+                case "EPSILON" -> f32 ? (double) Math.ulp(1.0f) : Math.ulp(1.0);
+                case "MAX" -> f32 ? (double) Float.MAX_VALUE : Double.MAX_VALUE;
+                case "MIN" -> f32 ? -(double) Float.MAX_VALUE : -Double.MAX_VALUE;
+                case "MIN_POSITIVE" -> f32 ? (double) Float.MIN_NORMAL : Double.MIN_NORMAL;
+                default -> null;
+            };
+            if (v != null) {
+                float fv = (float) (double) v;
+                FloatLit lit = new FloatLit(at, f32 ? (double) fv : v, fv);
+                lit.named = true;
+                return new Convert(sp, k, lit);
+            }
+        } else if (k != PrimKind.BOOL) {
+            BigInteger v = switch (name) {
+                case "MIN" -> k.signed ? BigInteger.ONE.shiftLeft(k.bits - 1).negate() : BigInteger.ZERO;
+                case "MAX" -> (k.signed ? BigInteger.ONE.shiftLeft(k.bits - 1) : BigInteger.ONE.shiftLeft(k.bits)).subtract(BigInteger.ONE);
+                default -> null;
+            };
+            if (v != null) return new Convert(sp, k, new IntLit(at, v, false));
+        }
+        List<String> names = k == PrimKind.BOOL ? List.of() : k.isFloat ? FLOAT_CONSTS : INT_CONSTS;
+        diags.error(Code.E0101, at, "`" + k.name + "` has no constant `" + name + "`", names.isEmpty()
+            ? "bool has no constants; its values are true and false"
+            : "the constants of " + k.name + " are " + String.join(", ", names.stream().map(n -> k.name + "." + n).toList()));
+        return k == PrimKind.BOOL ? new BoolLit(sp, false) : new Convert(sp, k, new IntLit(at, BigInteger.ZERO, false));
     }
 
     /**

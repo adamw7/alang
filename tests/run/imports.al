@@ -9,7 +9,7 @@ fn main() {
         print(label(area(s)));
     }
     print(perimeter(Rect(w: 2, h: 5)));
-    print(first([7, 8]));
+    print(front([7, 8]));
 }
 
 test "imported declarations work in tests" {

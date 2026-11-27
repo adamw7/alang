@@ -107,6 +107,7 @@ test "counts repeated words" {
 
 1. **Every variable has a type and a value**: `let x: i32 = 0;` (immutable) or `var x: i32 = 0;` (mutable).
 2. **No implicit conversions.** `i64(x)`, `f64(n)`, `u8(c)`. Integer literals adapt to context and default to `i64`; `for i in 0..n` gives `i: i64` when the bounds are literals. `len()` returns `i64`.
+   Each number type has constants of its own type: `i64.MAX`, `u8.MIN`, `f64.PI`, `f64.INFINITY`, `f64.NAN`.
 3. **No heap, no null, no pointers.** Fixed-capacity types: `str[64]`, `list[T; 16]`, `[T; 4]`, `map[K, V; 16]`, `set[T; 16]`. Capacity overflow traps.
    A smaller capacity widens on its own; to narrow, convert: `str[16](s)`, `list[T; 8](xs)` (traps if it
    does not fit, so check `len` first). A parameter takes any capacity with `_`: `fn total(xs: list[i64; _])`,
@@ -188,12 +189,16 @@ test "counts repeated words" {
 | `hash(s)`, `s.hashCode()` | `hash(s)`: 64-bit FNV-1a of the bytes, the same on every run |
 | `float(s)`, `s.parse::<f64>()` | `parse_f64(trim(s))`, or `f64(trim(s))` after checking `is_float(trim(s))`: an optional sign, digits and at most one `.` (`3.`, `.25` count), and an optional exponent (`1e5`, `2.5E-3`) |
 | `a % m` in Python (never negative), `a.rem_euclid(m)`, `Math.floorMod(a, m)` | `rem_euclid(a, m)`: `rem_euclid(-1, 5)` is 4, where `-1 % 5` is -1; `a // m` is `div_euclid(a, m)` |
-| `(a * b) % m` with big numbers, `pow(a, b, m)` | `mul_mod(a, b, m)`: exact however large `a * b` is (for `pow(a, b, m)`, square and multiply with it) |
+| `(a * b) % m` with big numbers, `pow(a, b, m)`, `a.modPow(b, m)` | `mul_mod(a, b, m)`, `pow_mod(a, b, m)`: exact however large the product or power is |
+| `i64::MAX`, `Integer.MAX_VALUE`, `sys.maxsize`, `math.pi`, `math.inf`, `float('nan')` | `i64.MAX`, `i32.MAX`, `i64.MAX`, `f64.PI`, `f64.INFINITY`, `f64.NAN` (also `MIN` on every integer type, and `f64.E`, `f64.TAU`, `f64.EPSILON`, `f64.MAX`, `f64.MIN_POSITIVE`) |
+| `a.abs_diff(b)`, `abs(a - b)` on unsigned numbers, `np.sign(x)`, `Integer.signum(x)` | `abs_diff(a, b)` (no trap where `u8(3) - 5` traps), `sign(x)` |
+| `statistics.mean(xs)`, `median(xs)`, `pvariance(xs)`, `pstdev(xs)`, `np.mean` | `mean(xs)`, `median(xs)`, `variance(xs)`, `stddev(xs)`: an `f64`, of any numbers; population variance (divided by n) |
+| `random.seed(42); random.randint(1, 6)`, `random.random()`, `random.shuffle(xs)`, `rand::thread_rng()` | `var rng: u64 = 42;` then `let d: i64 = random_int(mut rng, 1, 6);`, `let f: f64 = random_f64(mut rng);`, `shuffle(mut xs, mut rng);`, `random_u64(mut rng)`: seeded, the same numbers on every run |
 | `a.checked_add(b)`, `Math.addExact` in a `try` | `checked_add(a, b)`, `checked_sub`, `checked_mul`: an `Option`, `Option.None` when it does not fit |
 | `f"{x:.2f}"`, `format!("{:.2}", x)`, `x.toFixed(2)` | `fixed(x, 2)`, in `print`/`append` or stored in a typed str |
 | `f"{n:03}"`, `s.rjust(8)`, `s.ljust(8)`, `padStart` | `pad_left(n, 3, '0')`, `pad_left(s, 8, ' ')`, `pad_right(s, 8, ' ')` |
 | `def f(x, y=2)`, `function f(x, y = 2)` | `fn f(x: i64, y: i64 = 2)`: a constant default, after the parameters without one |
-| `fn first<T>(xs: &[T]) -> T`, `def first(xs)` | `fn first<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
+| `fn biggest<T>(xs: &[T]) -> T`, `def biggest(xs)` | `fn biggest<T>(xs: list[T; _]) -> T`: a type parameter; order with `compare(a, b) < 0`, not `<` |
 | `any(f(x) for x in xs)`, `xs.iter().all(f)`, `xs.filter(f).count()`, `xs.iter().position(f)` | `any(xs, f)`, `all(xs, f)`, `count_if(xs, f)`, `find_index(xs, f)` (-1 if none), with `fn f(x: T) -> bool` passed by name |
 | `xs = [x for x in xs if f(x)]`, `xs.retain(f)` | `retain(mut xs, f);` |
 | `[f(x) for x in xs]`, `map(f, xs)`, `xs.iter().map(f).collect()` | `transform(xs, f)` with `fn f(x: T) -> U`: a list of the capacity of `xs` (an array for an array) |
@@ -209,20 +214,38 @@ test "counts repeated words" {
 | `json.loads(s)` into a type, `serde_json::from_str::<T>(s)` | `let cfg: Option<Config> = from_json(text);` |
 | `c.name` (Python Enum), `format!("{:?}", c)`, `Color[s]`, `Color.valueOf(s)` | `variant_name(c)` is `"Red"`; `let c: Option<Color> = parse_variant(s);` |
 | `date.fromisoformat(s)`, `(d2 - d1).days`, `d + timedelta(days=30)`, `d.isoweekday()` | `parse_date("2026-11-26")` (an `Option` of days since 1970-01-01), `days_from_date(y, m, d)`, then subtract or add days; `date_from_days(n)` gives `(y, m, d)`, `weekday(n)` 1 (Monday) to 7 |
+| `d.isoformat()`, `d + relativedelta(months=1)`, `calendar.isleap(y)`, `calendar.monthrange(y, m)[1]` | `format_date(days)`, `add_months(days, 1)` (the 31st becomes the month's last day), `is_leap_year(y)`, `days_in_month(y, m)` |
+| `datetime.fromisoformat(s).timestamp()`, `Instant.parse(s)`, `dt.isoformat()` in UTC | `parse_datetime("2026-11-27T10:30:00+01:00")` (an `Option` of seconds since 1970-01-01T00:00:00Z), `format_datetime(t)` |
 | `s.removeprefix("v")`, `s.strip_suffix(".txt")` | `strip_prefix(s, 'v')`, `strip_suffix(s, ".txt")`: `s` unchanged when it does not start (end) with it |
 | `k, _, v = s.partition("=")`, `s.split_once('=')` | `split_once(s, '=')`: `Option.Some((before, after))`, or `Option.None` |
+| `f"{n:,}"`, `format!("{}", n)` with separators, `n.toLocaleString()` | `group_digits(n, ',')`: `1,234,567`, in `print`/`append` or a typed str |
+| `s.center(10, '*')`, `s.capitalize()`, `a.lower() == b.lower()`, `a.eq_ignore_ascii_case(b)` | `pad_center(s, 10, '*')`, `capitalize(s)`, `eq_ignore_case(a, b)` |
+| `base64.b64encode(b)`, `b64decode(s)`, `b.hex()`, `bytes.fromhex(s)`, `urllib.parse.quote(s, safe='')`, `unquote(s)` | `base64_encode(s)`, `base64_decode(s)` (an `Option`), `hex_encode(s)`, `hex_decode(s)`, `url_encode(s)`, `url_decode(s)`: encoders make text, decoders give `Option.Some` of a str of the input's capacity |
+| `hashlib.sha256(b).hexdigest()`, `zlib.crc32(b)` | `sha256(s)` (64 hex digits, a `str[64]`), `crc32(s)` (a `u32`) |
 | `"-" * 20`, `"ab".repeat(3)` | `repeat('-', 20)`, `repeat("ab", 3)`, in `print`/`append` or a typed str |
 | `x in xs`, `s.find("x")`, `s.startswith("x")` | `contains(xs, x)`, `index_of(s, "x")` (-1 if absent), `starts_with(s, "x")` |
+| `s.find("x", start)`, `s.indexOf("x", from)` | `index_of(s, "x", start)`: counts from the start of `s`; also on lists |
+| `c in string.hexdigits`, `c in string.punctuation`, `s.isascii()` | `is_hex_digit(c)`, `is_punct(c)`, `is_ascii(c)` or `is_ascii(s)` |
 | `s.rfind("x")`, `xs.lastIndexOf(x)` | `last_index_of(s, "x")`, `last_index_of(xs, x)` (-1 if absent) |
 | `sum(xs)`, `min(xs)`, `max(xs)`, `xs.iter().sum()` | `sum(xs)`, `min(xs)`, `max(xs)` on an array or list of numbers (`min`/`max` trap on an empty one) |
 | `sorted(set(xs))`, `xs.dedup()`, `uniq` | `sort(mut xs);` then `dedup(mut xs);` |
+| `list(dict.fromkeys(xs))`, `[...new Set(xs)]` (first of each, in order) | `unique(mut xs);` |
+| `Counter(xs)`, `xs.groupingBy { it }.eachCount()` | `let c: map[str[16], i64; 64] = frequencies(xs);` (keys in order) |
+| `itertools.accumulate(xs)`, `np.cumsum(xs)` | `prefix_sums(xs)` |
+| `xs[0] if xs else None`, `xs.first()`, `xs.last()` | `first(xs)`, `last(xs)`: an `Option` |
+| `zip(xs, xs[1:])`, `xs.windows(2)`, `xs.chunks(3)`, `itertools.batched(xs, 3)` | `for w in windows(xs, 2) { }`, `for c in chunks(xs, 3) { }`: each a list of the capacity of `xs`, in a `for` only |
+| `itertools.permutations(xs)`, `std::next_permutation` | `sort(mut xs); var more: bool = true; while more limit 5040 { ...; more = next_permutation(mut xs); }` |
+| `itertools.combinations(range(n), k)` | `var idx: [i64; 3] = [0, 1, 2];` then the same loop with `more = next_combination(mut idx, n);` |
 | `xs.binary_search(&x)`, `Collections.binarySearch(xs, x)` | `binary_search(xs, x)` on a sorted list: the position of an equal element, or -1 |
 | `bisect_left(xs, x)`, `bisect_right(xs, x)`, `partition_point` | `lower_bound(xs, x)`, `upper_bound(xs, x)` on a sorted list: where `x` would go, before (after) equal ones |
 | `xs.extend(ys)`, `xs + ys`, `xs.addAll(ys)`, `[...xs, ...ys]` | `extend(mut xs, ys);` (traps, adding nothing, if they do not all fit) |
 | `xs.fill(v)`, `xs.rotate_left(k)`, `all(a <= b for a, b in pairwise(xs))` | `fill(mut xs, v);`, `rotate(mut xs, k);` (negative `k` rotates right), `is_sorted(xs)` |
 | `math.prod(xs)`, `np.argmin(xs)`, `xs.index(max(xs))` | `product(xs)`, `min_index(xs)`, `max_index(xs)` |
 | `xs.sort()`, `sorted(xs, reverse=True)` | `sort(mut xs);` then `reverse(mut xs);` |
-| `xs.sort(key=f)`, `xs.sort_by(cmp)`, `Collections.sort(xs, cmp)` | `sort_by(mut xs, before)`, with `fn before(a: T, b: T) -> bool` true when `a` must come first; stable |
+| `xs.sort(key=f)`, `xs.sort_by_key(f)`, `sorted(xs, key=len)` | `sort_by_key(mut xs, key)`, with `fn key(x: T) -> K` passed by name; stable |
+| `xs.sort_by(cmp)`, `Collections.sort(xs, cmp)` | `sort_by(mut xs, before)`, with `fn before(a: T, b: T) -> bool` true when `a` must come first; stable |
+| `heapq.heappush(h, x)`, `heapq.heappop(h)`, `BinaryHeap`, `PriorityQueue` | `heap_push(mut h, x);`, `let x: T = heap_pop(mut h);` on a `list[T; N]`: the smallest first, or the first by `before` with `heap_push(mut h, x, before)` |
+| `math.isqrt(n)`, `(n as f64).sqrt() as i64` | `isqrt(n)`: exact, on any integer type |
 | `xs.insert(i, v)`, `xs.pop(i)` | `insert(mut xs, i, v);`, `let v: T = remove(mut xs, i);` |
 | `class`, `impl`, `trait`, `interface` | `struct Shape { ... }` and functions that take it: `fn area(s: Shape) -> f64` |
 | `pub fn`, `export function`, `public` | `fn`: every top-level declaration is visible to the files that import it |
@@ -248,14 +271,14 @@ adds tested helpers (pseudo-random numbers, an insertion-ordered map).
 
 | Area | Functions |
 |------|-----------|
-| Math | `abs` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `product(xs)` `clamp(x, lo, hi)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` (an `Option`) `rem_euclid` `div_euclid` `mul_mod(a, b, m)` `count_ones` `leading_zeros` `trailing_zeros` `rotl(x, n)` `rotr(x, n)` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite` |
-| Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `to_upper` `to_lower` (also on a whole str) |
-| Text | `contains` `index_of` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `trim_start` `trim_end` `strip_prefix` `strip_suffix` `split(s, sep)` `split_once(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `split_csv(s, sep)` `try_split_csv(mut fields, s, sep)` `join(parts, sep)` `replace(s, from, to)` `repeat(s, n)` `is_int` `is_float` `parse_i64(s)` `parse_i64(s, base)` `parse_f64` (an `Option`) `str[N](n)` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` `to_base(n, base)` `hash(s)`; regular expressions: `re_match(s, p)` `re_find(s, p)` `re_replace(s, p, to)` `re_split(s, p)`; JSON: `to_json(v)` `from_json(s)`; enums: `variant_name(e)` `parse_variant(s)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
-| Dates (days since 1970-01-01) | `days_from_date(y, m, d)` `date_from_days(n)` (a `(y, m, d)` tuple) `weekday(n)` (1 Monday to 7 Sunday) `parse_date(s)` (`YYYY-MM-DD`, an `Option`) |
+| Math | `abs` `abs_diff(a, b)` `sign(x)` `min(a, b)` `max(a, b)` `min(xs)` `max(xs)` `sum(xs)` `product(xs)` `mean(xs)` `median(xs)` `variance(xs)` `stddev(xs)` `clamp(x, lo, hi)` `isqrt(n)` `pow(x, n)` (integers, or floats: `pow(2.0, 0.5)`) `pow_mod(b, e, m)` `gcd` `lcm` `wrapping_add` `wrapping_sub` `wrapping_mul` `saturating_add` `saturating_sub` `saturating_mul` `checked_add` `checked_sub` `checked_mul` (an `Option`) `rem_euclid` `div_euclid` `mul_mod(a, b, m)` `count_ones` `leading_zeros` `trailing_zeros` `rotl(x, n)` `rotr(x, n)` `sqrt` `floor` `ceil` `round` `trunc` `exp` `log` `log2` `log10` `sin` `cos` `tan` `asin` `acos` `atan` `atan2(y, x)` `is_nan` `is_finite`; constants `i64.MAX` `u8.MIN` `f64.PI` `f64.E` `f64.INFINITY` `f64.NAN` `f64.EPSILON`; seeded random numbers: `random_u64(mut rng)` `random_int(mut rng, lo, hi)` `random_f64(mut rng)` `shuffle(mut xs, mut rng)` |
+| Characters (`u8`, ASCII) | `is_digit` `is_alpha` `is_alnum` `is_space` `is_upper` `is_lower` `is_hex_digit` `is_punct` `is_ascii` `to_upper` `to_lower` (`to_*` and `is_ascii` also on a whole str) |
+| Text | `contains` `index_of(s, x)` `index_of(s, x, from)` `last_index_of` `count` `starts_with` `ends_with` `slice(s, from, to)` or `s[from..to]` `trim` `trim_start` `trim_end` `strip_prefix` `strip_suffix` `split(s, sep)` `split_once(s, sep)` `words(s)` `try_split(mut parts, s, sep)` `try_words(mut parts, s)` `split_csv(s, sep)` `try_split_csv(mut fields, s, sep)` `join(parts, sep)` `replace(s, from, to)` `repeat(s, n)` `capitalize(s)` `eq_ignore_case(a, b)` `is_int` `is_float` `parse_i64(s)` `parse_i64(s, base)` `parse_f64` (an `Option`) `str[N](n)` `fixed(x, decimals)` `pad_left(v, width, fill)` `pad_right(v, width, fill)` `pad_center(v, width, fill)` `group_digits(n, sep)` `to_base(n, base)` `hash(s)` `sha256(s)` `crc32(s)`; encodings: `base64_encode` `base64_decode` `hex_encode` `hex_decode` `url_encode` `url_decode`; regular expressions: `re_match(s, p)` `re_find(s, p)` `re_replace(s, p, to)` `re_split(s, p)`; JSON: `to_json(v)` `from_json(s)`; enums: `variant_name(e)` `parse_variant(s)`; UTF-8: `is_utf8` `char_count` `chars(s)` `push_char(mut s, c)` `slice_chars(s, from, to)` |
+| Dates (days since 1970-01-01) | `days_from_date(y, m, d)` `date_from_days(n)` (a `(y, m, d)` tuple) `weekday(n)` (1 Monday to 7 Sunday) `parse_date(s)` (`YYYY-MM-DD`, an `Option`) `format_date(n)` `add_months(n, k)` `is_leap_year(y)` `days_in_month(y, m)`; times (seconds since 1970-01-01T00:00:00Z): `parse_datetime(s)` (ISO 8601, an `Option`) `format_datetime(t)` |
 | Option, Result | `unwrap_or(o, d)` `is_some` `is_none` `is_ok` `is_err`; `e?`; `assert_eq(a, b);` |
-| Collections | `sort(mut xs)` `sort_by(mut xs, before)` `reverse(mut xs)` `dedup(mut xs)` `is_sorted(xs)` `binary_search(xs, x)` `lower_bound(xs, x)` `upper_bound(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `pop_front(mut xs)` `extend(mut xs, ys)` `fill(mut xs, v)` `rotate(mut xs, k)` `swap(mut xs, i, j)` `swap(mut a, mut b)` `retain(mut xs, keep)` `min_index(xs)` `max_index(xs)` `zip(a, b)`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` `min_by(xs, before)` `max_by(xs, before)` `fold(xs, init, f)` `transform(xs, f)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get(m, k)` (an `Option`), `get_or(m, k, d)`, `keys(m)`, `values(m)`, `first_key(m)` `last_key(m)` `floor_key(m, k)` `ceil_key(m, k)` (an `Option`), `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear`, `union(a, b)`, `intersection(a, b)`, `difference(a, b)`, `symmetric_difference(a, b)`, `is_subset(a, b)`; enums: `variants(E)` |
+| Collections | `sort(mut xs)` `sort_by(mut xs, before)` `sort_by_key(mut xs, key)` `heap_push(mut h, x)` `heap_pop(mut h)` `reverse(mut xs)` `dedup(mut xs)` `is_sorted(xs)` `binary_search(xs, x)` `lower_bound(xs, x)` `upper_bound(xs, x)` `insert(mut xs, i, v)` `remove(mut xs, i)` `pop_front(mut xs)` `extend(mut xs, ys)` `fill(mut xs, v)` `rotate(mut xs, k)` `swap(mut xs, i, j)` `swap(mut a, mut b)` `retain(mut xs, keep)` `unique(mut xs)` `min_index(xs)` `max_index(xs)` `zip(a, b)` `prefix_sums(xs)` `first(xs)` `last(xs)` `frequencies(xs)` `next_permutation(mut xs)` `next_combination(mut idx, n)`; `for w in windows(xs, k) { }` `for c in chunks(xs, k) { }`; `any(xs, f)` `all(xs, f)` `count_if(xs, f)` `find_index(xs, f)` `min_by(xs, before)` `max_by(xs, before)` `fold(xs, init, f)` `transform(xs, f)` with a function passed by name; `contains`, `index_of`, `last_index_of`, `count`, `slice` on lists and arrays; maps and sets: `m[k]`, `m[k] = v`, `get(m, k)` (an `Option`), `get_or(m, k, d)`, `keys(m)`, `values(m)`, `first_key(m)` `last_key(m)` `floor_key(m, k)` `ceil_key(m, k)` (an `Option`), `insert(mut s, x)`, `remove(mut m, k)`, `contains`, `len`, `clear`, `union(a, b)`, `intersection(a, b)`, `difference(a, b)`, `symmetric_difference(a, b)`, `is_subset(a, b)`; enums: `variants(E)` |
 
-- `split`, `words`, `join`, `replace`, `split_csv`, `re_replace`, `re_split` take their type from the typed
+- `split`, `words`, `join`, `replace`, `split_csv`, `re_replace`, `re_split`, `frequencies` take their type from the typed
   `let`/`var`/assignment/`return` they are the whole right side of: `let parts: list[str[16]; 8] = split(line, ",");`. Pieces that do not fit
   trap (R0004; `check` warns W0307), so for input use `try_split`/`try_words` (false, list left empty) or
   iterate: `for p in split(s, sep) { }` builds no list and never traps; each piece has the capacity of
@@ -263,7 +286,7 @@ adds tested helpers (pseudo-random numbers, an insertion-ordered map).
 - A separator or pattern is a str or a character. `index_of` and friends return -1 when absent.
 - `parse_i64`/`parse_f64` give an `Option`; `i64(s)`/`f64(s)` trap on bad text, so check `is_int`/`is_float`
   first, after `trim`. Floats accept `19.99`, `-0.5`, `.25`, `1e5`, `2.5E-3`.
-- `fixed(x, 2)`, `pad_left(v, width, fill)`, `pad_right`, `variant_name(e)` and `to_json(v)` make text for
+- `fixed(x, 2)`, `pad_left(v, width, fill)`, `pad_right`, `pad_center`, `group_digits`, `variant_name(e)`, `to_json(v)` and the encoders make text for
   `print`, `append` or a typed str; widths count bytes.
 - `sort` orders every type: numbers, strs by bytes, structs field by field (put the key first), enums by
   variant; `reverse` for descending, `sort_by(mut xs, before)` for any other order (stable).
@@ -587,7 +610,7 @@ test "keeps what is in stock" with stock = some_stock {
 
 - Same input, same output, same trap, on every run, machine, compiler and locale.
 - No time, randomness, environment, threads or I/O but `print`, stdin and the replies to host fns, which are
-  recorded and can be replayed. For "random", take a seed.
+  recorded and can be replayed. For "random", take a seed: `var rng: u64 = seed;`, then `random_int(mut rng, lo, hi)`.
 - Floats are bit-exact across the interpreter and the C backend, `sin`, `exp` and `pow` included.
 - `print` shows floats with at most 6 decimals (`0.1 + 0.2` prints `0.3`); compare floats in tests with a
   tolerance, e.g. `assert abs(x - 0.3) < 0.000001;`.

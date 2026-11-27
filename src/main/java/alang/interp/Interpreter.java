@@ -700,6 +700,7 @@ public final class Interpreter {
      * read-only and anything that stores it copies it, so one buffer serves every piece.
      */
     private int pieceLoop(For f, Call c, Object[] slots) {
+        if (c.builtin == Builtin.WINDOWS || c.builtin == Builtin.CHUNKS) return runLoop(f, c, slots);
         Expr src = c.args.get(0).expr();
         StrV s = (StrV) (f.snapshot ? owned(src, slots) : eval(src, slots));
         long index = 0;
@@ -747,6 +748,45 @@ public final class Interpreter {
             int r = iteration(f, slots, index++, piece);
             if (r != GO) return r;
             if (pos < 0) break;
+        }
+        return NORMAL;
+    }
+
+    /**
+     * `for w in windows(xs, k)` and `for c in chunks(xs, k)`: each run of k elements in turn (each step one element on,
+     * or k), copied into one list (str) of the capacity of xs, which the loop variable is.
+     */
+    private int runLoop(For f, Call c, Object[] slots) {
+        Expr src = c.args.get(0).expr();
+        Object xs = f.snapshot ? owned(src, slots) : eval(src, slots);
+        long k = (Long) eval(c.args.get(1).expr(), slots);
+        PrimKind kk = Type.kind(c.args.get(1).expr().type);
+        if (IntOps.compare(kk, k, 1) < 0) {
+            throw new Trap(Code.R0013, c.span, c.name + "() needs a size of at least 1, found " + IntOps.toString(kk, k));
+        }
+        int n = length(xs);
+        // A size beyond any length: no window, and one chunk of everything.
+        int size = Long.compareUnsigned(k, n) > 0 || (kk.signed && k < 0) ? n + 1 : (int) k;
+        boolean windows = c.builtin == Builtin.WINDOWS;
+        long index = 0;
+        int cap = xs instanceof ArrV a ? a.items.length : Type.capacity(src.type);
+        for (int pos = 0; windows ? pos + size <= n : pos < n; pos += windows ? 1 : size) {
+            int len = Math.min(size, n - pos);
+            step(f.span);
+            meter.elements(len);
+            Object piece;
+            if (xs instanceof StrV str) {
+                byte[] b = new byte[cap];
+                System.arraycopy(str.b, pos, b, 0, len);
+                piece = new StrV(b, len);
+            } else {
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                Object[] out = new Object[cap];
+                System.arraycopy(items, pos, out, 0, len);
+                piece = new ListV(out, len);
+            }
+            int r = iteration(f, slots, index++, piece);
+            if (r != GO) return r;
         }
         return NORMAL;
     }
@@ -1672,7 +1712,7 @@ public final class Interpreter {
                 }
                 return top;
             }
-            case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
+            case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER, IS_HEX_DIGIT, IS_PUNCT -> {
                 long ch = (Long) eval(args.get(0).expr(), slots);
                 return switch (c.builtin) {
                     case IS_DIGIT -> Stdlib.isDigit(ch);
@@ -1680,6 +1720,8 @@ public final class Interpreter {
                     case IS_ALNUM -> Stdlib.isAlpha(ch) || Stdlib.isDigit(ch);
                     case IS_SPACE -> Stdlib.isSpace(ch);
                     case IS_UPPER -> Stdlib.isUpper(ch);
+                    case IS_HEX_DIGIT -> Stdlib.isDigit(ch) || ch >= 'a' && ch <= 'f' || ch >= 'A' && ch <= 'F';
+                    case IS_PUNCT -> ch > ' ' && ch < 127 && !Stdlib.isAlpha(ch) && !Stdlib.isDigit(ch);
                     default -> Stdlib.isLower(ch);
                 };
             }
@@ -1701,8 +1743,18 @@ public final class Interpreter {
                 Type ct = args.get(0).expr().type;
                 if (ct instanceof Type.MapT mt) return Stdlib.find(((MapV) xs).keys, ((MapV) xs).len, x, mt.key(), meter) >= 0;
                 if (ct instanceof Type.SetT st) return Stdlib.find(((ListV) xs).items, ((ListV) xs).len, x, st.elem(), meter) >= 0;
-                long at = xs instanceof StrV s ? Stdlib.find(s.b, s.len, Stdlib.pattern(x, meter), 0, meter)
-                    : Stdlib.indexOf(xs, x, Type.elementOf(args.get(0).expr().type), meter);
+                int from = 0;
+                if (args.size() == 3) {
+                    long f = (Long) eval(args.get(2).expr(), slots);
+                    PrimKind fk = Type.kind(args.get(2).expr().type);
+                    int n = length(xs);
+                    if (!Stdlib.within(f, n) || fk == PrimKind.U64 && f < 0) {
+                        throw new Trap(Code.R0003, c.span, "index_of start " + IntOps.toString(fk, f) + " is out of range for length " + n);
+                    }
+                    from = (int) f;
+                }
+                long at = xs instanceof StrV s ? Stdlib.find(s.b, s.len, Stdlib.pattern(x, meter), from, meter)
+                    : Stdlib.indexOf(xs, x, Type.elementOf(args.get(0).expr().type), from, meter);
                 return c.builtin == Builtin.CONTAINS ? (Object) (at >= 0) : (Object) at;
             }
             case COUNT -> {
@@ -1788,7 +1840,7 @@ public final class Interpreter {
                 String t = IntOps.toBig(Type.kind(args.get(0).expr().type), n).toString(radix);
                 return text(c, t.getBytes(StandardCharsets.US_ASCII));
             }
-            case PAD_LEFT, PAD_RIGHT -> {
+            case PAD_LEFT, PAD_RIGHT, PAD_CENTER -> {
                 Expr value = args.get(0).expr();
                 ByteArrayOutputStream text = new ByteArrayOutputStream();
                 Format.format(ByteSink.of(text), eval(value, slots), value.type, false, meter);
@@ -1802,10 +1854,11 @@ public final class Interpreter {
                 byte[] t = text.toByteArray();
                 int pad = (int) Math.max(0, width - t.length);
                 byte[] out = new byte[t.length + pad];
-                int at = c.builtin == Builtin.PAD_LEFT ? pad : 0;
+                int at = c.builtin == Builtin.PAD_LEFT ? pad : c.builtin == Builtin.PAD_CENTER ? pad / 2 : 0;
                 System.arraycopy(t, 0, out, at, t.length);
-                Arrays.fill(out, at == 0 ? t.length : 0, at == 0 ? out.length : pad, fill);
-                if (pad > 0 && at > 0 && fill == '0' && t[0] == '-' && Builtin.zeroPadsAfterSign(value)) {
+                Arrays.fill(out, 0, at, fill);
+                Arrays.fill(out, at + t.length, out.length, fill);
+                if (pad > 0 && at > 0 && c.builtin == Builtin.PAD_LEFT && fill == '0' && t[0] == '-' && Builtin.zeroPadsAfterSign(value)) {
                     out[0] = '-';
                     out[pad] = '0';
                 }
@@ -2354,6 +2407,234 @@ public final class Interpreter {
                     out[i] = new StructV(new Object[] {Values.copy(xa[i], meter), Values.copy(xb[i], meter)});
                 }
                 return new ListV(out, n);
+            }
+            case ABS_DIFF -> {
+                Object a = eval(args.get(0).expr(), slots);
+                Object b = eval(args.get(1).expr(), slots);
+                if (Type.isFloat(c.type)) return round(Math.abs((Double) a - (Double) b), c.type);
+                PrimKind k = Type.kind(c.type);
+                java.math.BigInteger d = IntOps.toBig(k, (Long) a).subtract(IntOps.toBig(k, (Long) b)).abs();
+                if (k.signed && d.bitLength() > k.bits - 1) throw IntOps.overflow(c.span, k, "abs_diff");
+                return d.longValue();
+            }
+            case SIGN -> {
+                Object v = eval(args.get(0).expr(), slots);
+                if (Type.isFloat(c.type)) {
+                    double d = (Double) v;
+                    return d > 0 ? 1.0 : d < 0 ? -1.0 : d;
+                }
+                long x = (Long) v;
+                return x == 0 ? 0L : Type.kind(c.type).signed && x < 0 ? -1L : 1L;
+            }
+            case POW_MOD -> {
+                long b = (Long) eval(args.get(0).expr(), slots);
+                long e = (Long) eval(args.get(1).expr(), slots);
+                long m = (Long) eval(args.get(2).expr(), slots);
+                return Stdlib.powMod(Type.kind(c.type), b, e, m, c.span, meter);
+            }
+            case MEAN, MEDIAN, VARIANCE, STDDEV -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                if (n == 0) {
+                    throw new Trap(Code.R0013, c.span, c.builtin.name + "() of an empty " + (xs instanceof ListV ? "list" : "array"));
+                }
+                PrimKind k = Type.kind(Type.elementOf(args.get(0).expr().type));
+                double[] d = new double[n];
+                for (int i = 0; i < n; i++) d[i] = Stdlib.toF64(k, items[i]);
+                meter.elements(n);
+                if (c.builtin == Builtin.MEDIAN) {
+                    meter.elements((long) n * (64 - Long.numberOfLeadingZeros(n)));
+                    return Stdlib.median(d);
+                }
+                double mean = Stdlib.mean(d);
+                if (c.builtin == Builtin.MEAN) return mean;
+                meter.elements(n);
+                double v = Stdlib.variance(d, mean);
+                return c.builtin == Builtin.VARIANCE ? v : Math.sqrt(v);
+            }
+            case RANDOM_U64, RANDOM_INT, RANDOM_F64 -> {
+                Ref rng = ref(args.get(0).expr(), slots);
+                long[] state = {(Long) rng.get()};
+                Object r;
+                if (c.builtin == Builtin.RANDOM_INT) {
+                    long lo = (Long) eval(args.get(1).expr(), slots);
+                    long hi = (Long) eval(args.get(2).expr(), slots);
+                    if (lo > hi) {
+                        throw new Trap(Code.R0013, c.span, "random_int() needs lo <= hi, found lo " + lo + " and hi " + hi);
+                    }
+                    r = Stdlib.randomInt(state, lo, hi);
+                } else {
+                    long x = Stdlib.nextRandom(state);
+                    r = c.builtin == Builtin.RANDOM_U64 ? (Object) x : (Object) ((x >>> 11) * 0x1.0p-53);
+                }
+                rng.set(state[0]);
+                return r;
+            }
+            case SHUFFLE -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                Ref rng = ref(args.get(1).expr(), slots);
+                long[] state = {(Long) rng.get()};
+                Stdlib.shuffle(xs, state, meter);
+                rng.set(state[0]);
+                return null;
+            }
+            case GROUP_DIGITS -> {
+                long n = (Long) eval(args.get(0).expr(), slots);
+                byte[] sep = Stdlib.pattern(eval(args.get(1).expr(), slots), meter);
+                return text(c, Codecs.groupDigits(IntOps.toString(Type.kind(args.get(0).expr().type), n), sep));
+            }
+            case BASE64_ENCODE, HEX_ENCODE, URL_ENCODE, SHA256, CRC32 -> {
+                Object v = eval(args.get(0).expr(), slots);
+                byte[] in = Codecs.bytesOf(v);
+                meter.bytes(in.length);
+                return switch (c.builtin) {
+                    case BASE64_ENCODE -> text(c, Codecs.base64Encode(in));
+                    case HEX_ENCODE -> text(c, Codecs.hexEncode(in));
+                    case URL_ENCODE -> text(c, Codecs.urlEncode((StrV) v));
+                    case SHA256 -> new StrV(Codecs.sha256(in), 64);
+                    default -> Codecs.crc32(in);
+                };
+            }
+            case BASE64_DECODE, HEX_DECODE, URL_DECODE -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                meter.bytes(s.len);
+                byte[] out = switch (c.builtin) {
+                    case BASE64_DECODE -> Codecs.base64Decode(s);
+                    case HEX_DECODE -> Codecs.hexDecode(s);
+                    default -> Codecs.urlDecode(s);
+                };
+                if (out == null) return option(null);
+                int cap = ((Type.Str) ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0)).cap();
+                return option(new StrV(Arrays.copyOf(out, cap), out.length));
+            }
+            case IS_LEAP_YEAR -> {
+                return Codecs.isLeapYear((Long) eval(args.get(0).expr(), slots));
+            }
+            case DAYS_IN_MONTH -> {
+                long y = (Long) eval(args.get(0).expr(), slots);
+                long m = (Long) eval(args.get(1).expr(), slots);
+                if (m < 1 || m > 12) throw new Trap(Code.R0013, c.span, "days_in_month() needs a month from 1 to 12, found " + m);
+                return Codecs.daysInMonth(y, m);
+            }
+            case ADD_MONTHS -> {
+                long z = (Long) eval(args.get(0).expr(), slots);
+                long n = (Long) eval(args.get(1).expr(), slots);
+                if (z < Stdlib.MIN_DAYS || z > Stdlib.MAX_DAYS) {
+                    throw new Trap(Code.R0013, c.span, "add_months() needs " + Stdlib.MIN_DAYS + " to " + Stdlib.MAX_DAYS
+                        + " days, the years 1 to 9999, found " + z);
+                }
+                long r = Codecs.addMonths(z, n);
+                if (r == Long.MIN_VALUE) {
+                    throw new Trap(Code.R0013, c.span, "add_months() of " + n + " months leaves the years 1 to 9999");
+                }
+                return r;
+            }
+            case FORMAT_DATE -> {
+                long z = (Long) eval(args.get(0).expr(), slots);
+                if (z < Stdlib.MIN_DAYS || z > Stdlib.MAX_DAYS) {
+                    throw new Trap(Code.R0013, c.span, "format_date() needs " + Stdlib.MIN_DAYS + " to " + Stdlib.MAX_DAYS
+                        + " days, the years 1 to 9999, found " + z);
+                }
+                meter.bytes(10);
+                return new StrV(Codecs.formatDate(z), 10);
+            }
+            case FORMAT_DATETIME -> {
+                long t = (Long) eval(args.get(0).expr(), slots);
+                if (t < Codecs.MIN_SECONDS || t > Codecs.MAX_SECONDS) {
+                    throw new Trap(Code.R0013, c.span, "format_datetime() needs " + Codecs.MIN_SECONDS + " to " + Codecs.MAX_SECONDS
+                        + " seconds, the years 1 to 9999, found " + t);
+                }
+                meter.bytes(20);
+                return new StrV(Codecs.formatDateTime(t), 20);
+            }
+            case PARSE_DATETIME -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                meter.bytes(Math.min(s.len, 64));
+                long t = Codecs.parseDateTime(s);
+                return option(t == Long.MIN_VALUE ? null : t);
+            }
+            case NEXT_PERMUTATION -> {
+                Object xs = ref(args.get(0).expr(), slots).get();
+                return Stdlib.nextPermutation(xs, args.get(0).expr().type, meter);
+            }
+            case NEXT_COMBINATION -> {
+                Object idx = ref(args.get(0).expr(), slots).get();
+                long n = (Long) eval(args.get(1).expr(), slots);
+                Object[] items = idx instanceof ListV l ? l.items : ((ArrV) idx).items;
+                int k = idx instanceof ListV l ? l.len : items.length;
+                if (n < 0 || k > n) {
+                    throw new Trap(Code.R0013, c.span, "next_combination() needs 0 <= len(idx) <= n, found " + k + " positions and n " + n);
+                }
+                meter.elements(k);
+                for (int i = k - 1; i >= 0; i--) {
+                    if ((Long) items[i] < n - k + i) {
+                        items[i] = (Long) items[i] + 1;
+                        for (int j = i + 1; j < k; j++) items[j] = (Long) items[j - 1] + 1;
+                        return true;
+                    }
+                }
+                for (int j = 0; j < k; j++) items[j] = (long) j;
+                return false;
+            }
+            case UNIQUE -> {
+                Stdlib.unique(ref(args.get(0).expr(), slots).get(), args.get(0).expr().type, meter);
+                return null;
+            }
+            case FREQUENCIES -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Type.MapT mt = (Type.MapT) c.type;
+                return Stdlib.frequencies(xs, mt, c.span, meter);
+            }
+            case PREFIX_SUMS -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+                int n = xs instanceof ListV l ? l.len : items.length;
+                PrimKind k = Type.kind(Type.elementOf(c.type));
+                Object[] out = new Object[items.length];
+                Object total = k.isFloat ? (Object) 0.0 : (Object) 0L;
+                meter.slots(items.length);
+                for (int i = 0; i < n; i++) {
+                    meter.elements(1);
+                    total = arith(BinOp.ADD, k, k, total, items[i], c.span);
+                    out[i] = total;
+                }
+                return xs instanceof ListV ? new ListV(out, n) : new ArrV(out);
+            }
+            case FIRST, LAST -> {
+                Object xs = eval(args.get(0).expr(), slots);
+                int n = length(xs);
+                if (n == 0) return option(null);
+                return option(Values.copy(element(xs, c.builtin == Builtin.FIRST ? 0 : n - 1), meter));
+            }
+            case IS_ASCII -> {
+                Object v = eval(args.get(0).expr(), slots);
+                if (v instanceof StrV str) {
+                    meter.bytes(str.len);
+                    for (int i = 0; i < str.len; i++) if (str.b[i] < 0) return false;
+                    return true;
+                }
+                return (Long) v < 128;
+            }
+            case EQ_IGNORE_CASE -> {
+                StrV a = (StrV) eval(args.get(0).expr(), slots);
+                StrV b = (StrV) eval(args.get(1).expr(), slots);
+                if (a.len != b.len) return false;
+                meter.bytes(a.len);
+                for (int i = 0; i < a.len; i++) {
+                    if (Stdlib.toLower(a.b[i] & 0xFF) != Stdlib.toLower(b.b[i] & 0xFF)) return false;
+                }
+                return true;
+            }
+            case CAPITALIZE -> {
+                StrV s = (StrV) eval(args.get(0).expr(), slots);
+                meter.bytes(s.len);
+                byte[] out = Arrays.copyOf(s.b, ((Type.Str) c.type).cap());
+                for (int i = 0; i < s.len; i++) {
+                    int ch = s.b[i] & 0xFF;
+                    out[i] = (byte) (i == 0 ? Stdlib.toUpper(ch) : Stdlib.toLower(ch));
+                }
+                return new StrV(out, s.len);
             }
             case ASSERT_EQ -> throw new IllegalStateException("assert_eq is an assert statement");
             case PANIC -> {

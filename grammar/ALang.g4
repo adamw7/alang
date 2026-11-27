@@ -380,6 +380,8 @@ postfixOp
 primary
     : literal                                                           # literalExpr
     | primitiveType LPAREN expression RPAREN                            # conversionExpr
+    | primitiveType DOT identifier                                      # typeConstExpr
+    // i64.MAX, u8.MIN, f64.PI, f64.INFINITY: a constant of a number type.
     // str[16](s), list[i64; 8](xs): the same text or elements with another capacity; traps if too long.
     | STR LBRACK expression RBRACK LPAREN expression RPAREN               # strResizeExpr
     | LIST LBRACK type SEMI expression RBRACK LPAREN expression RPAREN    # listResizeExpr

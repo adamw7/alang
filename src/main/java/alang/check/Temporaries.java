@@ -253,6 +253,8 @@ final class Temporaries {
                 long keys = Type.isAggregate(c.fnArgResult()) ? 2 * Layout.size(c.fnArgResult()) : 0;
                 yield Layout.add(Type.isAggregate(elem) ? Layout.size(elem) : 0, keys);
             }
+            // The copy of the numbers that is sorted to find the middle.
+            case MEDIAN -> Layout.mul(8, args.get(0).expr().type instanceof Type.ArrayT a ? a.len() : Type.capacity(args.get(0).expr().type));
             // The compiled pattern and the state of the machine that runs it: one al_re of the C prelude.
             case RE_MATCH, RE_FIND, RE_REPLACE, RE_SPLIT -> RE_STATE;
             // The exact decimal digits of a float and of the midpoints to its neighbours (al_json_float).

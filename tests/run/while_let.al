@@ -25,7 +25,7 @@ fn main() {
     var stack: list[i64; 4] = xs;
     var total: i64 = 0;
     // Exactly as many iterations as the limit: the final test that does not match does not count.
-    while let Option.Some(top) = last(stack) limit 4 {
+    while let Option.Some(top) = back(stack) limit 4 {
         total += top;
         let _gone: i64 = pop(mut stack);
     }
@@ -54,7 +54,7 @@ fn main() {
     }
 }
 
-fn last(xs: list[i64; 4]) -> Option<i64> {
+fn back(xs: list[i64; 4]) -> Option<i64> {
     if len(xs) == 0 {
         return Option.None;
     }

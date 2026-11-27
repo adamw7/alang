@@ -461,7 +461,7 @@ the call site** (the caller broke the contract). `ensures` clauses are checked o
 reported at the clause, with the returned value.
 
 ```
-fn isqrt(x: i64) -> i64
+fn int_sqrt(x: i64) -> i64
     requires x >= 0
     ensures result * result <= x
 {
@@ -503,6 +503,12 @@ while `a & b == 0`, `a < b < c`, `a and b or c` and `x << 2 + 1` are syntax erro
 
 **Conversions** are calls to a primitive type: `i64(x)`, `u8(n)`, `f64(count)`; and to a capacity:
 `str[16](s)`, `list[i64; 8](xs)`.
+
+**Constants of the number types** are written after the type with a dot, and have that type: `i8.MIN` to
+`u64.MAX` for every integer type (`MIN` and `MAX`), and for `f32` and `f64` `PI`, `TAU` (2π), `E`,
+`INFINITY`, `NAN`, `EPSILON` (the gap between 1.0 and the next value), `MAX` (the largest finite value),
+`MIN` (`-MAX`) and `MIN_POSITIVE` (the smallest normal value). `var best: i64 = i64.MAX;` starts a search
+for a smallest value; `i64::MAX` is E0001 with a fix, `Math.PI` an unknown name with a hint.
 
 | From → To | Behavior |
 |-----------|----------|
@@ -593,7 +599,8 @@ order:
 **The same program with the same tool arguments produces the same output bytes and the same trap, every
 time, everywhere:**
 
-- **No sources of nondeterminism:** no clock, random numbers, environment, file or network I/O, threads,
+- **No sources of nondeterminism:** no clock, random numbers (the generator of `random_u64` and its kin is
+  seeded by the program, §9.2), environment, file or network I/O, threads,
   hash-ordered collections, addresses or uninitialized memory. The only effect is `print`; the only
   inputs are a tool call's arguments, the standard input that `alang run` passes to a
   `fn main(input: str[N])`, read whole before main starts, and the replies to `host fn` calls (§10.1),
@@ -663,6 +670,7 @@ them all.
 | `product(xs) -> T` | The elements multiplied left to right, as `*` multiplies them, in their type; 1 if it is empty. An integer product that does not fit traps (R0001). |
 | `clamp(x, lo, hi) -> T` | `lo` if `x < lo`, `hi` if `x > hi`, else `x`; same-type numbers. Traps (R0013) unless `lo <= hi`, so a NaN bound traps. |
 | `pow(x, n) -> T` | `x` (any integer type) to the power `n` (any integer type); `pow(0, 0)` is 1. Traps if `n < 0` (R0013) or the result does not fit (R0001). For an `f32`/`f64` `x`, `n` is a float of the same type (`pow(2.0, 0.5)`, `pow(x, 3.0)`) and nothing traps: the special cases are C99's (`pow(-8.0, 0.5)` is NaN, `pow(0.0, -1.0)` is `inf`), an integer `n` gives the correctly rounded power (`pow(2.0, 10.0)` is `1024.0`), and `pow(x, 0.5)` is `sqrt(x)`. |
+| `isqrt(n) -> T` | The integer square root of an integer `n >= 0`, of any type: the largest `r` with `r * r <= n`, exact for every value (`isqrt(17)` is 4). Traps (R0013) if `n` is negative. |
 | `gcd(a, b) -> T` | Greatest common divisor of same-type integers, never negative; `gcd(0, 0)` is 0. `gcd(x, 0)` for the minimum `x` does not fit and traps (R0001). |
 | `lcm(a, b) -> T` | Least common multiple, never negative; 0 if either is 0. Traps if it does not fit (R0001). |
 | `wrapping_add(a, b)`, `wrapping_sub(a, b)`, `wrapping_mul(a, b)` | Same-type integers; the exact result wrapped around to the type (modulo 2^bits), so they never trap: `wrapping_add(u8(250), 10)` is `4`, `wrapping_mul(h, 16777619)` is the multiply of 32-bit FNV. |
@@ -671,9 +679,15 @@ them all.
 | `rem_euclid(a, m) -> T` | Same-type integers; the remainder of `a / m` that is never negative, `0 <= r < abs(m)`: `rem_euclid(-1, 5)` is `4`, where `-1 % 5` is `-1`. Wraps an index around: `xs[rem_euclid(i + k, n)]`. Traps (R0002) if `m` is 0. |
 | `div_euclid(a, m) -> T` | The quotient that goes with it, `a == div_euclid(a, m) * m + rem_euclid(a, m)`: `div_euclid(-7, 2)` is `-4`, where `-7 / 2` is `-3`. Traps (R0002) if `m` is 0, and (R0001) where `/` overflows. |
 | `mul_mod(a, b, m) -> T` | Same-type integers; `(a * b) mod m` computed exactly however large `a * b` is, from 0 to `m - 1` (`a` and `b` reduced as `rem_euclid` reduces them). Traps (R0013) unless `m > 0`. |
+| `pow_mod(b, e, m) -> T` | Same-type integers; `b` to the power `e`, mod `m`, exactly however large the power is (by squaring with `mul_mod`), from 0 to `m - 1`, `b` reduced as `rem_euclid` reduces it: `pow_mod(2, 10, 1000)` is 24, `pow_mod(x, 0, m)` is `1 % m`. Traps (R0013) unless `e >= 0` (first) and `m > 0`. |
+| `abs_diff(a, b) -> T` | Same-type numbers; the distance `abs(a - b)`, without the subtraction that could trap first: `abs_diff(u8(3), 5)` is 2, where `u8(3) - 5` traps. Never traps for unsigned integers or floats; for signed ones, traps (R0001) when the distance does not fit, as `abs_diff(i64.MIN, 0)` does. |
+| `sign(x) -> T` | -1, 0 or 1 as the number `x` is negative, zero or positive, in its type (0 or 1 when unsigned); for a float -1.0 or 1.0, and `x` itself when it is 0.0, -0.0 or NaN. |
 | `count_ones(x) -> i64` | The number of 1 bits of an integer over the bits of its type (two's complement for a signed one): `count_ones(i8(-1))` is 8. |
 | `leading_zeros(x) -> i64`, `trailing_zeros(x) -> i64` | The 0 bits above the highest 1 bit, or below the lowest, over the bits of the type: `leading_zeros(u8(1))` is 7, `trailing_zeros(u8(8))` is 3; the number of bits for 0. |
 | `rotl(x, n) -> T`, `rotr(x, n) -> T` | The bits of the integer `x` rotated left or right by `n` (any integer), the bits that leave at one end coming back at the other: `rotl(u8(0x81), 1)` is `0x03`. `n` is taken as `rem_euclid(n, bits)`, so a negative `n` rotates the other way. Never trap. |
+| `mean(xs) -> f64` | The mean of a non-empty array or list of numbers of any type: the elements converted with `f64(x)` and added first to last, then divided by their number. Traps (R0013) if it is empty. |
+| `median(xs) -> f64` | The middle element of a non-empty array or list of numbers, in the order of `sort`, as an `f64`; for an even number of them `(a + b) / 2.0` of the two in the middle. `xs` is left as it is. Traps (R0013) if it is empty. |
+| `variance(xs) -> f64`, `stddev(xs) -> f64` | The population variance of a non-empty array or list of numbers, the mean of `(f64(x) - mean(xs))^2` with the terms added first to last (divided by n, not n - 1), and its square root. Traps (R0013) if it is empty. |
 | `sqrt(x)`, `floor(x)`, `ceil(x)` | On `f32`/`f64`, correctly rounded. |
 | `round(x)`, `trunc(x)` | On `f32`/`f64`, exact: `round` halves away from zero (`round(2.5)` is `3.0`, `round(-0.5)` is `-1.0`); `trunc` drops the fraction (`trunc(-2.7)` is `-2.0`). |
 | `exp(x)`, `log(x)`, `log2(x)`, `log10(x)` | On `f32`/`f64`: e^x and the logarithms; `log` of 0 is `-inf` and of a negative number NaN. `log2` of a power of two and `log10` of a power of ten are exact. |
@@ -681,12 +695,26 @@ them all.
 | `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y, x)` | On `f32`/`f64`, in radians: `asin` and `atan` from -pi/2 to pi/2, `acos` from 0 to pi (NaN outside -1..1), `atan2` the angle of the point (x, y) from -pi to pi. |
 | `is_nan(x)`, `is_finite(x)` | On `f32`/`f64`. |
 
+**Pseudo-random numbers** come from a generator whose state is a `u64` (or `i64`) variable of the program,
+passed as `mut` and advanced by each call: SplitMix64, so a seed gives the same numbers on every run and
+backend, and there is no hidden state. `var rng: u64 = 42;` starts one.
+
+| Function | Description |
+|----------|-------------|
+| `random_u64(mut rng) -> u64` | The next number of the generator. |
+| `random_int(mut rng, lo, hi) -> i64` | A number from `lo` to `hi` (two `i64`), both included, every value equally likely: a draw below 2^64 mod the size of the range is drawn again. Traps (R0013) unless `lo <= hi`. |
+| `random_f64(mut rng) -> f64` | A number from 0.0 (included) to 1.0 (excluded): the top 53 bits of the next draw times 2^-53. |
+| `shuffle(mut xs, mut rng)` | Puts the elements of a list or array (bytes of a str) in a random order, every order equally likely: Fisher-Yates from the last element down, element `i` exchanged with `random_int(mut rng, 0, i)`. |
+
+Each is a call with `mut` arguments, so it is its own statement or the whole right side of a `let` (rule
+11): `let die: i64 = random_int(mut rng, 1, 6);`.
+
 The elementary functions are within one unit in the last place of the exact result (`tan` within two), and the
 same bits everywhere: ALang computes them itself (`exp`, `log`, `log10`, `sin`, `cos`, `asin`, `acos`, `atan` and
 `atan2` as fdlibm does, see THIRD-PARTY-NOTICES), and an `f32` result is the `f64` one rounded once.
 
 A literal argument takes the type of the other arguments or, for `min`, `max`, `clamp`, `pow`, `gcd`,
-`lcm`, `rem_euclid`, `div_euclid`, `mul_mod`, `rotl`, `rotr` and the wrapping and saturating functions, of the variable the result is
+`lcm`, `rem_euclid`, `div_euclid`, `mul_mod`, `pow_mod`, `abs_diff`, `sign`, `rotl`, `rotr` and the wrapping and saturating functions, of the variable the result is
 stored in: `let b: u8 = pow(2, 7);`.
 
 ### 9.3 Characters
@@ -699,6 +727,9 @@ so every other byte is not a letter, digit or space and is left as it is.
 | `is_digit(c)`, `is_alpha(c)`, `is_alnum(c)` | `0-9`; `a-z` and `A-Z`; either. |
 | `is_upper(c)`, `is_lower(c)` | `A-Z`; `a-z`. |
 | `is_space(c)` | Space, `\t`, `\n`, `\r`, `\x0b` or `\x0c`. |
+| `is_hex_digit(c)` | `0-9`, `a-f` or `A-F`. |
+| `is_punct(c)` | A printable ASCII character that is no letter, digit or space: ``!"#$%&'()*+,-./:;<=>?@[\]^_`{\|}~``. |
+| `is_ascii(x)` | A `u8` below 128, or a str whose every byte is. |
 | `to_upper(x)`, `to_lower(x)` | A `u8`, or every byte of a `str[N]`, with its case changed; the same type back. |
 
 ### 9.4 Text
@@ -710,7 +741,7 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | Function | Description |
 |----------|-------------|
 | `contains(xs, x) -> bool` | In a str, whether the pattern `x` occurs (the empty str always does); in an array or list, whether an element `== x`. |
-| `index_of(xs, x) -> i64` | Where the first occurrence starts, as for `contains`, or -1. |
+| `index_of(xs, x) -> i64` | Where the first occurrence starts, as for `contains`, or -1. `index_of(xs, x, from)` looks from position `from` on (of any integer type) and still counts from the start: `index_of("abab", "b", 2)` is 3. Traps (R0003) unless `0 <= from <= len(xs)`. |
 | `last_index_of(xs, x) -> i64` | Where the last occurrence starts, or -1; `len(xs)` for the empty str. |
 | `count(xs, x) -> i64` | In a str, the non-overlapping occurrences of the pattern `x`, left to right (`count("aaaa", "aa")` is 2); traps (R0013) if `x` is an empty str. In an array or list, the elements `== x`. |
 | `starts_with(s, p) -> bool`, `ends_with(s, p) -> bool` | Whether the str `s` begins or ends with the pattern `p`. |
@@ -740,6 +771,14 @@ replaces or puts in, is a **pattern**: a str, or one `u8` byte (`split(line, ','
 | `parse_i64(s) -> Option<i64>` | `Option.Some(i64(s))` when `is_int(s)`, else `Option.None`: never traps. Strict, as `i64(s)` is: `trim` first. |
 | `parse_i64(s, base) -> Option<i64>` | The same in a base from 2 to 36 (any integer type; R0013 otherwise): an optional `+` or `-`, then at least one digit, `0`-`9` then `a`-`z` or `A`-`Z`, with no prefix such as `0x`. `parse_i64("ff", 16)` is `Option.Some(255)`, `parse_i64("-101", 2)` is `Option.Some(-5)`. |
 | `hash(s) -> u64` | The 64-bit FNV-1a hash of the bytes of a str, or of an array or list of `u8`: the same number on every run and machine; `hash("")` is 14695981039346656037. Not for secrets. |
+| `sha256(data) -> str[64]` | The SHA-256 digest (FIPS 180-4) of the bytes of a str, or of an array or list of `u8`, as 64 lowercase hexadecimal digits. |
+| `crc32(data) -> u32` | The CRC-32 of the bytes of a str, or of an array or list of `u8`, as zlib, gzip and PNG compute it: `crc32("123456789")` is 3421780262. |
+| `base64_encode(data)`, `hex_encode(data)` | The Base64 text (RFC 4648: `A-Z`, `a-z`, `0-9`, `+`, `/`, padded with `=`) or the two lowercase hexadecimal digits of each byte of a str, or of an array or list of `u8`: `base64_encode("hi")` is `aGk=`, `hex_encode("Hi")` is `4869`. They make text (§9.6). |
+| `base64_decode(s)`, `hex_decode(s)` -> `Option<str[N]>` | The bytes that the Base64 or hexadecimal text `s` stands for, as `Option.Some` of a str of the capacity of `s`, or `Option.None` for any other text: Base64 needs a multiple of 4 characters, `=` only in the last two places, and no spaces or newlines; hex an even number of digits, of either case. |
+| `url_encode(s)` | `s` with every byte but `A-Z`, `a-z`, `0-9` and `- . _ ~` written `%XX` with uppercase digits (RFC 3986), for a URL path or query part: `url_encode("a b&c")` is `a%20b%26c`. It makes text (§9.6). |
+| `url_decode(s) -> Option<str[N]>` | `s` with each `%XX` (either case) replaced by its byte, as `Option.Some` of a str of the capacity of `s`, or `Option.None` when a `%` is not followed by two hexadecimal digits. A `+` stays a `+`. |
+| `eq_ignore_case(a, b) -> bool` | Whether two strs are equal but for the case of ASCII letters. |
+| `capitalize(s) -> str[N]` | `s` with its first byte uppercase and the rest lowercase (ASCII letters only), of the type of `s`: `capitalize("hELLO")` is `Hello`. |
 | `parse_f64(s) -> Option<f64>` | `Option.Some(f64(s))` when `is_float(s)`, else `Option.None`: never traps. |
 | `fixed(x, n)`, `pad_left(v, w, fill)`, `pad_right(v, w, fill)` | Formatted text (§9.6). |
 
@@ -832,7 +871,12 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 | `sort(mut xs)` | Sorts a list, array or str in place, ascending, in the order below. |
 | `reverse(mut xs)` | Reverses a list, array or str in place. |
 | `dedup(mut xs)` | Removes each element of a list (byte of a str) that is `==` to the one before it, keeping the first of each run and the order. After `sort`, every value is left once. |
+| `unique(mut xs)` | Removes each element of a list (byte of a str) that is `==` to any before it, keeping the first of each and their order, with no sort needed: `[3, 1, 3, 2, 1]` becomes `[3, 1, 2]`. About n * k comparisons, for k values kept. |
+| `next_permutation(mut xs) -> bool` | Rearranges a list, array or str into the next permutation in the order of `sort`, and returns true; from the last (descending) it goes back to the first (ascending) and returns false. Sorted first, `var more: bool = true; while more limit N { ...; more = next_permutation(mut xs); }` visits each distinct order once; equal elements give no repeats. |
+| `next_combination(mut idx, n) -> bool` | Advances `idx`, a list or array of k increasing `i64` positions in 0 to n - 1, to the next k of n in lexicographic order, and returns true; from the last one it goes back to `[0, 1, ..., k - 1]` and returns false. Start from `[0, 1, ..., k - 1]`. Traps (R0013) unless `0 <= k <= n`. |
 | `sort_by(mut xs, before)` | Sorts a list or array in place into the order of `before`, a function `fn(T, T) -> bool` passed by name that is true when its first argument must come before its second. Stable: elements neither comes before keep their order. A binary insertion sort: about n log2(n) calls of `before`, made in the same order on every backend. |
+| `sort_by_key(mut xs, key)` | Sorts a list or array in place by `key(x)`, a function `fn(T) -> K` passed by name, in the order `sort` gives the keys: `sort_by_key(mut people, age)`. Stable, as `sort_by` is. |
+| `heap_push(mut h, x)`, `heap_pop(mut h) -> T` | A list kept as a binary heap, a priority queue: `heap_push` adds `x` (traps if full, R0004), `heap_pop` removes and returns the smallest element in the order of `sort` (traps if empty, R0012), and `h[0]` is always the smallest. With a third (second) argument `before`, a function `fn(T, T) -> bool` as for `sort_by`, they order by it; pass the same one to both. About log2(len(h)) comparisons each. |
 | `binary_search(xs, x) -> i64` | In an array or list sorted as `sort` sorts it, the position of the first element `e` with `compare(e, x) == 0`, or -1. It looks at about log2(len(xs)) elements; on one that is not sorted it may miss an equal element, the same way on every backend. |
 | `any(xs, f) -> bool`, `all(xs, f) -> bool` | Whether `f(x)` is true for some (every) element `x` of an array or list; `f` is a function `fn(T) -> bool` passed by name: `any(xs, is_even)`. They call `f` from the first element on and stop at the first true (false); `any` of an empty one is false, `all` true. |
 | `count_if(xs, f) -> i64` | How many elements `x` of an array or list have `f(x)` true. |
@@ -852,6 +896,10 @@ the character classes (`is_alpha`, `to_upper`, ...) stay ASCII.
 | `fold(xs, init, f) -> A` | `f(...f(f(init, xs[0]), xs[1])..., xs[n - 1])`: the elements of an array or list combined first to last, with `f` a function `fn(A, T) -> A` passed by name; `init` when it is empty. `A` is the result type of `f`, which a literal `init` takes: `fold(xs, "", f)` with `f` returning a `str[32]`. |
 | `transform(xs, f)` | `f(x)` for each element `x` of an array or list, in order, with `f` a function `fn(T) -> U` passed by name: a `list[U; N]` of the length and capacity of the `list[T; N]` `xs`, or a `[U; N]` for an array. |
 | `zip(a, b) -> list[(A, B); N]` | The pairs `(a[i], b[i])` of two arrays or lists, as far as the shorter goes, in a list whose capacity `N` is the smaller of theirs (an array's is its length): `for (x, y) in zip(xs, ys) { }`. |
+| `prefix_sums(xs) -> T` | The running totals of an array or list of numbers, of its type: element `i` is `xs[0] + ... + xs[i]`, added as `+` adds them: `prefix_sums([1, 2, 3])` is `[1, 3, 6]`. A total that does not fit traps (R0001). |
+| `first(xs) -> Option<T>`, `last(xs) -> Option<T>` | `Option.Some` of the first (last) element of an array or list, or byte of a str, or `Option.None` when it is empty. |
+| `frequencies(xs) -> map[T, i64; N]` | Each element of an array or list (byte of a str) with the number of times it occurs, in key order; its type is that of the typed `let`/`var`/assignment/`return` it is the whole right side of, as for `split`: `let c: map[str[16], i64; 32] = frequencies(words);`. Traps (R0004) when there are more distinct elements than the map holds. |
+| `windows(xs, k)`, `chunks(xs, k)` | In a `for` loop only: each run of `k` consecutive elements of an array, list or str, one element on each time (`windows`), or the elements `k` at a time, the last piece shorter if they do not divide evenly (`chunks`): `for w in windows([1, 2, 3], 2) { }` gives `[1, 2]` and `[2, 3]`, `for c in chunks("abcde", 2) { }` gives `ab`, `cd` and `e`. Each piece is a list (a str for a str) of the capacity of `xs` (an array's is its length), and no list of pieces is built. `windows` gives none when `k > len(xs)`. `for i, w in windows(xs, k)` counts them. Traps (R0013) unless `k >= 1` (any integer type). |
 
 | `insert(mut m, k, v)`, `insert(mut s, x)` | Sets `k` to `v` in a map (as `m[k] = v`), or adds `x` to a set; a key or value already there is kept once. Traps (R0004) when a new one does not fit. |
 | `remove(mut m, k) -> bool`, `remove(mut s, x) -> bool` | Removes a key (with its value) or a value; whether it was there. |
@@ -901,14 +949,17 @@ The text of a value (for `print`, `append`, trap messages and the left/right val
 - a `u8` (a character literal too) as a number: add a character to a string with `push(mut s, 'a')`;
   `append(mut s, 'a')` appends `97` (warning W0303).
 
-Seven functions make text: with a width, a number of decimals or a base, a pattern repeated, the name of a
-variant, or JSON:
+These functions make text: with a width, a number of decimals or a base, digits in groups, a pattern
+repeated, the name of a variant, JSON, and the encodings `base64_encode`, `hex_encode` and `url_encode`
+(§9.4):
 
 | Function | Text |
 |----------|------|
 | `fixed(x, n)` | The f32 or f64 `x` with exactly `n` digits after the point, 0 to 20 (otherwise R0013), and no point for 0: its exact binary value rounded half to even, as above. `fixed(3.14159, 2)` is `3.14`, `fixed(2.5, 0)` is `2`, `fixed(2.675, 2)` is `2.67` (2.675 is stored as 2.67499...); `nan`, `inf`, `-inf`. |
 | `pad_left(v, w, fill)` | The text of the number, bool, str or `fixed(...)` `v`, as `print` writes it, with the `u8` byte `fill` in front up to `w` bytes; longer text is kept whole. `pad_left(7, 3, '0')` is `007`, `pad_left(-42, 6, '0')` is `-00042`: zeros padding a negative number, `fixed(...)` or `to_base(...)` go after its sign. A width above 1 048 576 traps (R0013). |
 | `pad_right(v, w, fill)` | The same with the fill after the text: `pad_right("ab", 4, '.')` is `ab..`. |
+| `pad_center(v, w, fill)` | The same with the fill split around the text, the odd byte after it: `pad_center("ab", 5, '*')` is `*ab**` (Python's `str.center` puts it before for some lengths). |
+| `group_digits(n, sep)` | The integer `n` in decimal with the pattern `sep` (a str or `u8` byte) between each group of three digits from the right, after any `-`: `group_digits(1234567, ',')` is `1,234,567`, `group_digits(-1000, ' ')` is `-1 000`. |
 | `to_base(n, base)` | The integer `n` in a base from 2 to 36 (otherwise R0013), with the digits `0`-`9` then `a`-`z`, no prefix, and a `-` before a negative `n`: `to_base(255, 16)` is `ff`, `to_base(-5, 2)` is `-101`. `pad_left(to_base(b, 16), 2, '0')` gives two hex digits. |
 | `variant_name(e)` | The name of the variant of the enum value `e`: `variant_name(Color.Red)` is `Red` (§9.4). |
 | `to_json(v)` | The JSON text of `v` (§9.4): `print(to_json(order));`. |
@@ -931,19 +982,30 @@ subtract to give the days between two dates and add to move one; nothing reads a
 | `date_from_days(days) -> (i64, i64, i64)` | The date `(year, month, day)` of a day: `let (y, m, d): (i64, i64, i64) = date_from_days(n);`. Traps (R0013) outside -719162 (0001-01-01) to 2932896 (9999-12-31). |
 | `weekday(days) -> i64` | The day of the week, as ISO 8601 numbers them: 1 for Monday to 7 for Sunday; `weekday(0)` is 4, a Thursday. Any `i64`. |
 | `parse_date(s) -> Option<i64>` | The days of the date written `YYYY-MM-DD` in `s`, exactly ten bytes, or `Option.None` for other text or a date that does not exist. |
+| `format_date(days) -> str[10]` | The date as `YYYY-MM-DD`, as `parse_date` reads it: `format_date(0)` is `1970-01-01`. Traps (R0013) outside the years 1 to 9999, as `date_from_days` does. |
+| `is_leap_year(y) -> bool` | Whether the year `y` (any `i64`) has a February 29: divisible by 4, and by 400 if by 100. |
+| `days_in_month(y, m) -> i64` | The days of month `m` of year `y`, 28 to 31. Traps (R0013) unless `1 <= m <= 12`. |
+| `add_months(days, n) -> i64` | The date `n` months later (earlier for a negative `n`), on the same day of the month, or on the last day of a shorter month: from 2026-01-31, one month on is 2026-02-28. Traps (R0013) unless both dates are in the years 1 to 9999. |
+
+Times are counted in seconds since 1970-01-01T00:00:00Z, an `i64`, in UTC, with no leap seconds: a day is
+86 400 of them, so `floor`-dividing by 86400 (`div_euclid`) gives the day.
+
+| Function | Description |
+|----------|-------------|
+| `parse_datetime(s) -> Option<i64>` | The seconds of an ISO 8601 / RFC 3339 date and time: `YYYY-MM-DD`, `T` (or `t` or a space), `HH:MM` or `HH:MM:SS` with any fraction of a second (dropped), then `Z` (or `z`), `+HH:MM`, `-HH:MM`, or nothing for UTC: `parse_datetime("2026-11-27T10:30:00+01:00")` is 1795771800. `Option.None` for any other text, or a date or time that does not exist (hours 0 to 23, minutes and seconds 0 to 59). |
+| `format_datetime(t) -> str[20]` | The instant as `YYYY-MM-DDTHH:MM:SSZ`, in UTC: `format_datetime(0)` is `1970-01-01T00:00:00Z`. Traps (R0013) outside the years 1 to 9999. |
 
 ```alang
-fn iso(days: i64) -> str[10] {
-    let (y, m, d): (i64, i64, i64) = date_from_days(days);
-    var s: str[10] = "";
-    append(mut s, pad_left(y, 4, '0'), "-", pad_left(m, 2, '0'), "-", pad_left(d, 2, '0'));
-    return s;
-}
-
 test "thirty days after a date" {
     let start: Option<i64> = parse_date("2024-02-15");
-    assert iso(unwrap_or(start, 0) + 30) == "2024-03-16";
+    assert format_date(unwrap_or(start, 0) + 30) == "2024-03-16";
     assert weekday(days_from_date(2024, 3, 16)) == 6;
+    assert format_date(add_months(days_from_date(2024, 1, 31), 1)) == "2024-02-29";
+}
+
+test "an instant in another zone" {
+    let t: Option<i64> = parse_datetime("2026-11-27T10:30:00+01:00");
+    assert format_datetime(unwrap_or(t, 0)) == "2026-11-27T09:30:00Z";
 }
 ```
 

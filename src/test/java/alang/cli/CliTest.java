@@ -827,13 +827,13 @@ class CliTest {
         // A precondition runs before any statement: its work is the call's.
         Path q = write("first.al", """
             /// Needs some text.
-            tool fn first(s: str[65536]) -> i64
+            tool fn check(s: str[65536]) -> i64
                 requires len(trim(s)) > 0
             {
                 return 1;
             }
             """);
-        Map<?, ?> error = (Map<?, ?>) ((Map<?, ?>) Json.parse(run("call", q.toString(), "first", "{\"s\": \"x\"}", "--max-steps", "100").out()))
+        Map<?, ?> error = (Map<?, ?>) ((Map<?, ?>) Json.parse(run("call", q.toString(), "check", "{\"s\": \"x\"}", "--max-steps", "100").out()))
             .get("error");
         assertEquals("R0011", error.get("code"), error.toString());
         assertEquals(BigInteger.valueOf(2), error.get("line"), error.toString());

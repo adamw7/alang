@@ -190,12 +190,15 @@ final class Uses {
                 case Call c when c.asStruct != null -> read(c.asStruct);
                 case Call c -> {
                     // A user function may read what it is given as `mut`, and so do pop, pop_front and remove, which
-                    // return part of it, and swap, which moves it; the other builtins that take `mut` only change it.
+                    // return part of it, swap, which moves it, and the random number generators, which read their state; the other builtins that take `mut` only change it.
                     // A call of a variable that holds a function value reads it, and so does a builtin given one.
                     if (c.fnParam != null) read.add(c.fnParam);
                     if (c.fnArgLocal != null) read.add(c.fnArgLocal);
                     boolean reads = c.builtin == null || c.builtin == Builtin.POP || c.builtin == Builtin.POP_FRONT
-                        || c.builtin == Builtin.REMOVE || c.builtin == Builtin.SWAP || c.builtin == Builtin.HEAP_POP;
+                        || c.builtin == Builtin.REMOVE || c.builtin == Builtin.SWAP || c.builtin == Builtin.HEAP_POP
+                        // The generators read their state, and the permutation steps the order they are in.
+                        || c.builtin == Builtin.RANDOM_U64 || c.builtin == Builtin.RANDOM_INT || c.builtin == Builtin.RANDOM_F64
+                        || c.builtin == Builtin.SHUFFLE || c.builtin == Builtin.NEXT_PERMUTATION || c.builtin == Builtin.NEXT_COMBINATION;
                     for (Arg a : c.args) {
                         if (a.mut()) {
                             written(a.expr());

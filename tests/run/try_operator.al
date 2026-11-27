@@ -51,7 +51,7 @@ fn guarded(flag: bool, s: str[8]) -> Option<bool> {
     return Option.Some(both or n > 100);
 }
 
-fn first<T>(xs: list[T; _]) -> Option<T> {
+fn front<T>(xs: list[T; _]) -> Option<T> {
     if len(xs) == 0 {
         return Option.None;
     }
@@ -59,7 +59,7 @@ fn first<T>(xs: list[T; _]) -> Option<T> {
 }
 
 fn first_twice<T>(xs: list[T; _]) -> Option<(T, T)> {
-    let x: T = first(xs)?;
+    let x: T = front(xs)?;
     return Option.Some((x, x));
 }
 
