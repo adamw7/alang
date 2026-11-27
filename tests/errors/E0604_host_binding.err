@@ -1,0 +1,21 @@
+error[E0604]: `cents` has type fn(str[8]) -> i64, but host fn `price` has type fn(str[16]) -> i64
+  --> tests/errors/E0604_host_binding.al:12:32
+   |
+12 | test "wrong type" with price = cents {
+   |                                ^^^^^
+  = hint: give cents exactly the parameter types and result of price, with fixed capacities and no `mut`
+
+error[E0604]: `flat` is not a host fn
+  --> tests/errors/E0604_host_binding.al:16:27
+   |
+16 | test "not a host fn" with flat = cents {
+   |                           ^^^^
+  = hint: `with` binds a function declared `host fn flat(...) -> T;` to one of your own
+
+error[E0604]: host fn `price` is bound twice in this test
+  --> tests/errors/E0604_host_binding.al:20:39
+   |
+20 | test "bound twice" with price = flat, price = flat {
+   |                                       ^^^^^
+  = hint: bind it once
+

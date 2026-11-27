@@ -32,6 +32,12 @@ public final class Interpreter {
 
     /** Told of each statement and trap; null when no debugger is attached, as for every run but `alang debug`. */
     private Debugger debugger;
+    /** Answers the calls of host fns that the running test does not bind. */
+    private Host host = Host.NONE;
+    /** In a test: the function each host fn it binds runs instead. */
+    private Map<FnDecl, FnDecl> bound = Map.of();
+    /** Every call of a host fn the host answered, or failed to: {"fn", "args", and "result" or "error"}. */
+    private final List<Object> hostCalls = new ArrayList<>();
     /** The trap the debugger was last told of, which every statement it unwinds through rethrows. */
     private Trap reported;
 
@@ -110,6 +116,24 @@ public final class Interpreter {
         this.source = source;
         this.out = out;
         this.meter = meter;
+    }
+
+    /** Sets the host that answers this run's calls of host fns. */
+    public void host(Host h) {
+        this.host = h;
+    }
+
+    /** Runs each host fn in {@code hosts} as the function it maps to, as a test that binds them does. */
+    public void bind(Map<FnDecl, FnDecl> hosts) {
+        this.bound = hosts;
+    }
+
+    /**
+     * The calls of host fns the host was asked, in order, as JSON: {"fn": name, "args": {...}, "result": reply}, or
+     * "error" with the failure in place of "result". {@link Host#replay} answers them again.
+     */
+    public List<Object> hostCalls() {
+        return hostCalls;
     }
 
     /**
@@ -217,12 +241,14 @@ public final class Interpreter {
         try {
             Object[] slots = new Object[t.locals.size()];
             callStack.push(new Frame(entry, t.span, t, slots));
+            bound = t.hosts;
             execBlock(t.body, slots);
             callStack.pop();
         } catch (Trap trap) {
             fillTrace(trap);
             got = trap;
         } finally {
+            bound = Map.of();
             flush();
         }
         Code want = t.expectedTrap;
@@ -290,11 +316,15 @@ public final class Interpreter {
             }
         }
         retVal = null;
-        try {
-            execBlock(f.body, slots);
-        } catch (Escape e) {
-            // `e?` met an Option.None or a Result.Err: the function returns it.
-            retVal = e.value;
+        if (f.host) {
+            retVal = hostCall(f, args, site);
+        } else {
+            try {
+                execBlock(f.body, slots);
+            } catch (Escape e) {
+                // `e?` met an Option.None or a Result.Err: the function returns it.
+                retVal = e.value;
+            }
         }
         Object result = retVal == null ? null : Values.coerce(retVal, f.ret, meter);
         retVal = null;
@@ -313,6 +343,46 @@ public final class Interpreter {
         }
         callStack.pop();
         return result;
+    }
+
+    /**
+     * A call of host fn f: the function a test binds it to runs, or else the host is asked, with the arguments as a
+     * JSON object, and its reply is read as f's result. A call with no reply traps R0015, a reply not of f's type
+     * R0016; both, and each reply, are recorded in {@link #hostCalls}.
+     */
+    private Object hostCall(FnDecl f, Object[] args, Span site) {
+        FnDecl impl = bound.get(f);
+        if (impl != null) return invoke(impl, args, site);
+        step(site);
+        Map<String, Object> json = new LinkedHashMap<>();
+        for (int i = 0; i < f.paramVars.size(); i++) {
+            // Written as to_json writes it, as the C backend does: a NaN or a str that is not UTF-8 traps (R0013).
+            LocalVar p = f.paramVars.get(i);
+            ByteArrayOutputStream text = new ByteArrayOutputStream();
+            JsonText.write(text, args[i], p.type, site, meter);
+            json.put(p.name, alang.util.Json.parse(text.toString(StandardCharsets.UTF_8)));
+        }
+        Map<String, Object> rec = new LinkedHashMap<>();
+        rec.put("fn", f.name);
+        rec.put("args", json);
+        hostCalls.add(rec);
+        Object reply;
+        try {
+            reply = host.call(f.name, json);
+        } catch (Host.Failure e) {
+            rec.put("error", e.getMessage());
+            throw new Trap(Code.R0015, site, "host fn `" + f.name + "` failed: " + e.getMessage());
+        }
+        rec.put("result", reply);
+        // Reading the reply costs what reading its text would.
+        meter.bytes(alang.util.Json.write(reply).length());
+        if (f.ret instanceof Type.Void) return null;
+        try {
+            return JsonValues.fromJson(reply, f.ret, "reply");
+        } catch (JsonValues.DecodeException e) {
+            throw new Trap(Code.R0016, site, "host fn `" + f.name + "` replied with JSON that is not " + f.ret + ": "
+                + e.getMessage());
+        }
     }
 
     // =================================================================== statements

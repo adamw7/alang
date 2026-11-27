@@ -30,15 +30,18 @@ final class ToolExamples {
             for (Call c : callsIn(t.body)) {
                 if (examples.size() == MAX) return examples;
                 if (c.fn != tool || !c.args.stream().allMatch(a -> ToolDefinitions.isConstant(a.expr()))) continue;
-                Map<String, Object> example = example(tool, c, src, maxSteps);
+                Map<String, Object> example = example(tool, c, t, src, maxSteps);
                 if (example != null && seen.add(Json.write(example))) examples.add(example);
             }
         }
         return examples;
     }
 
-    /** The arguments of {@code c} as a JSON object, or null if the call traps or its result is not JSON. */
-    private static Map<String, Object> example(FnDecl tool, Call c, Source src, long maxSteps) {
+    /**
+     * The arguments of {@code c} as a JSON object, or null if the call traps or its result is not JSON. It runs as in
+     * test {@code t}, with the functions the test binds its host fns to.
+     */
+    private static Map<String, Object> example(FnDecl tool, Call c, TestDecl t, Source src, long maxSteps) {
         Object[] args = new Object[tool.paramVars.size()];
         Map<String, Object> json = new LinkedHashMap<>();
         try {
@@ -49,6 +52,7 @@ final class ToolExamples {
                 if (c.given < 0 || i < c.given) json.put(p.name, JsonValues.toJson(args[i], p.type));
             }
             Interpreter in = new Interpreter(src, OutputStream.nullOutputStream(), maxSteps);
+            in.bind(t.hosts);
             Object result = in.call(tool, args, c.span);
             if (!(tool.ret instanceof Type.Void)) JsonValues.toJson(result, tool.ret);
         } catch (Trap | JsonValues.EncodeException unusable) {

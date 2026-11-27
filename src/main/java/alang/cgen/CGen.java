@@ -5,6 +5,7 @@ import alang.ast.Builtin;
 import alang.diag.*;
 import alang.interp.Format;
 import alang.interp.Interpreter;
+import alang.interp.JsonValues;
 import alang.interp.Values.*;
 import alang.types.*;
 import java.io.*;
@@ -127,7 +128,7 @@ public final class CGen {
                 args.add("&al_input");
             }
             // A failed `requires` of main is reported at its name, as the interpreter does.
-            if (!main.requires.isEmpty()) args.add(loc(main.nameSpan));
+            if (takesSite(main)) args.add(loc(main.nameSpan));
             sb.append("    al_f_main(").append(String.join(", ", args)).append(");\n");
         }
         sb.append("    al_flush();\n    return 0;\n}\n");
@@ -793,11 +794,19 @@ public final class CGen {
             else if (Type.isAggregate(p.type)) ps.add("const " + t + " *" + cName(p));
             else ps.add(t + " " + cName(p));
         }
-        if (!f.requires.isEmpty()) {
+        if (takesSite(f)) {
             ps.add("int al_call_line");
             ps.add("int al_call_col");
         }
         return "static " + ret + " " + fnName(f) + "(" + (ps.isEmpty() ? "void" : String.join(", ", ps)) + ")";
+    }
+
+    /**
+     * Whether calls of f pass where they are, for a trap f reports there: a failed `requires`, or a host fn's call that
+     * gets no reply.
+     */
+    private static boolean takesSite(FnDecl f) {
+        return !f.requires.isEmpty() || f.host;
     }
 
     private void prototype(FnDecl f) {
@@ -810,6 +819,12 @@ public final class CGen {
         indent = 1;
         tmpCount = 0;
         boolean exitLabel = !f.ensures.isEmpty();
+        // A parameter the body does not read, as in a stand-in a test binds a host fn to, is no warning in C.
+        for (int i = 0; i < f.paramVars.size(); i++) {
+            LocalVar p = f.paramVars.get(i);
+            if (p.type instanceof Type.FnT && i < f.fnArgs.size() && f.fnArgs.get(i) != null) continue;
+            emit("(void)" + cName(p) + ";");
+        }
         if (f.resultVar != null) {
             emit(ct(f.resultVar.type) + " " + cName(f.resultVar) + " = " + zero(f.resultVar.type) + ";");
         }
@@ -820,7 +835,8 @@ public final class CGen {
                 + ", al_call_line, al_call_col);");
             close("}");
         }
-        block(f.body);
+        if (f.host) hostBody(f);
+        else block(f.body);
         if (exitLabel) {
             emit("goto al_exit;");
             out.append("al_exit:;\n");
@@ -981,6 +997,82 @@ public final class CGen {
                 if (v != null && !v.isEmpty()) emit("(void)(" + v + ");");
             }
         }
+    }
+
+    private boolean hostGlue;
+
+    /** The C declarations of the host: al_host, which -DAL_HOST links in, or a stub that answers nothing; the buffers. */
+    private static final String HOST_GLUE = """
+        /*
+         * The host that answers the calls of host fns. Compiled with -DAL_HOST, the program this file is linked with
+         * defines al_host: it gets the host fn's name and its arguments, a JSON object of args_len bytes, writes the
+         * JSON of the result (at most reply_cap bytes) to reply and its length to *reply_len, and returns 1, or returns
+         * 0 when it has no answer. Without -DAL_HOST, no call gets an answer.
+         */
+        #ifdef AL_HOST
+        int al_host(const char *name, const uint8_t *args, uint32_t args_len, uint8_t *reply, uint32_t reply_cap,
+            uint32_t *reply_len);
+        #else
+        static int al_host(const char *name, const uint8_t *args, uint32_t args_len, uint8_t *reply, uint32_t reply_cap,
+            uint32_t *reply_len) {
+            (void)name;
+            (void)args;
+            (void)args_len;
+            (void)reply;
+            (void)reply_cap;
+            (void)reply_len;
+            return 0;
+        }
+        #endif
+        static uint8_t al_host_args[CAP];
+        static uint8_t al_host_reply[CAP];
+
+        """;
+
+    /**
+     * The body of host fn f: its arguments, written as a JSON object as to_json writes them, go to al_host, and its
+     * reply is read as the result. No reply traps R0015, a reply not of the result's type R0016, as in the interpreter.
+     * The buffers are static: one call runs at a time.
+     */
+    private void hostBody(FnDecl f) {
+        if (!hostGlue) {
+            hostGlue = true;
+            statics.append(HOST_GLUE.replace("CAP", Integer.toString(Interpreter.MAX_JSON_INPUT)));
+        }
+        String site = "al_call_line, al_call_col";
+        open("{");
+        emit("al_out al_a;");
+        emit("uint32_t al_n = 0;");
+        emit("al_a.kind = 0;");
+        emit("al_a.buf = al_host_args;");
+        emit("al_a.cap = (uint32_t)sizeof al_host_args;");
+        emit("al_a.len = 0;");
+        for (int i = 0; i < f.paramVars.size(); i++) {
+            LocalVar p = f.paramVars.get(i);
+            String key = (i == 0 ? "{" : ", ") + "\"" + p.name + "\": ";
+            emit("AL_PUTS(&al_a, " + cString(utf8(key)) + ");");
+            String arg = Type.isAggregate(p.type) ? cName(p) : "&" + cName(p);
+            emit(toJsonFn(p.type) + "(&al_a, " + arg + ", " + site + ");");
+        }
+        emit(f.paramVars.isEmpty() ? "AL_PUTS(&al_a, \"{}\");" : "AL_PUTS(&al_a, \"}\");");
+        emit("if (al_a.len > al_a.cap) AL_TRAP(\"R0015\", " + cString(utf8("host fn `" + f.name + "` failed: its arguments exceed "
+            + Interpreter.MAX_JSON_INPUT + " bytes of JSON")) + ", " + site + ");");
+        open("if (!al_host(" + cString(utf8(f.name)) + ", al_host_args, al_a.len, al_host_reply, (uint32_t)sizeof al_host_reply, &al_n)"
+            + " || al_n > (uint32_t)sizeof al_host_reply) {");
+        emit("AL_TRAP(\"R0015\", " + cString(utf8("host fn `" + f.name + "` failed: no host answered"
+            + " (compile with -DAL_HOST and link a definition of al_host)")) + ", " + site + ");");
+        close("}");
+        if (!(f.ret instanceof Type.Void)) {
+            String r = tmp(f.ret, zeroInit(f.ret));
+            emit("al_json al_j;");
+            emit("al_j.s = al_host_reply;");
+            emit("al_j.n = al_n;");
+            emit("al_j.pos = 0;");
+            emit("if (!" + jsonFn(f.ret) + "(&al_j, &" + r + ") || !al_json_end(&al_j)) AL_TRAP(\"R0016\", "
+                + cString(utf8("host fn `" + f.name + "` replied with JSON that is not " + f.ret)) + ", " + site + ");");
+            returnValue(r);
+        }
+        close("}");
     }
 
     /** Returns v (null for none) from the function: through its postconditions, if it has any. */
@@ -1785,7 +1877,7 @@ public final class CGen {
         for (int i = 0; i < values.length; i++) {
             args.add(Type.isAggregate(f.paramVars.get(i).type) ? "&(" + values[i] + ")" : values[i]);
         }
-        if (!f.requires.isEmpty()) args.add(loc(c.span));
+        if (takesSite(f)) args.add(loc(c.span));
         return fnName(f) + "(" + String.join(", ", args) + ")";
     }
 
@@ -1839,7 +1931,7 @@ public final class CGen {
         for (FnDecl f : program.functionValues) {
             if (!f.fnType().equals(ft)) continue;
             List<String> args = new ArrayList<>(as);
-            if (!f.requires.isEmpty()) {
+            if (takesSite(f)) {
                 args.add("al_call_line");
                 args.add("al_call_col");
             }
@@ -1944,6 +2036,8 @@ public final class CGen {
                     b.append("    if (!seen[").append(i).append("]) ");
                     if (f.defConst != null && f.defConst.value != null) {
                         b.append("out->f_").append(f.name).append(" = ").append(constRef(f.defConst)).append(";\n");
+                    } else if (JsonValues.omittable(f.type)) {
+                        b.append("out->f_").append(f.name).append(" = ").append(zero(f.type)).append(";\n");
                     } else {
                         b.append("return 0;\n");
                     }
@@ -1978,6 +2072,13 @@ public final class CGen {
                 b.append("        (void)al_find_").append(m).append("(out, &k, &found);\n        if (found) return 0;\n")
                     .append("        *al_put_").append(m).append("(out, &k, 0, 0) = v;\n")
                     .append("        if (al_json_eat(j, ").append(close).append(")) return 1;\n        if (!al_json_eat(j, ',')) return 0;\n    }\n");
+            }
+            case Type.EnumT et when JsonValues.nullable(et) != null -> {
+                // null is Option.None (variant 0); any other value is Option.Some (variant 1) of it.
+                String inner = jsonFn(JsonValues.nullable(et));
+                b.append("    *out = ").append(zero(et)).append(";\n")
+                    .append("    if (al_json_peek(j) == 'n') return al_json_word(j, \"null\");\n")
+                    .append("    out->tag = 1u;\n    return ").append(inner).append("(j, &out->u.v_Some.p0);\n");
             }
             case Type.EnumT et -> {
                 List<Variant> vs = et.decl().variants;
@@ -2069,6 +2170,11 @@ public final class CGen {
                 }
                 b.append("    }\n    AL_PUTS(o, \"").append(strKeys ? "}" : "]").append("\");\n");
             }
+            case Type.EnumT et when JsonValues.nullable(et) != null -> {
+                String inner = toJsonFn(JsonValues.nullable(et));
+                b.append("    if (x->tag == 0u) AL_PUTS(o, \"null\");\n    else ").append(inner)
+                    .append("(o, &x->u.v_Some.p0, line, col);\n");
+            }
             case Type.EnumT et -> {
                 List<Variant> vs = et.decl().variants;
                 List<List<String>> fns = new ArrayList<>();
@@ -2143,7 +2249,7 @@ public final class CGen {
                 args.add(lower(a));
             }
         }
-        if (!f.requires.isEmpty()) args.add(loc(c.span));
+        if (takesSite(f)) args.add(loc(c.span));
         String call = fnName(f) + "(" + String.join(", ", args) + ")";
         if (f.ret instanceof Type.Void) {
             emit(call + ";");

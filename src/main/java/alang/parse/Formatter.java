@@ -55,7 +55,8 @@ public final class Formatter {
 
     /** Words that are names in some places and keywords in others. */
     private static boolean contextual(int t) {
-        return t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL || t == ALangLexer.IMPORT
+        return t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL || t == ALangLexer.HOST || t == ALangLexer.WITH
+            || t == ALangLexer.IMPORT
             || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP
             || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t == ALangLexer.TYPE;
     }

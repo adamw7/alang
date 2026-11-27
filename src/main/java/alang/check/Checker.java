@@ -969,6 +969,7 @@ public final class Checker {
                 diags.error(Code.E0601, p.span(), "tool functions cannot take `mut` parameters",
                     "tools receive JSON arguments; return the new value instead");
             }
+            if (f.host) hostParam(p, t);
         }
         paramCapacities = savedCapacities;
         // After the parameters, which give each capacity parameter its `_`: the result may have them too.
@@ -977,6 +978,14 @@ public final class Checker {
             diags.error(Code.E0601, f.retRef.span(), "a tool's result is sent as JSON, which holds no functions",
                 "return the data the caller needs, such as the function's name as a str");
             f.ret = Type.ERROR;
+        }
+        if (f.host && (hasFunction(f.ret) || Type.hasAnyCapacity(f.ret))) {
+            diags.error(Code.E0603, f.retRef.span(), "a host fn's result comes back as JSON, of a type with fixed capacities and no "
+                + "functions", "return the data itself, with the most it may hold, e.g. str[256] or list[i64; 64]");
+            f.ret = Type.ERROR;
+        }
+        if (f.host && f.name.equals("main")) {
+            diags.error(Code.E0603, f.nameSpan, "`main` cannot be a host fn", "write fn main() { ... } with a body");
         }
         if (f.origin != null) f.ret = Type.substitute(f.ret, f.capacities);
         for (int i = 0; i < f.capacityParams.size(); i++) {
@@ -1120,6 +1129,18 @@ public final class Checker {
         }
         if (f.name.equals("main") && !f.typeParams.isEmpty()) {
             diags.error(Code.E0602, f.typeParamSpans.get(0), "`main` cannot have type parameters");
+        }
+    }
+
+    /** A host fn's parameter is sent to the host as JSON: read-only, of a type with fixed capacities and no functions. */
+    private void hostParam(Param p, Type t) {
+        if (p.mut()) {
+            diags.error(Code.E0603, p.span(), "a host fn cannot take `mut` parameters",
+                "the host receives a JSON copy of each argument; have the host fn return the new value instead");
+        } else if (hasFunction(t) || Type.hasAnyCapacity(t)) {
+            diags.error(Code.E0603, p.typeRef().span(), "a host fn's parameters are sent as JSON, of types with fixed capacities "
+                + "and no functions", "write the most it may hold, e.g. " + p.name() + ": "
+                + t.toString().replace("_", t instanceof Type.Str ? "256" : "16"));
         }
     }
 
@@ -1398,7 +1419,8 @@ public final class Checker {
         ctx.inEnsures = false;
         ctx.inContract = false;
         boolean jumps = block(f.body);
-        if (!jumps && !(f.ret instanceof Type.Void) && !Type.isError(f.ret)) {
+        // A host fn has no body to return from: the host's reply is its result.
+        if (!jumps && !f.host && !(f.ret instanceof Type.Void) && !Type.isError(f.ret)) {
             diags.error(Code.E0301, f.nameSpan, "function `" + f.name + "` does not return a value on every path",
                 "add `return <" + f.ret + ">;` at the end of the function (loops never count as returning)");
         }
@@ -1409,9 +1431,42 @@ public final class Checker {
         ctx = new Ctx();
         enterScope(t);
         ctx.routine = t;
+        hostBindings(t);
         ctx.scopes.push(new HashMap<>());
         block(t.body);
         ctx.scopes.pop();
+    }
+
+    /**
+     * `test "..." with price = fixed_price { }`: each name before `=` is a host fn, bound once, and each after it a
+     * function of the program of exactly its type, which its calls run in this test. The host fn calls it, for the
+     * recursion check: fixed_price may not call back into what calls price.
+     */
+    private void hostBindings(TestDecl t) {
+        for (HostBinding b : t.bindings) {
+            FnDecl h = fns.get(b.host());
+            FnDecl impl = fns.get(b.fn());
+            if (h == null || !h.host) {
+                diags.error(Code.E0604, b.hostSpan(), "`" + b.host() + "` is not a host fn",
+                    "`with` binds a function declared `host fn " + b.host() + "(...) -> T;` to one of your own");
+            } else if (t.hosts.containsKey(h)) {
+                diags.error(Code.E0604, b.hostSpan(), "host fn `" + b.host() + "` is bound twice in this test", "bind it once");
+            } else if (impl == null) {
+                diags.error(Code.E0604, b.fnSpan(), "unknown function `" + b.fn() + "`",
+                    "declare fn " + b.fn() + " with the parameters and result of host fn " + h.name + ": " + h.fnType());
+            } else if (impl.host) {
+                diags.error(Code.E0604, b.fnSpan(), "`" + b.fn() + "` is a host fn too, which has no body to run",
+                    "bind `" + b.host() + "` to a function with a body");
+            } else if (!impl.typeParams.isEmpty() || impl.generic() || impl.params.stream().anyMatch(Param::mut)
+                || !impl.fnType().equals(h.fnType())) {
+                diags.error(Code.E0604, b.fnSpan(), "`" + b.fn() + "` has type " + impl.fnType() + ", but host fn `" + h.name
+                    + "` has type " + h.fnType(), "give " + b.fn() + " exactly the parameter types and result of " + h.name
+                    + ", with fixed capacities and no `mut`");
+            } else {
+                t.hosts.put(h, impl);
+                h.callees.add(impl);
+            }
+        }
     }
 
     /**

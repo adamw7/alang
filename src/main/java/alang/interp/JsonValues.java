@@ -1,5 +1,6 @@
 package alang.interp;
 
+import alang.ast.Ast;
 import alang.ast.Ast.*;
 import alang.interp.Values.*;
 import alang.types.*;
@@ -16,6 +17,9 @@ import java.util.*;
  *   <li>[T; N] and list[T; N] map to arrays (exactly N / at most N items)</li>
  *   <li>structs map to objects with every field present</li>
  *   <li>enum variants without payload map to "Variant"; with payload to {"Variant": [values...]}</li>
+ *   <li>Option&lt;T&gt; maps to null for Option.None and to T's own JSON for Option.Some(x), so a struct field or
+ *       tool parameter of that type may also be left out; an Option of an Option keeps the variant form, as null
+ *       could then be either</li>
  * </ul>
  */
 public final class JsonValues {
@@ -54,6 +58,39 @@ public final class JsonValues {
         }
     }
 
+    // ------------------------------------------------------------------ Option
+
+    /** Whether t is the built-in Option&lt;T&gt; (an instance of it). */
+    public static boolean isOption(Type t) {
+        if (!(t instanceof Type.EnumT et)) return false;
+        Item origin = Ast.origin(et.decl());
+        return origin.builtin && origin instanceof EnumDecl d && d.name.equals("Option");
+    }
+
+    /**
+     * The T of an Option&lt;T&gt; whose JSON is null or T's JSON, or null for any other type. An Option of an Option
+     * keeps the variant form ("None", {"Some": [...]}): null would stand for both Option.None and
+     * Option.Some(Option.None). Option.None is variant 0, Option.Some variant 1.
+     */
+    public static Type nullable(Type t) {
+        if (!isOption(t)) return null;
+        Type inner = ((Type.EnumT) t).decl().variants.get(1).payload.get(0);
+        return isOption(inner) ? null : inner;
+    }
+
+    /**
+     * Whether a struct field or tool parameter of type t may be left out of an object, as Option.None: any Option,
+     * an Option of an Option too, as leaving it out can only mean the outer Option.None.
+     */
+    public static boolean omittable(Type t) {
+        return isOption(t);
+    }
+
+    /** Option.None, the value a nullable Option left out of an object or given as null takes. */
+    public static Object none() {
+        return new EnumV(0, new Object[0]);
+    }
+
     // ------------------------------------------------------------------ schema
 
     /**
@@ -78,7 +115,8 @@ public final class JsonValues {
                 for (Field f : st.decl().fields) {
                     Map<String, Object> fs = new LinkedHashMap<>(describe(schema(f.type), f.doc));
                     if (f.defConst == null || f.defConst.value == null) {
-                        required.add(f.name);
+                        // An Option that is left out is Option.None.
+                        if (!omittable(f.type)) required.add(f.name);
                     } else {
                         // Optional: an object that leaves it out gets the default. One JSON cannot write is not shown.
                         try {
@@ -102,6 +140,11 @@ public final class JsonValues {
                 for (Type e : tt.elems()) items.add(schema(e));
                 yield Json.obj("type", "array", "prefixItems", items, "items", false, "minItems", items.size(),
                     "maxItems", items.size());
+            }
+            case Type.EnumT et when nullable(et) != null -> {
+                Map<String, Object> inner = schema(nullable(et));
+                yield Json.obj("anyOf", List.of(inner, Json.obj("type", "null")),
+                    "description", "null when there is none");
             }
             case Type.EnumT et -> describe(enumSchema(et.decl()), et.decl().doc);
             default -> Json.obj();
@@ -238,6 +281,10 @@ public final class JsonValues {
                     out.add(List.of(element(mv.keys[i], mt.key(), i), element(mv.vals[i], mt.value(), i)));
                 }
                 yield out;
+            }
+            case Type.EnumT et when nullable(et) != null -> {
+                EnumV ev = (EnumV) v;
+                yield ev.tag == 0 ? null : toJson(ev.payload[0], nullable(et));
             }
             case Type.EnumT et -> {
                 EnumV ev = (EnumV) v;
@@ -379,8 +426,13 @@ public final class JsonValues {
                 int i = 0;
                 for (Field f : st.decl().fields) {
                     if (!m.containsKey(f.name)) {
-                        if (f.defConst == null || f.defConst.value == null) throw fail(path, "missing field \"" + f.name + "\"");
-                        fields[i++] = Values.copy(f.defConst.value, new Meter(0));
+                        if (f.defConst != null && f.defConst.value != null) {
+                            fields[i++] = Values.copy(f.defConst.value, new Meter(0));
+                        } else if (omittable(f.type)) {
+                            fields[i++] = none();
+                        } else {
+                            throw fail(path, "missing field \"" + f.name + "\"");
+                        }
                         continue;
                     }
                     fields[i++] = fromJson(m.get(f.name), f.type, path + "." + f.name);
@@ -429,6 +481,11 @@ public final class JsonValues {
                 Object[] vals = new Object[n];
                 for (int i = 0; i < n; i++) vals[i] = fromJson(l.get(i), tt.elems().get(i), path + "[" + i + "]");
                 return new StructV(vals);
+            }
+            case Type.EnumT et when nullable(et) != null -> {
+                // JSON's null is the absent value; anything else is the value itself.
+                if (j == null) return none();
+                return new EnumV(1, new Object[] {fromJson(j, nullable(et), path)});
             }
             case Type.EnumT et -> {
                 EnumDecl d = et.decl();

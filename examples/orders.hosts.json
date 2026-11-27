@@ -1,0 +1,1 @@
+{"price": {"command": ["python3", "orders_host.py"], "timeout": 5}}

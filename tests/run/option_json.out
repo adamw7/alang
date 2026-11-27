@@ -1,0 +1,11 @@
+{"name": "ann", "email": "a@x.io", "age": null, "tags": [1, null], "nested": {"Some": [null]}}
+true
+bob Option.None Option.None [] Option.None
+cy Option.None Option.Some(7) [Option.None, Option.Some(2)] Option.Some(Option.Some(3))
+dee Option.Some("null") Option.None [] Option.None
+not a contact: {"name": "eve", "age": 300, "tags": []}
+gil Option.None Option.None [] Option.None
+not a contact: {"name": "fay", "tags": [], "nested": null}
+Option.Some(Option.None) Option.Some(Option.Some(5))
+5 "x"
+null

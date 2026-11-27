@@ -132,7 +132,12 @@ final class AstBuilder {
             trapSpan = span(t.identifier());
             expected = trapCode(t.identifier().getText(), trapSpan);
         }
-        return new TestDecl(span(t.STRING_LIT().getSymbol()), name, block(t.block()), expected, trapSpan);
+        TestDecl test = new TestDecl(span(t.STRING_LIT().getSymbol()), name, block(t.block()), expected, trapSpan);
+        for (HostBindingContext b : t.hostBinding()) {
+            test.bindings.add(new HostBinding(b.identifier(0).getText(), span(b.identifier(0)), b.identifier(1).getText(),
+                span(b.identifier(1))));
+        }
+        return test;
     }
 
     /** The trap code of `test "..." traps R0006`, or null after reporting that the text names none. */
@@ -192,8 +197,11 @@ final class AstBuilder {
                 typeParamSpans.add(span(t));
             }
         }
+        // A host fn has no body: an empty block stands for it, which the host answers instead of running.
+        Block body = f.block() != null ? block(f.block()) : new Block(span(f.SEMI().getSymbol()), new ArrayList<>());
         FnDecl fn = new FnDecl(span(f), span(f.identifier()), f.identifier().getText(), f.TOOL() != null && !imported,
-            typeParams, typeParamSpans, params, ret, requires, ensures, requiresText, ensuresText, block(f.block()));
+            typeParams, typeParamSpans, params, ret, requires, ensures, requiresText, ensuresText, body);
+        fn.host = f.HOST() != null;
         if (!typeParams.isEmpty() || params.stream().anyMatch(p -> anyCapacity(p.typeRef()) || p.typeRef() instanceof FnRef)) {
             // A function that takes any capacity is checked once as written, then once more for each set of
             // capacities it is called with, on a fresh copy of its tree; the syntax errors were reported already.

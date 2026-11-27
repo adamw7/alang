@@ -82,6 +82,12 @@ public final class JsonText {
                 }
                 out.write(strKeys ? '}' : ']');
             }
+            case Type.EnumT et when JsonValues.nullable(et) != null -> {
+                // Option.None is null, Option.Some(x) the JSON of x.
+                EnumV ev = (EnumV) v;
+                if (ev.tag == 0) ascii(out, "null");
+                else write(out, ev.payload[0], JsonValues.nullable(et), at, meter);
+            }
             case Type.EnumT et -> {
                 EnumV ev = (EnumV) v;
                 Variant var = et.decl().variants.get(ev.tag);

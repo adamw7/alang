@@ -24,8 +24,11 @@ final class Fuzz {
     static final int MAX_CALLS = 200;
     private static final int MAX_VALUES = 24;
 
-    /** A trap, and the arguments of the first call that hit it (for main: its input, as a JSON string). */
-    record Finding(Trap trap, Object input) {}
+    /**
+     * A trap, and the arguments of the first call that hit it (for main: its input, as a JSON string), with the calls
+     * of host fns it made and the replies the fuzzer gave them (empty for a program without host fns).
+     */
+    record Finding(Trap trap, Object input, List<Object> hostCalls) {}
 
     /** An entry point that was called: a tool, or main with its input. */
     record Entry(String name, boolean tool, int calls, List<Finding> findings) {}
@@ -56,28 +59,76 @@ final class Fuzz {
             if (example.containsKey(name)) base.put(name, example.get(name));
             else if (f.defaults.get(i) == null) base.put(name, vs.get(0));
         }
-        List<Map<String, Object>> calls = new ArrayList<>();
-        calls.add(base);
+        // The host fns the tool may ask answer with values of their result types: the first of each in the calls over
+        // the arguments, then, in up to MAX_CALLS more, each value in turn with each of those arguments, as a host may
+        // reply anything of its type.
+        Map<String, List<Object>> replies = new HashMap<>();
+        int variants = 1;
+        for (FnDecl h : ToolDefinitions.hostFns(f)) {
+            List<Object> vs = h.ret instanceof Type.Void ? List.of() : values(h.ret, JsonValues.schema(h.ret));
+            replies.put(h.name, vs);
+            variants = Math.max(variants, vs.size());
+        }
+        record Call(Map<String, Object> args, int reply) {}
+        List<Map<String, Object>> argSets = new ArrayList<>();
+        argSets.add(base);
         // One parameter at a time over its values, the others as in the plainest call.
         for (int i = 0; i < f.paramVars.size(); i++) {
             for (Object v : values.get(i)) {
                 Map<String, Object> args = new LinkedHashMap<>(base);
                 args.put(f.paramVars.get(i).name, v);
-                calls.add(args);
+                argSets.add(args);
             }
+        }
+        List<Call> calls = new ArrayList<>();
+        for (Map<String, Object> args : argSets) calls.add(new Call(args, 0));
+        List<Call> replyCalls = new ArrayList<>();
+        for (int k = 1; k < variants; k++) {
+            for (Map<String, Object> args : argSets) replyCalls.add(new Call(args, k));
         }
         Set<String> seen = new LinkedHashSet<>();
         List<Finding> findings = new ArrayList<>();
-        int n = 0;
         Set<String> done = new LinkedHashSet<>();
-        for (Map<String, Object> args : calls) {
-            if (n == MAX_CALLS) break;
-            if (!done.add(Json.write(args))) continue;
-            n++;
-            Trap t = callTool(f, args, src, maxSteps);
-            if (t != null && !ownPrecondition(t, f) && seen.add(key(t))) findings.add(new Finding(t, args));
+        int n = 0;
+        // The argument sweep first, then the replies, each with a budget of MAX_CALLS calls.
+        for (List<Call> pass : List.of(calls, replyCalls)) {
+            int made = 0;
+            for (Call c : pass) {
+                if (made == MAX_CALLS) break;
+                if (!done.add(Json.write(c.args()) + " " + c.reply())) continue;
+                made++;
+                Made in = callTool(f, c.args(), src, maxSteps, fuzzHost(replies, c.reply()));
+                Trap t = in == null ? null : in.trap();
+                if (t != null && !ownPrecondition(t, f) && !hostsFault(t, f) && seen.add(key(t))) {
+                    findings.add(new Finding(t, c.args(), in.interp().hostCalls()));
+                }
+            }
+            n += made;
         }
         return new Entry(f.name, true, n, findings);
+    }
+
+    /** A host that answers each call of a host fn with value {@code k} of those of its result type (cycling). */
+    private static Host fuzzHost(Map<String, List<Object>> replies, int k) {
+        return (name, args) -> {
+            List<Object> vs = replies.getOrDefault(name, List.of());
+            return vs.isEmpty() ? null : vs.get(k % vs.size());
+        };
+    }
+
+    /**
+     * A reply broke the `ensures` of the host fn that got it, or did not fit its type: the host's fault, which the
+     * program states it rules out, not the program's.
+     */
+    private static boolean hostsFault(Trap t, FnDecl tool) {
+        if (t.code == Code.R0016) return true;
+        if (t.code != Code.R0007) return false;
+        for (FnDecl h : ToolDefinitions.hostFns(tool)) {
+            for (Expr e : h.ensures) {
+                if (e.span.equals(t.span)) return true;
+            }
+        }
+        return false;
     }
 
     private static Entry main(FnDecl main, Source src, long maxSteps) {
@@ -92,24 +143,32 @@ final class Fuzz {
             inputs = new ArrayList<>();
             for (Object v : values(type, JsonValues.schema(type))) inputs.add(Json.write(v));
         }
+        Map<String, List<Object>> replies = new HashMap<>();
+        for (FnDecl h : ToolDefinitions.hostFns(main)) {
+            replies.put(h.name, h.ret instanceof Type.Void ? List.of() : values(h.ret, JsonValues.schema(h.ret)));
+        }
         int n = 0;
         for (String input : inputs) {
             if (n == MAX_CALLS) break;
             n++;
             Interpreter in = new Interpreter(src, new CappedOutput(0), maxSteps);
+            in.host(fuzzHost(replies, 0));
             Trap t = null;
             try {
                 in.runMain(main, input.getBytes(StandardCharsets.UTF_8));
             } catch (Trap trap) {
                 t = trap;
             }
-            if (t != null && !ownPrecondition(t, main) && seen.add(key(t))) findings.add(new Finding(t, input));
+            if (t != null && !ownPrecondition(t, main) && !hostsFault(t, main) && seen.add(key(t))) findings.add(new Finding(t, input, in.hostCalls()));
         }
         return new Entry("main", false, n, findings);
     }
 
-    /** The trap of calling the tool with {@code args}, as `alang call` would, or null. */
-    private static Trap callTool(FnDecl f, Map<String, Object> args, Source src, long maxSteps) {
+    /** A call that was made, and its trap or null. */
+    private record Made(Interpreter interp, Trap trap) {}
+
+    /** Calls the tool with {@code args}, as `alang call` would: null for arguments its types do not take. */
+    private static Made callTool(FnDecl f, Map<String, Object> args, Source src, long maxSteps, Host host) {
         Object[] values = new Object[f.paramVars.size()];
         try {
             for (int i = 0; i < values.length; i++) {
@@ -122,11 +181,12 @@ final class Fuzz {
             return null;
         }
         Interpreter in = new Interpreter(src, new CappedOutput(0), maxSteps);
+        in.host(host);
         try {
             in.call(f, values, f.nameSpan);
-            return null;
+            return new Made(in, null);
         } catch (Trap t) {
-            return t;
+            return new Made(in, t);
         }
     }
 
@@ -237,6 +297,14 @@ final class Fuzz {
                         out.add(m);
                     }
                 }
+            }
+            case Type.EnumT et when JsonValues.nullable(et) != null -> {
+                // An Option is null, or any value of its type: the plainest is a value, as a caller most often sends.
+                Type inner = JsonValues.nullable(et);
+                List<Object> vs = values(inner, JsonValues.schema(inner));
+                out.add(vs.get(0));
+                out.add(null);
+                out.addAll(vs);
             }
             case Type.EnumT et -> {
                 EnumDecl d = et.decl();

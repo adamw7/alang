@@ -1,4 +1,4 @@
-{"id": 18446744073709551615, "items": [{"name": "tea", "qty": 2, "price": 3.5, "tags": ["hot"]}, {"name": "café \"x\"", "qty": -1, "price": 0.1, "tags": []}], "status": {"Moved": [1, -2]}, "paid": true, "note": "None"}
+{"id": 18446744073709551615, "items": [{"name": "tea", "qty": 2, "price": 3.5, "tags": ["hot"]}, {"name": "café \"x\"", "qty": -1, "price": 0.1, "tags": []}], "status": {"Moved": [1, -2]}, "paid": true, "note": null}
 true
 {"a": 1, "b": 2} [[3, true]] [1, 2, 3]
 "Open" {"Closed": ["tab\there"]} [1, "x", false]

@@ -1,6 +1,7 @@
 package alang.api;
 
 import alang.util.Json;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -47,7 +48,16 @@ public final class CallResult {
         return report.get("steps") instanceof Number n ? n.longValue() : 0;
     }
 
-    /** The whole report as JSON: "ok", then "result" or "error", "stdout" and "steps". */
+    /**
+     * The calls of host fns the call made, as a JSON array of {"fn": name, "args": {...}, "result": answer} ("error"
+     * in place of "result" for one with no answer), in order: "[]" when it made none. {@link Host#replay} answers them
+     * again.
+     */
+    public String hostCallsJson() {
+        return Json.write(report.get("host_calls") instanceof List<?> l ? l : List.of());
+    }
+
+    /** The whole report as JSON: "ok", then "result" or "error", "host_calls" if any, "stdout" and "steps". */
     public String toJson() {
         return Json.write(report);
     }

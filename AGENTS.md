@@ -144,7 +144,8 @@ test "counts repeated words" {
     `panic("...")` or `assert` for bugs. Structs and enums of your own take type parameters too:
     `struct Pair<A, B> { first: A, second: B }`, used as `Pair<i64, str[8]>`.
 19. **Input arrives whole; nothing else is read.** `fn main(input: str[4096])` gets all of stdin as bytes
-    (`bin/alang run prog.al < data.txt`; more than 4096 bytes traps), a `tool fn` gets JSON. No files.
+    (`bin/alang run prog.al < data.txt`; more than 4096 bytes traps), a `tool fn` gets JSON. No files: what
+    the program must fetch, it asks for with a `host fn` ([below](#reaching-outside-data-host-fns)).
     Go through it with `for line in split(input, '\n') { }`: one line at a time, never a trap on a long one.
     Split a line into a list with `try_split(mut fields, line, ',')`: false, not a trap, when it does not fit.
 20. **`import "lib/text.al";` at the top of a file** adds that file's declarations, by their plain names.
@@ -203,7 +204,8 @@ test "counts repeated words" {
 | `s.lstrip()`, `s.trim_end()`, `trimStart` | `trim_start(s)`, `trim_end(s)` |
 | `re.sub(p, r, s)`, `re.split(p, s)`, `re.fullmatch`, `re.search` | `re_replace(s, r"\d+", "#")`, `re_split(s, r"[,;] *")` (both typed by their variable, as `replace` and `split` are), `re_match(s, p)`, `re_find(s, p)` (`Option.Some((start, end))`) |
 | `next(csv.reader([line]))`, a CSV line with quoted fields | `var fields: list[str[32]; 8] = []; let ok: bool = try_split_csv(mut fields, line);` (`split_csv(line)` traps instead); `try_split_csv(mut fields, line, ';')` for another separator |
-| `json.dumps(x)`, `JSON.stringify(x)`, `serde_json::to_string(&x)` | `print(to_json(x));` or `let j: str[256] = to_json(x);`: structs as objects, enums as `"Name"` or `{"Name": [...]}`; `from_json(j)` reads it back |
+| `json.dumps(x)`, `JSON.stringify(x)`, `serde_json::to_string(&x)` | `print(to_json(x));` or `let j: str[256] = to_json(x);`: structs as objects, an `Option` as `null` or its value, enums as `"Name"` or `{"Name": [...]}`; `from_json(j)` reads it back |
+| `requests.get(url)`, `fetch(url)`, a database query, reading a file | `host fn fetch(url: str[256]) -> Result<str[4096], str[64]>;`: the host answers (`--hosts`), each call is recorded, and a test binds it: `test "..." with fetch = fake_fetch { }` |
 | `json.loads(s)` into a type, `serde_json::from_str::<T>(s)` | `let cfg: Option<Config> = from_json(text);` |
 | `c.name` (Python Enum), `format!("{:?}", c)`, `Color[s]`, `Color.valueOf(s)` | `variant_name(c)` is `"Red"`; `let c: Option<Color> = parse_variant(s);` |
 | `date.fromisoformat(s)`, `(d2 - d1).days`, `d + timedelta(days=30)`, `d.isoweekday()` | `parse_date("2026-11-26")` (an `Option` of days since 1970-01-01), `days_from_date(y, m, d)`, then subtract or add days; `date_from_days(n)` gives `(y, m, d)`, `weekday(n)` 1 (Monday) to 7 |
@@ -523,19 +525,69 @@ Handle each such input (`try_split`, a `len`/`cap` check before `push`) or rule 
 
 JSON mapping: numbers, bools; `str[N]` as a string of at most N UTF-8 *bytes*; arrays, lists and tuples as
 arrays; maps with str keys as objects (others as `[key, value]` pairs); sets as arrays; structs as objects
-(all fields required); enum variants as `"Name"` or `{"Name": [payload...]}`. Tools cannot take `mut`
+(all fields required but those with a default or of an `Option` type); an `Option` as `null` or the value
+itself; enum variants as `"Name"` or `{"Name": [payload...]}`. Tools cannot take `mut`
 parameters. A trap returns `{"ok": false, "error": {"code": "R....", ...}}`. A float result holding NaN or
 infinity fails with `bad_result`; return raw bytes as `list[u8; N]`, not `str`.
 
 `bin/alang serve prog.al [--watch]` serves every tool over MCP on stdio (`--http 8080 --token-file token.txt`
-for HTTP at `/mcp`, with `--tls-cert cert.pem --tls-key key.pem` for HTTPS, TLS 1.3 only). Tools have no file, network, clock or random access, and run within a deterministic
+for HTTP at `/mcp`, with `--tls-cert cert.pem --tls-key key.pem` for HTTPS, TLS 1.3 only). Tools have no file, network, clock or random access but the host fns the host answers, and run within a deterministic
 step budget (`steps`: one per statement plus about one per 128 bytes touched; the default 100 million is a
 few seconds), backed by `--timeout` (60 s).
+
+## Reaching outside data: host fns
+
+A tool that needs data the caller does not send (a price list, a database, a web page) declares a `host fn`:
+no body, and the host answers each call. The arguments go out as a JSON object and the reply comes back as
+JSON of the result type; `requires` is checked before the call and `ensures` against the reply. Return a
+`Result` for failures the program should handle:
+
+```alang
+/// The stock of an item, or why it cannot say.
+host fn stock(sku: str[16]) -> Result<i64, str[64]>
+    ensures not is_ok(result) or unwrap_or(result, 0) >= 0;
+
+/// Which of the items are in stock.
+tool fn available(skus: list[str[16]; 8]) -> list[str[16]; 8] {
+    var out: list[str[16]; 8] = [];
+    for s in skus {
+        if unwrap_or(stock(s), 0) > 0 {
+            push(mut out, s);
+        }
+    }
+    return out;
+}
+
+fn some_stock(sku: str[16]) -> Result<i64, str[64]> {
+    if sku == "tea" {
+        return Result.Ok(4);
+    }
+    return Result.Err("unknown item");
+}
+
+test "keeps what is in stock" with stock = some_stock {
+    assert available(["tea", "gold"]) == ["tea"];
+}
+```
+
+- **Tests** bind each host fn to a function of the same type: `test "..." with stock = some_stock { }`.
+  Unbound, a call traps R0015.
+- **`run`, `call`, `serve`** take `--hosts hosts.json`: `{"stock": {"command": ["python3", "stock.py"]}}`
+  (`"*"` for any other host fn, `"timeout"` in seconds, 10 by default). Each call runs the command with
+  `{"fn": "stock", "args": {"sku": "tea"}}` on stdin; it prints the JSON result (`{"Ok": [4]}`) and exits 0.
+  A non-zero exit, a timeout or text that is not JSON traps R0015; JSON of another type traps R0016.
+- **Every call is recorded**: `call` and `run --json` add `"host_calls": [{"fn", "args", "result"}]`, and
+  `--replay report.json` answers the same calls again, so a run can be repeated exactly.
+- **`fuzz`** answers host fns with values of their result types at their limits; a reply that breaks the
+  host fn's own `ensures` is left out, so state what the host promises there.
+- A tool that may reach a host fn says so in its description, and `serve` drops its read-only and
+  idempotent annotations. The C backend calls `al_host`, which you link in with `-DAL_HOST`.
 
 ## Determinism checklist
 
 - Same input, same output, same trap, on every run, machine, compiler and locale.
-- No time, randomness, environment, threads or I/O but `print` and stdin. For "random", take a seed.
+- No time, randomness, environment, threads or I/O but `print`, stdin and the replies to host fns, which are
+  recorded and can be replayed. For "random", take a seed.
 - Floats are bit-exact across the interpreter and the C backend, `sin`, `exp` and `pow` included.
 - `print` shows floats with at most 6 decimals (`0.1 + 0.2` prints `0.3`); compare floats in tests with a
   tolerance, e.g. `assert abs(x - 0.3) < 0.000001;`.

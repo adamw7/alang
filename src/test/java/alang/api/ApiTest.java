@@ -209,4 +209,52 @@ class ApiTest {
         assertEquals(7, o.timeoutMillis());
         assertNull(o.cancellation());
     }
+
+    private static final String SHOP = """
+        /// The price of an item in cents.
+        host fn price(sku: str[8]) -> i64;
+
+        /// Prices an item.
+        tool fn quote(sku: str[8]) -> i64 {
+            return price(sku) * 2;
+        }
+        """;
+
+    @Test
+    void aHostAnswersTheHostFnsAndTheCallsAreRecorded() {
+        Program p = Alang.compile("shop.al", SHOP).program();
+        assertTrue(p.tool("quote").orElseThrow().description().endsWith("Asks the host (price), so it may reach outside "
+            + "data, and a repeated call may differ."));
+        Host host = (fn, args) -> {
+            assertEquals("price", fn);
+            assertEquals("{\"sku\": \"tea\"}", args);
+            return "350";
+        };
+        CallResult r = p.call("quote", "{\"sku\": \"tea\"}", CallOptions.defaults().host(host));
+        assertEquals("700", r.resultJson(), r::toJson);
+        assertEquals("[{\"fn\": \"price\", \"args\": {\"sku\": \"tea\"}, \"result\": 350}]", r.hostCallsJson());
+
+        // The recording answers the same call again; another call gets no answer.
+        CallResult again = p.call("quote", "{\"sku\": \"tea\"}", CallOptions.defaults().host(Host.replay(r.toJson())));
+        assertEquals(r.toJson(), again.toJson());
+        CallResult other = p.call("quote", "{\"sku\": \"jam\"}", CallOptions.defaults().host(Host.replay(r.hostCallsJson())));
+        assertEquals("R0015", other.errorCode());
+        assertThrows(IllegalArgumentException.class, () -> Host.replay("3"));
+    }
+
+    @Test
+    void aHostThatThrowsOrAnswersBadlyFailsOnlyTheCall() {
+        Program p = Alang.compile("shop.al", SHOP).program();
+        CallResult thrown = p.call("quote", "{\"sku\": \"tea\"}", CallOptions.defaults().host((fn, args) -> {
+            throw new IllegalStateException("no price list");
+        }));
+        assertEquals("R0015", thrown.errorCode());
+        assertEquals("host fn `price` failed: no price list", thrown.errorMessage());
+        assertEquals("[{\"fn\": \"price\", \"args\": {\"sku\": \"tea\"}, \"error\": \"no price list\"}]", thrown.hostCallsJson());
+        assertEquals("R0015", p.call("quote", "{\"sku\": \"tea\"}", CallOptions.defaults().host((fn, args) -> "{")).errorCode());
+        assertEquals("R0016", p.call("quote", "{\"sku\": \"tea\"}", CallOptions.defaults().host((fn, args) -> "\"cheap\""))
+            .errorCode());
+        assertEquals("R0015", p.call("quote", "{\"sku\": \"tea\"}").errorCode());
+        assertEquals("[]", p.call("quote", "{\"sku\": 1}").hostCallsJson());
+    }
 }

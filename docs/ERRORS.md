@@ -57,6 +57,8 @@ Codes are never reused for a different meaning.
 | [E0501](#e0501) | misplaced `result` |
 | [E0601](#e0601) | invalid tool signature |
 | [E0602](#e0602) | invalid main |
+| [E0603](#e0603) | invalid host fn |
+| [E0604](#e0604) | invalid host binding |
 | [E0701](#e0701) | imported file not found |
 | [E0702](#e0702) | invalid import |
 | [E0703](#e0703) | import cycle |
@@ -84,6 +86,8 @@ Codes are never reused for a different meaning.
 | [R0012](#r0012) | invalid shift or empty pop |
 | [R0013](#r0013) | invalid argument |
 | [R0014](#r0014) | input is not JSON of its type |
+| [R0015](#r0015) | host call failed |
+| [R0016](#r0016) | host reply does not fit |
 
 ## E0001
 
@@ -481,6 +485,25 @@ fn main() { print("hello"); }
 fn main(input: str[4096]) { print(len(input)); }
 ```
 
+## E0603
+
+**invalid host fn**: A `host fn` has no body: the program's host answers each call, receiving the arguments as a JSON object and replying with the JSON of the result. So its parameters cannot be `mut`, and its parameters and result have fixed capacities and no functions. `main` cannot be one.
+
+```
+host fn price(sku: str[16]) -> Option<i64>;  // ok
+host fn grow(xs: mut list[i64; 8]);  // error: `mut`
+```
+
+## E0604
+
+**invalid host binding**: `test "..." with price = fixed_price { }` runs fixed_price for each call of host fn price in that test. The name before `=` must be a host fn, bound once per test, and the one after it a function with a body of exactly its type: the same parameter types, the same result, no `mut`, no type parameters or `_` capacities.
+
+```
+host fn price(sku: str[16]) -> i64;
+fn fixed_price(sku: str[16]) -> i64 { return 100; }
+test "priced" with price = fixed_price { assert price("a") == 100; }
+```
+
 ## E0701
 
 **imported file not found**: An `import` names a file that cannot be read: it does not exist, it is not readable, or it is not UTF-8 text. The path is relative to the file that has the import, not to the current directory.
@@ -719,6 +742,23 @@ let c: i64 = clamp(x, 10, 0);  // trap
 
 ```
 fn main(input: Config) { ... }  // with stdin {"name": 3} where name is a str: trap
+```
+
+## R0015
+
+**host call failed**: A call of a host fn got no reply: no host answers it here (a test runs one bound with `with`, and `run`, `call` and `serve` take --hosts or --replay), the host reported a failure, it did not answer in time, a recording given with --replay holds a different call at that point, or, compiled to C, no al_host is linked (-DAL_HOST). Return a Result from the host fn for failures the program should handle. (An argument JSON cannot hold, a NaN or a str that is not UTF-8, traps R0013 before the call, as to_json does.)
+
+```
+host fn price(sku: str[16]) -> i64;
+test "no host" traps R0015 { let p: i64 = price("a"); }
+```
+
+## R0016
+
+**host reply does not fit**: The host answered a call of a host fn with JSON that is not of the host fn's result type, mapped as a tool's arguments are: a string longer than its str, too many items for a list, a missing field, a number out of range. The reply is not used.
+
+```
+host fn price(sku: str[16]) -> u8;  // a reply of 300, or of "cheap": trap
 ```
 
 ## Builtin functions and the standard library

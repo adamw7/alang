@@ -90,6 +90,20 @@ class InstalledWheel(unittest.TestCase):
         names = [t["name"] for t in alang.tools(EXAMPLES / "text_tools.al")]
         self.assertIn("word_count", names)
 
+    def test_call_with_hosts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hosts = Path(tmp) / "hosts.json"
+            command = [sys.executable, str(EXAMPLES / "orders_host.py")]
+            hosts.write_text(json.dumps({"price": {"command": command, "timeout": 30}}), encoding="utf-8")
+            args = {"lines": [{"sku": "tea", "qty": 2}, {"sku": "gold", "qty": 1}]}
+            reply = alang.call(EXAMPLES / "orders.al", "quote", args, hosts=hosts)
+            self.assertTrue(reply["ok"], reply)
+            self.assertEqual(reply["result"], {"total_cents": 700, "unknown": ["gold"], "note": None})
+            self.assertEqual([c["args"]["sku"] for c in reply["host_calls"]], ["tea", "gold"])
+            recording = Path(tmp) / "recording.json"
+            recording.write_text(json.dumps(reply), encoding="utf-8")
+            self.assertEqual(alang.call(EXAMPLES / "orders.al", "quote", args, replay=recording), reply)
+
     def test_call(self):
         reply = alang.call(EXAMPLES / "inventory.al", "place_order", {"sku": "B-200", "quantity": 2})
         self.assertTrue(reply["ok"], reply)

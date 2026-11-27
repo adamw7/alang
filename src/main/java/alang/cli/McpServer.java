@@ -39,6 +39,11 @@ final class McpServer {
         + "`alang call` prints: ok, then result or error, then stdout and steps (its cost: the statements it ran "
         + "and the data they went through).";
 
+    /** What {@link #INSTRUCTIONS} adds for a program with host fns. */
+    static final String HOST_INSTRUCTIONS = " A tool whose description says it asks the host reaches outside data "
+        + "through it, so a repeated call may give another result; its text also lists host_calls, each question "
+        + "asked and its answer.";
+
     /** JSON-RPC error codes. */
     static final int PARSE_ERROR = -32700;
     static final int INVALID_REQUEST = -32600;
@@ -119,6 +124,7 @@ final class McpServer {
     private volatile boolean initialized;
     /** For `serve --watch`, set by {@link #watch}: the program's files, how often to poll them, and the log; else null. */
     private Reloader reloader;
+    private java.util.function.Supplier<Host> hosts = () -> Host.NONE;
     private long pollMillis;
     private PrintStream log;
     /**
@@ -137,6 +143,11 @@ final class McpServer {
         this.watchdog = watchdog;
         this.workers = workers;
         this.maxQueued = maxQueued;
+    }
+
+    /** Sets what answers the calls of host fns: a fresh host for each tool call. */
+    void hosts(java.util.function.Supplier<Host> h) {
+        this.hosts = h;
     }
 
     /** Tells {@code o} of every call from now on. */
@@ -365,12 +376,13 @@ final class McpServer {
         return Json.obj("protocolVersion", version,
             "capabilities", Json.obj("tools", Json.obj("listChanged", reloader != null && session.notify != null)),
             "serverInfo", Json.obj("name", "alang", "version", Main.VERSION),
-            "instructions", INSTRUCTIONS);
+            "instructions", current.program().itemsOf(FnDecl.class).stream().anyMatch(f -> f.host)
+                ? INSTRUCTIONS + HOST_INSTRUCTIONS : INSTRUCTIONS);
     }
 
     /**
      * MCP tool definitions: the same description and input schema as `alang tools`, the result's schema,
-     * and annotations that are true of every ALang tool: it changes nothing, so it is read-only, not
+     * and annotations that are true of every ALang tool that asks no host: it changes nothing, so it is read-only, not
      * destructive and idempotent, and it reaches nothing outside itself.
      */
     private static List<Object> tools(Program program) {
@@ -383,8 +395,10 @@ final class McpServer {
                 tool.put("outputSchema", Json.obj("type", "object", "properties", Json.obj("result", JsonValues.schema(f.ret)),
                     "required", List.of("result"), "additionalProperties", false));
             }
-            tool.put("annotations", Json.obj("readOnlyHint", true, "destructiveHint", false,
-                "idempotentHint", true, "openWorldHint", false));
+            // A tool that asks the host may do anything the host does: only that it reaches outside is known.
+            tool.put("annotations", ToolDefinitions.hostFns(f).isEmpty()
+                ? Json.obj("readOnlyHint", true, "destructiveHint", false, "idempotentHint", true, "openWorldHint", false)
+                : Json.obj("openWorldHint", true));
             tools.add(tool);
         }
         return tools;
@@ -437,7 +451,7 @@ final class McpServer {
                 try {
                     Watchdog.Alarm alarm = watchdog.watch(meter);
                     try {
-                        report = Main.runTool(src, f, args, meter);
+                        report = Main.runTool(src, f, args, meter, hosts.get());
                     } finally {
                         alarm.off();
                     }

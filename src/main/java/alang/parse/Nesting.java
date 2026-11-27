@@ -136,15 +136,15 @@ final class Nesting {
     }
 
     private static boolean startsItem(int type) {
-        return type == ALangLexer.FN || type == ALangLexer.TOOL || type == ALangLexer.CONST
+        return type == ALangLexer.FN || type == ALangLexer.TOOL || type == ALangLexer.HOST || type == ALangLexer.CONST
             || type == ALangLexer.STRUCT || type == ALangLexer.ENUM || type == ALangLexer.TEST;
     }
 
     private Item startItem(List<Token> tokens, int i) {
         int type = tokens.get(i).getType();
-        int nameAt = type == ALangLexer.TOOL ? i + 2 : i + 1;  // tool fn NAME
+        int nameAt = type == ALangLexer.TOOL || type == ALangLexer.HOST ? i + 2 : i + 1;  // tool fn NAME, host fn NAME
         Token name = type != ALangLexer.TEST && nameAt < tokens.size() ? tokens.get(nameAt) : null;
-        Item item = new Item(file, tokens.get(i), name, type == ALangLexer.CONST);
+        Item item = new Item(file, tokens.get(i), name, type == ALangLexer.CONST || type == ALangLexer.HOST);
         items.add(item);
         return item;
     }
@@ -171,7 +171,8 @@ final class Nesting {
 
     private static boolean isIdentifier(int type) {
         return type == ALangLexer.IDENT || type == ALangLexer.LIMIT || type == ALangLexer.TEST
-            || type == ALangLexer.TOOL || type == ALangLexer.IMPORT || type == ALangLexer.STEP || type == ALangLexer.REV || type == ALangLexer.THEN
+            || type == ALangLexer.TOOL || type == ALangLexer.HOST || type == ALangLexer.WITH || type == ALangLexer.IMPORT
+            || type == ALangLexer.STEP || type == ALangLexer.REV || type == ALangLexer.THEN
             || type == ALangLexer.MAP || type == ALangLexer.SET || type == ALangLexer.AS || type == ALangLexer.TRAPS
             || type == ALangLexer.TYPE;
     }

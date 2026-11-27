@@ -45,6 +45,8 @@ final class Uses {
             // A call of a generic function runs an instance of it, which calls the functions it was given.
             for (FnDecl f : r.callees) called.add(f.origin != null ? f.origin : f);
             called.addAll(r.fnValues);
+            // A function a test binds a host fn to runs for each call of it.
+            if (r instanceof TestDecl t) called.addAll(t.hosts.values());
         }
         for (Item item : program.items) {
             if (!(item instanceof Routine r)) continue;

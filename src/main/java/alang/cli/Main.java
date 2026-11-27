@@ -107,6 +107,12 @@ public final class Main {
           --tls-cert FILE    serve HTTPS, TLS 1.3 only, at https://HOST:PORT/mcp with the PEM certificate
                              chain in FILE, the server's certificate first (serve; with --tls-key)
           --tls-key FILE     the certificate's private key: PEM, unencrypted PKCS#8 (serve; with --tls-cert)
+          --hosts FILE       the commands that answer the program's `host fn` calls, as JSON: {"price":
+                             {"command": ["python3", "price.py"], "timeout": 5}} ("*" for any other); each
+                             call runs one with {"fn": ..., "args": {...}} on stdin and reads its JSON result
+                             from stdout (run, call, serve, debug)
+          --replay FILE      answer `host fn` calls from a recording: the "host_calls" that `call` and
+                             `run --json` report, in the same order (run, call, debug)
 
         exit codes: 0 success, 1 errors / traps / failed tests, 2 usage error
         """;
@@ -117,18 +123,18 @@ public final class Main {
      */
     private static final Map<String, Set<String>> OPTIONS = Map.ofEntries(
         Map.entry("check", Set.of("--json", "--memory", "--max-stack")),
-        Map.entry("run", Set.of("--json", "--max-steps", "--max-stack")),
+        Map.entry("run", Set.of("--json", "--max-steps", "--max-stack", "--hosts", "--replay")),
         Map.entry("test", Set.of("--json", "--filter", "--max-steps", "--max-stack")),
         Map.entry("tools", Set.of("--json", "--max-steps", "--max-stack")),
-        Map.entry("call", Set.of("--json", "--max-steps", "--max-stack", "--timeout")),
+        Map.entry("call", Set.of("--json", "--max-steps", "--max-stack", "--timeout", "--hosts", "--replay")),
         Map.entry("fuzz", Set.of("--json", "--max-steps", "--max-stack")),
         Map.entry("serve", Set.of("--max-steps", "--max-stack", "--timeout", "--watch", "--workers", "--max-queued",
-            "--http", "--token-file", "--allow-origin", "--tls-cert", "--tls-key")),
+            "--http", "--token-file", "--allow-origin", "--tls-cert", "--tls-key", "--hosts")),
         Map.entry("build", Set.of("-o", "--max-stack")),
         Map.entry("fmt", Set.of("--write", "--check")),
         Map.entry("fix", Set.of("--write", "--json", "--max-stack")),
         Map.entry("debug", Set.of("--json", "--max-steps", "--max-stack", "--break", "--input", "--test", "--call",
-            "--max-stops")),
+            "--max-stops", "--hosts", "--replay")),
         Map.entry("deps", Set.of("--json", "--lock")),
         Map.entry("explain", Set.of()),
         Map.entry("grammar", Set.of()),
@@ -138,11 +144,12 @@ public final class Main {
     /** The options that take a value, the next argument. */
     private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--timeout", "--filter", "-o",
         "--break", "--input", "--test", "--call", "--max-stops", "--workers", "--max-queued", "--http", "--token-file",
-        "--allow-origin", "--tls-cert", "--tls-key");
+        "--allow-origin", "--tls-cert", "--tls-key", "--hosts", "--replay");
 
     private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--timeout",
         "--filter", "-o", "--write", "--check", "--lock", "--watch", "--break", "--input", "--test", "--call", "--max-stops",
-        "--workers", "--max-queued", "--http", "--token-file", "--allow-origin", "--tls-cert", "--tls-key");
+        "--workers", "--max-queued", "--http", "--token-file", "--allow-origin", "--tls-cert", "--tls-key", "--hosts",
+        "--replay");
 
     private final PrintStream out;
     private final PrintStream err;
@@ -170,6 +177,8 @@ public final class Main {
     private String tokenFile;
     private String tlsCert;
     private String tlsKey;
+    private String hostsFile;
+    private String replayFile;
     private final List<String> allowOrigins = new ArrayList<>();
 
     /** How many stops `alang debug` shows once its commands have run out. */
@@ -241,6 +250,8 @@ public final class Main {
                         case "--allow-origin" -> allowOrigins.add(next(args, ++i, a));
                         case "--tls-cert" -> tlsCert = next(args, ++i, a);
                         case "--tls-key" -> tlsKey = next(args, ++i, a);
+                        case "--hosts" -> hostsFile = next(args, ++i, a);
+                        case "--replay" -> replayFile = next(args, ++i, a);
                         default -> throw new IllegalStateException(a);
                     }
                 } else {
@@ -328,7 +339,7 @@ public final class Main {
         return 2;
     }
 
-    private static final class UsageException extends RuntimeException {
+    static final class UsageException extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
         UsageException(String m) {
@@ -477,6 +488,7 @@ public final class Main {
         CappedOutput captured = json ? new CappedOutput(MAX_CAPTURED_OUTPUT) : null;
         OutputStream sink = json ? captured : out;
         Interpreter interp = new Interpreter(src, sink, maxSteps);
+        interp.host(Hosts.load(hostsFile, replayFile).get());
         Trap trap = null;
         try {
             interp.runMain(main, input);
@@ -488,6 +500,7 @@ public final class Main {
             j.put("ok", trap == null);
             putStdout(j, captured);
             j.put("trap", trap == null ? null : trapJson(src, trap));
+            if (!interp.hostCalls().isEmpty()) j.put("host_calls", interp.hostCalls());
             j.put("steps", interp.steps());
             line(out, Json.write(j));
         } else if (trap != null) {
@@ -724,11 +737,12 @@ public final class Main {
         } catch (Json.ParseException e) {
             return callError(j, "bad_json", "arguments are not valid JSON: " + e.getMessage());
         }
+        Host host = Hosts.load(hostsFile, replayFile).get();
         Meter meter = new Meter(maxSteps);
         Map<String, Object> report;
         try (Watchdog watchdog = new Watchdog(timeoutMillis)) {
             Watchdog.Alarm alarm = watchdog.watch(meter);
-            report = callTool(src, f, parsed, meter);
+            report = callTool(src, f, parsed, meter, host);
             alarm.off();
         }
         line(out, Json.write(report));
@@ -838,6 +852,7 @@ public final class Main {
         }
         java.io.ByteArrayOutputStream held = json ? new java.io.ByteArrayOutputStream() : null;
         Interpreter interp = new Interpreter(src, json ? held : out, maxSteps);
+        interp.host(Hosts.load(hostsFile, replayFile).get());
         java.io.BufferedReader commands = new java.io.BufferedReader(new java.io.InputStreamReader(in, StandardCharsets.UTF_8));
         boolean interactive = in == System.in && System.console() != null;
         Debug d = new Debug(src, p, commands, out, json, interactive, maxStops, held, r.check().expressions());
@@ -864,14 +879,14 @@ public final class Main {
      * charged to {@code meter}, which holds its budget, and stops with a "timeout" or "cancelled" error when
      * another thread stops the meter.
      */
-    static Map<String, Object> callTool(Source src, FnDecl f, Object arguments, Meter meter) {
+    static Map<String, Object> callTool(Source src, FnDecl f, Object arguments, Meter meter, Host host) {
         Object[] args;
         try {
             args = toolArguments(f, arguments);
         } catch (JsonValues.DecodeException e) {
             return badArguments(e.getMessage());
         }
-        return runTool(src, f, args, meter);
+        return runTool(src, f, args, meter, host);
     }
 
     /**
@@ -892,6 +907,11 @@ public final class Main {
                 args[i] = Values.copy(f.defaults.get(i).value, new Meter(0));
                 continue;
             }
+            if (!m.containsKey(p.name) && JsonValues.omittable(p.type)) {
+                // An Option left out is Option.None, as null is.
+                args[i] = JsonValues.none();
+                continue;
+            }
             if (!m.containsKey(p.name)) throw new JsonValues.DecodeException(p.name + ": missing argument");
             args[i] = JsonValues.fromJson(m.get(p.name), p.type, p.name);
         }
@@ -908,9 +928,18 @@ public final class Main {
      * prints, as {@link #callTool} does.
      */
     public static Map<String, Object> runTool(Source src, FnDecl f, Object[] args, Meter meter) {
+        return runTool(src, f, args, meter, Host.NONE);
+    }
+
+    /**
+     * {@link #runTool(Source, FnDecl, Object[], Meter)} with {@code host} answering the calls of host fns; the report
+     * has "host_calls", each call it was asked, after "result" or "error" when there were any.
+     */
+    public static Map<String, Object> runTool(Source src, FnDecl f, Object[] args, Meter meter, Host host) {
         Map<String, Object> j = Json.obj("ok", false);  // set again below, where it keeps its place as the first key
         CappedOutput captured = new CappedOutput(MAX_CAPTURED_OUTPUT);
         Interpreter in = new Interpreter(src, captured, meter);
+        in.host(host);
         try {
             Object result = in.call(f, args, f.nameSpan);
             j.put("result", f.ret instanceof Type.Void ? null : JsonValues.toJson(result, f.ret));
@@ -922,6 +951,7 @@ public final class Main {
             j.put("error", Json.obj("code", "bad_result", "message", e.messageAt("result")));
         }
         j.put("ok", !j.containsKey("error"));
+        if (!in.hostCalls().isEmpty()) j.put("host_calls", in.hostCalls());
         putStdout(j, captured);
         // The call's cost: the statements it ran and the data they went through, the same on every run (unless
         // it was stopped by the clock), as `run --json` reports.
@@ -951,10 +981,21 @@ public final class Main {
             for (Fuzz.Finding f : e.findings()) {
                 Map<String, Object> t = trapJson(src, f.trap());
                 t.put(e.tool() ? "arguments" : "input", f.input());
+                if (!f.hostCalls().isEmpty()) t.put("host_calls", f.hostCalls());
                 found.add(t);
                 String trap = renderTrap(src, f.trap());
                 text.append(trap.endsWith("\n") ? trap : trap + "\n");
-                text.append("  = ").append(e.tool() ? "arguments: " : "input: ").append(abbreviated(f.input())).append("\n\n");
+                text.append("  = ").append(e.tool() ? "arguments: " : "input: ").append(abbreviated(f.input())).append("\n");
+                // The replies the fuzzer gave, the last ones first to go: the trap followed the last.
+                List<Object> asked = f.hostCalls();
+                int from = Math.max(0, asked.size() - 4);
+                if (from > 0) text.append("  = host fns replied ").append(from).append(" time(s) before these:\n");
+                for (Object call : asked.subList(from, asked.size())) {
+                    Map<?, ?> c = (Map<?, ?>) call;
+                    text.append("  = host fn ").append(c.get("fn")).append(" replied: ")
+                        .append(abbreviated(c.containsKey("result") ? c.get("result") : "(no reply)")).append("\n");
+                }
+                text.append("\n");
             }
             list.add(Json.obj("name", e.name(), "kind", e.tool() ? "tool" : "main", "calls", e.calls(), "traps", found));
         }
@@ -1020,6 +1061,7 @@ public final class Main {
         HttpTransport.Config config = http == null ? null : httpConfig();
         try (Watchdog watchdog = new Watchdog(timeoutMillis)) {
             McpServer server = new McpServer(src, r.program(), maxSteps, watchdog, workers, maxQueued);
+            server.hosts(Hosts.load(hostsFile, null));
             if (watch) server.watch(new Reloader(r.program(), maxStack), WATCH_MILLIS, err);
             if (config == null) {
                 server.serve(in, out);

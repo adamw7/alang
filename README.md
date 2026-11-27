@@ -69,9 +69,9 @@ what it writes to any MCP client with `alang serve prog.al` ([how](#tools-in-an-
 |----------|-----|
 | **Easy for agents** | One way to do things, explicit types, no precedence puzzles, no shadowing. Every diagnostic has a stable code, location and fix hint, also as JSON. Built-in `test` blocks and `requires`/`ensures` contracts. |
 | **No heap** | Every type has a compile-time size; no pointers, `null` or allocator. `alang check` bounds each entry point's worst-case memory (8 MiB budget by default). |
-| **Deterministic** | No clock, randomness, environment, threads or I/O but `print`; input arrives whole. No undefined behavior: overflow, bad indexes and conversions trap with fixed codes. Floats are correctly rounded, `sin`/`exp`/`pow` included. Tests compare the C backend byte for byte with the interpreter under gcc and clang, `-O0` to `-O3`, and across locales. |
+| **Deterministic** | No clock, randomness, environment, threads or I/O but `print`; input arrives whole, and outside data only as the replies to `host fn` calls, which are recorded and can be replayed. No undefined behavior: overflow, bad indexes and conversions trap with fixed codes. Floats are correctly rounded, `sin`/`exp`/`pow` included. Tests compare the C backend byte for byte with the interpreter under gcc and clang, `-O0` to `-O3`, and across locales. |
 | **Always terminates** | No recursion; every `while` states a `limit`. |
-| **Safe to run** | Tools take JSON in and give JSON out with no host access, within a deterministic step budget (backed by `--timeout`). |
+| **Safe to run** | Tools take JSON in and give JSON out, within a deterministic step budget (backed by `--timeout`); they reach nothing but the `host fn`s their host chooses to answer. |
 | **Runs anywhere** | A JVM interpreter and a C99 backend emitting heap-free, stdio-free C. |
 
 [docs/COMPARISON.md](docs/COMPARISON.md) compares these with Python, JavaScript, Go, Rust, C and Java.
@@ -122,7 +122,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `run FILE` | Run `fn main()`; `fn main(input: str[N])` gets all of stdin |
 | `test FILE [--filter TEXT]` | Run the `test` blocks (`test "..." traps R0006 { }` must trap) |
 | `tools FILE` | JSON tool definitions for every `tool fn` |
-| `call FILE TOOL [JSON \| -] [--timeout S]` | Call a tool; `-` reads the arguments from stdin |
+| `call FILE TOOL [JSON \| -] [--timeout S]` | Call a tool; `-` reads the arguments from stdin; `--hosts FILE` or `--replay FILE` answers its host fns |
 | `fuzz FILE` | Call every tool, and a `main` that reads input, with arguments at their limits |
 | `serve FILE [--watch] [--http ADDR]` | Serve every tool over MCP |
 | `build FILE [-o out.c]` | Compile to heap-free C99 |
@@ -204,6 +204,48 @@ alang serve bill.al --http 0.0.0.0:8443 --token-file token.txt --tls-cert fullch
 ```
 
 Details: [SPEC.md §10](docs/SPEC.md#10-tools-calling-alang-from-an-agent).
+
+## Reaching outside data
+
+A `host fn` has no body: the host answers each call, with JSON. It is how a tool gets a price list, a database
+row or a web page, while the rest of the program stays deterministic: every question and answer is recorded,
+a test binds the host fn to a function of its own, and `fuzz` answers with values at their limits.
+
+```alang
+/// The price of an item in cents, or Option.None when it is not sold.
+host fn price(sku: str[16]) -> Option<i64>
+    ensures unwrap_or(result, 0) >= 0;
+
+/// The total of the items that are sold.
+tool fn total(skus: list[str[16]; 8]) -> i64 {
+    var sum: i64 = 0;
+    for s in skus {
+        sum += unwrap_or(price(s), 0);
+    }
+    return sum;
+}
+
+fn fixed_prices(sku: str[16]) -> Option<i64> {
+    return if sku == "tea" then Option.Some(350) else Option.None;
+}
+
+test "adds up the sold items" with price = fixed_prices {
+    assert total(["tea", "gold", "tea"]) == 700;
+}
+```
+
+```
+$ cat hosts.json
+{"price": {"command": ["python3", "price.py"]}}
+$ alang call shop.al total '{"skus": ["tea", "gold"]}' --hosts hosts.json | tee report.json
+{"ok": true, "result": 350, "host_calls": [{"fn": "price", "args": {"sku": "tea"}, "result": 350}, {"fn": "price", "args": {"sku": "gold"}, "result": null}], "stdout": "", "steps": 9}
+$ alang call shop.al total '{"skus": ["tea", "gold"]}' --replay report.json   # the same report, with no host
+```
+
+Each call runs the command with `{"fn": "price", "args": {"sku": "tea"}}` on stdin and reads the JSON result
+from stdout; `alang serve --hosts` does the same for an MCP client, which is told that such a tool reaches
+outside data. Embedders pass a `Host` (`CallOptions.host`) or link `al_host` into the C build. See
+[examples/orders.al](examples/orders.al) and [SPEC.md §10.1](docs/SPEC.md#101-host-functions).
 
 ## Embedding in a JVM host
 
@@ -298,7 +340,8 @@ tooling; keep the Java code plain and the dependency list short.
 
 ## Status
 
-Version 0.6: imports, vendored packages pinned by hash, generics, `Option`/`Result`, function values, tuples, maps, sets, slices, labelled
+Version 0.7: host fns for outside data, with recorded and replayable calls; `Option` as `null` or its value in
+JSON. Imports, vendored packages pinned by hash, generics, `Option`/`Result`, function values, tuples, maps, sets, slices, labelled
 loops, nested patterns with guards, `if let`, `while let`, `let ... else`, patterns in `for`, the `?` operator on
 `Option`/`Result`, `match` and `if` expressions, default parameters and
 struct fields, struct update (`P(..p, x: 1)`), UTF-8 text, base-N text (`to_base`, `parse_i64(s, 16)`), bit

@@ -136,11 +136,20 @@ def tools(path, *, timeout=None):
     return _json(invoke("tools", path, timeout=timeout))
 
 
-def call(path, tool, arguments=None, *, timeout=None):
+def call(path, tool, arguments=None, *, hosts=None, replay=None, timeout=None):
     """``alang call PATH TOOL``: calls a ``tool fn`` with a dict of arguments and returns the reply, a dict
-    with ``ok`` and either ``result`` and ``stdout``, or ``error`` (with its ``code``, such as ``R0004``)."""
+    with ``ok`` and either ``result`` and ``stdout``, or ``error`` (with its ``code``, such as ``R0004``).
+
+    ``hosts`` is the path of a ``--hosts`` file, the commands that answer the program's ``host fn`` calls;
+    ``replay`` the path of a report whose ``host_calls`` answer them again. A reply that made any such calls
+    lists them in ``host_calls``."""
     payload = json.dumps({} if arguments is None else arguments, ensure_ascii=False)
-    return _json(invoke("call", path, tool, "-", input=payload, timeout=timeout))
+    options = []
+    if hosts is not None:
+        options += ["--hosts", hosts]
+    if replay is not None:
+        options += ["--replay", replay]
+    return _json(invoke("call", path, tool, "-", *options, input=payload, timeout=timeout))
 
 
 def agents_md():

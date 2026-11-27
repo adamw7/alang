@@ -108,7 +108,7 @@
         { "name": "storage.modifier.mut.alang", "match": "\\bmut\\b" },
         { "name": "constant.language.boolean.alang", "match": "\\b(?:true|false)\\b" },
         { "name": "variable.language.result.alang", "match": "\\bresult\\b" },
-        { "name": "keyword.other.alang", "match": "\\b(?:fn|struct|enum|const|test|tool|traps|import|as)\\b" }
+        { "name": "keyword.other.alang", "match": "\\b(?:fn|struct|enum|const|test|tool|host|with|traps|import|as)\\b" }
       ]
     },
     "types": {
