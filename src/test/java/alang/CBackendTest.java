@@ -410,4 +410,96 @@ class CBackendTest {
             }
         }));
     }
+
+    /**
+     * A host fn compiled to C asks al_host, which the program it is linked with defines (-DAL_HOST): with the same
+     * answers, the build prints what the interpreter prints, and a call it gets no answer to traps R0015 in the same
+     * place. Each backend says what is missing in its own words: no --hosts, or no al_host.
+     */
+    @TestFactory
+    Stream<DynamicTest> hostFnsAskTheLinkedHost() {
+        String program = """
+            struct Item {
+                name: str[16],
+                tags: list[str[4]; 3],
+                price: f64,
+                note: Option<str[8]>,
+            }
+
+            host fn info(sku: str[8], qty: i64) -> Option<Item>;
+            host fn record(line: str[32]);
+            host fn missing() -> u8;
+
+            fn main() {
+                print(info("tea", 2));
+                print(info("gold", 1));
+                record("done");
+                print(missing());
+            }
+            """;
+        String host = """
+            #include <stdint.h>
+            #include <string.h>
+
+            static int answer(const char *r, uint8_t *out, uint32_t cap, uint32_t *len) {
+                uint32_t n = (uint32_t)strlen(r);
+                if (n > cap) return 0;
+                memcpy(out, r, n);
+                *len = n;
+                return 1;
+            }
+
+            static int is(const uint8_t *a, uint32_t n, const char *s) {
+                return n == strlen(s) && memcmp(a, s, n) == 0;
+            }
+
+            int al_host(const char *name, const uint8_t *args, uint32_t n, uint8_t *out, uint32_t cap, uint32_t *len) {
+                if (strcmp(name, "info") == 0 && is(args, n, "{\\"sku\\": \\"tea\\", \\"qty\\": 2}")) {
+                    return answer("{\\"name\\": \\"green tea\\", \\"tags\\": [\\"hot\\"], \\"price\\": 3.5}", out, cap, len);
+                }
+                if (strcmp(name, "info") == 0 || (strcmp(name, "record") == 0 && is(args, n, "{\\"line\\": \\"done\\"}"))) {
+                    return answer("null", out, cap, len);
+                }
+                return 0;
+            }
+            """;
+        alang.interp.Host same = (name, args) -> {
+            String a = alang.util.Json.write(args);
+            if (name.equals("info") && a.equals("{\"sku\": \"tea\", \"qty\": 2}")) {
+                return alang.util.Json.parse("{\"name\": \"green tea\", \"tags\": [\"hot\"], \"price\": 3.5}");
+            }
+            if (name.equals("info") || name.equals("record") && a.equals("{\"line\": \"done\"}")) return null;
+            throw new alang.interp.Host.Failure("no answer");
+        };
+        return Stream.of(Harness.dynamicTest("host_fns_in_c.al", COMPILE_AND_RUN_TIMEOUT, () -> {
+            List<String[]> ccs = compilers();
+            assumeTrue(!ccs.isEmpty(), "no C compiler available");
+            Frontend.Result r = Frontend.compile(new Source("host_fns_in_c.al", program), Checker.DEFAULT_MAX_STACK);
+            assertTrue(r.ok(), () -> r.diags().renderText());
+            ByteArrayOutputStream printed = new ByteArrayOutputStream();
+            alang.interp.Interpreter in = new alang.interp.Interpreter(r.diags().source(), printed, 0);
+            in.host(same);
+            alang.interp.Trap trap = assertThrows(alang.interp.Trap.class, () -> in.runMain(r.program().function("main"), new byte[0]));
+            assertEquals(Code.R0015, trap.code);
+            assertEquals("Option.Some(Item(name: \"green tea\", tags: [\"hot\"], price: 3.5, note: Option.None))\nOption.None\n",
+                printed.toString(StandardCharsets.UTF_8));
+            Path dir = Files.createTempDirectory("alang-c");
+            Files.writeString(dir.resolve("prog.c"), CGen.generate(r.program()), StandardCharsets.UTF_8);
+            Files.writeString(dir.resolve("host.c"), host, StandardCharsets.UTF_8);
+            for (int i = 0; i < ccs.size(); i++) {
+                String[] cc = ccs.get(i);
+                List<String> cmd = new ArrayList<>(List.of(cc));
+                cmd.addAll(List.of("-DAL_HOST", "-o", prog(i), "prog.c", "host.c"));
+                cmd.addAll(libm(cc[0]));
+                Proc build = exec(dir, cmd.toArray(new String[0]));
+                assertEquals(0, build.exit(), () -> String.join(" ", cc) + ":\n" + build.stderr());
+                Proc run = exec(dir, dir.resolve(prog(i)).toString());
+                String who = String.join(" ", cc);
+                assertEquals(printed.toString(StandardCharsets.UTF_8), run.stdout(), who);
+                assertEquals(1, run.exit(), who);
+                assertTrue(run.stderr().startsWith("trap[R0015]: host fn `missing` failed: "), who + "\n" + run.stderr());
+                assertTrue(run.stderr().contains("--> host_fns_in_c.al:" + trap.span.line() + ":" + trap.span.col()), run.stderr());
+            }
+        }));
+    }
 }

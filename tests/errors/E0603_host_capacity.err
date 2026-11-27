@@ -1,0 +1,7 @@
+error[E0603]: a host fn's parameters are sent as JSON, of types with fixed capacities and no functions
+ --> tests/errors/E0603_host_capacity.al:2:21
+  |
+2 | host fn lookup(key: str[_]) -> str[64];
+  |                     ^^^^^^
+  = hint: write the most it may hold, e.g. key: str[256]
+

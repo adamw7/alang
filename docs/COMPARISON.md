@@ -20,7 +20,7 @@ enforces a rule for each. The video [demo/why.mp4](demo/why.mp4) shows six cases
 | Worst-case memory known before running | yes, printed by `alang check` | no | no | no | no | no |
 | Guaranteed to terminate | yes: no recursion, every `while` has a `limit` | no | no | no | no | no |
 | Same output on every run and machine | guaranteed and tested | no: `set` order changes per process | no: `Math.random`, `Date`, engine-specific math | no: map order is randomized | no: `HashMap` order is randomized | no: undefined behavior, FMA contraction, locale |
-| Can reach files, network, clock | no | yes | yes | yes | yes | yes |
+| Can reach files, network, clock | only through the `host fn`s its host answers, each call recorded and replayable | yes | yes | yes | yes | yes |
 | Tool schema for an agent | generated from the signature, doc comments and contract | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand or with a library | written by hand |
 
 ## 1. Arithmetic never goes wrong quietly

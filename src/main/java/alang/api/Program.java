@@ -95,7 +95,7 @@ public final class Program {
             ? Timer.WATCHDOG.watch(meter, options.timeoutMillis(), "")
             : () -> { };
         try {
-            return new CallResult(Main.runTool(source, f, args, meter));
+            return new CallResult(Main.runTool(source, f, args, meter, HostBridge.of(options.host())));
         } finally {
             alarm.off();
             if (c != null) c.detach(meter);

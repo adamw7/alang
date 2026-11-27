@@ -43,7 +43,8 @@ flowchart TB
     style sys fill:none,stroke:#888,stroke-dasharray:6 4
 ```
 
-The toolchain never reaches out: no network, processes, clock, environment or randomness. It reads the
+The toolchain never reaches out on its own: no network, clock, environment or randomness, and the only processes it
+starts are the commands a `--hosts` file names, to answer a program's `host fn` calls. It reads the
 source, its imports and the `alang.json` manifests of the packages they use (and stdin for `call -` and
 `fn main(input)`), and writes stdout, stderr, `build -o` and, for `deps --lock`, `alang.json`. `bin/alang` rebuilds the jar when sources are newer and runs it under `LC_ALL=C.UTF-8`. A
 compiled program is one C99 file: the program plus the [prelude](../src/main/resources/alang/cgen/prelude.c),

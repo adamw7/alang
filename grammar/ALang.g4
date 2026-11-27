@@ -90,6 +90,8 @@ variantDecl
 // fn first<T>(xs: list[T; _]) -> T: a type parameter stands for any type; each call fixes it from the arguments.
 functionDecl
     : TOOL? FN identifier typeParams? LPAREN paramList? RPAREN (ARROW type)? contract* block
+    // host fn price(sku: str[16]) -> Option<i64>;  no body: the program's host answers each call, with JSON
+    | HOST FN identifier LPAREN paramList? RPAREN (ARROW type)? contract* SEMI
     ;
 
 typeParams
@@ -112,8 +114,13 @@ contract
 
 // test "sum of empty list is zero" { assert sum([]) == 0; }
 // test "zero is refused" traps R0006 { let _q: i64 = div(1, 0); }  passes only if the body stops with that trap
+// test "priced" with price = fixed_price { }  each call to host fn price runs fixed_price instead
 testDecl
-    : TEST STRING_LIT (TRAPS identifier)? block
+    : TEST STRING_LIT (TRAPS identifier)? (WITH hostBinding (COMMA hostBinding)*)? block
+    ;
+
+hostBinding
+    : identifier ASSIGN identifier
     ;
 
 // =====================================================================
@@ -416,14 +423,16 @@ literal
     | FALSE
     ;
 
-// `limit`, `test`, `tool`, `import`, `step`, `rev`, `then`, `map`, `set`, `as`, `traps` and `type` are contextual keywords and
-// remain usable as names.
+// `limit`, `test`, `tool`, `host`, `with`, `import`, `step`, `rev`, `then`, `map`, `set`, `as`, `traps` and `type` are
+// contextual keywords and remain usable as names.
 identifier
     : IDENT
     | TYPE
     | LIMIT
     | TEST
     | TOOL
+    | HOST
+    | WITH
     | IMPORT
     | STEP
     | REV
@@ -442,6 +451,8 @@ identifier
 IMPORT    : 'import' ;
 FN        : 'fn' ;
 TOOL      : 'tool' ;
+HOST      : 'host' ;
+WITH      : 'with' ;
 LET       : 'let' ;
 VAR       : 'var' ;
 CONST     : 'const' ;

@@ -1,4 +1,4 @@
-error[E0001]: unexpected 'import', expected one of end of file, 'fn', 'tool', 'const', 'struct', 'type', 'enum', 'test'
+error[E0001]: unexpected 'import', expected one of end of file, 'fn', 'tool', 'host', 'const', 'struct', 'type', 'enum', 'test'
  --> tests/errors/import_after_declaration.al:4:1
   |
 4 | import "lib/names.al";

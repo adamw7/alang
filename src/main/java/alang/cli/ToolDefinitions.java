@@ -24,7 +24,30 @@ public final class ToolDefinitions {
         for (String clause : f.requiresText) sb.append("\nRequires: ").append(clause);
         if (!(f.ret instanceof Type.Void)) sb.append("\nReturns ").append(f.ret).append('.');
         for (String clause : f.ensuresText) sb.append("\nEnsures: ").append(clause);
+        List<String> hosts = hostFns(f).stream().map(h -> h.name).toList();
+        if (!hosts.isEmpty()) {
+            sb.append("\nAsks the host (").append(String.join(", ", hosts))
+                .append("), so it may reach outside data, and a repeated call may differ.");
+        }
         return sb.toString();
+    }
+
+    /**
+     * The host fns a call of {@code f} may reach, by name: through the functions it calls, those it passes as values,
+     * and theirs. A tool that reaches none is a pure function of its arguments.
+     */
+    public static List<FnDecl> hostFns(FnDecl f) {
+        Set<Routine> seen = new HashSet<>();
+        Deque<Routine> work = new ArrayDeque<>(List.of(f));
+        TreeMap<String, FnDecl> hosts = new TreeMap<>();
+        while (!work.isEmpty()) {
+            Routine r = work.pop();
+            if (!seen.add(r)) continue;
+            if (r instanceof FnDecl fd && fd.host) hosts.put(fd.name, fd);
+            work.addAll(r.callees);
+            work.addAll(r.fnValues);
+        }
+        return List.copyOf(hosts.values());
     }
 
     /**
@@ -39,7 +62,8 @@ public final class ToolDefinitions {
             Map<String, Object> schema = new LinkedHashMap<>(JsonValues.describe(JsonValues.schema(p.type), f.params.get(i).doc()));
             ConstDecl d = f.defaults.get(i);
             if (d == null) {
-                required.add(p.name);
+                // An Option that is left out is Option.None.
+                if (!JsonValues.omittable(p.type)) required.add(p.name);
             } else {
                 // Optional: a call that leaves it out gets the default. One JSON cannot write (a NaN) is not shown.
                 try {

@@ -552,4 +552,39 @@ class McpServerTest {
             assertEquals(List.of(), s.end());
         }
     }
+
+    @Test
+    void aToolThatAsksTheHostIsNotReadOnly() throws IOException {
+        String program = """
+            host fn stock(sku: str[8]) -> i64;
+
+            /// Whether an item is in stock.
+            tool fn in_stock(sku: str[8]) -> bool {
+                return stock(sku) > 0;
+            }
+
+            /// Pure.
+            tool fn twice(n: i64) -> i64 {
+                return n * 2;
+            }
+            """;
+        McpServer server = server(program, 1000, 0, 1);
+        server.hosts(() -> (fn, args) -> java.math.BigInteger.valueOf(3));
+        String input = "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"initialize\", \"params\": {}}\n"
+            + "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"tools/list\"}\n"
+            + call("3", "in_stock", "{\"sku\": \"tea\"}") + "\n";
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        server.serve(new ByteArrayInputStream(input.getBytes(StandardCharsets.UTF_8)), new PrintStream(out, false, StandardCharsets.UTF_8));
+        List<String> lines = List.of(out.toString(StandardCharsets.UTF_8).split("\n"));
+        Map<?, ?> init = (Map<?, ?>) ((Map<?, ?>) Json.parse(lines.get(0))).get("result");
+        assertEquals(McpServer.INSTRUCTIONS + McpServer.HOST_INSTRUCTIONS, init.get("instructions"));
+        List<?> tools = (List<?>) ((Map<?, ?>) ((Map<?, ?>) Json.parse(lines.get(1))).get("result")).get("tools");
+        assertEquals("{\"openWorldHint\": true}", Json.write(((Map<?, ?>) tools.get(0)).get("annotations")));
+        assertEquals("{\"readOnlyHint\": true, \"destructiveHint\": false, \"idempotentHint\": true, \"openWorldHint\": false}",
+            Json.write(((Map<?, ?>) tools.get(1)).get("annotations")));
+        Map<?, ?> result = (Map<?, ?>) ((Map<?, ?>) Json.parse(lines.get(2))).get("result");
+        assertEquals("{\"result\": true}", Json.write(result.get("structuredContent")));
+        String text = (String) ((Map<?, ?>) ((List<?>) result.get("content")).get(0)).get("text");
+        assertTrue(text.contains("\"host_calls\": [{\"fn\": \"stock\", \"args\": {\"sku\": \"tea\"}, \"result\": 3}]"), text);
+    }
 }

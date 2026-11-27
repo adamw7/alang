@@ -450,7 +450,8 @@ final class SyntaxErrorListener extends BaseErrorListener {
                 names.add("a name");
                 continue;
             }
-            if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.IMPORT
+            if (t == ALangParser.LIMIT || t == ALangParser.TEST || t == ALangParser.TOOL || t == ALangParser.HOST || t == ALangParser.WITH
+                || t == ALangParser.IMPORT
                 || t == ALangParser.STEP || t == ALangParser.REV || t == ALangParser.THEN || t == ALangParser.MAP
                 || t == ALangParser.SET || t == ALangParser.AS || t == ALangParser.TRAPS || t == ALangParser.TYPE) {
                 // `type` starts a declaration too, where no name is expected.
@@ -464,7 +465,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
         if (expr) names.add(0, "an expression");
         if (operator) names.add("an operator");
         if (names.isEmpty()) return null;
-        if (names.size() > (names.contains("end of file") ? 9 : 8)) return "a statement or expression";
+        // The declarations a file may have next (end of file, import, fn, tool, host, const, struct, type, enum, test)
+        // are listed; a longer list is where a statement or expression could go.
+        if (names.size() > (names.contains("end of file") ? 10 : 8)) return "a statement or expression";
         if (names.size() == 1) return names.get(0);
         if (names.size() == 2) return names.get(0) + " or " + names.get(1);
         return "one of " + String.join(", ", names);
@@ -841,6 +844,7 @@ final class SyntaxErrorListener extends BaseErrorListener {
 
     private static boolean isNameLike(int t) {
         return t == ALangLexer.IDENT || t == ALangLexer.LIMIT || t == ALangLexer.TEST || t == ALangLexer.TOOL
+            || t == ALangLexer.HOST || t == ALangLexer.WITH
             || t == ALangLexer.IMPORT || t == ALangLexer.STEP || t == ALangLexer.REV || t == ALangLexer.THEN || t == ALangLexer.MAP || t == ALangLexer.SET || t == ALangLexer.AS || t == ALangLexer.TRAPS || t == ALangLexer.TYPE || t >= ALangLexer.BOOL && t <= ALangLexer.LIST;
     }
 

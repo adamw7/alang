@@ -1,0 +1,1 @@
+an order with no sku breaks the host fn's precondition, before any host is asked:

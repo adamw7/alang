@@ -479,4 +479,70 @@ class ToolsTest {
         assertEquals("{\"type\": \"string\", \"maxLength\": 4, \"description\": \"UTF-8 text of at most 4 bytes\"}",
             param(program, "s"));
     }
+
+    @Test
+    void optionsAreNullOrTheirValueAndMayBeLeftOut() throws IOException {
+        String program = """
+            struct Contact {
+                name: str[8],
+                email: Option<str[16]>,
+            }
+
+            /// Greets someone.
+            tool fn greet(who: Contact, times: Option<u8>) -> Option<str[32]> {
+                if let Option.Some(e) = who.email {
+                    var s: str[32] = "hi ";
+                    append(mut s, e, " x", unwrap_or(times, 1));
+                    return Option.Some(s);
+                }
+                return Option.None;
+            }
+            """;
+        Map<?, ?> tool = (Map<?, ?>) ((List<?>) Json.parse(tools(program))).get(0);
+        Map<?, ?> input = (Map<?, ?>) tool.get("input_schema");
+        assertEquals(List.of("who"), input.get("required"));
+        assertEquals("{\"anyOf\": [{\"type\": \"integer\", \"minimum\": 0, \"maximum\": 255}, {\"type\": \"null\"}], "
+            + "\"description\": \"null when there is none\"}", param(program, "times"));
+        Map<?, ?> who = (Map<?, ?>) ((Map<?, ?>) input.get("properties")).get("who");
+        assertEquals(List.of("name"), who.get("required"));
+
+        Path p = dir.resolve("greet.al");
+        Files.writeString(p, program, StandardCharsets.UTF_8);
+        assertEquals("{\"ok\": true, \"result\": \"hi a@b x1\", \"stdout\": \"\", \"steps\": 5}\n",
+            run("call", p.toString(), "greet", "{\"who\": {\"name\": \"ann\", \"email\": \"a@b\"}}").out());
+        assertEquals("{\"ok\": true, \"result\": \"hi a@b x3\", \"stdout\": \"\", \"steps\": 5}\n",
+            run("call", p.toString(), "greet", "{\"who\": {\"name\": \"ann\", \"email\": \"a@b\"}, \"times\": 3}").out());
+        assertEquals("{\"ok\": true, \"result\": null, \"stdout\": \"\", \"steps\": 2}\n",
+            run("call", p.toString(), "greet", "{\"who\": {\"name\": \"ann\", \"email\": null}, \"times\": null}").out());
+        assertEquals("{\"ok\": false, \"error\": {\"code\": \"bad_arguments\", \"message\": \"times: expected an integer\"}}\n",
+            run("call", p.toString(), "greet", "{\"who\": {\"name\": \"ann\"}, \"times\": \"None\"}").out());
+    }
+
+    @Test
+    void examplesComeFromTestsThatBindTheHostFns() throws IOException {
+        String program = """
+            host fn price(sku: str[8]) -> i64;
+
+            /// Prices an item twice over.
+            tool fn double(sku: str[8]) -> i64 {
+                return price(sku) * 2;
+            }
+
+            fn flat(sku: str[8]) -> i64 {
+                return 5;
+            }
+
+            test "doubles" with price = flat {
+                assert double("tea") == 10;
+            }
+
+            test "unbound" traps R0015 {
+                print(double("jam"));
+            }
+            """;
+        Map<?, ?> tool = (Map<?, ?>) ((List<?>) Json.parse(tools(program))).get(0);
+        assertEquals("[{\"sku\": \"tea\"}]", Json.write(tool.get("input_examples")));
+        assertEquals("Prices an item twice over.\nReturns i64.\nAsks the host (price), so it may reach outside data, and a "
+            + "repeated call may differ.", tool.get("description"));
+    }
 }

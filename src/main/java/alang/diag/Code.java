@@ -187,6 +187,17 @@ public enum Code {
         "`fn main()` returns nothing, and takes no parameters or one: a read-only `str[N]` that receives all of the "
             + "program's standard input, e.g. `alang run prog.al < data.txt`. Input longer than N bytes traps (R0004).",
         "fn main() { print(\"hello\"); }\nfn main(input: str[4096]) { print(len(input)); }"),
+    E0603("invalid host fn",
+        "A `host fn` has no body: the program's host answers each call, receiving the arguments as a JSON object and "
+            + "replying with the JSON of the result. So its parameters cannot be `mut`, and its parameters and result have "
+            + "fixed capacities and no functions. `main` cannot be one.",
+        "host fn price(sku: str[16]) -> Option<i64>;  // ok\nhost fn grow(xs: mut list[i64; 8]);  // error: `mut`"),
+    E0604("invalid host binding",
+        "`test \"...\" with price = fixed_price { }` runs fixed_price for each call of host fn price in that test. The name "
+            + "before `=` must be a host fn, bound once per test, and the one after it a function with a body of exactly "
+            + "its type: the same parameter types, the same result, no `mut`, no type parameters or `_` capacities.",
+        "host fn price(sku: str[16]) -> i64;\nfn fixed_price(sku: str[16]) -> i64 { return 100; }\n"
+            + "test \"priced\" with price = fixed_price { assert price(\"a\") == 100; }"),
 
     // ---- imports ----
     E0701("imported file not found",
@@ -314,7 +325,19 @@ public enum Code {
         "A fn main whose parameter is not a str, fn main(input: Config), receives its standard input as JSON for that type, "
             + "mapped as a tool's arguments are (see from_json). Input that is not, or longer than 1048576 bytes, stops the "
             + "program before main starts.",
-        "fn main(input: Config) { ... }  // with stdin {\"name\": 3} where name is a str: trap");
+        "fn main(input: Config) { ... }  // with stdin {\"name\": 3} where name is a str: trap"),
+    R0015("host call failed",
+        "A call of a host fn got no reply: no host answers it here (a test runs one bound with `with`, and `run`, `call` "
+            + "and `serve` take --hosts or --replay), the host reported a failure, it did not answer in time, a "
+            + "recording given with --replay holds a different call at that point, or, compiled to C, no al_host is linked "
+            + "(-DAL_HOST). Return a Result from the host fn for failures the program should handle. (An argument JSON "
+            + "cannot hold, a NaN or a str that is not UTF-8, traps R0013 before the call, as to_json does.)",
+        "host fn price(sku: str[16]) -> i64;\ntest \"no host\" traps R0015 { let p: i64 = price(\"a\"); }"),
+    R0016("host reply does not fit",
+        "The host answered a call of a host fn with JSON that is not of the host fn's result type, mapped as a tool's "
+            + "arguments are: a string longer than its str, too many items for a list, a missing field, a number out of "
+            + "range. The reply is not used.",
+        "host fn price(sku: str[16]) -> u8;  // a reply of 300, or of \"cheap\": trap");
 
     public final String title;
     public final String explanation;

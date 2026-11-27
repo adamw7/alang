@@ -145,7 +145,8 @@ can fail; a caller takes them apart with `match` or `if let Option.Some(i) = fin
 `let Option.Some(i): Option<i64> = find(xs, x) else { return -1; };` (§4), with `unwrap_or(o, default)`,
 `is_some`, `is_none`, `is_ok` and `is_err` (§9.1), or passes the failure on with `?` (§6). Like every enum they
 compare with `==`, sort (`None` before `Some`, `Ok` before `Err`), print as `Option.Some(3)`, and are JSON values in
-a tool's arguments and result (§10): `"None"`, `{"Some": [3]}`.
+a tool's arguments and result (§10): an `Option` is `null` or the value itself (`3`), and a struct field or tool
+parameter of an `Option` type may be left out, as `Option.None`; a `Result` is `{"Ok": [3]}` or `{"Err": ["why"]}`.
 
 **Equality and ordering.** `==` and `!=` work on every type (strings, and lists of the same element type,
 of different capacities may be compared; aggregates compare element-wise). `< <= > >=` work on numbers of
@@ -165,8 +166,10 @@ enum Name { Variant, Variant(Type, ...), ... }
 enum Name<T> { Variant, Variant(T), ... }
 fn name(param: Type, param: mut Type, param: Type = constant) -> ReturnType requires cond ensures cond { ... }
 tool fn name(param: Type) -> ReturnType { ... }
+host fn name(param: Type) -> ReturnType requires cond ensures cond;
 test "description" { ... }
 test "description" traps R0006 { ... }
+test "description" with host_fn = fn_name, ... { ... }
 ```
 
 - **Constants** are evaluated at compile time from literals, other constants, operators, conversions,
@@ -179,12 +182,19 @@ test "description" traps R0006 { ... }
   an empty str. Any other signature is E0602. The program never reads a file itself: the host decides
   what the input is, and the same input gives the same output.
 - **`tool fn`** is callable with JSON arguments (§10) and cannot take `mut` parameters.
+- **`host fn`** has no body: the program's host answers each call (§10.1). Its arguments go to the host as JSON
+  and its result comes back as JSON, so its parameters cannot be `mut`, and its parameters and result have fixed
+  capacities and no functions (E0603). It can be called, and passed as a value, like any function.
 - **`test "..."`** blocks are run by `alang test`, each from a fresh state. A test passes when its body runs
   to its end; one written `test "..." traps R0006 { ... }` passes only when its body stops with that trap,
   and fails with R0005 when it runs to its end or stops with another trap (whose code and message the
-  failure gives). The code is one of R0001 to R0013 (§11); anything else is E0001. In such a test, a call
+  failure gives). The code is one of R0001 to R0016 (§11); anything else is E0001. In such a test, a call
   whose result is not used and a variable changed but never read are not warned about (W0302, W0305): they
   are there to trap. Its calls do not become a tool's `input_examples` (§10).
+  `test "..." with price = fixed_price { ... }` runs `fixed_price` for each call of host fn `price` in that
+  test, at any depth: a function with a body of exactly the host fn's type (E0604), which may not call back
+  into what calls `price` (E0401 otherwise, as recursion). `traps` comes before `with`. Each test binds its
+  own host fns; one it does not bind gets no answer (R0015).
 
 Names are unique: two items cannot share a name, and **locals cannot shadow** (E0105): a local may not
 reuse the name of a local still in scope, a parameter, a constant or a type. Sibling blocks may reuse
@@ -585,9 +595,11 @@ time, everywhere:**
 
 - **No sources of nondeterminism:** no clock, random numbers, environment, file or network I/O, threads,
   hash-ordered collections, addresses or uninitialized memory. The only effect is `print`; the only
-  inputs are a tool call's arguments and the standard input that `alang run` passes to a
-  `fn main(input: str[N])`, read whole before main starts. Imports are read when the program is checked,
-  relative to the importing file, so they add no input either.
+  inputs are a tool call's arguments, the standard input that `alang run` passes to a
+  `fn main(input: str[N])`, read whole before main starts, and the replies to `host fn` calls (§10.1),
+  which every run records (`host_calls`) so that `--replay` gives them again. Imports are read when the
+  program is checked, relative to the importing file, so they add no input either. A program without host
+  fns has no inputs but the first two.
 - **No undefined or implementation-defined behavior:** integer widths are fixed, and overflow, bad
   indexes, shifts and conversions, and failed contracts trap with a fixed code, message and location.
   Evaluation order is fixed (§6).
@@ -976,22 +988,25 @@ on every run, each within `--max-steps`.
 | `str[N]` | string of at most N UTF-8 bytes; a result that is not UTF-8 text fails with `bad_result` |
 | `[T; N]` | array of exactly N items |
 | `list[T; N]` | array of at most N items |
-| struct | object with every field required, no extra fields |
+| struct | object with every field required but those with a default and those of an `Option` type, no extra fields |
 | `(T1, T2)` | array of exactly that many items, each of its element's type (`prefixItems`) |
 | `map[str[K], V; N]` | object of at most N properties, each a value of V |
 | `map[K, V; N]` (other keys) | array of at most N `[key, value]` pairs, each key once |
 | `set[T; N]` | array of at most N distinct items, in any order |
+| `Option<T>` | `null` for `Option.None`, the JSON of the value for `Option.Some(value)`; an `Option<Option<T>>` keeps the enum form, as `null` could be either |
 | enum | `"Variant"` without payload, `{"Variant": [v1, v2]}` with |
 
 Arguments must be strict JSON (RFC 8259) and are validated against the parameter types before the call;
 unknown, missing or duplicate keys are errors. A parameter with a default (§5) is optional: left out of
-`required`, shown as `"default"` (unless JSON cannot write it), and supplied when absent.
+`required`, shown as `"default"` (unless JSON cannot write it), and supplied when absent. So is one of an
+`Option` type, which is `Option.None` when absent, as for `null`.
 
 `alang serve file.al` serves the tools over MCP's stdio transport (JSON-RPC 2.0, one message per line,
 until stdin ends). It answers `initialize` (revisions 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05;
 otherwise the newest), `ping`, `tools/list` and `tools/call`, and ignores notifications. Tools carry the
 `alang tools` schema and description, an `outputSchema` `{"result": <return type schema>}` when they return
-a value, and the annotations read-only, not destructive, idempotent, closed-world. A call's text is what
+a value, and the annotations read-only, not destructive, idempotent, closed-world (only open-world for one that
+asks the host, §10.1). A call's text is what
 `alang call` prints; a successful value is also `structuredContent` `{"result": value}`; any failure is a
 result with `"isError": true`. `"arguments"` may be absent or `null`. JSON-RPC errors: an unknown tool
 (-32602) and a reused id of a pending call (-32600). A program with errors starts no server; diagnostics
@@ -1038,9 +1053,73 @@ start: restart the server to serve a renewed certificate. The `"listening"` log 
 (or `false`); listening beyond loopback without TLS adds a `"warning"`, as the token then crosses the network
 in plain text (unless a proxy in front terminates TLS).
 
+### 10.1 Host functions
+
+A `host fn` (§3) is the one way a program reaches outside data: it has no body, and the program's host answers
+each call. The call sends the arguments as a JSON object, one entry per parameter in order, written as `to_json`
+writes them (a NaN or a str that is not UTF-8 traps R0013 first); the host replies with the JSON of the result,
+mapped as a tool's arguments are (the table above), or anything for a host fn without a result. The host fn's
+`requires` are checked before the call and its `ensures` against the reply, so a contract states what the
+program counts on the host to send. No reply traps R0015; a reply that is not of the result's type traps R0016
+(the message says where it differs). For failures the program should handle, return a `Result`:
+
+```alang
+/// The price of an item in cents, or why there is none.
+host fn price(sku: str[16]) -> Result<i64, str[64]>
+    ensures not is_ok(result) or unwrap_or(result, 0) >= 0;
+
+/// The total of an order; an item without a price adds nothing.
+tool fn total(skus: list[str[16]; 8]) -> i64 {
+    var sum: i64 = 0;
+    for s in skus {
+        sum += unwrap_or(price(s), 0);
+    }
+    return sum;
+}
+
+fn price_list(sku: str[16]) -> Result<i64, str[64]> {
+    if sku == "tea" {
+        return Result.Ok(350);
+    }
+    return Result.Err("not sold");
+}
+
+test "adds the prices it gets" with price = price_list {
+    assert total(["tea", "gold", "tea"]) == 700;
+}
+```
+
+What answers:
+
+- **In a test**, the function `with` binds each host fn to, called directly; an unbound host fn gets no answer.
+- **`run`, `call`, `serve` and `debug`**, the commands of `--hosts FILE`, a JSON object from each host fn's
+  name (or `"*"` for any other) to `{"command": [program, arguments...], "timeout": seconds}` (timeout 10
+  by default). Each call runs the command once, in the file's directory (a relative program path such as
+  `./host` is too), with `{"fn": "price", "args": {"sku": "tea"}}` and a newline on its standard input. It
+  prints the JSON of the result on its standard output, at most 1 MiB, and exits with status 0. Any other
+  status, no answer within the timeout, or output that is not JSON fails the call, with what the command
+  wrote on its standard error.
+- **`run`, `call` and `debug`**, `--replay FILE`: the calls a run recorded, answered again in order; a call
+  with another name or other arguments than the next one recorded gets no answer.
+- **`fuzz`**, the fuzzer: each host fn replies with values of its result type at their limits, as a tool's
+  arguments are chosen, first with the plainest value and then, in up to 200 more calls, each value in turn
+  with each set of arguments. A reply that breaks the host fn's own `ensures`, which the program says the
+  host never sends, is left out, as a tool's own failed `requires` is.
+- **The Java API**, `CallOptions.host(Host)`, a function from the host fn's name and arguments (JSON text) to
+  the result (JSON text), which fails the call by throwing; `Host.replay(json)` answers from a recording.
+- **The C backend**, `al_host` (§12).
+
+Every call the host is asked is recorded: `call` and `run --json` add `"host_calls"`, after `"result"`
+(`"error"`, `"trap"`) when there were any, each `{"fn": name, "args": {...}, "result": reply}`, or
+`"error": why` for a call that got no reply. The same arguments and the same replies give the same run, so a
+report passed to `--replay` repeats the call exactly (§8). A tool whose calls may reach a host fn says so in its
+description (`Asks the host (price), so it may reach outside data, and a repeated call may differ.`); `serve`
+gives it only the annotation `"openWorldHint": true`, as what the host does is not known, and adds a sentence
+about it to its instructions.
+
 ## 11. Runtime errors (traps)
 
-A trap stops the program (or the current test or tool call) and reports a code `R0001`–`R0013`, a
+A trap stops the program (or the current test or tool call) and reports a code `R0001`–`R0016`, a
 message and the source location; the interpreter also prints the call stack. The exit code is 1. There
 are no exceptions: model recoverable failures as enum return values (see `examples/rpn_calculator.al`).
 [ERRORS.md](ERRORS.md) lists every trap.
@@ -1061,6 +1140,11 @@ are no exceptions: model recoverable failures as enum return values (see `exampl
   (overflow, bounds, contracts, loop limits) and identical trap messages.
 - The runtime prelude formats numbers itself (floats exactly, with big-number arithmetic), so output is
   byte-identical to the interpreter's.
+- A `host fn` (§10.1) calls `int al_host(const char *name, const uint8_t *args, uint32_t args_len, uint8_t
+  *reply, uint32_t reply_cap, uint32_t *reply_len)` with its arguments as JSON (at most 1 MiB, in static
+  storage); it writes the JSON of the result to `reply` and its length to `*reply_len` and returns 1, or
+  returns 0 when it has no answer (R0015). The program the C file is linked with defines it, with
+  `-DAL_HOST`: `cc -std=c99 -DAL_HOST file.c host.c -lm`. Without `-DAL_HOST` no call gets an answer.
 
 Recommended: `cc -std=c99 -O2 file.c -lm`. The test suite checks gcc and clang at `-O0` to `-O3`.
 

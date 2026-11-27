@@ -279,6 +279,11 @@ public final class Ast {
     public static final class FnDecl extends Routine {
         public final Span nameSpan;
         public final boolean tool;
+        /**
+         * `host fn price(sku: str[16]) -> i64;`: declared without a body, as the program's host answers each call; its
+         * body is an empty block. A test may bind it to a function of the program instead ({@link TestDecl#bindings}).
+         */
+        public boolean host;
         /** The names of `fn f<T, U>`'s type parameters, and where each is declared. */
         public final List<String> typeParams;
         public final List<Span> typeParamSpans;
@@ -351,6 +356,9 @@ public final class Ast {
         }
     }
 
+    /** `price = fixed_price` in `test "..." with price = fixed_price { }`: a host fn, and the function a test runs for it. */
+    public record HostBinding(String host, Span hostSpan, String fn, Span fnSpan) {}
+
     public static final class TestDecl extends Routine {
         /**
          * `test "..." traps R0006 { }`: the trap the body must stop with for the test to pass, and where the code is
@@ -358,6 +366,10 @@ public final class Ast {
          */
         public final alang.diag.Code expectedTrap;
         public final Span trapSpan;
+        /** `test "..." with price = fixed_price { }`: each host fn the test binds, to a function of the program. */
+        public final List<HostBinding> bindings = new ArrayList<>();
+        /** Set by the checker: for each bound host fn, the function its calls run in this test. */
+        public final Map<FnDecl, FnDecl> hosts = new LinkedHashMap<>();
 
         public TestDecl(Span span, String description, Block body) {
             this(span, description, body, null, null);

@@ -1,0 +1,2 @@
+R0006 18:11
+precondition of `stock` failed: requires len(sku) > 0
