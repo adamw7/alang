@@ -1,0 +1,2 @@
+R0013 3:20
+next_combination() needs 0 <= len(idx) <= n, found 3 positions and n 2

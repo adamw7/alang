@@ -161,6 +161,92 @@ final class Stdlib {
         return IntOps.toBig(k, a).multiply(IntOps.toBig(k, b)).mod(bm).longValue();
     }
 
+    /** pow_mod(b, e, m): b^e mod m, exactly, between 0 and m - 1; R0013 unless e >= 0 and m > 0. */
+    static long powMod(PrimKind k, long b, long e, long m, Span at, Meter meter) {
+        BigInteger bm = IntOps.toBig(k, m);
+        BigInteger be = IntOps.toBig(k, e);
+        if (be.signum() < 0) throw new Trap(Code.R0013, at, "pow_mod() needs an exponent >= 0, found " + IntOps.toString(k, e));
+        if (bm.signum() <= 0) throw new Trap(Code.R0013, at, "pow_mod() needs a modulus above 0, found " + IntOps.toString(k, m));
+        meter.elements(be.bitLength());
+        return IntOps.toBig(k, b).modPow(be, bm).longValue();
+    }
+
+    /** An element of an array or list of numbers of kind k, as f64(x) converts it. */
+    static double toF64(PrimKind k, Object v) {
+        if (k.isFloat) return (Double) v;
+        long x = (Long) v;
+        if (k == PrimKind.U64 && x < 0) return IntOps.toBig(k, x).doubleValue();
+        return (double) x;
+    }
+
+    /** The elements added first to last, divided by their number. */
+    static double mean(double[] d) {
+        double s = 0.0;
+        for (double x : d) s += x;
+        return s / d.length;
+    }
+
+    /** The mean of the squared distances from mean, each added first to last. */
+    static double variance(double[] d, double mean) {
+        double s = 0.0;
+        for (double x : d) {
+            double t = x - mean;
+            s += t * t;
+        }
+        return s / d.length;
+    }
+
+    /** The middle element in the order of sort, or the mean of the two middle ones; sorts d. */
+    static double median(double[] d) {
+        Arrays.sort(d);
+        int n = d.length;
+        return n % 2 == 1 ? d[n / 2] : (d[n / 2 - 1] + d[n / 2]) / 2.0;
+    }
+
+    /** SplitMix64: advances state[0] and returns the next number. */
+    static long nextRandom(long[] state) {
+        long z = state[0] += 0x9E3779B97F4A7C15L;
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        return z ^ (z >>> 31);
+    }
+
+    /**
+     * A number from lo to hi (lo <= hi), each equally likely: drawn again while it is below 2^64 mod (hi - lo + 1),
+     * so that the numbers left are a whole number of runs of the range.
+     */
+    static long randomInt(long[] state, long lo, long hi) {
+        long range = hi - lo + 1;
+        if (range == 0) return nextRandom(state);
+        long threshold = Long.remainderUnsigned(-range, range);
+        long x = nextRandom(state);
+        while (Long.compareUnsigned(x, threshold) < 0) x = nextRandom(state);
+        return lo + Long.remainderUnsigned(x, range);
+    }
+
+    /** Fisher-Yates, from the last element down: element i is exchanged with one from 0 to i. */
+    static void shuffle(Object xs, long[] state, Meter meter) {
+        if (xs instanceof StrV s) {
+            meter.bytes(s.len);
+            for (int i = s.len - 1; i > 0; i--) {
+                int j = (int) randomInt(state, 0, i);
+                byte t = s.b[i];
+                s.b[i] = s.b[j];
+                s.b[j] = t;
+            }
+            return;
+        }
+        Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+        int n = xs instanceof ListV l ? l.len : items.length;
+        meter.elements(n);
+        for (int i = n - 1; i > 0; i--) {
+            int j = (int) randomInt(state, 0, i);
+            Object t = items[i];
+            items[i] = items[j];
+            items[j] = t;
+        }
+    }
+
     static Object clamp(Type t, Object x, Object lo, Object hi, Span at) {
         PrimKind k = Type.kind(t);
         if (k.isFloat) {
@@ -289,9 +375,14 @@ final class Stdlib {
 
     /** The position of the first element of a list or array equal to x, or -1. */
     static long indexOf(Object xs, Object x, Type elem, Meter cost) {
+        return indexOf(xs, x, elem, 0, cost);
+    }
+
+    /** The position of the first element of a list or array at or after from equal to x, or -1. */
+    static long indexOf(Object xs, Object x, Type elem, int from, Meter cost) {
         Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
         int n = xs instanceof ListV l ? l.len : items.length;
-        for (int i = 0; i < n; i++) {
+        for (int i = from; i < n; i++) {
             cost.elements(1);
             if (Values.equal(items[i], x, elem, cost)) return i;
         }
@@ -348,6 +439,87 @@ final class Stdlib {
     }
 
     /**
+     * next_permutation(mut xs): the next order of the elements in the order of sort, and true; after the last, the
+     * first (ascending) and false. Exchanges and reversals only, so equal elements are never told apart.
+     */
+    static boolean nextPermutation(Object xs, Type t, Meter cost) {
+        Type elem = Type.elementOf(t);
+        int n = xs instanceof StrV s ? s.len : xs instanceof ListV l ? l.len : ((ArrV) xs).items.length;
+        cost.elements(n);
+        int i = n - 2;
+        while (i >= 0 && compare(at(xs, i), at(xs, i + 1), elem, cost) >= 0) i--;
+        if (i >= 0) {
+            int j = n - 1;
+            while (compare(at(xs, j), at(xs, i), elem, cost) <= 0) j--;
+            exchange(xs, i, j);
+        }
+        for (int a = i + 1, b = n - 1; a < b; a++, b--) exchange(xs, a, b);
+        return i >= 0;
+    }
+
+    private static Object at(Object xs, int i) {
+        if (xs instanceof StrV s) return (long) (s.b[i] & 0xFF);
+        return xs instanceof ListV l ? l.items[i] : ((ArrV) xs).items[i];
+    }
+
+    private static void exchange(Object xs, int i, int j) {
+        if (xs instanceof StrV s) {
+            byte t = s.b[i];
+            s.b[i] = s.b[j];
+            s.b[j] = t;
+            return;
+        }
+        Object[] items = xs instanceof ListV l ? l.items : ((ArrV) xs).items;
+        Object t = items[i];
+        items[i] = items[j];
+        items[j] = t;
+    }
+
+    /** unique(mut xs): keeps the first of the elements (bytes) that are ==, in their order. */
+    static void unique(Object xs, Type t, Meter cost) {
+        if (xs instanceof StrV s) {
+            boolean[] seen = new boolean[256];
+            cost.bytes(s.len);
+            int w = 0;
+            for (int i = 0; i < s.len; i++) {
+                int b = s.b[i] & 0xFF;
+                if (!seen[b]) {
+                    seen[b] = true;
+                    s.b[w++] = s.b[i];
+                }
+            }
+            s.len = w;
+            return;
+        }
+        ListV l = (ListV) xs;
+        Type elem = Type.elementOf(t);
+        int w = 0;
+        for (int i = 0; i < l.len; i++) {
+            boolean dup = false;
+            cost.elements(w + 1);
+            for (int j = 0; j < w && !dup; j++) dup = Values.equal(l.items[j], l.items[i], elem, cost);
+            if (!dup) l.items[w++] = l.items[i];
+        }
+        Arrays.fill(l.items, w, l.len, null);
+        l.len = w;
+    }
+
+    /** frequencies(xs): each element (byte) with the number of times it occurs, in a map of type mt. */
+    static MapV frequencies(Object xs, Type.MapT mt, Span at, Meter cost) {
+        cost.slots(2L * mt.cap());
+        MapV m = new MapV(new Object[mt.cap()], new Object[mt.cap()], 0);
+        int n = xs instanceof StrV s ? s.len : xs instanceof ListV l ? l.len : ((ArrV) xs).items.length;
+        for (int i = 0; i < n; i++) {
+            cost.elements(1);
+            Object k = Values.coerce(at(xs, i), mt.key(), cost);
+            int f = find(m.keys, m.len, k, mt.key(), cost);
+            if (f >= 0) m.vals[f] = (Long) m.vals[f] + 1;
+            else mapPut(m, Values.copy(k, cost), 1L, mt.key(), at, cost);
+        }
+        return m;
+    }
+
+    /**
      * binary_search(xs, x): the first position whose element is not before x in the order of sort, if that element
      * is equal to x; otherwise -1. The C backend searches the same positions in the same order.
      */
@@ -399,7 +571,7 @@ final class Stdlib {
     }
 
     /** Whether a position is within 0..len; a u64 above 2^63 is a negative long, and so is not. */
-    private static boolean within(long v, int len) {
+    static boolean within(long v, int len) {
         return v >= 0 && v <= len;
     }
 

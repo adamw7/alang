@@ -28,7 +28,7 @@ fn grade(score: i64) -> str[8] {
     return g;
 }
 
-fn sign(x: i64) -> i64 {
+fn signum(x: i64) -> i64 {
     return if x > 0 then 1 else if x < 0 then -1 else 0;
 }
 
@@ -41,8 +41,8 @@ fn main() {
     print(describe(Shape.Circle(12.5)), "; ", describe(Shape.Circle(2.0)), "; ", describe(Shape.Rect(3.0, 3.0)), "; ",
         describe(Shape.Rect(2.0, 5.0)), "; ", describe(Shape.Empty));
     print(grade(100), " ", grade(95), " ", grade(80), " ", grade(10));
-    print(sign(-5), " ", sign(0), " ", sign(7));
-    let n: u8 = if sign(3) > 0 then 200 else 7;
+    print(signum(-5), " ", signum(0), " ", signum(7));
+    let n: u8 = if signum(3) > 0 then 200 else 7;
     let half: f64 = (if n > 100 then 1.0 else 0.0) / 2.0;
     print(n, " ", half);
     let word: str[16] = if n > 100 then "big" else "a little";

@@ -501,6 +501,15 @@ final class SyntaxErrorListener extends BaseErrorListener {
     private static final String TERNARY = "there is no `c ? a : b`; write `if c then a else b`. A `?` after an Option or "
         + "Result, as in `parse_i64(s)?`, takes its value out, or returns its Option.None or Result.Err";
 
+    /** Whether a token type is a primitive type's name, as in `i64::MAX`. */
+    private static boolean primitive(int t) {
+        return switch (t) {
+            case ALangLexer.I8, ALangLexer.I16, ALangLexer.I32, ALangLexer.I64, ALangLexer.U8, ALangLexer.U16, ALangLexer.U32,
+                 ALangLexer.U64, ALangLexer.F32, ALangLexer.F64 -> true;
+            default -> false;
+        };
+    }
+
     private static String hint(TokenStream ts, Token tok, Token prev, Token prev2, IntervalSet expected) {
         int t = tok.getType();
         int p = prev == null ? -1 : prev.getType();
@@ -508,7 +517,9 @@ final class SyntaxErrorListener extends BaseErrorListener {
             case ALangLexer.AMPAMP -> "use the keyword `and` instead of `&&`";
             case ALangLexer.PIPEPIPE -> "use the keyword `or` instead of `||`";
             case ALangLexer.BANG -> "use the keyword `not` for negation (`!=` is still the inequality operator)";
-            case ALangLexer.COLONCOLON -> "enum variants are accessed with a dot: Color.Red, Shape.Circle(1.0)";
+            case ALangLexer.COLONCOLON -> primitive(p)
+                ? "the constants of a number type are written with a dot: i64.MAX, u8.MIN, f64.PI, f64.INFINITY"
+                : "enum variants are accessed with a dot: Color.Red, Shape.Circle(1.0)";
             case ALangLexer.PLUSPLUS -> "there is no ++ operator; write `x += 1;`";
             case ALangLexer.QUESTION -> TERNARY;
             case ALangLexer.IDENT -> switch (tok.getText()) {

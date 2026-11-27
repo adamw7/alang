@@ -341,7 +341,7 @@ var name: str[32] = "ann";   // ok: room for names of up to 32 bytes
 **missing return**: A function with a return type must return a value on every path. Loops are not considered to always return.
 
 ```
-fn sign(x: i32) -> i32 { if x > 0 { return 1; } }  // error: add a final return
+fn signum(x: i32) -> i32 { if x > 0 { return 1; } }  // error: add a final return
 ```
 
 ## E0302
@@ -644,7 +644,7 @@ let z: i32 = 1 / n;  // trap when n == 0
 
 ## R0003
 
-**index out of bounds**: An index is negative or not smaller than the length of the array, list or string.
+**index out of bounds**: An index is negative or not smaller than the length of the array, list or string; or a position given to slice, insert or index_of is outside 0 to the length.
 
 ```
 let a: [i32; 3] = [1, 2, 3];
@@ -729,7 +729,7 @@ let x: u32 = 1 << 32;  // trap
 
 ## R0013
 
-**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, a negative number for isqrt, an empty separator or pattern for split, split_once, replace or count, an empty list for min(xs), max(xs), min_index, max_index, min_by or max_by, a count below 0 or text over 1048576 bytes for repeat, a width over 1048576 for pad_left or pad_right, decimals outside 0 to 20 for fixed, a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, a base outside 2 to 36 for to_base or parse_i64, a pattern that is not valid for re_match or re_find, or a step of a range that is not positive.
+**invalid argument**: A standard library function received an argument outside its domain: a negative exponent for pow, bounds with lo > hi for clamp, a negative number for isqrt, an empty separator or pattern for split, split_once, replace or count, an empty list for min(xs), max(xs), min_index, max_index, min_by or max_by, a count below 0 or text over 1048576 bytes for repeat, a width over 1048576 for pad_left or pad_right, decimals outside 0 to 20 for fixed, a modulus that is not above 0 for mul_mod, a number that is not a Unicode code point for push_char, a base outside 2 to 36 for to_base or parse_i64, a pattern that is not valid for re_match or re_find, an exponent below 0 or a modulus not above 0 for pow_mod, lo > hi for random_int, an empty list for mean, median, variance or stddev, a size below 1 for windows or chunks, more positions than n for next_combination, a month outside 1 to 12 for days_in_month, a date or time outside the years 1 to 9999 for date_from_days, add_months, format_date or format_datetime, or a step of a range that is not positive.
 
 ```
 let p: i64 = pow(2, -1);  // trap
@@ -814,6 +814,16 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `trailing_zeros(x) -> i64` | The number of 0 bits below the lowest 1 bit of the integer x: trailing_zeros(u8(8)) is 3; the number of bits of its type if x is 0. |
 | `rotl(x, n) -> T` | The bits of the integer x shifted left by n (any integer), those that leave at the top coming back at the bottom: rotl(u8(0x81), 1) is 0x03. n is taken modulo the number of bits, rem_euclid(n, bits), so a negative n rotates right. Never traps. |
 | `rotr(x, n) -> T` | The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps. |
+| `abs_diff(a, b) -> T` | The distance between two numbers of the same type, abs(a - b), computed without the subtraction first: never traps for unsigned integers (abs_diff(u8(3), 5) is 2, where u8(3) - 5 traps) or floats; for signed ones, traps (R0001) if it does not fit, as abs_diff(i64.MIN, 0) does. |
+| `sign(x) -> T` | -1, 0 or 1 as the number x is negative, zero or positive, in its type: 0 or 1 for an unsigned integer; for a float -1.0 or 1.0, and x itself when it is 0.0, -0.0 or NaN. |
+| `pow_mod(b, e, m) -> T` | b to the power e, mod m, for three integers of the same type: computed exactly however large the power is (by squaring with mul_mod), from 0 to m - 1, b reduced as rem_euclid reduces it; pow_mod(x, 0, m) is 1 % m. Traps (R0013) unless e >= 0 and m > 0. |
+| `mean(xs) -> f64` | The arithmetic mean of a non-empty array or list of numbers, as an f64: the elements converted with f64(x), added first to last, then divided by their number. Traps (R0013) if it is empty. |
+| `median(xs) -> f64` | The middle value of a non-empty array or list of numbers in the order of sort, as an f64; for an even number of them, the mean of the two in the middle, (a + b) / 2.0. xs is left as it is. Traps (R0013) if it is empty. |
+| `variance(xs) -> f64` | The population variance of a non-empty array or list of numbers, as an f64: the mean of (x - mean(xs))^2, each term added first to last (divide by n, not n - 1). Traps (R0013) if it is empty. |
+| `stddev(xs) -> f64` | The population standard deviation of a non-empty array or list of numbers: sqrt(variance(xs)). Traps (R0013) if it is empty. |
+| `random_u64(mut rng) -> u64` | The next pseudo-random u64 of the generator whose state is the u64 or i64 variable rng, which it advances: SplitMix64, the same numbers for the same seed on every run and backend. var rng: u64 = 42; let x: u64 = random_u64(mut rng); |
+| `random_int(mut rng, lo, hi) -> i64` | A pseudo-random i64 from lo to hi, both included, every value equally likely (numbers that would favour some are drawn again), from the generator of random_u64: random_int(mut rng, 1, 6) rolls a die. Traps (R0013) unless lo <= hi. |
+| `random_f64(mut rng) -> f64` | A pseudo-random f64 from 0.0 (included) to 1.0 (excluded), a multiple of 2^-53, from the generator of random_u64. |
 | `isqrt(n) -> T` | The integer square root of an integer n >= 0: the largest r with r * r <= n, exact for every value of every type, isqrt(17) is 4. Traps (R0013) if n is negative. |
 | `sqrt(x) -> f` | Square root of an f32/f64. |
 | `floor(x) -> f` | Largest integral value not greater than x (f32/f64). |
@@ -844,6 +854,9 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `is_space(c) -> bool` | Whether the u8 byte c is ASCII whitespace: space, \t, \n, \r, \x0b or \x0c. |
 | `is_upper(c) -> bool` | Whether the u8 byte c is an ASCII uppercase letter A-Z. |
 | `is_lower(c) -> bool` | Whether the u8 byte c is an ASCII lowercase letter a-z. |
+| `is_hex_digit(c) -> bool` | Whether the u8 byte c is a hexadecimal digit: 0-9, a-f or A-F. |
+| `is_punct(c) -> bool` | Whether the u8 byte c is ASCII punctuation, a printable character that is no letter, digit or space: !"#$%&'()*+,-./:;<=>?@[\]^_`{\|}~ |
+| `is_ascii(c) -> bool` | Whether the u8 byte c is ASCII, below 128; is_ascii(s) of a str, whether every byte is. |
 | `to_upper(x) -> T` | A u8 byte or a str[N] with ASCII a-z changed to A-Z; other bytes are kept. |
 | `to_lower(x) -> T` | A u8 byte or a str[N] with ASCII A-Z changed to a-z; other bytes are kept. |
 
@@ -852,7 +865,7 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | Signature | Description |
 |-----------|-------------|
 | `contains(xs, x) -> bool` | Whether a str contains a str or u8 byte, or an array/list contains an element equal to x. |
-| `index_of(xs, x) -> i64` | Position of the first occurrence of x (as for contains), or -1 if there is none. |
+| `index_of(xs, x) -> i64` | Position of the first occurrence of x (as for contains), or -1 if there is none. index_of(xs, x, from) looks from the position from on, and still counts from the start: index_of("abab", "b", 2) is 3. Traps (R0003) unless 0 <= from <= len(xs). |
 | `last_index_of(xs, x) -> i64` | Position of the last occurrence of x (as for contains), or -1 if there is none; for the empty str, len(xs). |
 | `starts_with(s, prefix) -> bool` | Whether a str begins with a str or u8 byte. |
 | `ends_with(s, suffix) -> bool` | Whether a str ends with a str or u8 byte. |
@@ -868,6 +881,15 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `re_split(s, pattern) -> list[str[K]; M]` | The pieces of s between the matches of the regular expression pattern, found as re_replace finds them, empty pieces included: re_split("a, b;c", r"[,;] *") is ["a", "b", "c"]. Its type is that of the variable it is stored in. Traps (R0013) if the pattern is not valid, and (R0004) if a piece or the count does not fit. |
 | `to_json(v) -> str[N]` | The JSON text of the value v, on one line, in the forms tool results and from_json use: numbers, bools, strs as strings (" \ and control bytes escaped), arrays, lists, sets and tuples as arrays, structs as objects, maps with str keys as objects (others as [[key, value], ...]), enum variants as "Name" or {"Name": [values]}: to_json(Point(x: 1, y: 2)) is {"x": 1, "y": 2}. A float is written with the fewest digits that read back as the same value (0.1, 100.0, 1e+21). from_json reads it back. Traps (R0013) on NaN, infinity or a str that is not UTF-8, which JSON cannot hold. Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
 | `from_json(s) -> Option<T>` | The value of type T that the JSON text s stands for, T being the type of the Option<T> that the result is stored in: let cfg: Option<Config> = from_json(text);. JSON maps to values as a tool's arguments do: numbers to numbers (an integer type takes only whole numbers that fit), strings to strs of at most their capacity in UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default present, no other) and maps with str keys, "Variant" or {"Variant": [values]} to enums. Option.None for any other text. |
+| `group_digits(n, sep) -> str[N]` | The decimal text of the integer n with sep (a str or a u8 byte) between each group of three digits, counted from the right: group_digits(1234567, ',') is "1,234,567", group_digits(-1000, ' ') is "-1 000". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
+| `base64_encode(data) -> str[N]` | The Base64 text (RFC 4648, with + and /, padded with =) of the bytes of a str, or of an array or list of u8: base64_encode("hi") is "aGk=". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
+| `base64_decode(s) -> Option<str[N]>` | The bytes that the Base64 text s (RFC 4648, with + and /, padded with = to a multiple of 4) encodes, as Option.Some of a str of the capacity of s, or Option.None if s is not such text (no spaces or newlines). |
+| `hex_encode(data) -> str[N]` | Two lowercase hexadecimal digits for each byte of a str, or of an array or list of u8: hex_encode("Hi") is "4869". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
+| `hex_decode(s) -> Option<str[N]>` | The bytes that the hexadecimal digits of s (two for each byte, either case) stand for, as Option.Some of a str of the capacity of s, or Option.None if s has an odd length or another character. |
+| `url_encode(s) -> str[N]` | s with every byte other than A-Z, a-z, 0-9 and - . _ ~ written as %XX (two uppercase hexadecimal digits), as a URL query or path part needs it (RFC 3986): url_encode("a b&c") is "a%20b%26c". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
+| `url_decode(s) -> Option<str[N]>` | s with each %XX (either case) replaced by the byte it stands for, as Option.Some of a str of the capacity of s, or Option.None if a % is not followed by two hexadecimal digits. A + stays a +. |
+| `sha256(data) -> str[64]` | The SHA-256 digest (FIPS 180-4) of the bytes of a str, or of an array or list of u8, as 64 lowercase hexadecimal digits. |
+| `crc32(data) -> u32` | The CRC-32 checksum of the bytes of a str, or of an array or list of u8, as zlib, gzip and PNG compute it: crc32("123456789") is 3421780262 (0xcbf43926). |
 | `variant_name(e) -> str[N]` | The name of the variant of the enum value e, without the enum's name or the values it carries: variant_name(Color.Red) is "Red", variant_name(Shape.Circle(2.0)) is "Circle". parse_variant reads it back. Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
 | `parse_variant(s) -> Option<E>` | The variant of the enum E named by the str s, E being the type of the Option<E> that the result is stored in: let c: Option<Color> = parse_variant("Red"); is Option.Some(Color.Red). The name must match exactly, case included; Option.None for any other text. E's variants must carry no values. |
 | `split_once(s, sep) -> Option<(str[N], str[N])>` | The text before and after the first occurrence of sep (a non-empty str or a u8 byte) in s, each a str of the capacity of s (or of the wider strs of the Option it is stored as), or Option.None if s has no sep: split_once("k=v=w", '=') is Option.Some(("k", "v=w")). Traps (R0013) if sep is empty. |
@@ -883,6 +905,9 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `fixed(x, decimals) -> str[N]` | The text of the f32/f64 x with exactly `decimals` digits after the point, 0 to 20 (traps (R0013) otherwise), rounded half to even on its exact value as print rounds: fixed(3.14159, 2) is "3.14", fixed(2.5, 0) is "2", fixed(0.125, 2) is "0.12". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
 | `pad_left(value, width, fill) -> str[N]` | The text of a number, bool, str or fixed(...) as print writes it, with the u8 byte fill added in front until it is width bytes long: pad_left(7, 3, '0') is "007", pad_left("ab", 4, ' ') is "  ab". Zeros padding a negative number, fixed(...) or to_base(...) go after its sign: pad_left(-42, 6, '0') is "-00042". Longer text is kept whole; a width above 1048576 traps (R0013). Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
 | `pad_right(value, width, fill) -> str[N]` | As pad_left, with the fill added after the text: pad_right("ab", 4, '.') is "ab..". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
+| `pad_center(value, width, fill) -> str[N]` | As pad_left, with the fill split around the text, the odd one after it: pad_center("ab", 5, '*') is "*ab**". Pass it to print or append, as the value of pad_left or pad_right, or store it in a typed str, whose capacity it then has (traps (R0004) if it does not fit). |
+| `eq_ignore_case(a, b) -> bool` | Whether two strs are the same but for the case of ASCII letters: eq_ignore_case("Yes", "YES") is true. |
+| `capitalize(s) -> str[N]` | s with its first byte made uppercase and the rest lowercase (ASCII letters only), of the type of s: capitalize("hELLO") is "Hello". |
 | `count(xs, x) -> i64` | How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right (traps (R0013) if the str is empty); in an array or list, the elements equal to x. |
 | `is_int(s) -> bool` | Whether a str is a decimal integer that fits in i64: an optional + or -, then digits. Then i64(s) converts it. |
 | `is_float(s) -> bool` | Whether a str is a decimal number that f64(s) converts exactly to the nearest f64: an optional + or -, then digits with at most one . among them (12, -0.5, 3.), and at most 2^53 once the zeros at either end are left out (15 significant digits always are), between 1e-22 and about 1e37 in size, or 0. An exponent may follow: 1e5, 2.5E-3. |
@@ -903,6 +928,12 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `days_from_date(year, month, day) -> i64` | The number of days from 1970-01-01 to the date, in the Gregorian calendar (negative before 1970), for three i64: days_from_date(1970, 1, 2) is 1. Subtract two of them for the days between dates, add to one to move it. Traps (R0013) unless the date exists and the year is 1 to 9999. |
 | `date_from_days(days) -> (i64, i64, i64)` | The date (year, month, day) that many days after 1970-01-01, as days_from_date counts them: date_from_days(31) is (1970, 2, 1). Traps (R0013) outside the years 1 to 9999 (-719162 to 2932896). |
 | `weekday(days) -> i64` | The day of the week of the date that many days after 1970-01-01, as ISO 8601 numbers them: 1 for Monday to 7 for Sunday. weekday(0) is 4, a Thursday. |
+| `is_leap_year(y) -> bool` | Whether the year y (an i64) of the Gregorian calendar has a February 29: divisible by 4, and by 400 if by 100. |
+| `days_in_month(y, m) -> i64` | The number of days, 28 to 31, of the month m (1 to 12) of the year y. Traps (R0013) unless 1 <= m <= 12. |
+| `add_months(days, n) -> i64` | The date n months after (before, for a negative n) the date days, as days since 1970-01-01, the day of the month kept, or made the last day of a shorter month: add_months of 2026-01-31 and 1 is 2026-02-28. Traps (R0013) unless both dates are in the years 1 to 9999. |
+| `format_date(days) -> str[10]` | The date days (since 1970-01-01) as YYYY-MM-DD, as parse_date reads it: format_date(0) is "1970-01-01". Traps (R0013) unless it is in the years 1 to 9999. |
+| `parse_datetime(s) -> Option<i64>` | The seconds since 1970-01-01T00:00:00Z of an ISO 8601 date and time: YYYY-MM-DD, T or a space, HH:MM or HH:MM:SS (with any fraction of a second, which is dropped), then Z, +HH:MM or -HH:MM, or nothing for UTC: parse_datetime("2026-11-27T10:30:00+01:00"). Option.None for any other text, or a date or time that does not exist. |
+| `format_datetime(seconds) -> str[20]` | The instant seconds (since 1970-01-01T00:00:00Z) as YYYY-MM-DDTHH:MM:SSZ, in UTC: format_datetime(0) is "1970-01-01T00:00:00Z". Traps (R0013) unless it is in the years 1 to 9999. |
 | `parse_date(s) -> Option<i64>` | The date written YYYY-MM-DD in the str s, as days_from_date counts it: parse_date("1970-01-31") is Option.Some(30). Option.None for any other text, or a date that does not exist (2026-02-30). Strict: exactly ten bytes, so trim(s) first. |
 
 ### Collections
@@ -916,6 +947,16 @@ Their names are reserved. [SPEC.md](SPEC.md) section 9 describes them in full.
 | `sort_by_key(mut xs, key)` | Sorts a list or array in place by key(x), a function fn(T) -> K passed by name, in the order sort gives the keys: sort_by_key(mut people, age). Stable, as sort_by is: elements with equal keys keep their order. |
 | `heap_push(mut heap, x)` | Adds x to a list kept as a binary heap, a priority queue whose smallest element (in the order of sort) is always heap[0]; heap_push(mut heap, x, before) orders by before, a function fn(T, T) -> bool passed by name, as sort_by does. About log2(len) comparisons. Traps (R0004) if the list is full. |
 | `heap_pop(mut heap) -> T` | Removes and returns the smallest element of a list kept as a heap by heap_push (pass the same before, if it was given one): the next in priority order. Traps (R0012) if it is empty. |
+| `shuffle(mut xs, mut rng)` | Puts the elements of a list or array (bytes of a str) in a pseudo-random order, every order equally likely, with the generator of random_u64 (Fisher-Yates, from the last element down): the same order for the same seed on every run and backend. |
+| `next_permutation(mut xs) -> bool` | Rearranges a list, array or str into the next permutation in the order of sort, element by element, and returns true; from the last one (descending) it goes back to the first (ascending) and returns false. Sort first; then var more: bool = true; while more limit N { ...; more = next_permutation(mut xs); } visits each distinct order once. |
+| `next_combination(mut idx, n) -> bool` | Advances idx, a list or array of k increasing i64 positions from 0 to n - 1, to the next k of n in lexicographic order, and returns true; from the last one it goes back to the first, [0, 1, ..., k - 1], and returns false. Traps (R0013) unless 0 <= k <= n. |
+| `windows(xs, k)` | In a for loop, each run of k elements of an array, list or str that follow one another, first to last: for w in windows([1, 2, 3], 2) { } gives [1, 2] and [2, 3]; none if k > len(xs). Each is a list (a str for a str) of the capacity of xs, and no list of them is built. Traps (R0013) unless k >= 1. |
+| `chunks(xs, k)` | In a for loop, the elements of an array, list or str in pieces of k, first to last, the last one shorter if they do not divide evenly: for c in chunks([1, 2, 3], 2) { } gives [1, 2] and [3]. Each is a list (a str for a str) of the capacity of xs, and no list of them is built. Traps (R0013) unless k >= 1. |
+| `unique(mut xs)` | Removes from a list (a str) every element (byte) that is == to one before it, wherever it is, keeping the first of each and their order: [3, 1, 3, 2, 1] becomes [3, 1, 2]. Unlike dedup, it needs no sort. About n * k comparisons, for k values kept. |
+| `frequencies(xs) -> map[T, i64; N]` | How many times each element of an array or list (byte of a str) occurs, as a map from the element to its count, in key order: let c: map[str[16], i64; 32] = frequencies(words);. Its type is that of the variable it is stored in; traps (R0004) if there are more distinct elements than the map holds. |
+| `prefix_sums(xs) -> T` | The running totals of an array or list of numbers, of its type: element i is xs[0] + ... + xs[i], added as + adds them: prefix_sums([1, 2, 3]) is [1, 3, 6]. An integer total that does not fit traps (R0001). |
+| `first(xs) -> Option<T>` | Option.Some of the first element of an array or list (byte of a str), or Option.None if it is empty. |
+| `last(xs) -> Option<T>` | Option.Some of the last element of an array or list (byte of a str), or Option.None if it is empty. |
 | `any(xs, f) -> bool` | Whether f(x) is true for some element x of an array or list, f being a function fn(T) -> bool passed by name: any(xs, is_even). Calls f from the first element on, and stops at the first true; false if xs is empty. |
 | `all(xs, f) -> bool` | Whether f(x) is true for every element x of an array or list (as for any); stops at the first false; true if xs is empty. |
 | `count_if(xs, f) -> i64` | How many elements x of an array or list have f(x) true, f being a function fn(T) -> bool passed by name. |

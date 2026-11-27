@@ -97,6 +97,39 @@ public enum Builtin {
     ROTR(Group.MATH, true, "rotr", "rotr(x, n) -> T",
         "The bits of the integer x shifted right by n, those that leave at the bottom coming back at the top: "
             + "rotr(u8(0x81), 1) is 0xc0. n is taken modulo the number of bits. Never traps."),
+    ABS_DIFF(Group.MATH, true, "abs_diff", "abs_diff(a, b) -> T",
+        "The distance between two numbers of the same type, abs(a - b), computed without the subtraction first: never "
+            + "traps for unsigned integers (abs_diff(u8(3), 5) is 2, where u8(3) - 5 traps) or floats; for signed ones, "
+            + "traps (R0001) if it does not fit, as abs_diff(i64.MIN, 0) does."),
+    SIGN(Group.MATH, true, "sign", "sign(x) -> T",
+        "-1, 0 or 1 as the number x is negative, zero or positive, in its type: 0 or 1 for an unsigned integer; for a "
+            + "float -1.0 or 1.0, and x itself when it is 0.0, -0.0 or NaN."),
+    POW_MOD(Group.MATH, true, "pow_mod", "pow_mod(b, e, m) -> T",
+        "b to the power e, mod m, for three integers of the same type: computed exactly however large the power is "
+            + "(by squaring with mul_mod), from 0 to m - 1, b reduced as rem_euclid reduces it; pow_mod(x, 0, m) is 1 % m. "
+            + "Traps (R0013) unless e >= 0 and m > 0."),
+    MEAN(Group.MATH, true, "mean", "mean(xs) -> f64",
+        "The arithmetic mean of a non-empty array or list of numbers, as an f64: the elements converted with f64(x), "
+            + "added first to last, then divided by their number. Traps (R0013) if it is empty."),
+    MEDIAN(Group.MATH, true, "median", "median(xs) -> f64",
+        "The middle value of a non-empty array or list of numbers in the order of sort, as an f64; for an even number "
+            + "of them, the mean of the two in the middle, (a + b) / 2.0. xs is left as it is. Traps (R0013) if it is empty."),
+    VARIANCE(Group.MATH, true, "variance", "variance(xs) -> f64",
+        "The population variance of a non-empty array or list of numbers, as an f64: the mean of (x - mean(xs))^2, "
+            + "each term added first to last (divide by n, not n - 1). Traps (R0013) if it is empty."),
+    STDDEV(Group.MATH, true, "stddev", "stddev(xs) -> f64",
+        "The population standard deviation of a non-empty array or list of numbers: sqrt(variance(xs)). Traps (R0013) "
+            + "if it is empty."),
+    RANDOM_U64(Group.MATH, false, "random_u64", "random_u64(mut rng) -> u64",
+        "The next pseudo-random u64 of the generator whose state is the u64 or i64 variable rng, which it advances: "
+            + "SplitMix64, the same numbers for the same seed on every run and backend. var rng: u64 = 42; "
+            + "let x: u64 = random_u64(mut rng);"),
+    RANDOM_INT(Group.MATH, false, "random_int", "random_int(mut rng, lo, hi) -> i64",
+        "A pseudo-random i64 from lo to hi, both included, every value equally likely (numbers that would favour some "
+            + "are drawn again), from the generator of random_u64: random_int(mut rng, 1, 6) rolls a die. Traps (R0013) "
+            + "unless lo <= hi."),
+    RANDOM_F64(Group.MATH, false, "random_f64", "random_f64(mut rng) -> f64",
+        "A pseudo-random f64 from 0.0 (included) to 1.0 (excluded), a multiple of 2^-53, from the generator of random_u64."),
     ISQRT(Group.MATH, true, "isqrt", "isqrt(n) -> T",
         "The integer square root of an integer n >= 0: the largest r with r * r <= n, exact for every value of every "
             + "type, isqrt(17) is 4. Traps (R0013) if n is negative."),
@@ -128,6 +161,13 @@ public enum Builtin {
         "Whether the u8 byte c is ASCII whitespace: space, \\t, \\n, \\r, \\x0b or \\x0c."),
     IS_UPPER(Group.CHARS, true, "is_upper", "is_upper(c) -> bool", "Whether the u8 byte c is an ASCII uppercase letter A-Z."),
     IS_LOWER(Group.CHARS, true, "is_lower", "is_lower(c) -> bool", "Whether the u8 byte c is an ASCII lowercase letter a-z."),
+    IS_HEX_DIGIT(Group.CHARS, true, "is_hex_digit", "is_hex_digit(c) -> bool",
+        "Whether the u8 byte c is a hexadecimal digit: 0-9, a-f or A-F."),
+    IS_PUNCT(Group.CHARS, true, "is_punct", "is_punct(c) -> bool",
+        "Whether the u8 byte c is ASCII punctuation, a printable character that is no letter, digit or space: "
+            + "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"),
+    IS_ASCII(Group.CHARS, true, "is_ascii", "is_ascii(c) -> bool",
+        "Whether the u8 byte c is ASCII, below 128; is_ascii(s) of a str, whether every byte is."),
     TO_UPPER(Group.CHARS, true, "to_upper", "to_upper(x) -> T",
         "A u8 byte or a str[N] with ASCII a-z changed to A-Z; other bytes are kept."),
     TO_LOWER(Group.CHARS, true, "to_lower", "to_lower(x) -> T",
@@ -137,7 +177,9 @@ public enum Builtin {
     CONTAINS(Group.TEXT, true, "contains", "contains(xs, x) -> bool",
         "Whether a str contains a str or u8 byte, or an array/list contains an element equal to x."),
     INDEX_OF(Group.TEXT, true, "index_of", "index_of(xs, x) -> i64",
-        "Position of the first occurrence of x (as for contains), or -1 if there is none."),
+        "Position of the first occurrence of x (as for contains), or -1 if there is none. index_of(xs, x, from) looks "
+            + "from the position from on, and still counts from the start: index_of(\"abab\", \"b\", 2) is 3. Traps "
+            + "(R0003) unless 0 <= from <= len(xs)."),
     LAST_INDEX_OF(Group.TEXT, true, "last_index_of", "last_index_of(xs, x) -> i64",
         "Position of the last occurrence of x (as for contains), or -1 if there is none; for the empty str, len(xs)."),
     STARTS_WITH(Group.TEXT, true, "starts_with", "starts_with(s, prefix) -> bool", "Whether a str begins with a str or u8 byte."),
@@ -195,6 +237,34 @@ public enum Builtin {
             + "UTF-8 bytes, arrays to arrays, lists, sets and tuples, objects to structs (every field without a default "
             + "present, no other) and maps with str keys, \"Variant\" or {\"Variant\": [values]} to enums. "
             + "Option.None for any other text."),
+    GROUP_DIGITS(Group.TEXT, true, "group_digits", "group_digits(n, sep) -> str[N]",
+        "The decimal text of the integer n with sep (a str or a u8 byte) between each group of three digits, counted "
+            + "from the right: group_digits(1234567, ',') is \"1,234,567\", group_digits(-1000, ' ') is \"-1 000\". "
+            + Builtin.TEXT_USE),
+    BASE64_ENCODE(Group.TEXT, true, "base64_encode", "base64_encode(data) -> str[N]",
+        "The Base64 text (RFC 4648, with + and /, padded with =) of the bytes of a str, or of an array or list of u8: "
+            + "base64_encode(\"hi\") is \"aGk=\". " + Builtin.TEXT_USE),
+    BASE64_DECODE(Group.TEXT, true, "base64_decode", "base64_decode(s) -> Option<str[N]>",
+        "The bytes that the Base64 text s (RFC 4648, with + and /, padded with = to a multiple of 4) encodes, as "
+            + "Option.Some of a str of the capacity of s, or Option.None if s is not such text (no spaces or newlines)."),
+    HEX_ENCODE(Group.TEXT, true, "hex_encode", "hex_encode(data) -> str[N]",
+        "Two lowercase hexadecimal digits for each byte of a str, or of an array or list of u8: hex_encode(\"Hi\") is "
+            + "\"4869\". " + Builtin.TEXT_USE),
+    HEX_DECODE(Group.TEXT, true, "hex_decode", "hex_decode(s) -> Option<str[N]>",
+        "The bytes that the hexadecimal digits of s (two for each byte, either case) stand for, as Option.Some of a "
+            + "str of the capacity of s, or Option.None if s has an odd length or another character."),
+    URL_ENCODE(Group.TEXT, true, "url_encode", "url_encode(s) -> str[N]",
+        "s with every byte other than A-Z, a-z, 0-9 and - . _ ~ written as %XX (two uppercase hexadecimal digits), "
+            + "as a URL query or path part needs it (RFC 3986): url_encode(\"a b&c\") is \"a%20b%26c\". " + Builtin.TEXT_USE),
+    URL_DECODE(Group.TEXT, true, "url_decode", "url_decode(s) -> Option<str[N]>",
+        "s with each %XX (either case) replaced by the byte it stands for, as Option.Some of a str of the capacity of s, "
+            + "or Option.None if a % is not followed by two hexadecimal digits. A + stays a +."),
+    SHA256(Group.TEXT, true, "sha256", "sha256(data) -> str[64]",
+        "The SHA-256 digest (FIPS 180-4) of the bytes of a str, or of an array or list of u8, as 64 lowercase "
+            + "hexadecimal digits."),
+    CRC32(Group.TEXT, true, "crc32", "crc32(data) -> u32",
+        "The CRC-32 checksum of the bytes of a str, or of an array or list of u8, as zlib, gzip and PNG compute it: "
+            + "crc32(\"123456789\") is 3421780262 (0xcbf43926)."),
     VARIANT_NAME(Group.TEXT, true, "variant_name", "variant_name(e) -> str[N]",
         "The name of the variant of the enum value e, without the enum's name or the values it carries: "
             + "variant_name(Color.Red) is \"Red\", variant_name(Shape.Circle(2.0)) is \"Circle\". parse_variant reads it "
@@ -254,6 +324,14 @@ public enum Builtin {
             + "text is kept whole; a width above 1048576 traps (R0013). " + Builtin.TEXT_USE),
     PAD_RIGHT(Group.TEXT, true, "pad_right", "pad_right(value, width, fill) -> str[N]",
         "As pad_left, with the fill added after the text: pad_right(\"ab\", 4, '.') is \"ab..\". " + Builtin.TEXT_USE),
+    PAD_CENTER(Group.TEXT, true, "pad_center", "pad_center(value, width, fill) -> str[N]",
+        "As pad_left, with the fill split around the text, the odd one after it: pad_center(\"ab\", 5, '*') is "
+            + "\"*ab**\". " + Builtin.TEXT_USE),
+    EQ_IGNORE_CASE(Group.TEXT, true, "eq_ignore_case", "eq_ignore_case(a, b) -> bool",
+        "Whether two strs are the same but for the case of ASCII letters: eq_ignore_case(\"Yes\", \"YES\") is true."),
+    CAPITALIZE(Group.TEXT, true, "capitalize", "capitalize(s) -> str[N]",
+        "s with its first byte made uppercase and the rest lowercase (ASCII letters only), of the type of s: "
+            + "capitalize(\"hELLO\") is \"Hello\"."),
     COUNT(Group.TEXT, true, "count", "count(xs, x) -> i64",
         "How often x occurs: in a str, the non-overlapping occurrences of a str or u8 byte, left to right "
             + "(traps (R0013) if the str is empty); in an array or list, the elements equal to x."),
@@ -288,6 +366,25 @@ public enum Builtin {
     WEEKDAY(Group.DATES, true, "weekday", "weekday(days) -> i64",
         "The day of the week of the date that many days after 1970-01-01, as ISO 8601 numbers them: 1 for Monday to 7 "
             + "for Sunday. weekday(0) is 4, a Thursday."),
+    IS_LEAP_YEAR(Group.DATES, true, "is_leap_year", "is_leap_year(y) -> bool",
+        "Whether the year y (an i64) of the Gregorian calendar has a February 29: divisible by 4, and by 400 if by 100."),
+    DAYS_IN_MONTH(Group.DATES, true, "days_in_month", "days_in_month(y, m) -> i64",
+        "The number of days, 28 to 31, of the month m (1 to 12) of the year y. Traps (R0013) unless 1 <= m <= 12."),
+    ADD_MONTHS(Group.DATES, true, "add_months", "add_months(days, n) -> i64",
+        "The date n months after (before, for a negative n) the date days, as days since 1970-01-01, the day of the "
+            + "month kept, or made the last day of a shorter month: add_months of 2026-01-31 and 1 is 2026-02-28. "
+            + "Traps (R0013) unless both dates are in the years 1 to 9999."),
+    FORMAT_DATE(Group.DATES, true, "format_date", "format_date(days) -> str[10]",
+        "The date days (since 1970-01-01) as YYYY-MM-DD, as parse_date reads it: format_date(0) is \"1970-01-01\". "
+            + "Traps (R0013) unless it is in the years 1 to 9999."),
+    PARSE_DATETIME(Group.DATES, true, "parse_datetime", "parse_datetime(s) -> Option<i64>",
+        "The seconds since 1970-01-01T00:00:00Z of an ISO 8601 date and time: YYYY-MM-DD, T or a space, HH:MM or "
+            + "HH:MM:SS (with any fraction of a second, which is dropped), then Z, +HH:MM or -HH:MM, or nothing for UTC: "
+            + "parse_datetime(\"2026-11-27T10:30:00+01:00\"). Option.None for any other text, or a date or time that "
+            + "does not exist."),
+    FORMAT_DATETIME(Group.DATES, true, "format_datetime", "format_datetime(seconds) -> str[20]",
+        "The instant seconds (since 1970-01-01T00:00:00Z) as YYYY-MM-DDTHH:MM:SSZ, in UTC: format_datetime(0) is "
+            + "\"1970-01-01T00:00:00Z\". Traps (R0013) unless it is in the years 1 to 9999."),
     PARSE_DATE(Group.DATES, true, "parse_date", "parse_date(s) -> Option<i64>",
         "The date written YYYY-MM-DD in the str s, as days_from_date counts it: parse_date(\"1970-01-31\") is "
             + "Option.Some(30). Option.None for any other text, or a date that does not exist (2026-02-30). Strict: "
@@ -336,6 +433,42 @@ public enum Builtin {
     HEAP_POP(Group.COLLECTIONS, false, "heap_pop", "heap_pop(mut heap) -> T",
         "Removes and returns the smallest element of a list kept as a heap by heap_push (pass the same before, if it was "
             + "given one): the next in priority order. Traps (R0012) if it is empty."),
+    SHUFFLE(Group.COLLECTIONS, false, "shuffle", "shuffle(mut xs, mut rng)",
+        "Puts the elements of a list or array (bytes of a str) in a pseudo-random order, every order equally likely, "
+            + "with the generator of random_u64 (Fisher-Yates, from the last element down): the same order for the same "
+            + "seed on every run and backend."),
+    NEXT_PERMUTATION(Group.COLLECTIONS, false, "next_permutation", "next_permutation(mut xs) -> bool",
+        "Rearranges a list, array or str into the next permutation in the order of sort, element by element, and "
+            + "returns true; from the last one (descending) it goes back to the first (ascending) and returns false. "
+            + "Sort first; then var more: bool = true; while more limit N { ...; more = next_permutation(mut xs); } visits "
+            + "each distinct order once."),
+    NEXT_COMBINATION(Group.COLLECTIONS, false, "next_combination", "next_combination(mut idx, n) -> bool",
+        "Advances idx, a list or array of k increasing i64 positions from 0 to n - 1, to the next k of n in "
+            + "lexicographic order, and returns true; from the last one it goes back to the first, [0, 1, ..., k - 1], "
+            + "and returns false. Traps (R0013) unless 0 <= k <= n."),
+    WINDOWS(Group.COLLECTIONS, true, "windows", "windows(xs, k)",
+        "In a for loop, each run of k elements of an array, list or str that follow one another, first to last: for w "
+            + "in windows([1, 2, 3], 2) { } gives [1, 2] and [2, 3]; none if k > len(xs). Each is a list (a str for a str) "
+            + "of the capacity of xs, and no list of them is built. Traps (R0013) unless k >= 1."),
+    CHUNKS(Group.COLLECTIONS, true, "chunks", "chunks(xs, k)",
+        "In a for loop, the elements of an array, list or str in pieces of k, first to last, the last one shorter if "
+            + "they do not divide evenly: for c in chunks([1, 2, 3], 2) { } gives [1, 2] and [3]. Each is a list (a str "
+            + "for a str) of the capacity of xs, and no list of them is built. Traps (R0013) unless k >= 1."),
+    UNIQUE(Group.COLLECTIONS, false, "unique", "unique(mut xs)",
+        "Removes from a list (a str) every element (byte) that is == to one before it, wherever it is, keeping the first "
+            + "of each and their order: [3, 1, 3, 2, 1] becomes [3, 1, 2]. Unlike dedup, it needs no sort. About n * k "
+            + "comparisons, for k values kept."),
+    FREQUENCIES(Group.COLLECTIONS, true, "frequencies", "frequencies(xs) -> map[T, i64; N]",
+        "How many times each element of an array or list (byte of a str) occurs, as a map from the element to its "
+            + "count, in key order: let c: map[str[16], i64; 32] = frequencies(words);. Its type is that of the variable it is "
+            + "stored in; traps (R0004) if there are more distinct elements than the map holds."),
+    PREFIX_SUMS(Group.COLLECTIONS, true, "prefix_sums", "prefix_sums(xs) -> T",
+        "The running totals of an array or list of numbers, of its type: element i is xs[0] + ... + xs[i], added as "
+            + "+ adds them: prefix_sums([1, 2, 3]) is [1, 3, 6]. An integer total that does not fit traps (R0001)."),
+    FIRST(Group.COLLECTIONS, true, "first", "first(xs) -> Option<T>",
+        "Option.Some of the first element of an array or list (byte of a str), or Option.None if it is empty."),
+    LAST(Group.COLLECTIONS, true, "last", "last(xs) -> Option<T>",
+        "Option.Some of the last element of an array or list (byte of a str), or Option.None if it is empty."),
     ANY(Group.COLLECTIONS, false, "any", "any(xs, f) -> bool",
         "Whether f(x) is true for some element x of an array or list, f being a function fn(T) -> bool passed by name: "
             + "any(xs, is_even). Calls f from the first element on, and stops at the first true; false if xs is empty."),
@@ -497,16 +630,16 @@ public enum Builtin {
      */
     public boolean typedByTarget() {
         return this == SPLIT || this == WORDS || this == CHARS || this == JOIN || this == REPLACE || this == RE_REPLACE
-            || this == RE_SPLIT || this == SPLIT_CSV || formats();
+            || this == RE_SPLIT || this == SPLIT_CSV || this == FREQUENCIES || formats();
     }
 
     /**
-     * Whether it makes text: fixed, pad_left, pad_right, to_base, repeat, variant_name and to_json, which print and
-     * append write out directly.
+     * Whether it makes text: fixed, pad_left, pad_right, to_base, repeat, variant_name, to_json, group_digits and the
+     * encoders base64_encode, hex_encode and url_encode, which print and append write out directly.
      */
     public boolean formats() {
-        return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT || this == TO_BASE || this == REPEAT || this == VARIANT_NAME
-            || this == TO_JSON;
+        return this == FIXED || this == PAD_LEFT || this == PAD_RIGHT || this == PAD_CENTER || this == TO_BASE || this == REPEAT || this == VARIANT_NAME
+            || this == TO_JSON || this == GROUP_DIGITS || this == BASE64_ENCODE || this == HEX_ENCODE || this == URL_ENCODE;
     }
 
     /**
@@ -523,7 +656,8 @@ public enum Builtin {
     public boolean modifiesFirst() {
         return switch (this) {
             case PUSH, POP, POP_FRONT, CLEAR, APPEND, PUSH_CHAR, SORT, SORT_BY, SORT_BY_KEY, HEAP_PUSH, HEAP_POP, RETAIN,
-                 REVERSE, DEDUP, INSERT, REMOVE, SWAP, TRY_SPLIT, TRY_WORDS, TRY_SPLIT_CSV, EXTEND, FILL, ROTATE -> true;
+                 REVERSE, DEDUP, INSERT, REMOVE, SWAP, TRY_SPLIT, TRY_WORDS, TRY_SPLIT_CSV, EXTEND, FILL, ROTATE, RANDOM_U64, RANDOM_INT,
+                 RANDOM_F64, SHUFFLE, NEXT_PERMUTATION, NEXT_COMBINATION, UNIQUE -> true;
             default -> false;
         };
     }

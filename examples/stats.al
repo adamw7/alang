@@ -55,31 +55,6 @@ fn within_limit(xs: list[f64; MAX_VALUES]) -> bool {
     return true;
 }
 
-fn mean(xs: list[f64; MAX_VALUES]) -> f64
-    requires len(xs) > 0
-{
-    var sum: f64 = 0.0;
-    for x in xs {
-        sum += x;
-    }
-    return sum / f64(len(xs));
-}
-
-fn sorted(xs: list[f64; MAX_VALUES]) -> list[f64; MAX_VALUES] {
-    var out: list[f64; MAX_VALUES] = xs;
-    // Insertion sort: move each value left past the larger ones before it.
-    for i in 1..len(out) {
-        let x: f64 = out[i];
-        var j: i64 = i;
-        while j > 0 and out[j - 1] > x limit MAX_VALUES {
-            out[j] = out[j - 1];
-            j -= 1;
-        }
-        out[j] = x;
-    }
-    return out;
-}
-
 /// Count, smallest, largest, mean, median and (population) standard deviation of 1 to 64 numbers,
 /// each between -1e150 and 1e150.
 tool fn summarize(values: list[f64; MAX_VALUES]) -> Summary
@@ -88,24 +63,15 @@ tool fn summarize(values: list[f64; MAX_VALUES]) -> Summary
     ensures result.smallest <= result.median and result.median <= result.largest
     ensures result.stddev >= 0.0
 {
-    let m: f64 = mean(values);
-    var squares: f64 = 0.0;
-    for v in values {
-        squares += (v - m) * (v - m);
-    }
-    let s: list[f64; MAX_VALUES] = sorted(values);
-    let n: i64 = len(s);
-    var median: f64 = s[n / 2];
-    if n % 2 == 0 {
-        median = (s[n / 2 - 1] + s[n / 2]) / 2.0;
-    }
+    // mean, median and stddev are the standard library's: the sum first to last, the middle of the sorted
+    // values, and the square root of the mean squared distance from the mean.
     return Summary(
-        count: n,
-        smallest: s[0],
-        largest: s[n - 1],
-        mean: m,
-        median: median,
-        stddev: sqrt(squares / f64(n)),
+        count: len(values),
+        smallest: min(values),
+        largest: max(values),
+        mean: mean(values),
+        median: median(values),
+        stddev: stddev(values),
     );
 }
 

@@ -1,0 +1,2 @@
+R0001 2:11
+integer overflow: result of `abs_diff` does not fit in i8

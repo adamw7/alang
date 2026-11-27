@@ -1317,7 +1317,8 @@ public final class Checker {
     /** E0203 for a builtin that orders values given values with functions in them, which have no order. */
     private void unordered(Call c, Builtin b) {
         boolean orders = switch (b) {
-            case SORT, COMPARE, BINARY_SEARCH, LOWER_BOUND, UPPER_BOUND, IS_SORTED, MIN, MAX, MIN_INDEX, MAX_INDEX -> true;
+            case SORT, COMPARE, BINARY_SEARCH, LOWER_BOUND, UPPER_BOUND, IS_SORTED, MIN, MAX, MIN_INDEX, MAX_INDEX, NEXT_PERMUTATION,
+                 FREQUENCIES -> true;
             case HEAP_PUSH, HEAP_POP -> c.fnArg == null && c.fnArgLocal == null;
             default -> false;
         };
@@ -2103,7 +2104,9 @@ public final class Checker {
         } else {
             // split and words in a for loop make one piece at a time: there is no list for them to take a type from.
             Builtin b = f.from instanceof Call c ? Builtin.byName(c.name) : null;
-            if (b == Builtin.SPLIT || b == Builtin.WORDS || b == Builtin.CHARS) ctx.pieces = (Call) f.from;
+            if (b == Builtin.SPLIT || b == Builtin.WORDS || b == Builtin.CHARS || b == Builtin.WINDOWS || b == Builtin.CHUNKS) {
+                ctx.pieces = (Call) f.from;
+            }
             Type ct = expr(f.from, null);
             ctx.pieces = null;
             varType = Type.elementOf(ct);
@@ -2750,7 +2753,7 @@ public final class Checker {
 
     /** A literal too large for its float type would silently become inf; integer literals get E0202 too. */
     private void floatLiteralRange(Expr lit, double value, Type t) {
-        if (Double.isInfinite(value)) {
+        if (Double.isInfinite(value) && !(lit instanceof FloatLit f && f.named)) {
             diags.error(Code.E0202, lit.span, "literal " + exprText(lit) + " is too large for " + t + " and would become inf",
                 Type.kind(t) == PrimKind.F32 ? "f32 holds magnitudes up to about 3.4e38; use f64" : "f64 holds magnitudes up to about 1.8e308");
         }
@@ -2825,6 +2828,9 @@ public final class Checker {
             case "null", "nil", "None", "NULL", "undefined" ->
                 "ALang has no null; a value that may be absent is an Option<T>: Option.None, or Option.Some(x)";
             case "self", "this" -> "there are no methods or `self`; pass the value as a parameter";
+            case "Math", "math", "Integer", "Long", "Double", "Float", "Number", "sys", "std", "numpy", "np" ->
+                "the constants of a number type are written after it: i64.MAX, i64.MIN, u8.MAX, f64.PI, f64.E, f64.INFINITY, "
+                    + "f64.NAN, f64.EPSILON; functions such as sqrt, abs and pow are called by their plain names";
             case "True", "False", "TRUE", "FALSE" -> "booleans are lowercase: true, false";
             default -> fns.containsKey(n.name) || Builtin.byName(n.name) != null
                 ? "`" + n.name + "` is a function; call it with parentheses: " + n.name + "(...)"
@@ -4064,7 +4070,7 @@ public final class Checker {
                 }
                 return t;
             }
-            case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
+            case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER, IS_HEX_DIGIT, IS_PUNCT -> {
                 if (!arity(c, 1)) return Type.BOOL;
                 Type t = value(args.get(0), Type.U8);
                 if (!t.equals(Type.U8) && !Type.isError(t)) {
@@ -4088,7 +4094,8 @@ public final class Checker {
             }
             case CONTAINS, INDEX_OF, LAST_INDEX_OF -> {
                 Type ret = b == Builtin.CONTAINS ? Type.BOOL : Type.I64;
-                if (!arity(c, 2)) return ret;
+                boolean from = b == Builtin.INDEX_OF && args.size() == 3;
+                if (!from && !arity(c, 2)) return ret;
                 Type t = readArg(args.get(0));
                 if (b == Builtin.CONTAINS && (t instanceof Type.MapT || t instanceof Type.SetT)) {
                     keyArg(b, args.get(1), t instanceof Type.MapT mt ? mt.key() : ((Type.SetT) t).elem());
@@ -4110,6 +4117,7 @@ public final class Checker {
                         diags.error(Code.E0203, args.get(0).span(), b.name + "() needs a str, array or list, found " + t);
                     }
                 }
+                if (from) indexArg(b, args.get(2));
                 return ret;
             }
             case COUNT -> {
@@ -4539,7 +4547,7 @@ public final class Checker {
                 intArg(b, args.get(1), "the base");
                 return formatted(c, b, expected, asText);
             }
-            case PAD_LEFT, PAD_RIGHT -> {
+            case PAD_LEFT, PAD_RIGHT, PAD_CENTER -> {
                 boolean asText = ctx.text == c;
                 if (!arity(c, 3)) return Type.ERROR;
                 Arg v = args.get(0);
@@ -4993,6 +5001,235 @@ public final class Checker {
                 int cap = ca < 0 ? ca : cb < 0 ? cb : Math.min(ca, cb);
                 return new Type.ListT(new Type.TupleT(List.of(Type.elementOf(ts[0]), Type.elementOf(ts[1]))), cap);
             }
+            case ABS_DIFF -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                noMut(args.get(0), args.get(1));
+                Type[] ts = sameTypeOperands(args.get(0).expr(), args.get(1).expr(), Type.isNumeric(expected) ? expected : null);
+                if (Type.isError(ts[0]) || Type.isError(ts[1])) return Type.ERROR;
+                if (!Type.isNumeric(ts[0]) || !ts[0].equals(ts[1])) {
+                    diags.error(Code.E0201, c.span, "abs_diff() needs two numbers of the same type, found " + ts[0] + " and " + ts[1]);
+                    return Type.ERROR;
+                }
+                return ts[0];
+            }
+            case SIGN -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                Type t = value(args.get(0), Type.isNumeric(expected) ? expected : null);
+                if (Type.isError(t)) return t;
+                if (!Type.isNumeric(t)) {
+                    diags.error(Code.E0203, args.get(0).span(), "sign() needs a number, found " + t);
+                    return Type.ERROR;
+                }
+                return t;
+            }
+            case POW_MOD -> {
+                if (!arity(c, 3)) return Type.ERROR;
+                for (Arg a : args) noMut(a);
+                Type x = sameType(c, args, Type.isInt(expected) ? expected : null);
+                if (Type.isError(x)) return x;
+                if (!Type.isInt(x)) {
+                    diags.error(Code.E0201, c.span, "pow_mod() needs three integers of the same type, found " + joinArgTypes(args),
+                        Type.isFloat(x) ? "for floats, use pow(x, n) and %" : null);
+                    return Type.ERROR;
+                }
+                return x;
+            }
+            case MEAN, MEDIAN, VARIANCE, STDDEV -> {
+                if (!arity(c, 1)) return Type.F64;
+                Arg a = args.get(0);
+                Type t = value(a, null);
+                readInPlace(a.expr());
+                Type elem = t instanceof Type.ArrayT || t instanceof Type.ListT ? Type.elementOf(t) : null;
+                if ((elem == null || !Type.isNumeric(elem)) && !Type.isError(t)) {
+                    diags.error(Code.E0203, a.span(), b.name + "() needs an array or list of numbers, found " + t);
+                }
+                return Type.F64;
+            }
+            case RANDOM_U64, RANDOM_F64, RANDOM_INT -> {
+                Type ret = b == Builtin.RANDOM_U64 ? Type.U64 : b == Builtin.RANDOM_F64 ? Type.F64 : Type.I64;
+                if (!arity(c, b == Builtin.RANDOM_INT ? 3 : 1)) return ret;
+                rngArg(c, args.get(0));
+                for (int i = 1; i < args.size(); i++) i64Arg(b, args.get(i));
+                return ret;
+            }
+            case SHUFFLE -> {
+                if (!arity(c, 2)) return Type.VOID;
+                sequenceArg(c, args.get(0));
+                rngArg(c, args.get(1));
+                return Type.VOID;
+            }
+            case GROUP_DIGITS -> {
+                boolean asText = ctx.text == c;
+                if (!arity(c, 2)) return Type.ERROR;
+                Type n = value(args.get(0), Type.I64);
+                if (!Type.isInt(n) && !Type.isError(n)) {
+                    diags.error(Code.E0201, args.get(0).span(), "group_digits() needs an integer, found " + n,
+                        Type.isFloat(n) ? "convert it: group_digits(i64(" + exprText(args.get(0).expr()) + "), "
+                            + exprText(args.get(1).expr()) + ")" : null);
+                }
+                textPattern(b, args.get(1), "the separator");
+                return formatted(c, b, expected, asText);
+            }
+            case BASE64_ENCODE, HEX_ENCODE -> {
+                boolean asText = ctx.text == c;
+                if (!arity(c, 1)) return Type.ERROR;
+                bytesArg(b, args.get(0));
+                return formatted(c, b, expected, asText);
+            }
+            case URL_ENCODE -> {
+                boolean asText = ctx.text == c;
+                if (!arity(c, 1)) return Type.ERROR;
+                textArg(b, args.get(0));
+                return formatted(c, b, expected, asText);
+            }
+            case BASE64_DECODE, HEX_DECODE, URL_DECODE -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                Type t = textArg(b, args.get(0));
+                // The bytes never outnumber the text, and a str of the text's capacity is what a caller stores them in.
+                return t instanceof Type.Str ? optionOf(t) : Type.ERROR;
+            }
+            case SHA256, CRC32 -> {
+                Type ret = b == Builtin.SHA256 ? new Type.Str(64) : Type.U32;
+                if (!arity(c, 1)) return ret;
+                bytesArg(b, args.get(0));
+                return ret;
+            }
+            case IS_LEAP_YEAR -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                i64Arg(b, args.get(0));
+                return Type.BOOL;
+            }
+            case DAYS_IN_MONTH, ADD_MONTHS -> {
+                if (!arity(c, 2)) return Type.I64;
+                for (Arg a : args) i64Arg(b, a);
+                return Type.I64;
+            }
+            case FORMAT_DATE, FORMAT_DATETIME -> {
+                Type ret = new Type.Str(b == Builtin.FORMAT_DATE ? 10 : 20);
+                if (!arity(c, 1)) return ret;
+                i64Arg(b, args.get(0));
+                return ret;
+            }
+            case PARSE_DATETIME -> {
+                Type ret = optionOf(Type.I64);
+                if (!arity(c, 1)) return ret;
+                textArg(b, args.get(0));
+                return ret;
+            }
+            case NEXT_PERMUTATION -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                sequenceArg(c, args.get(0));
+                return Type.BOOL;
+            }
+            case NEXT_COMBINATION -> {
+                if (!arity(c, 2)) return Type.BOOL;
+                Arg idx = args.get(0);
+                Type t;
+                if (!idx.mut()) {
+                    t = expr(idx.expr(), null);
+                    missingMut(idx, "next_combination() changes its first argument",
+                        "write next_combination(mut " + exprText(idx.expr()) + ", " + exprText(args.get(1).expr()) + ")");
+                } else {
+                    t = mutPlace(idx.expr());
+                }
+                if (!Type.isError(t) && !((t instanceof Type.ListT || t instanceof Type.ArrayT) && Type.I64.equals(Type.elementOf(t)))) {
+                    diags.error(Code.E0203, idx.span(), "next_combination() needs a list or array of i64 positions, found " + t,
+                        "start from the first combination: var idx: [i64; 3] = [0, 1, 2];");
+                }
+                i64Arg(b, args.get(1));
+                return Type.BOOL;
+            }
+            case WINDOWS, CHUNKS -> {
+                if (!arity(c, 2)) return Type.ERROR;
+                Type t = readArg(args.get(0));
+                intArg(b, args.get(1), "the size");
+                if (Type.isError(t)) return t;
+                Type piece = t instanceof Type.ArrayT a ? new Type.ListT(a.elem(), a.len()) : t instanceof Type.ListT || t instanceof Type.Str ? t : null;
+                if (piece == null) {
+                    diags.error(Code.E0203, args.get(0).span(), b.name + "() needs an array, list or str, found " + t);
+                    return Type.ERROR;
+                }
+                if (ctx.pieces != c) {
+                    diags.error(Code.E0216, c.span, b.name + "() goes through its pieces in a for loop, and builds no list of them",
+                        "write for w in " + exprText(c) + " { }, and store what you need from each piece");
+                    return Type.ERROR;
+                }
+                // The list type is nominal: the loop never builds it.
+                return new Type.ListT(piece, 1);
+            }
+            case UNIQUE -> {
+                if (!arity(c, 1)) return Type.VOID;
+                collectionArg(c, args.get(0));
+                return Type.VOID;
+            }
+            case FREQUENCIES -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                Type t = readArg(args.get(0));
+                Type elem = t instanceof Type.ArrayT || t instanceof Type.ListT || t instanceof Type.Str ? Type.elementOf(t) : null;
+                if (elem == null) {
+                    if (!Type.isError(t)) diags.error(Code.E0203, args.get(0).span(), "frequencies() needs an array, list or str, found " + t);
+                    return Type.ERROR;
+                }
+                String example = "let c: map[" + (elem instanceof Type.Str ? "str[16]" : elem.toString()) + ", i64; 64] = " + exprText(c) + ";";
+                if (expected != null && Type.isError(expected)) return Type.ERROR;
+                if (ctx.stored != c || expected == null) {
+                    diags.error(Code.E0216, c.span, "frequencies() takes its type, and so its capacity, from the variable it is stored in",
+                        "make the call the whole right-hand side of a typed let/var, an assignment or a return: " + example);
+                    return Type.ERROR;
+                }
+                if (!(expected instanceof Type.MapT mt) || !mt.value().equals(Type.I64) || !Type.assignable(elem, mt.key())) {
+                    diags.error(Code.E0201, c.span, "frequencies() builds a map from the elements, " + elem + ", to i64, but " + expected
+                        + " is expected", "store it in a variable of that type: " + example);
+                    return Type.ERROR;
+                }
+                return expected;
+            }
+            case PREFIX_SUMS -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                Arg a = args.get(0);
+                Type t = value(a, null);
+                readInPlace(a.expr());
+                if (Type.isError(t)) return t;
+                Type elem = t instanceof Type.ArrayT || t instanceof Type.ListT ? Type.elementOf(t) : null;
+                if (elem == null || !Type.isNumeric(elem)) {
+                    diags.error(Code.E0203, a.span(), "prefix_sums() needs an array or list of numbers, found " + t);
+                    return Type.ERROR;
+                }
+                return t;
+            }
+            case FIRST, LAST -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                Type t = readArg(args.get(0));
+                if (Type.isError(t)) return t;
+                Type elem = t instanceof Type.ArrayT || t instanceof Type.ListT || t instanceof Type.Str ? Type.elementOf(t) : null;
+                if (elem == null) {
+                    diags.error(Code.E0203, args.get(0).span(), b.name + "() needs an array, list or str, found " + t,
+                        t instanceof Type.MapT || t instanceof Type.SetT ? "for the smallest or largest key, use " + b.name + "_key" : null);
+                    return Type.ERROR;
+                }
+                return optionOf(elem);
+            }
+            case IS_ASCII -> {
+                if (!arity(c, 1)) return Type.BOOL;
+                Expr e = args.get(0).expr();
+                Type t = value(args.get(0), isUntyped(e) ? Type.U8 : null);
+                readInPlace(e);
+                if (!t.equals(Type.U8) && !(t instanceof Type.Str) && !Type.isError(t)) {
+                    diags.error(Code.E0201, args.get(0).span(), "is_ascii() needs a u8 byte or a str, found " + t,
+                        Type.isInt(t) ? "convert it: is_ascii(u8(" + exprText(e) + "))" : null);
+                }
+                return Type.BOOL;
+            }
+            case EQ_IGNORE_CASE -> {
+                if (!arity(c, 2)) return Type.BOOL;
+                textArg(b, args.get(0));
+                textArg(b, args.get(1));
+                return Type.BOOL;
+            }
+            case CAPITALIZE -> {
+                if (!arity(c, 1)) return Type.ERROR;
+                return textArg(b, args.get(0));
+            }
             case PANIC -> {
                 if (!arity(c, 1)) return Type.VOID;
                 Type t = value(args.get(0), null);
@@ -5047,6 +5284,35 @@ public final class Checker {
         if (!Type.isError(t) && !t.equals(Type.U8)) {
             diags.error(Code.E0201, a.span(), b.name + "() needs a u8 byte for " + what + ", found " + t,
                 t instanceof Type.Str ? "write the character in single quotes: ';'" : null);
+        }
+    }
+
+    /** The data of hash, sha256, crc32 and the encoders: a str, or an array or list of u8, read in place. */
+    private void bytesArg(Builtin b, Arg a) {
+        Type t = readArg(a);
+        boolean bytes = t instanceof Type.Str
+            || (t instanceof Type.ListT || t instanceof Type.ArrayT) && Type.U8.equals(Type.elementOf(t));
+        if (!bytes && !Type.isError(t)) {
+            diags.error(Code.E0203, a.span(), b.name + "() needs a str or an array or list of u8, found " + t,
+                Type.isInt(t) ? "use its text: var s: str[24] = \"\"; append(mut s, " + exprText(a.expr()) + "); then "
+                    + b.name + "(s)" : null);
+        }
+    }
+
+    /** The generator of random_u64, random_int, random_f64 and shuffle: a `mut` u64 or i64 variable, its state. */
+    private void rngArg(Call c, Arg a) {
+        Type t;
+        if (!a.mut()) {
+            t = expr(a.expr(), null);
+            missingMut(a, c.name + "() advances the generator, so its state is passed as `mut`",
+                "write " + c.name + "(" + (c.builtin == Builtin.SHUFFLE ? "mut xs, " : "") + "mut " + exprText(a.expr())
+                    + (c.builtin == Builtin.RANDOM_INT ? ", lo, hi" : "") + ")");
+        } else {
+            t = mutPlace(a.expr());
+        }
+        if (!Type.isError(t) && !t.equals(Type.U64) && !t.equals(Type.I64)) {
+            diags.error(Code.E0201, a.span(), c.name + "() needs the generator's state, a u64 or i64 variable, found " + t,
+                "declare one with a seed: var rng: u64 = 42;");
         }
     }
 
@@ -5375,7 +5641,7 @@ public final class Checker {
             case WORDS -> "let ws: list[str[32]; 16] = ";
             case CHARS -> "let cs: list[u32; 64] = ";
             case JOIN -> "let line: str[256] = ";
-            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE, REPEAT, VARIANT_NAME -> "let text: str[32] = ";
+            case FIXED, PAD_LEFT, PAD_RIGHT, PAD_CENTER, TO_BASE, REPEAT, VARIANT_NAME, GROUP_DIGITS -> "let text: str[32] = ";
             case TO_JSON -> "let json: str[256] = ";
             default -> "let text: str[256] = ";
         } + exprText(c) + ";";

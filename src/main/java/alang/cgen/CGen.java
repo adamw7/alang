@@ -1392,6 +1392,10 @@ public final class CGen {
      * variable is copied, since the body may change it.
      */
     private void pieceLoop(For f, Call c) {
+        if (c.builtin == Builtin.WINDOWS || c.builtin == Builtin.CHUNKS) {
+            runLoop(f, c);
+            return;
+        }
         Expr src = c.args.get(0).expr();
         open("{");
         String s = f.snapshot ? tmp(src.type, lower(src)) : lowerLvalue(src);
@@ -1431,6 +1435,43 @@ public final class CGen {
         open("while (al_next_piece((" + s + ").b, (" + s + ").len, &" + pos + ", " + p[0] + ", " + p[1] + ", " + (words ? 1 : 0)
             + ", &" + from + ", &" + to + ")) {");
         emit(x + ".len = al_copy_bytes(" + x + ".b, (" + s + ").b + " + from + ", " + to + " - " + from + ");");
+        pieceIndex(f, index);
+        loopBody(f, f.body);
+    }
+
+    /**
+     * `for w in windows(xs, k)` and `for c in chunks(xs, k)`: each run of k elements in turn (each step one element on,
+     * or k) copied into the loop variable, a list (str) of the capacity of xs.
+     */
+    private void runLoop(For f, Call c) {
+        Expr src = c.args.get(0).expr();
+        open("{");
+        String s = f.snapshot ? tmp(src.type, lower(src)) : lowerLvalue(src);
+        Type kt = c.args.get(1).expr().type;
+        String k = tmp(kt, lower(c.args.get(1).expr()));
+        rangeTrap(Type.kind(kt).signed ? "(" + k + ") < 1" : "(" + k + ") == 0", c.name + "() needs a size of at least 1, found ", kt, k,
+            loc(c.span));
+        String index = null;
+        if (f.indexVar != null) {
+            index = "t" + ++tmpCount;
+            emit("int64_t " + index + " = -1;");
+        }
+        boolean str = src.type instanceof Type.Str;
+        String n = str ? "(" + s + ").len" : lenOf(src.type, s);
+        String data = "(" + s + ")." + (str ? "b" : "v");
+        String size = "t" + ++tmpCount;
+        emit("uint64_t " + size + " = (uint64_t)" + k + " > (uint64_t)" + n + " ? (uint64_t)" + n + " + 1u : (uint64_t)" + k + ";");
+        String pos = "t" + ++tmpCount;
+        emit("uint32_t " + pos + ";");
+        String x = cName(f.var);
+        emit(ct(f.var.type) + " " + x + " = {0};");
+        open(c.builtin == Builtin.WINDOWS
+            ? "for (" + pos + " = 0; (uint64_t)" + pos + " + " + size + " <= (uint64_t)" + n + "; " + pos + "++) {"
+            : "for (" + pos + " = 0; " + pos + " < " + n + "; " + pos + " += (uint32_t)" + size + ") {");
+        emit(x + ".len = (uint32_t)(" + size + " < (uint64_t)(" + n + " - " + pos + ") ? " + size + " : (uint64_t)(" + n + " - " + pos + "));");
+        String j = "t" + ++tmpCount;
+        scopedLoop(j, "for (" + j + " = 0; " + j + " < " + x + ".len; " + j + "++) " + x + "." + (str ? "b" : "v") + "[" + j + "] = "
+            + data + "[" + pos + " + " + j + "];");
         pieceIndex(f, index);
         loopBody(f, f.body);
     }
@@ -2326,6 +2367,20 @@ public final class CGen {
             emit("al_repeat_check(" + p[1] + ", (uint64_t)(" + n + "), " + at + ");");
             return sink -> emit("al_repeat(" + sink + ", " + p[0] + ", " + p[1] + ", (uint64_t)(" + n + "));");
         }
+        if (c.builtin == Builtin.GROUP_DIGITS) {
+            Type nt = args.get(0).expr().type;
+            String n = tmp(nt, lower(args.get(0).expr()));
+            String[] p = pattern(args.get(1).expr());
+            boolean signed = Type.kind(nt).signed;
+            String mag = signed ? "al_mag((int64_t)" + n + ")" : "(uint64_t)" + n;
+            String neg = signed ? "(" + n + " < 0)" : "0";
+            return sink -> emit("al_fmt_group(" + sink + ", " + mag + ", " + neg + ", " + p[0] + ", " + p[1] + ");");
+        }
+        if (c.builtin == Builtin.BASE64_ENCODE || c.builtin == Builtin.HEX_ENCODE || c.builtin == Builtin.URL_ENCODE) {
+            String[] d = bytesOf(args.get(0).expr());
+            String fn = c.builtin == Builtin.BASE64_ENCODE ? "al_fmt_base64" : c.builtin == Builtin.HEX_ENCODE ? "al_fmt_hex" : "al_fmt_url";
+            return sink -> emit(fn + "(" + sink + ", " + d[0] + ", " + d[1] + ");");
+        }
         Consumer<String> value = text(args.get(0).expr());
         Type wt = args.get(1).expr().type;
         String w = tmp(wt, lower(args.get(1).expr()));
@@ -2355,6 +2410,16 @@ public final class CGen {
             open("{");
             emit("al_out " + m + " = {0, 0, 0u, 0u};");
             value.accept("&" + m);
+            if (c.builtin == Builtin.PAD_CENTER) {
+                String total = "al_p" + ++tmpCount;
+                emit("int64_t " + total + " = (int64_t)(" + w + ") > (int64_t)" + m + ".len ? (int64_t)(" + w + ") - (int64_t)" + m
+                    + ".len : 0;");
+                emit("al_pad(" + sink + ", " + fill + ", " + total + " / 2, 0u);");
+                value.accept(sink);
+                emit("al_pad(" + sink + ", " + fill + ", " + total + " - " + total + " / 2, 0u);");
+                close("}");
+                return;
+            }
             String pad = "al_pad(" + sink + ", " + fill + ", (int64_t)(" + w + "), " + m + ".len);";
             if (left) emit(pad);
             value.accept(sink);
@@ -2989,7 +3054,7 @@ public final class CGen {
                     ? "al_sat_s((int64_t)" + a + ", (int64_t)" + b + ", " + op + ", INT" + k.bits + "_MIN, INT" + k.bits + "_MAX)"
                     : "al_sat_u((uint64_t)" + a + ", (uint64_t)" + b + ", " + op + ", UINT" + k.bits + "_MAX)"));
             }
-            case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER -> {
+            case IS_DIGIT, IS_ALPHA, IS_ALNUM, IS_SPACE, IS_UPPER, IS_LOWER, IS_HEX_DIGIT, IS_PUNCT -> {
                 String ch = tmp(Type.U8, lower(args.get(0).expr()));
                 String digit = "(" + ch + " >= 48 && " + ch + " <= 57)";
                 String upper = "(" + ch + " >= 65 && " + ch + " <= 90)";
@@ -3000,6 +3065,8 @@ public final class CGen {
                     case IS_ALNUM -> upper + " || " + lowerCase + " || " + digit;
                     case IS_SPACE -> "al_is_space(" + ch + ") != 0";
                     case IS_UPPER -> upper;
+                    case IS_HEX_DIGIT -> digit + " || (" + ch + " >= 97 && " + ch + " <= 102) || (" + ch + " >= 65 && " + ch + " <= 70)";
+                    case IS_PUNCT -> "(" + ch + " > 32 && " + ch + " < 127) && !(" + upper + " || " + lowerCase + " || " + digit + ")";
                     default -> lowerCase;
                 });
             }
@@ -3067,17 +3134,23 @@ public final class CGen {
                 }
                 String h = lowerLvalue(xs);
                 String at0;
-                if (xs.type instanceof Type.Str) {
-                    String[] p = pattern(args.get(1).expr());
-                    at0 = tmp(Type.I64, "al_find_bytes((" + h + ").b, (" + h + ").len, " + p[0] + ", " + p[1] + ", 0)");
+                boolean str = xs.type instanceof Type.Str;
+                String[] p = str ? pattern(args.get(1).expr()) : null;
+                Expr needle = args.get(1).expr();
+                String x = str ? null : lowerLvalue(needle);
+                String start = "0";
+                if (args.size() == 3) {
+                    String pos = position(args.get(2).expr());
+                    start = tmp(Type.U32, "al_start_pos(" + pos + ", " + (str ? "(" + h + ").len" : lenOf(xs.type, h)) + ", " + at + ")");
+                }
+                if (str) {
+                    at0 = tmp(Type.I64, "al_find_bytes((" + h + ").b, (" + h + ").len, " + p[0] + ", " + p[1] + ", " + start + ")");
                 } else {
-                    Expr needle = args.get(1).expr();
-                    String x = lowerLvalue(needle);
                     Type elem = Type.elementOf(xs.type);
                     String n = lenOf(xs.type, h);
                     at0 = tmp(Type.I64, "-1");
                     String i = "t" + ++tmpCount;
-                    openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                    openLoop(i, "for (" + i + " = " + start + "; " + i + " < " + n + "; " + i + "++) {");
                     open("if (" + eqExpr(elem, needle.type, "(" + h + ").v[" + i + "]", x) + " != 0) {");
                     emit(at0 + " = (int64_t)" + i + ";");
                     emit("break;");
@@ -3116,7 +3189,8 @@ public final class CGen {
                     + ", " + (c.builtin != Builtin.TRIM_START ? 1 : 0) + ");");
                 return r;
             }
-            case FIXED, PAD_LEFT, PAD_RIGHT, TO_BASE, REPEAT, VARIANT_NAME, TO_JSON -> {
+            case FIXED, PAD_LEFT, PAD_RIGHT, PAD_CENTER, TO_BASE, REPEAT, VARIANT_NAME, TO_JSON, GROUP_DIGITS, BASE64_ENCODE, HEX_ENCODE,
+                 URL_ENCODE -> {
                 // Stored in a str: the text is written into it, and must fit.
                 String target = into;
                 into = null;
@@ -3867,6 +3941,235 @@ public final class CGen {
                 close(2);
                 return r;
             }
+            case ABS_DIFF -> {
+                PrimKind k = Type.kind(c.type);
+                String a = tmp(c.type, lower(args.get(0).expr()));
+                String b = tmp(c.type, lower(args.get(1).expr()));
+                if (k.isFloat) return tmp(c.type, (k == PrimKind.F32 ? "fabsf(" : "fabs(") + arith(BinOp.SUB, k, k, a, b, c.span) + ")");
+                if (!k.signed) return tmp(c.type, "(" + cPrim(k) + ")(" + a + " > " + b + " ? " + a + " - " + b + " : " + b + " - " + a + ")");
+                String d = tmp(Type.U64, a + " > " + b + " ? (uint64_t)(int64_t)" + a + " - (uint64_t)(int64_t)" + b
+                    + " : (uint64_t)(int64_t)" + b + " - (uint64_t)(int64_t)" + a);
+                emit("if (" + d + " > (uint64_t)INT" + k.bits + "_MAX) al_overflow(\"abs_diff\", \"" + k.name + "\", " + at + ");");
+                return "((" + cPrim(k) + ")" + d + ")";
+            }
+            case SIGN -> {
+                PrimKind k = Type.kind(c.type);
+                String x = tmp(c.type, lower(args.get(0).expr()));
+                if (k.isFloat) return tmp(c.type, "(" + x + " > 0 ? 1.0 : " + x + " < 0 ? -1.0 : " + x + ")");
+                return tmp(c.type, "(" + cPrim(k) + ")" + (k.signed ? "((" + x + " > 0) - (" + x + " < 0))" : "(" + x + " != 0)"));
+            }
+            case POW_MOD -> {
+                PrimKind k = Type.kind(c.type);
+                String b = tmp(c.type, lower(args.get(0).expr()));
+                String e = tmp(c.type, lower(args.get(1).expr()));
+                String m = tmp(c.type, lower(args.get(2).expr()));
+                return tmp(c.type, "(" + cPrim(k) + ")" + (k.signed
+                    ? "al_pow_mod_s((int64_t)" + b + ", (int64_t)" + e + ", (int64_t)" + m + ", " + at + ")"
+                    : "al_pow_mod_u((uint64_t)" + b + ", (uint64_t)" + e + ", (uint64_t)" + m + ", " + at + ")"));
+            }
+            case MEAN, MEDIAN, VARIANCE, STDDEV -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String n = lenOf(xs.type, h);
+                String kind = xs.type instanceof Type.ArrayT ? "array" : "list";
+                emit("if (" + n + " == 0) AL_TRAP(\"R0013\", \"" + c.builtin.name + "() of an empty " + kind + "\", " + at + ");");
+                String i = "t" + ++tmpCount;
+                if (c.builtin == Builtin.MEDIAN) {
+                    String buf = "t" + ++tmpCount;
+                    String r = tmp(Type.F64, "0.0");
+                    long cap = Math.max(1, xs.type instanceof Type.ArrayT arr ? arr.len() : Type.capacity(xs.type));
+                    open("{");
+                    emit("double " + buf + "[" + cap + "];");
+                    openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                    emit(buf + "[" + i + "] = (double)(" + h + ").v[" + i + "];");
+                    close(2);
+                    emit("al_heapsort(" + buf + ", " + n + ", sizeof(double), " + ordFn(Type.F64) + ");");
+                    emit(r + " = " + n + " % 2u == 1u ? " + buf + "[" + n + " / 2u] : (" + buf + "[" + n + " / 2u - 1u] + " + buf
+                        + "[" + n + " / 2u]) / 2.0;");
+                    close("}");
+                    return r;
+                }
+                String sum = tmp(Type.F64, "0.0");
+                openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                emit(sum + " = " + sum + " + (double)(" + h + ").v[" + i + "];");
+                close(2);
+                String mean = tmp(Type.F64, sum + " / (double)" + n);
+                if (c.builtin == Builtin.MEAN) return mean;
+                String sq = tmp(Type.F64, "0.0");
+                String j = "t" + ++tmpCount;
+                openLoop(j, "for (" + j + " = 0; " + j + " < " + n + "; " + j + "++) {");
+                emit("double al_d = (double)(" + h + ").v[" + j + "] - " + mean + ";");
+                emit(sq + " = " + sq + " + al_rnd(al_d * al_d);");
+                close(2);
+                String v = tmp(Type.F64, sq + " / (double)" + n);
+                return c.builtin == Builtin.VARIANCE ? v : tmp(Type.F64, "sqrt(" + v + ")");
+            }
+            case RANDOM_U64, RANDOM_INT, RANDOM_F64 -> {
+                String rng = "(uint64_t *)&(" + lower(args.get(0).expr()) + ")";
+                if (c.builtin == Builtin.RANDOM_INT) {
+                    String lo = tmp(Type.I64, lower(args.get(1).expr()));
+                    String hi = tmp(Type.I64, lower(args.get(2).expr()));
+                    return tmp(Type.I64, "al_rand_int(" + rng + ", " + lo + ", " + hi + ", " + at + ")");
+                }
+                return tmp(c.type, c.builtin == Builtin.RANDOM_U64 ? "al_rand_next(" + rng + ")" : "al_rand_f64(" + rng + ")");
+            }
+            case SHUFFLE -> {
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String base = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
+                String n = t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + place + ").len";
+                String rng = "(uint64_t *)&(" + lower(args.get(1).expr()) + ")";
+                emit("al_shuffle(" + base + ", " + n + ", sizeof " + base + "[0], " + rng + ");");
+                return null;
+            }
+            case BASE64_DECODE, HEX_DECODE, URL_DECODE -> {
+                String v = lowerLvalue(args.get(0).expr());
+                Type st = ((Type.EnumT) c.type).decl().variants.get(1).payload.get(0);
+                String r = tmp(st, "{0}");
+                String fn = c.builtin == Builtin.BASE64_DECODE ? "al_b64_decode" : c.builtin == Builtin.HEX_DECODE ? "al_hex_decode"
+                    : "al_url_decode";
+                String ok = tmp(Type.BOOL, fn + "(" + r + ".b, &" + r + ".len, (" + v + ").b, (" + v + ").len)");
+                return optionValue(c.type, ok, r);
+            }
+            case SHA256 -> {
+                String[] d = bytesOf(args.get(0).expr());
+                String r = tmp(c.type, "{0}");
+                emit("al_sha256_hex(" + r + ".b, " + d[0] + ", " + d[1] + ");");
+                emit(r + ".len = 64u;");
+                return r;
+            }
+            case CRC32 -> {
+                String[] d = bytesOf(args.get(0).expr());
+                return tmp(Type.U32, "al_crc32(" + d[0] + ", " + d[1] + ")");
+            }
+            case IS_LEAP_YEAR -> {
+                return tmp(Type.BOOL, "al_is_leap_year(" + lower(args.get(0).expr()) + ") != 0");
+            }
+            case DAYS_IN_MONTH, ADD_MONTHS -> {
+                String a = tmp(Type.I64, lower(args.get(0).expr()));
+                String b = tmp(Type.I64, lower(args.get(1).expr()));
+                return tmp(Type.I64, "al_" + c.builtin.name + "(" + a + ", " + b + ", " + at + ")");
+            }
+            case FORMAT_DATE, FORMAT_DATETIME -> {
+                String z = tmp(Type.I64, lower(args.get(0).expr()));
+                String r = tmp(c.type, "{0}");
+                emit("al_" + c.builtin.name + "(" + r + ".b, " + z + ", " + at + ");");
+                emit(r + ".len = " + ((Type.Str) c.type).cap() + "u;");
+                return r;
+            }
+            case PARSE_DATETIME -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String t = "t" + ++tmpCount;
+                emit("int64_t " + t + " = 0;");
+                String ok = tmp(Type.BOOL, "al_parse_datetime((" + v + ").b, (" + v + ").len, &" + t + ") != 0");
+                return optionValue(c.type, ok, t);
+            }
+            case NEXT_PERMUTATION -> {
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String base = "(" + place + ")." + (t instanceof Type.Str ? "b" : "v");
+                String n = t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + place + ").len";
+                return tmp(Type.BOOL, "al_next_perm(" + base + ", " + n + ", sizeof " + base + "[0], " + ordFn(Type.elementOf(t)) + ")");
+            }
+            case NEXT_COMBINATION -> {
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                String n = t instanceof Type.ArrayT arr ? arr.len() + "u" : "(" + place + ").len";
+                String total = tmp(Type.I64, lower(args.get(1).expr()));
+                return tmp(Type.BOOL, "al_next_comb((" + place + ").v, " + n + ", " + total + ", " + at + ")");
+            }
+            case UNIQUE -> {
+                Type t = args.get(0).expr().type;
+                String place = lower(args.get(0).expr());
+                if (t instanceof Type.Str) {
+                    emit("al_unique_bytes((" + place + ").b, &(" + place + ").len);");
+                    return null;
+                }
+                Type elem = Type.elementOf(t);
+                String sp = "t" + ++tmpCount;
+                String w = "t" + ++tmpCount;
+                String i = "t" + ++tmpCount;
+                String j = "t" + ++tmpCount;
+                String dup = "t" + ++tmpCount;
+                open("{");
+                emit(ct(t) + " *" + sp + " = &(" + place + ");");
+                emit("uint32_t " + w + " = 0, " + i + ", " + j + ";");
+                open("for (" + i + " = 0; " + i + " < " + sp + "->len; " + i + "++) {");
+                emit("int " + dup + " = 0;");
+                emit("for (" + j + " = 0; " + j + " < " + w + " && !" + dup + "; " + j + "++) " + dup + " = ("
+                    + eqExpr(elem, elem, sp + "->v[" + j + "]", sp + "->v[" + i + "]") + " != 0);");
+                open("if (!" + dup + ") {");
+                emit("if (" + w + " != " + i + ") " + sp + "->v[" + w + "] = " + sp + "->v[" + i + "];");
+                emit(w + "++;");
+                close(2);
+                emit(sp + "->len = " + w + ";");
+                close("}");
+                return null;
+            }
+            case FREQUENCIES -> {
+                String target = into;
+                into = null;
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                Type.MapT mt = (Type.MapT) c.type;
+                String r = dest(c.type, target);
+                boolean str = xs.type instanceof Type.Str;
+                String n = str ? "(" + h + ").len" : lenOf(xs.type, h);
+                Type elem = Type.elementOf(xs.type);
+                String i = "t" + ++tmpCount;
+                String m = keyedFns(mt);
+                openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                emit(ct(mt.key()) + " al_k = " + coerce("(" + h + ")." + (str ? "b" : "v") + "[" + i + "]", elem, mt.key()) + ";");
+                emit("int al_found;");
+                emit("uint32_t al_at = al_find_" + m + "(&" + r + ", &al_k, &al_found);");
+                emit("if (al_found) " + r + ".v[al_at] += 1;");
+                emit("else *al_put_" + m + "(&" + r + ", &al_k, " + at + ") = 1;");
+                close(2);
+                return r;
+            }
+            case PREFIX_SUMS -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                String n = lenOf(xs.type, h);
+                PrimKind k = Type.kind(Type.elementOf(c.type));
+                String r = tmp(c.type, "{0}");
+                if (c.type instanceof Type.ListT) emit(r + ".len = " + n + ";");
+                String total = tmp(Type.elementOf(c.type), k.isFloat ? "0.0" : "0");
+                String i = "t" + ++tmpCount;
+                openLoop(i, "for (" + i + " = 0; " + i + " < " + n + "; " + i + "++) {");
+                emit(total + " = " + arith(BinOp.ADD, k, k, total, "(" + h + ").v[" + i + "]", c.span) + ";");
+                emit(r + ".v[" + i + "] = " + total + ";");
+                close(2);
+                return r;
+            }
+            case FIRST, LAST -> {
+                Expr xs = args.get(0).expr();
+                String h = lowerLvalue(xs);
+                boolean str = xs.type instanceof Type.Str;
+                String n = str ? "(" + h + ").len" : lenOf(xs.type, h);
+                String i = c.builtin == Builtin.FIRST ? "0" : n + " - 1u";
+                return optionValue(c.type, n + " > 0", "(" + h + ")." + (str ? "b" : "v") + "[" + i + "]");
+            }
+            case IS_ASCII -> {
+                Expr a = args.get(0).expr();
+                if (a.type instanceof Type.Str) {
+                    String v = lowerLvalue(a);
+                    return tmp(Type.BOOL, "al_is_ascii((" + v + ").b, (" + v + ").len)");
+                }
+                return tmp(Type.BOOL, "(" + lower(a) + ") < 128");
+            }
+            case EQ_IGNORE_CASE -> {
+                String a = lowerLvalue(args.get(0).expr());
+                String b = lowerLvalue(args.get(1).expr());
+                return tmp(Type.BOOL, "al_eq_ignore_case((" + a + ").b, (" + a + ").len, (" + b + ").b, (" + b + ").len)");
+            }
+            case CAPITALIZE -> {
+                String v = lowerLvalue(args.get(0).expr());
+                String r = tmp(c.type, "{0}");
+                emit(r + ".len = al_case_into(" + r + ".b, (" + v + ").b, (" + v + ").len, 0);");
+                emit("if (" + r + ".len > 0 && " + r + ".b[0] >= 97 && " + r + ".b[0] <= 122) " + r + ".b[0] = (uint8_t)(" + r + ".b[0] - 32);");
+                return r;
+            }
             case ASSERT_EQ -> throw new IllegalStateException("assert_eq is an assert statement");
             case PANIC -> {
                 String v = lowerLvalue(args.get(0).expr());
@@ -3944,6 +4247,14 @@ public final class CGen {
         close("}");
         close("}");
         return ok;
+    }
+
+    /** The data of a str, or of an array or list of u8: its bytes and their number, for sha256, crc32 and the encoders. */
+    private String[] bytesOf(Expr e) {
+        String v = lowerLvalue(e);
+        String data = e.type instanceof Type.Str ? "(" + v + ").b" : "(" + v + ").v";
+        String n = e.type instanceof Type.ArrayT a ? a.len() + "u" : "(" + v + ").len";
+        return new String[] {data, n};
     }
 
     private String[] pattern(Expr e) {

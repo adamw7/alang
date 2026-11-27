@@ -1,0 +1,14 @@
+true false true false true
+29 28 30 31
+2026-02-28 2025-11-30 2027-02-28
+2025-02-28 2026-01-31 0001-01-31
+1970-01-01 1969-12-31 0001-01-01 9999-12-31 10
+2026-11-27 true
+Option.Some(0) Option.Some(1795771800) Option.Some(1795775400)
+Option.Some(1795775459) Option.Some(-1) Option.Some(946704600)
+Option.Some(-62135596800) Option.Some(253402300799) Option.Some(1795775400)
+Option.None Option.None Option.None Option.None
+Option.None Option.None Option.None Option.None
+Option.None Option.None Option.None Option.None
+1970-01-01T00:00:00Z 1969-12-31T23:59:59Z 2026-11-27T08:50:00Z 0001-01-01T00:00:00Z 9999-12-31T23:59:59Z
+2026-11-27T09:30:00Z

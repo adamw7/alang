@@ -1,0 +1,2 @@
+R0013 5:18
+random_int() needs lo <= hi, found lo 6 and hi 5

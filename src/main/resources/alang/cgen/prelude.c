@@ -669,6 +669,35 @@ static uint32_t al_slice(al_pos f, al_pos t, uint32_t len, uint32_t *start, int 
     return al_pos_get(t) - *start;
 }
 
+static uint32_t al_start_pos(al_pos p, uint32_t len, int line, int col) {
+    if (!al_pos_le(p, len)) {
+        al_out e = al_trap_begin("R0003");
+        AL_PUTS(&e, "index_of start ");
+        al_fmt_pos(&e, p);
+        AL_PUTS(&e, " is out of range for length ");
+        al_fmt_u64(&e, len);
+        al_trap_end(&e, line, col);
+    }
+    return al_pos_get(p);
+}
+
+static bool al_is_ascii(const uint8_t *b, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i++) if (b[i] >= 128) return false;
+    return true;
+}
+
+static bool al_eq_ignore_case(const uint8_t *a, uint32_t an, const uint8_t *b, uint32_t bn) {
+    uint32_t i;
+    if (an != bn) return false;
+    for (i = 0; i < an; i++) {
+        uint8_t x = a[i] >= 'A' && a[i] <= 'Z' ? (uint8_t)(a[i] + 32) : a[i];
+        uint8_t y = b[i] >= 'A' && b[i] <= 'Z' ? (uint8_t)(b[i] + 32) : b[i];
+        if (x != y) return false;
+    }
+    return true;
+}
+
 static uint32_t al_insert_pos(al_pos p, uint32_t len, int line, int col) {
     if (!al_pos_le(p, len)) {
         al_out e = al_trap_begin("R0003");
@@ -1748,6 +1777,354 @@ static int al_parse_date(const uint8_t *b, uint32_t n, int64_t *out) {
     return 1;
 }
 
+/* ---------------------------------------------------------------- encodings and digests */
+
+/* group_digits(): the magnitude mag after a - if neg, with sep between groups of three digits from the right. */
+static void al_fmt_group(al_out *o, uint64_t mag, int neg, const uint8_t *sep, uint32_t seplen) {
+    uint8_t d[20];
+    uint32_t n = 0, i;
+    if (neg) AL_PUTS(o, "-");
+    do {
+        d[19 - n] = (uint8_t)('0' + mag % 10);
+        mag /= 10;
+        n++;
+    } while (mag != 0);
+    for (i = 0; i < n; i++) {
+        if (i > 0 && (n - i) % 3 == 0) al_put(o, sep, seplen);
+        al_put(o, d + 20 - n + i, 1);
+    }
+}
+
+static const char al_b64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static void al_fmt_base64(al_out *o, const uint8_t *d, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i += 3) {
+        uint32_t k = n - i < 3 ? n - i : 3;
+        uint32_t v = (uint32_t)d[i] << 16 | (k > 1 ? (uint32_t)d[i + 1] << 8 : 0u) | (k > 2 ? (uint32_t)d[i + 2] : 0u);
+        uint8_t q[4];
+        q[0] = (uint8_t)al_b64_chars[v >> 18 & 63u];
+        q[1] = (uint8_t)al_b64_chars[v >> 12 & 63u];
+        q[2] = k > 1 ? (uint8_t)al_b64_chars[v >> 6 & 63u] : (uint8_t)'=';
+        q[3] = k > 2 ? (uint8_t)al_b64_chars[v & 63u] : (uint8_t)'=';
+        al_put(o, q, 4);
+    }
+}
+
+static int al_sextet(uint8_t c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+/* base64_decode(): 1 and the bytes in out, or 0 for text that is not Base64. out holds 3 * (n / 4) bytes. */
+static int al_b64_decode(uint8_t *out, uint32_t *len, const uint8_t *s, uint32_t n) {
+    uint32_t i, w = 0;
+    if (n % 4 != 0) return 0;
+    for (i = 0; i < n; i += 4) {
+        int last = i + 4 == n, pad = 0, j;
+        uint32_t v = 0;
+        for (j = 0; j < 4; j++) {
+            int x;
+            if (s[i + j] == '=' && last && j >= 2) {
+                pad++;
+                v <<= 6;
+                continue;
+            }
+            x = al_sextet(s[i + j]);
+            if (x < 0 || pad > 0) return 0;
+            v = v << 6 | (uint32_t)x;
+        }
+        out[w++] = (uint8_t)(v >> 16);
+        if (pad < 2) out[w++] = (uint8_t)(v >> 8);
+        if (pad < 1) out[w++] = (uint8_t)v;
+    }
+    *len = w;
+    return 1;
+}
+
+static void al_fmt_hex(al_out *o, const uint8_t *d, uint32_t n) {
+    static const char hex[] = "0123456789abcdef";
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        uint8_t q[2];
+        q[0] = (uint8_t)hex[d[i] >> 4];
+        q[1] = (uint8_t)hex[d[i] & 15u];
+        al_put(o, q, 2);
+    }
+}
+
+static int al_hex_digit(uint8_t c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* hex_decode(): 1 and the bytes in out (n / 2 of them), or 0 for an odd length or a character that is no digit. */
+static int al_hex_decode(uint8_t *out, uint32_t *len, const uint8_t *s, uint32_t n) {
+    uint32_t i;
+    if (n % 2 != 0) return 0;
+    for (i = 0; i < n / 2; i++) {
+        int hi = al_hex_digit(s[2 * i]), lo = al_hex_digit(s[2 * i + 1]);
+        if (hi < 0 || lo < 0) return 0;
+        out[i] = (uint8_t)(hi << 4 | lo);
+    }
+    *len = n / 2;
+    return 1;
+}
+
+static void al_fmt_url(al_out *o, const uint8_t *d, uint32_t n) {
+    static const char hex[] = "0123456789ABCDEF";
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        uint8_t c = d[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_'
+            || c == '~') {
+            al_put(o, &c, 1);
+        } else {
+            uint8_t q[3];
+            q[0] = '%';
+            q[1] = (uint8_t)hex[c >> 4];
+            q[2] = (uint8_t)hex[c & 15u];
+            al_put(o, q, 3);
+        }
+    }
+}
+
+/* url_decode(): 1 and the bytes in out (at most n), or 0 if a % is not followed by two hexadecimal digits. */
+static int al_url_decode(uint8_t *out, uint32_t *len, const uint8_t *s, uint32_t n) {
+    uint32_t i, w = 0;
+    for (i = 0; i < n; i++) {
+        int hi, lo;
+        if (s[i] != '%') {
+            out[w++] = s[i];
+            continue;
+        }
+        if (i + 2 >= n) return 0;
+        hi = al_hex_digit(s[i + 1]);
+        lo = al_hex_digit(s[i + 2]);
+        if (hi < 0 || lo < 0) return 0;
+        out[w++] = (uint8_t)(hi << 4 | lo);
+        i += 2;
+    }
+    *len = w;
+    return 1;
+}
+
+static uint32_t al_ror32(uint32_t x, int n) {
+    return x >> n | x << (32 - n);
+}
+
+static void al_sha256_block(uint32_t h[8], const uint8_t *p) {
+    static const uint32_t k[64] = {
+        0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
+        0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u, 0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u,
+        0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu, 0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
+        0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u, 0xc6e00bf3u, 0xd5a79147u, 0x06ca6351u, 0x14292967u,
+        0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu, 0x53380d13u, 0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u,
+        0xa2bfe8a1u, 0xa81a664bu, 0xc24b8b70u, 0xc76c51a3u, 0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
+        0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
+        0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u};
+    uint32_t w[64], a, b, c, d, e, f, g, hh;
+    int i;
+    for (i = 0; i < 16; i++) {
+        w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 | (uint32_t)p[4 * i + 2] << 8 | (uint32_t)p[4 * i + 3];
+    }
+    for (i = 16; i < 64; i++) {
+        uint32_t s0 = al_ror32(w[i - 15], 7) ^ al_ror32(w[i - 15], 18) ^ (w[i - 15] >> 3);
+        uint32_t s1 = al_ror32(w[i - 2], 17) ^ al_ror32(w[i - 2], 19) ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    a = h[0]; b = h[1]; c = h[2]; d = h[3]; e = h[4]; f = h[5]; g = h[6]; hh = h[7];
+    for (i = 0; i < 64; i++) {
+        uint32_t t1 = hh + (al_ror32(e, 6) ^ al_ror32(e, 11) ^ al_ror32(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
+        uint32_t t2 = (al_ror32(a, 2) ^ al_ror32(a, 13) ^ al_ror32(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+        hh = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+    }
+    h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+}
+
+/* sha256(): the digest of n bytes as 64 lowercase hexadecimal digits in out. */
+static void al_sha256_hex(uint8_t *out, const uint8_t *d, uint32_t n) {
+    static const char hex[] = "0123456789abcdef";
+    uint32_t h[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au, 0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u};
+    uint8_t last[128];
+    uint32_t i, rest, total;
+    uint64_t bits = (uint64_t)n * 8u;
+    for (i = 0; i + 64 <= n; i += 64) al_sha256_block(h, d + i);
+    rest = n - i;
+    for (total = 0; total < 128; total++) last[total] = 0;
+    for (total = 0; total < rest; total++) last[total] = d[i + total];
+    last[rest] = 0x80;
+    total = rest + 9 <= 64 ? 64 : 128;
+    for (i = 0; i < 8; i++) last[total - 1 - i] = (uint8_t)(bits >> (8 * i));
+    al_sha256_block(h, last);
+    if (total == 128) al_sha256_block(h, last + 64);
+    for (i = 0; i < 32; i++) {
+        uint8_t byte = (uint8_t)(h[i / 4] >> (24 - 8 * (i % 4)));
+        out[2 * i] = (uint8_t)hex[byte >> 4];
+        out[2 * i + 1] = (uint8_t)hex[byte & 15u];
+    }
+}
+
+/* crc32(): the reflected CRC-32 of zlib (polynomial 0xEDB88320), bit by bit. */
+static uint32_t al_crc32(const uint8_t *d, uint32_t n) {
+    uint32_t c = 0xFFFFFFFFu, i;
+    int k;
+    for (i = 0; i < n; i++) {
+        c ^= d[i];
+        for (k = 0; k < 8; k++) c = c & 1u ? c >> 1 ^ 0xEDB88320u : c >> 1;
+    }
+    return c ^ 0xFFFFFFFFu;
+}
+
+/* ---------------------------------------------------------------- more dates */
+
+static int al_is_leap_year(int64_t y) {
+    return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+}
+
+static int64_t al_month_days(int64_t y, int64_t m) {
+    return m == 2 ? (al_is_leap_year(y) ? 29 : 28) : (m == 4 || m == 6 || m == 9 || m == 11) ? 30 : 31;
+}
+
+static int64_t al_days_in_month(int64_t y, int64_t m, int line, int col) {
+    if (m < 1 || m > 12) {
+        al_out e = al_trap_begin("R0013");
+        AL_PUTS(&e, "days_in_month() needs a month from 1 to 12, found ");
+        al_fmt_i64(&e, m);
+        al_trap_end(&e, line, col);
+    }
+    return al_month_days(y, m);
+}
+
+static void al_days_range_trap(const char *fn, int64_t z, int line, int col) {
+    al_out e = al_trap_begin("R0013");
+    al_puts_c(&e, fn);
+    AL_PUTS(&e, "() needs -719162 to 2932896 days, the years 1 to 9999, found ");
+    al_fmt_i64(&e, z);
+    al_trap_end(&e, line, col);
+}
+
+static int64_t al_add_months(int64_t z, int64_t n, int line, int col) {
+    int64_t y, m, d, t, ny, nm, md;
+    if (z < -719162 || z > 2932896) al_days_range_trap("add_months", z, line, col);
+    al_date_from_days(z, &y, &m, &d, line, col);
+    ny = 0;
+    nm = 1;
+    if (n <= 120000 && n >= -120000) {
+        t = y * 12 + m - 1 + n;
+        ny = t / 12 - (t % 12 < 0 ? 1 : 0);
+        nm = t - ny * 12 + 1;
+    }
+    if (ny < 1 || ny > 9999) {
+        al_out e = al_trap_begin("R0013");
+        AL_PUTS(&e, "add_months() of ");
+        al_fmt_i64(&e, n);
+        AL_PUTS(&e, " months leaves the years 1 to 9999");
+        al_trap_end(&e, line, col);
+    }
+    md = al_month_days(ny, nm);
+    return al_days_of(ny, nm, d < md ? d : md);
+}
+
+static void al_digits(uint8_t *out, int64_t v, int width) {
+    int i;
+    for (i = width - 1; i >= 0; i--) {
+        out[i] = (uint8_t)('0' + v % 10);
+        v /= 10;
+    }
+}
+
+/* format_date(): YYYY-MM-DD into out, 10 bytes. */
+static void al_format_date(uint8_t *out, int64_t z, int line, int col) {
+    int64_t y, m, d;
+    if (z < -719162 || z > 2932896) al_days_range_trap("format_date", z, line, col);
+    al_date_from_days(z, &y, &m, &d, line, col);
+    al_digits(out, y, 4);
+    out[4] = '-';
+    al_digits(out + 5, m, 2);
+    out[7] = '-';
+    al_digits(out + 8, d, 2);
+}
+
+/* format_datetime(): YYYY-MM-DDTHH:MM:SSZ into out, 20 bytes. */
+static void al_format_datetime(uint8_t *out, int64_t t, int line, int col) {
+    int64_t days, s;
+    if (t < INT64_C(-62135596800) || t > INT64_C(253402300799)) {
+        al_out e = al_trap_begin("R0013");
+        AL_PUTS(&e, "format_datetime() needs -62135596800 to 253402300799 seconds, the years 1 to 9999, found ");
+        al_fmt_i64(&e, t);
+        al_trap_end(&e, line, col);
+    }
+    days = t / 86400 - (t % 86400 < 0 ? 1 : 0);
+    s = t - days * 86400;
+    al_format_date(out, days, line, col);
+    out[10] = 'T';
+    al_digits(out + 11, s / 3600, 2);
+    out[13] = ':';
+    al_digits(out + 14, s / 60 % 60, 2);
+    out[16] = ':';
+    al_digits(out + 17, s % 60, 2);
+    out[19] = 'Z';
+}
+
+/* The number of the n digits at b[at], or -1 if one is not a digit or they run past len. */
+static int64_t al_number_at(const uint8_t *b, uint32_t len, uint32_t at, uint32_t n) {
+    int64_t v = 0;
+    uint32_t i;
+    if (at + n > len) return -1;
+    for (i = at; i < at + n; i++) {
+        if (b[i] < '0' || b[i] > '9') return -1;
+        v = v * 10 + (b[i] - '0');
+    }
+    return v;
+}
+
+/* parse_datetime(): YYYY-MM-DD, T or a space, HH:MM[:SS[.fraction]], then Z, +HH:MM, -HH:MM or nothing. */
+static int al_parse_datetime(const uint8_t *b, uint32_t n, int64_t *out) {
+    int64_t days, h, mi, sec = 0, offset = 0;
+    uint32_t at = 16;
+    if (n < 16 || !al_parse_date(b, 10, &days)) return 0;
+    if (b[10] != 'T' && b[10] != 't' && b[10] != ' ') return 0;
+    h = al_number_at(b, n, 11, 2);
+    if (h < 0 || h > 23 || b[13] != ':') return 0;
+    mi = al_number_at(b, n, 14, 2);
+    if (mi < 0 || mi > 59) return 0;
+    if (at < n && b[at] == ':') {
+        sec = al_number_at(b, n, at + 1, 2);
+        if (sec < 0 || sec > 59) return 0;
+        at += 3;
+        if (at < n && b[at] == '.') {
+            uint32_t from = ++at;
+            while (at < n && b[at] >= '0' && b[at] <= '9') at++;
+            if (at == from) return 0;
+        }
+    }
+    if (at < n) {
+        uint8_t z = b[at];
+        if (z == 'Z' || z == 'z') {
+            at++;
+        } else if (z == '+' || z == '-') {
+            int64_t oh = al_number_at(b, n, at + 1, 2), om;
+            if (oh < 0 || oh > 23 || at + 3 >= n || b[at + 3] != ':') return 0;
+            om = al_number_at(b, n, at + 4, 2);
+            if (om < 0 || om > 59) return 0;
+            offset = (z == '+' ? 1 : -1) * (oh * 3600 + om * 60);
+            at += 6;
+        } else {
+            return 0;
+        }
+    }
+    if (at != n) return 0;
+    *out = days * 86400 + h * 3600 + mi * 60 + sec - offset;
+    return 1;
+}
+
 static uint64_t al_isqrt(uint64_t n) {
     uint64_t rem = n, root = 0, bit = (uint64_t)1 << 62;
     while (bit > rem) bit >>= 2;
@@ -1876,6 +2253,91 @@ static int64_t al_mul_mod_s(int64_t a, int64_t b, int64_t m, int line, int col) 
 static uint64_t al_mul_mod_u(uint64_t a, uint64_t b, uint64_t m, int line, int col) {
     if (m == 0) al_mul_mod_trap(0, 0, m, line, col);
     return al_mul_mod(a % m, b % m, m);
+}
+
+static void al_pow_mod_trap(const char *what, int neg, int64_t s, uint64_t u, int line, int col) {
+    al_out e = al_trap_begin("R0013");
+    AL_PUTS(&e, "pow_mod() needs ");
+    al_puts_c(&e, what);
+    AL_PUTS(&e, ", found ");
+    if (neg) al_fmt_i64(&e, s);
+    else al_fmt_u64(&e, u);
+    al_trap_end(&e, line, col);
+}
+
+/* b^e mod m by squaring, for b < m; 1 % m when e is 0. */
+static uint64_t al_pow_mod(uint64_t b, uint64_t e, uint64_t m) {
+    uint64_t r = 1u % m;
+    while (e > 0) {
+        if (e & 1u) r = al_mul_mod(r, b, m);
+        b = al_mul_mod(b, b, m);
+        e >>= 1;
+    }
+    return r;
+}
+
+static int64_t al_pow_mod_s(int64_t b, int64_t e, int64_t m, int line, int col) {
+    int64_t rb;
+    if (e < 0) al_pow_mod_trap("an exponent >= 0", 1, e, 0, line, col);
+    if (m <= 0) al_pow_mod_trap("a modulus above 0", 1, m, 0, line, col);
+    rb = b % m;
+    if (rb < 0) rb += m;
+    return (int64_t)al_pow_mod((uint64_t)rb, (uint64_t)e, (uint64_t)m);
+}
+
+static uint64_t al_pow_mod_u(uint64_t b, uint64_t e, uint64_t m, int line, int col) {
+    if (m == 0) al_pow_mod_trap("a modulus above 0", 0, 0, m, line, col);
+    return al_pow_mod(b % m, e, m);
+}
+
+/* SplitMix64: advances the state and returns the next number. */
+static uint64_t al_rand_next(uint64_t *s) {
+    uint64_t z = *s += UINT64_C(0x9E3779B97F4A7C15);
+    z = (z ^ (z >> 30)) * UINT64_C(0xBF58476D1CE4E5B9);
+    z = (z ^ (z >> 27)) * UINT64_C(0x94D049BB133111EB);
+    return z ^ (z >> 31);
+}
+
+/* A number from lo to hi (lo <= hi), each equally likely: drawn again while it is below 2^64 mod the range. */
+static int64_t al_rand_range(uint64_t *s, int64_t lo, int64_t hi) {
+    uint64_t range = (uint64_t)hi - (uint64_t)lo + 1u, threshold, x;
+    if (range == 0) return (int64_t)al_rand_next(s);
+    threshold = (0u - range) % range;
+    x = al_rand_next(s);
+    while (x < threshold) x = al_rand_next(s);
+    return (int64_t)((uint64_t)lo + x % range);
+}
+
+static int64_t al_rand_int(uint64_t *s, int64_t lo, int64_t hi, int line, int col) {
+    if (lo > hi) {
+        al_out e = al_trap_begin("R0013");
+        AL_PUTS(&e, "random_int() needs lo <= hi, found lo ");
+        al_fmt_i64(&e, lo);
+        AL_PUTS(&e, " and hi ");
+        al_fmt_i64(&e, hi);
+        al_trap_end(&e, line, col);
+    }
+    return al_rand_range(s, lo, hi);
+}
+
+static double al_rand_f64(uint64_t *s) {
+    return (double)(al_rand_next(s) >> 11) * 0x1.0p-53;
+}
+
+/* Fisher-Yates, from the last element down: element i is exchanged, byte by byte, with one from 0 to i. */
+static void al_shuffle(void *base, uint32_t n, size_t size, uint64_t *s) {
+    uint8_t *v = (uint8_t *)base;
+    uint32_t i;
+    for (i = n; i > 1; i--) {
+        uint32_t j = (uint32_t)al_rand_range(s, 0, (int64_t)(i - 1));
+        size_t k;
+        if (j == i - 1) continue;
+        for (k = 0; k < size; k++) {
+            uint8_t t = v[(size_t)(i - 1) * size + k];
+            v[(size_t)(i - 1) * size + k] = v[(size_t)j * size + k];
+            v[(size_t)j * size + k] = t;
+        }
+    }
 }
 
 static double al_trunc(double d) {
@@ -3566,6 +4028,56 @@ static void al_reverse(void *base, uint32_t n, size_t size) {
  * Heapsort: in place, with no element copied to the stack, so the checker's memory bound holds. It is
  * not stable, but values that cmp calls equal cannot be told apart, so the result is the interpreter's.
  */
+/* next_permutation(): the next order in the order of cmp and 1, or, after the last, the first (ascending) and 0. */
+static bool al_next_perm(void *base, uint32_t n, size_t size, int (*cmp)(const void *, const void *)) {
+    uint8_t *v = (uint8_t *)base;
+    uint32_t i = n > 0 ? n - 1 : 0, j, a, b;
+    while (i > 0 && cmp(v + (size_t)(i - 1) * size, v + (size_t)i * size) >= 0) i--;
+    if (i > 0) {
+        j = n - 1;
+        while (cmp(v + (size_t)j * size, v + (size_t)(i - 1) * size) <= 0) j--;
+        al_swap_bytes(v + (size_t)(i - 1) * size, v + (size_t)j * size, size);
+    }
+    for (a = i, b = n > 0 ? n - 1 : 0; a < b; a++, b--) al_swap_bytes(v + (size_t)a * size, v + (size_t)b * size, size);
+    return i > 0;
+}
+
+/* next_combination(): the next k of n positions in lexicographic order and 1, or after the last the first and 0. */
+static bool al_next_comb(int64_t *v, uint32_t k, int64_t n, int line, int col) {
+    uint32_t i, j;
+    if (n < 0 || (int64_t)k > n) {
+        al_out e = al_trap_begin("R0013");
+        AL_PUTS(&e, "next_combination() needs 0 <= len(idx) <= n, found ");
+        al_fmt_u64(&e, k);
+        AL_PUTS(&e, " positions and n ");
+        al_fmt_i64(&e, n);
+        al_trap_end(&e, line, col);
+    }
+    for (i = k; i > 0; i--) {
+        if (v[i - 1] < n - (int64_t)k + (int64_t)(i - 1)) {
+            v[i - 1]++;
+            for (j = i; j < k; j++) v[j] = v[j - 1] + 1;
+            return true;
+        }
+    }
+    for (j = 0; j < k; j++) v[j] = (int64_t)j;
+    return false;
+}
+
+/* unique() of a str: the first of each byte, in order. */
+static void al_unique_bytes(uint8_t *b, uint32_t *len) {
+    uint8_t seen[256];
+    uint32_t i, w = 0;
+    for (i = 0; i < 256; i++) seen[i] = 0;
+    for (i = 0; i < *len; i++) {
+        if (!seen[b[i]]) {
+            seen[b[i]] = 1;
+            b[w++] = b[i];
+        }
+    }
+    *len = w;
+}
+
 static void al_heapsort(void *base, uint32_t n, size_t size, int (*cmp)(const void *, const void *)) {
     uint8_t *v = (uint8_t *)base;
     uint32_t start = n / 2, end = n, root, child;

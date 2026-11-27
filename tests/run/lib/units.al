@@ -8,6 +8,6 @@ fn label(n: i64) -> str[24] {
 }
 
 /// Traps on an empty list, in this file.
-fn first(xs: list[i64; 4]) -> i64 {
+fn front(xs: list[i64; 4]) -> i64 {
     return xs[0];
 }
