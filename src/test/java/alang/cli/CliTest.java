@@ -921,6 +921,37 @@ class CliTest {
         assertTrue(r.err().startsWith("error[E0201]: ") && r.err().endsWith("check failed: 1 error(s)\n"), r.err());
     }
 
+    /** `serve --skills DIR` serves the skills in DIR; skills a host would refuse stop it before it starts. */
+    @Test
+    void serveSkills() throws Exception {
+        write("one.al", "/// One.\ntool fn one() -> i64 {\n    return 1;\n}\n");
+        Files.createDirectories(dir.resolve("skills/counting"));
+        write("skills/counting/SKILL.md", "---\nname: counting\ndescription: Count with the one tool.\n---\nCall `one`.\n");
+        String session = "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"skills/list\", \"params\": {}}\n";
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        int code = new Main(new PrintStream(out, true, StandardCharsets.UTF_8), new PrintStream(err, true, StandardCharsets.UTF_8),
+            new ByteArrayInputStream(session.getBytes(StandardCharsets.UTF_8)))
+            .run(new String[] {"serve", dir.resolve("one.al").toString(), "--skills", dir.resolve("skills").toString()});
+        assertEquals(0, code, err.toString(StandardCharsets.UTF_8));
+        String answer = out.toString(StandardCharsets.UTF_8);
+        assertTrue(answer.contains("\"frontmatter\": {\"name\": \"counting\", \"description\": \"Count with the one tool.\"}"), answer);
+
+        write("skills/counting/SKILL.md", "---\nname: count\ndescription: Count.\n---\n");
+        Result r = run("serve", dir.resolve("one.al").toString(), "--skills", dir.resolve("skills").toString());
+        assertEquals(2, r.code(), r.err());
+        assertTrue(r.err().contains("--skills: ") && r.err().contains("the name `count` must be the skill's directory's name, `counting`"), r.err());
+
+        Files.createDirectories(dir.resolve("empty"));
+        r = run("serve", dir.resolve("one.al").toString(), "--skills", dir.resolve("empty").toString());
+        assertEquals(2, r.code(), r.err());
+        assertTrue(r.err().contains("--skills: no skill in "), r.err());
+
+        r = run("check", dir.resolve("one.al").toString(), "--skills", "x");
+        assertEquals(2, r.code());
+        assertTrue(r.err().contains("--skills does not apply to `alang check`"), r.err());
+    }
+
     @Test
     void dashReadsTheArgumentsFromStdinAsStrictUtf8() throws Exception {
         write("size.al", "tool fn size(text: str[16]) -> i64 {\n    return len(text);\n}\n");

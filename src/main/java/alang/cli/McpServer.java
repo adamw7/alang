@@ -30,6 +30,11 @@ import java.util.function.Consumer;
  * message is handled with the program current when it is read, so a call still runs one program from start
  * to end.
  *
+ * <p>With {@link #skills} (`serve --skills DIR`) it also serves Agent Skills as the MCP Skills extension
+ * ({@link Skills#EXTENSION}) defines: skills/list and skills/get describe them, and their files are resources,
+ * listed with resources/list, read with resources/read and browsed with resources/directory/read. With
+ * --watch, the skills are polled too, and a change is told with notifications/resources/list_changed.
+ *
  * <p>A client that offers the Tasks extension ({@link Tasks#EXTENSION}) gets a task for a call still running
  * {@link #TASK_AFTER_MILLIS} after it was asked for, instead of waiting for its end: the request is answered
  * with the task, and the client polls it with tasks/get, which gives the call's result once it ends, or stops
@@ -48,6 +53,16 @@ final class McpServer {
     static final String HOST_INSTRUCTIONS = " A tool whose description says it asks the host reaches outside data "
         + "through it, so a repeated call may give another result; its text also lists host_calls, each question "
         + "asked and its answer.";
+
+    /** What {@link #INSTRUCTIONS} adds for a server with skills, before their URIs. */
+    static final String SKILL_INSTRUCTIONS = " Its skills say how to use the tools for a task: read one with resources/read "
+        + "when its task comes up (skills/list describes each): ";
+
+    /** How many skills the instructions name; skills/list has them all. */
+    static final int INSTRUCTION_SKILLS = 16;
+
+    /** How long a client may keep a skill listing or file before asking again (CacheableResult's ttlMs). */
+    static final long SKILLS_TTL_MILLIS = 300_000;
 
     /** JSON-RPC error codes. */
     static final int PARSE_ERROR = -32700;
@@ -159,6 +174,10 @@ final class McpServer {
     /** For `serve --watch`, set by {@link #watch}: the program's files, how often to poll them, and the log; else null. */
     private Reloader reloader;
     private java.util.function.Supplier<Host> hosts = () -> Host.NONE;
+    /** The skills served, which --watch can replace; null for a server without --skills. */
+    private volatile Skills skills;
+    /** For `serve --watch --skills`: polls the skills' directories; else null. */
+    private Skills.Watcher skillWatcher;
     private long pollMillis;
     private PrintStream log;
     /**
@@ -203,6 +222,17 @@ final class McpServer {
         return tools(current.program()).size();
     }
 
+    /** Serves {@code s} too, as the MCP Skills extension defines. Call it before {@link #start}. */
+    void skills(Skills s) {
+        this.skills = s;
+    }
+
+    /** The number of skills served now: 0 without --skills. */
+    int skillCount() {
+        Skills s = skills;
+        return s == null ? 0 : s.count();
+    }
+
     /** A program and its main file, whose Source runs its calls. */
     private record Loaded(Source src, Program program) {}
 
@@ -214,6 +244,11 @@ final class McpServer {
         this.reloader = reloader;
         this.pollMillis = pollMillis;
         this.log = log;
+    }
+
+    /** With {@link #watch}, also polls the skills' directories with {@code w}, and serves what they come to hold. */
+    void watchSkills(Skills.Watcher w) {
+        this.skillWatcher = w;
     }
 
     /** A request this server cannot answer with a result: a JSON-RPC error. */
@@ -302,6 +337,11 @@ final class McpServer {
      * tells an initialized client when that changed its tools. A change to a tool's body alone does not.
      */
     private void reload() {
+        reloadProgram();
+        if (skillWatcher != null) reloadSkills();
+    }
+
+    private void reloadProgram() {
         try {
             Program p = reloader.poll(log);
             if (p == null) return;
@@ -318,6 +358,21 @@ final class McpServer {
         } catch (RuntimeException e) {
             // Caught, as one that escaped would end the polling for the rest of the session.
             log.print("alang: reloading failed: " + e + "\n");
+        }
+    }
+
+    /** One poll of the skills' directories: serves what they now hold, if it changed and settled, and tells the clients. */
+    private void reloadSkills() {
+        try {
+            Skills now = skillWatcher.poll(skills, log);
+            if (now == null) return;
+            skills = now;
+            for (Session s : listeners) {
+                if (s.initialized) s.notify.accept(Json.obj("jsonrpc", "2.0", "method", "notifications/resources/list_changed"));
+            }
+            log.print("alang: reloaded the skills: " + now.count() + " skill(s)\n");
+        } catch (RuntimeException e) {
+            log.print("alang: reloading the skills failed: " + e + "\n");
         }
     }
 
@@ -409,6 +464,26 @@ final class McpServer {
                 case "tools/list" -> Json.obj("tools", tools(now.program()));
                 case "notifications/cancelled" -> cancel(session, m.get("params"));
                 case "tasks/get" -> task(session, m.get("params")).view("complete");
+                case "resources/list" -> cacheable(Json.obj("resources", skills(method).resources()));
+                case "resources/templates/list" -> cacheable(Json.obj("resourceTemplates", List.of()));
+                case "resources/read" -> {
+                    Map<String, Object> contents = skills(method).read(uri(m.get("params"), method));
+                    if (contents == null) throw new RpcException(INVALID_PARAMS, "unknown resource: " + uri(m.get("params"), method));
+                    yield cacheable(Json.obj("contents", List.of(contents)));
+                }
+                case "resources/directory/read" -> {
+                    List<Object> children = skills(method).directory(uri(m.get("params"), method));
+                    if (children == null) {
+                        throw new RpcException(INVALID_PARAMS, "not a directory: " + uri(m.get("params"), method));
+                    }
+                    yield cacheable(Json.obj("resources", children));
+                }
+                case "skills/list" -> cacheable(Json.obj("skills", skills(method).list()));
+                case "skills/get" -> {
+                    Map<String, Object> skill = skills(method).get(uri(m.get("params"), method));
+                    if (skill == null) throw new RpcException(INVALID_PARAMS, "unknown skill: " + uri(m.get("params"), method));
+                    yield cacheable(Json.obj("skill", skill));
+                }
                 case "tasks/cancel" -> {
                     Tasks.Task t = task(session, m.get("params"));
                     t.cancel("the client cancelled the task");
@@ -422,6 +497,32 @@ final class McpServer {
         return notification ? null : Json.obj("jsonrpc", "2.0", "id", id, "result", result);
     }
 
+    /** The skills served; a server without --skills has no such methods. */
+    private Skills skills(String method) {
+        Skills s = skills;
+        if (s == null) throw new RpcException(METHOD_NOT_FOUND, "method not found: " + method);
+        return s;
+    }
+
+    /** The "uri" string of a request's params; without one the request is -32602. */
+    private static String uri(Object params, String method) {
+        if (params instanceof Map<?, ?> p && p.get("uri") instanceof String u) return u;
+        throw new RpcException(INVALID_PARAMS, method + " needs params with a \"uri\" string");
+    }
+
+    /**
+     * {@code result} as a CacheableResult of the protocol revision the Skills extension is written against:
+     * complete, fresh for {@link #SKILLS_TTL_MILLIS} (0 with --watch, which may change it any time), and private,
+     * so that a shared cache never hands what a --token-file guards to a client without the token.
+     */
+    private Map<String, Object> cacheable(Map<String, Object> result) {
+        Map<String, Object> r = Json.obj("resultType", "complete");
+        r.putAll(result);
+        r.put("ttlMs", skillWatcher != null ? 0L : SKILLS_TTL_MILLIS);
+        r.put("cacheScope", "private");
+        return r;
+    }
+
     static Map<String, Object> error(Object id, int code, String message) {
         return Json.obj("jsonrpc", "2.0", "id", id, "error", Json.obj("code", code, "message", message));
     }
@@ -430,12 +531,25 @@ final class McpServer {
         Object asked = params instanceof Map<?, ?> p ? p.get("protocolVersion") : null;
         String version = asked instanceof String s && PROTOCOL_VERSIONS.contains(s) ? s : PROTOCOL_VERSIONS.get(0);
         if (params instanceof Map<?, ?> p && offersTasks(p.get("capabilities"))) session.offersTasks = true;
-        return Json.obj("protocolVersion", version,
-            "capabilities", Json.obj("tools", Json.obj("listChanged", reloader != null && session.notify != null),
-                "extensions", Json.obj(Tasks.EXTENSION, Json.obj())),
-            "serverInfo", Json.obj("name", "alang", "version", Main.VERSION),
-            "instructions", current.program().itemsOf(FnDecl.class).stream().anyMatch(f -> f.host)
-                ? INSTRUCTIONS + HOST_INSTRUCTIONS : INSTRUCTIONS);
+        boolean changes = reloader != null && session.notify != null;
+        Map<String, Object> capabilities = Json.obj("tools", Json.obj("listChanged", changes));
+        Map<String, Object> extensions = Json.obj(Tasks.EXTENSION, Json.obj());
+        Skills s = skills;
+        StringBuilder instructions = new StringBuilder(INSTRUCTIONS);
+        if (current.program().itemsOf(FnDecl.class).stream().anyMatch(f -> f.host)) instructions.append(HOST_INSTRUCTIONS);
+        if (s != null) {
+            capabilities.put("resources", Json.obj("listChanged", changes && skillWatcher != null));
+            extensions.put(Skills.EXTENSION, Json.obj("directoryRead", true));
+            if (s.count() > 0) {
+                List<String> uris = new ArrayList<>(s.uris());
+                instructions.append(SKILL_INSTRUCTIONS).append(String.join(", ", uris.subList(0, Math.min(uris.size(), INSTRUCTION_SKILLS))));
+                if (uris.size() > INSTRUCTION_SKILLS) instructions.append(", and ").append(uris.size() - INSTRUCTION_SKILLS).append(" more");
+                instructions.append('.');
+            }
+        }
+        capabilities.put("extensions", extensions);
+        return Json.obj("protocolVersion", version, "capabilities", capabilities,
+            "serverInfo", Json.obj("name", "alang", "version", Main.VERSION), "instructions", instructions.toString());
     }
 
     /**

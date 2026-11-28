@@ -124,7 +124,7 @@ bin/alang build examples/shapes.al -o shapes.c && cc -std=c99 -O2 shapes.c -lm -
 | `tools FILE` | JSON tool definitions for every `tool fn` |
 | `call FILE TOOL [JSON \| -] [--timeout S]` | Call a tool; `-` reads the arguments from stdin; `--hosts FILE` or `--replay FILE` answers its host fns |
 | `fuzz FILE` | Call every tool, and a `main` that reads input, with arguments at their limits |
-| `serve FILE [--watch] [--http ADDR]` | Serve every tool over MCP |
+| `serve FILE [--watch] [--http ADDR] [--skills DIR]` | Serve every tool, and the skills in DIR, over MCP |
 | `build FILE [-o out.c]` | Compile to heap-free C99 |
 | `fix FILE [--write]` | Apply every diagnostic's mechanical `= fix:` |
 | `fmt FILE [--write \| --check]` | Lay the file out the one way |
@@ -195,6 +195,15 @@ annotations; a failing call returns an error result the model can act on. `--wat
 that compiles and notifies the host. Up to four calls run at once (`--workers N`, `--max-queued N`), each
 within its step budget and `--timeout`, cancellable with `notifications/cancelled`. A client that takes MCP
 tasks (Claude Code does) gets a task for a call that runs longer than a second, and keeps working while it runs.
+
+`--skills DIR` ships the instructions for using the tools with the server: each directory in DIR with a
+`SKILL.md` ([Agent Skills](https://agentskills.io)) is served by MCP's
+[Skills extension](https://skills.extensions.modelcontextprotocol.io/), `skills/list` and `skills/get` with
+each file's SHA-256, and its files as `skill://` resources:
+
+```sh
+alang serve bill.al --skills skills/    # skills/splitting-bills/SKILL.md is skill://splitting-bills/SKILL.md
+```
 
 `--http` serves MCP's Streamable HTTP transport instead, with sessions, bearer auth (`--token-file`;
 without it, loopback only), HTTPS with TLS 1.3 only (`--tls-cert`, `--tls-key`: PEM), `/health`, Prometheus

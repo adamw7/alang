@@ -1065,7 +1065,8 @@ unknown, missing or duplicate keys are errors. A parameter with a default (§5) 
 
 `alang serve file.al` serves the tools over MCP's stdio transport (JSON-RPC 2.0, one message per line,
 until stdin ends). It answers `initialize` (revisions 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05;
-otherwise the newest), `ping`, `tools/list` and `tools/call`, and ignores notifications. Tools carry the
+otherwise the newest), `ping`, `tools/list` and `tools/call` (and, with `--skills`, the methods of skills,
+below), and ignores notifications. Tools carry the
 `alang tools` schema and description, an `outputSchema` `{"result": <return type schema>}` when they return
 a value, and the annotations read-only, not destructive, idempotent, closed-world (only open-world for one that
 asks the host, §10.1). A call's text is what
@@ -1111,7 +1112,7 @@ unsupported `MCP-Protocol-Version` is 400; a body over 4 MiB is 413.
 `--token-file FILE` requires `Authorization: Bearer TOKEN` on every request but `GET /health` (TOKEN: the
 file's first line, at least 16 characters, compared in constant time); without it the server listens only
 on loopback. A request with an `Origin` is refused (403) unless `--allow-origin` names it, or it is local
-and the server listens only locally. `GET /health` returns `{"status": "ok", "version": ..., "tools": n}`;
+and the server listens only locally. `GET /health` returns `{"status": "ok", "version": ..., "tools": n, "skills": n}`;
 `GET /metrics` gives Prometheus counters `alang_tool_calls_total{tool, outcome}`,
 `alang_tool_call_steps_total`, `alang_tool_call_seconds_sum`/`_count`, `alang_tool_calls_in_flight`,
 `alang_sessions`, `alang_http_requests_total{status}`. Each request and call is logged on stderr as a JSON
@@ -1127,6 +1128,46 @@ key that is not the certificate's is refused too, both before the server starts.
 start: restart the server to serve a renewed certificate. The `"listening"` log line says `"tls": "TLSv1.3"`
 (or `false`); listening beyond loopback without TLS adds a `"warning"`, as the token then crosses the network
 in plain text (unless a proxy in front terminates TLS).
+
+Skills: `--skills DIR` (more than once for several) serves [Agent Skills](https://agentskills.io) beside the
+tools, by MCP's Skills extension, `io.modelcontextprotocol/skills`, which `initialize` then lists under
+`capabilities.extensions` with `{"directoryRead": true}`, beside `capabilities.resources`. A directory that
+holds a `SKILL.md` is one skill, served as `skill://NAME/...` (NAME: the directory's name); any other DIR is a
+tree in which each directory holding a `SKILL.md` is a skill at its path, `DIR/acme/refunds/SKILL.md` being
+`skill://acme/refunds/SKILL.md` (a skill inside another is one too, and its files are also the outer one's).
+Each file under a skill's directory is a resource at `skill://<skill path>/<file path>`, each segment
+percent-encoded but for `A-Z a-z 0-9 - . _ ~`; names beginning with `.` are left out, and so are files in no
+skill. Every file is read at start, so what is listed is what a read returns. A skill is refused, and the
+server does not start (exit 2), when its `SKILL.md` is not UTF-8 or does not begin with YAML frontmatter
+between two `---` lines, when the frontmatter's `name` is not the directory's name or not 1 to 64 lowercase
+letters, digits and single hyphens, when it has no `description` of 1 to 1024 characters, past 512 files or
+16 MiB, when a URI would be served from two directories, at a symbolic link, or when no skill is found.
+
+The frontmatter is sent as JSON, verbatim, so a host can match it against what its own YAML parser reads:
+block mappings and sequences, plain scalars (also over several lines), quoted strings, `|` and `>` block
+scalars, one-line flow collections and comments are read as YAML 1.2 reads them (`true`, `12`, `0x1F`, `1.5`
+and `null` are typed; other text is a string). A value that YAML 1.1 parsers, such as PyYAML, read otherwise
+is refused with the line, to be quoted: `yes`, `no`, `on`, `off`, `010`, `0o17`, `1e3`, `1_000`, `1:30`,
+`-.5`, a date. So is a plain value holding `: ` (`description: Use when: ...`, which YAML rejects), and anchors,
+aliases, tags, `.inf`, `.nan` and tabs in the indentation.
+
+- `skills/list` gives `{"resultType": "complete", "skills": [...], "ttlMs", "cacheScope"}`, each entry
+  `{"uri": ".../SKILL.md", "frontmatter": {...}, "resources": [{"uri", "digest": "sha256:<hex>", "size"}]}`:
+  every file of the skill, `SKILL.md` included, in URI order. `skills/get {"uri"}` gives one as `"skill"`.
+- `resources/list` lists every file (`uri`, `name`, `mimeType`, `size`; a `SKILL.md` is named and described as
+  its skill); `resources/read {"uri"}` gives `contents`, one item with `text`, or `blob` (Base64) for bytes
+  that are not UTF-8; `resources/templates/list` is empty.
+- `resources/directory/read {"uri"}` gives the direct children of a directory (`skill://acme`,
+  `skill://acme/refunds`, `skill://acme/refunds/templates`, no trailing `/`), a subdirectory with
+  `"mimeType": "inode/directory"`.
+- Each result has `"resultType": "complete"`, `"ttlMs": 300000` (0 with `--watch`) and `"cacheScope":
+  "private"`, so that a shared cache never hands what `--token-file` guards to a client without the token.
+  An unknown skill, file or directory, or a missing `uri`, is -32602; without `--skills` these methods are
+  -32601.
+- The `instructions` name the skills' URIs (the first 16) and say to read one when its task comes up.
+- With `--watch` the directories are polled with the program and a change is served once two polls agree:
+  `"listChanged": true` under `resources`, and `notifications/resources/list_changed` after
+  `notifications/initialized`. Skills that cannot be served are logged once on stderr, and those before stay.
 
 ### 10.1 Host functions
 

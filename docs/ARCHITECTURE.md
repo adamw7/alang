@@ -46,7 +46,7 @@ flowchart TB
 The toolchain never reaches out on its own: no network, clock, environment or randomness, and the only processes it
 starts are the commands a `--hosts` file names, to answer a program's `host fn` calls. It reads the
 source, its imports and the `alang.json` manifests of the packages they use (and stdin for `call -` and
-`fn main(input)`), and writes stdout, stderr, `build -o` and, for `deps --lock`, `alang.json`. `bin/alang` rebuilds the jar when sources are newer and runs it under `LC_ALL=C.UTF-8`. A
+`fn main(input)`, and for `serve --skills` the skill directories it serves), and writes stdout, stderr, `build -o` and, for `deps --lock`, `alang.json`. `bin/alang` rebuilds the jar when sources are newer and runs it under `LC_ALL=C.UTF-8`. A
 compiled program is one C99 file: the program plus the [prelude](../src/main/resources/alang/cgen/prelude.c),
 writing with `write(2)` (`_write` on Windows, `AL_WRITE` freestanding). Only the
 [benchmark](../bench/README.md) talks to the Claude API.

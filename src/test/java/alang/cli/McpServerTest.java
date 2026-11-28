@@ -659,6 +659,38 @@ class McpServerTest {
         }
     }
 
+    /** With --watch the skills are polled too: a change is served, and told, once it has settled. */
+    @Test
+    void watchServesChangedSkills(@TempDir Path dir) throws Exception {
+        Path main = dir.resolve("main.al");
+        save(main, tool("one", 1));
+        Path skill = dir.resolve("skills/counting/SKILL.md");
+        Files.createDirectories(skill.getParent());
+        save(skill, "---\nname: counting\ndescription: Count.\n---\n");
+        List<String> dirs = List.of(dir.resolve("skills").toString());
+        Log log = new Log();
+        McpServer server = watching(main, log);
+        server.skills(Skills.load(dirs));
+        server.watchSkills(new Skills.Watcher(dirs));
+        try (Session s = new Session(server)) {
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"initialize\", \"params\": {}}");
+            assertTrue(s.next().contains("\"resources\": {\"listChanged\": true}"));
+            s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/initialized\"}");
+            save(skill, "---\nname: counting\ndescription: Count to two.\n---\n");
+            assertEquals(msg("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/resources/list_changed\"}"), s.next());
+            log.await("reloaded the skills: 1 skill(s)");
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"skills/list\"}");
+            String list = s.next();
+            assertTrue(list.contains("\"description\": \"Count to two.\"") && list.contains("\"ttlMs\": 0"), list);
+
+            save(skill, "---\nname: counted\ndescription: Count.\n---\n");
+            log.await("--skills: ");
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 3, \"method\": \"skills/list\"}");
+            assertTrue(s.next().contains("\"description\": \"Count to two.\""));
+            assertEquals(List.of(), s.end());
+        }
+    }
+
     /** Without --watch the tools never change, and the server says so. */
     @Test
     void withoutWatchTheToolsDoNotChange() throws IOException {
