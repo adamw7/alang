@@ -21,11 +21,17 @@ import javax.net.ssl.*;
  *
  * <ul>
  *   <li>{@code POST /mcp} takes one JSON-RPC message. A request is answered with one JSON response
- *       ({@code application/json}); a notification or a response gets 202 and no body. {@code initialize}
- *       starts a session, whose id comes back in the {@code Mcp-Session-Id} header, and every later message
- *       carries it, so that the request ids and cancellations of two clients never meet.</li>
- *   <li>{@code DELETE /mcp} ends the session, stopping its calls. {@code GET /mcp} is 405: the server sends no
- *       messages of its own, so the tools' listChanged capability is false; a client lists them again.</li>
+ *       ({@code application/json}); a notification or a response gets 202 and no body.</li>
+ *   <li>A modern request (revision 2026-07-28, {@link McpServer#MODERN_VERSIONS}) stands alone: no session, its
+ *       revision and capabilities in its _meta, mirrored by the {@code MCP-Protocol-Version}, {@code Mcp-Method}
+ *       and {@code Mcp-Name} headers, which must match the body (400 and -32020 otherwise). A call still running
+ *       after {@link #STREAM_AFTER_MILLIS} is answered as an event stream instead ({@code text/event-stream}),
+ *       kept alive with a comment each {@link #KEEPALIVE_MILLIS}, and a client that closes it cancels the call.
+ *       {@code subscriptions/listen} is such a stream too, of the change notifications the client asked for.</li>
+ *   <li>A legacy request opens with {@code initialize}, which starts a session whose id comes back in the
+ *       {@code Mcp-Session-Id} header; every later message carries it, so that the request ids and cancellations
+ *       of two clients never meet. {@code DELETE /mcp} ends the session, stopping its calls. {@code GET /mcp} is
+ *       405: such a session hears nothing of the server's own, so its tools' listChanged capability is false.</li>
  *   <li>{@code GET /health} says the server is up, without authentication, for a load balancer.</li>
  *   <li>{@code GET /metrics} gives counters in the Prometheus text format.</li>
  * </ul>
@@ -58,6 +64,15 @@ final class HttpTransport implements McpServer.Observer {
 
     /** How long (s) stopping waits for requests in progress. */
     private static final int DRAIN_SECONDS = 5;
+
+    /** How long (ms) a modern request waits for its answer before it is answered as an event stream instead. */
+    static final long STREAM_AFTER_MILLIS = 1000;
+
+    /** How often (ms) an event stream of a call gets a comment, so that a client that went away is noticed. */
+    static final long KEEPALIVE_MILLIS = 1000;
+
+    /** How often (ms) a subscriptions/listen stream gets a comment while no notification comes. */
+    static final long LISTEN_KEEPALIVE_MILLIS = 15_000;
 
     /** The one TLS version spoken with --tls-cert and --tls-key. */
     static final String TLS_PROTOCOL = "TLSv1.3";
@@ -120,6 +135,12 @@ final class HttpTransport implements McpServer.Observer {
         }
         this.tls = config.tlsCert() == null ? null : tls(config.tlsCert(), config.tlsKey());
         mcp.observe(this);
+        // Modern requests share their tasks: an id that cannot be guessed keeps a client to its own.
+        mcp.taskIds(() -> {
+            byte[] bytes = new byte[16];
+            random.nextBytes(bytes);
+            return HexFormat.of().formatHex(bytes);
+        });
     }
 
     /** Whether {@code host} names only this machine. */
@@ -187,7 +208,10 @@ final class HttpTransport implements McpServer.Observer {
     /** Stops listening, ends the sessions and waits for the calls still running. */
     synchronized void stop() {
         if (stopped.getCount() == 0) return;
+        // First, so that each listening client hears the stream ended, and its request lets the server stop.
+        mcp.endSubscriptions();
         if (server != null) server.stop(DRAIN_SECONDS);
+        mcp.stopSharedTasks("the server is shutting down");
         for (Entry e : sessions.values()) mcp.endSession(e.session, "the server is shutting down");
         sessions.clear();
         mcp.stop();
@@ -245,9 +269,8 @@ final class HttpTransport implements McpServer.Observer {
         }
         if (!path.equals(ENDPOINT)) return respond(ex, 404, Json.obj("error", "not found; the MCP endpoint is " + ENDPOINT));
         String version = ex.getRequestHeaders().getFirst("MCP-Protocol-Version");
-        if (version != null && !McpServer.PROTOCOL_VERSIONS.contains(version)) {
-            return respond(ex, 400, Json.obj("error", "unsupported MCP-Protocol-Version: " + version
-                + "; supported: " + McpServer.PROTOCOL_VERSIONS));
+        if (version != null && !McpServer.PROTOCOL_VERSIONS.contains(version) && !method.equals("POST")) {
+            return respond(ex, 400, McpServer.unsupportedVersion(null, version));
         }
         return switch (method) {
             case "POST" -> post(ex, entry);
@@ -265,6 +288,15 @@ final class HttpTransport implements McpServer.Observer {
         if (rpc != null && rpc.equals("tools/call") && ((Map<?, ?>) message).get("params") instanceof Map<?, ?> p
                 && p.get("name") instanceof String tool) {
             entry.put("tool", tool);
+        }
+        Object rid = message instanceof Map<?, ?> m ? m.get("id") : null;
+        Object params = message instanceof Map<?, ?> m ? m.get("params") : null;
+        String version = ex.getRequestHeaders().getFirst("MCP-Protocol-Version");
+        if (version != null && !McpServer.PROTOCOL_VERSIONS.contains(version)) {
+            return respond(ex, 400, McpServer.unsupportedVersion(rid, version));
+        }
+        if (version != null && McpServer.MODERN_VERSIONS.contains(version) || McpServer.isModern(params)) {
+            return modern(ex, entry, body, (Map<?, ?>) message, version);
         }
         String id = ex.getRequestHeaders().getFirst("Mcp-Session-Id");
         Entry session;
@@ -296,10 +328,7 @@ final class HttpTransport implements McpServer.Observer {
             } catch (ExecutionException e) {
                 answer = null;
             }
-            if (answer == null) {
-                Object rid = ((Map<?, ?>) message).get("id");
-                answer = McpServer.error(rid, McpServer.REQUEST_CANCELLED, "the call was cancelled");
-            }
+            if (answer == null) answer = McpServer.error(rid, McpServer.REQUEST_CANCELLED, "the call was cancelled");
         }
         if (created) {
             if (answer != null && answer.containsKey("error")) {
@@ -314,6 +343,207 @@ final class HttpTransport implements McpServer.Observer {
             return 202;
         }
         return respond(ex, 200, answer);
+    }
+
+    /**
+     * A modern request: its headers checked against its body, then served on its own, in a session that ends with
+     * it (its tasks outlive it). The answer is JSON, unless it takes longer than {@link #STREAM_AFTER_MILLIS} or
+     * the request is subscriptions/listen: then an event stream, which a client cancels by closing it.
+     */
+    private int modern(HttpExchange ex, Map<String, Object> entry, byte[] body, Map<?, ?> message, String version)
+            throws IOException {
+        Object id = message.get("id");
+        if (!message.containsKey("id")) {
+            // A notification: the core revision sends none over HTTP (a client cancels by closing a stream).
+            ex.sendResponseHeaders(202, -1);
+            return 202;
+        }
+        Object params = message.get("params");
+        String asked = McpServer.version(params);
+        if (asked == null) {
+            return respond(ex, 400, McpServer.error(id, McpServer.INVALID_PARAMS, "a request of revision " + version
+                + " needs \"" + McpServer.PROTOCOL_VERSION + "\" in its params' _meta"));
+        }
+        String mismatch = headerMismatch(ex.getRequestHeaders(), message, version, asked);
+        if (mismatch != null) return respond(ex, 400, McpServer.error(id, McpServer.HEADER_MISMATCH, "Header mismatch: " + mismatch));
+        String rpc = (String) message.get("method");
+        EventStream stream = new EventStream(ex);
+        McpServer.Session session = mcp.requestSession(stream::sendQuietly);
+        try {
+            CompletableFuture<Map<String, Object>> later = new CompletableFuture<>();
+            Map<String, Object> answer = mcp.handle(session, body, later::complete);
+            if (answer == McpServer.PENDING) {
+                boolean listen = "subscriptions/listen".equals(rpc);
+                if (listen) entry.put("stream", true);
+                answer = await(later, stream, listen);
+                if (stream.started()) {
+                    entry.put("stream", true);
+                    // A client that went away hears nothing more; one still there gets the answer, if there is one.
+                    if (answer != null) stream.sendQuietly(answer);
+                    stream.close();
+                    return 200;
+                }
+                if (answer == null) answer = McpServer.error(id, McpServer.REQUEST_CANCELLED, "the call was cancelled");
+            }
+            if (answer == null) {
+                ex.sendResponseHeaders(202, -1);
+                return 202;
+            }
+            return respond(ex, status(answer), answer);
+        } finally {
+            mcp.endSession(session, "the client went away");
+        }
+    }
+
+    /**
+     * The answer {@code later} gives, or null once the client has gone away. A call that has not ended after
+     * {@link #STREAM_AFTER_MILLIS}, and a listen stream at once, turn into an event stream, kept alive with
+     * comments, through which a client that closes it is noticed.
+     */
+    private static Map<String, Object> await(CompletableFuture<Map<String, Object>> later, EventStream stream, boolean listen) {
+        long wait = listen ? LISTEN_KEEPALIVE_MILLIS : KEEPALIVE_MILLIS;
+        try {
+            if (!listen && !stream.started()) {
+                try {
+                    return later.get(STREAM_AFTER_MILLIS, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException e) {
+                    // On to the stream.
+                }
+            }
+            if (!stream.start()) return null;
+            while (true) {
+                try {
+                    return later.get(wait, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException e) {
+                    if (!stream.comment()) return null;
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (ExecutionException e) {
+            return null;
+        }
+    }
+
+    /** The HTTP status of a modern JSON-RPC answer: 400 for MCP's own errors of the request, 404 for an unknown method. */
+    private static int status(Map<String, Object> answer) {
+        if (!(answer.get("error") instanceof Map<?, ?> e) || !(e.get("code") instanceof Number n)) return 200;
+        return switch (n.intValue()) {
+            case McpServer.HEADER_MISMATCH, McpServer.UNSUPPORTED_PROTOCOL_VERSION, -32021 -> 400;
+            case McpServer.METHOD_NOT_FOUND -> 404;
+            default -> n.intValue() == McpServer.INVALID_PARAMS && missingMeta(e) ? 400 : 200;
+        };
+    }
+
+    /** Whether the error says the request's _meta lacks what a modern request must carry. */
+    private static boolean missingMeta(Map<?, ?> error) {
+        return error.get("message") instanceof String m && m.contains(McpServer.CLIENT_CAPABILITIES);
+    }
+
+    /**
+     * What is wrong with the headers of modern request {@code message}, or null: the revision, the method and, for
+     * a request that names a tool, resource or prompt, that name must be there and be the body's.
+     */
+    static String headerMismatch(Headers h, Map<?, ?> message, String version, String asked) {
+        if (version == null) return "the MCP-Protocol-Version header is missing";
+        if (!version.equals(asked)) {
+            return "MCP-Protocol-Version header value '" + version + "' does not match body value '" + asked + "'";
+        }
+        String method = h.getFirst("Mcp-Method");
+        Object rpc = message.get("method");
+        if (method == null) return "the Mcp-Method header is missing";
+        if (!method.equals(rpc)) return "Mcp-Method header value '" + method + "' does not match body value '" + rpc + "'";
+        String field = switch (method) {
+            case "tools/call", "prompts/get" -> "name";
+            case "resources/read" -> "uri";
+            default -> null;
+        };
+        if (field == null || !(message.get("params") instanceof Map<?, ?> p) || !(p.get(field) instanceof String value)) {
+            return null;
+        }
+        String name = h.getFirst("Mcp-Name");
+        if (name == null) return "the Mcp-Name header is missing";
+        String decoded = headerValue(name);
+        if (decoded == null) return "the Mcp-Name header is not valid Base64: " + name;
+        if (!decoded.equals(value)) return "Mcp-Name header value '" + decoded + "' does not match body value '" + value + "'";
+        return null;
+    }
+
+    /** A header value, decoded if written as {@code =?base64?...?=}; null if that is not valid UTF-8 Base64. */
+    static String headerValue(String value) {
+        if (!value.startsWith("=?base64?") || !value.endsWith("?=") || value.length() < 11) return value;
+        try {
+            return alang.util.Utf8.decode(Base64.getDecoder().decode(value.substring(9, value.length() - 2)));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * The response of one modern request as Server-Sent Events, once {@link #start}ed: each message one event,
+     * comments between them. Writing to a client that went away fails, and the stream then takes nothing more.
+     */
+    private static final class EventStream {
+        private final HttpExchange ex;
+        private OutputStream out;
+        private boolean broken;
+
+        EventStream(HttpExchange ex) {
+            this.ex = ex;
+        }
+
+        synchronized boolean started() {
+            return out != null;
+        }
+
+        /** Sends the headers of the stream, unless it started already; false if the client is gone. */
+        synchronized boolean start() {
+            if (out != null) return !broken;
+            try {
+                Headers h = ex.getResponseHeaders();
+                h.set("Content-Type", "text/event-stream");
+                h.set("Cache-Control", "no-cache");
+                h.set("X-Accel-Buffering", "no");
+                ex.sendResponseHeaders(200, 0);
+                out = ex.getResponseBody();
+                return true;
+            } catch (IOException e) {
+                broken = true;
+                return false;
+            }
+        }
+
+        /** Sends {@code message} as one event, starting the stream if need be. */
+        synchronized void sendQuietly(Map<String, Object> message) {
+            if (start()) write("data: " + Json.write(message) + "\n\n");
+        }
+
+        /** A comment, which the client ignores; false if the client is gone. */
+        synchronized boolean comment() {
+            return write(":\n\n");
+        }
+
+        private boolean write(String text) {
+            if (broken) return false;
+            try {
+                out.write(text.getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                return true;
+            } catch (IOException e) {
+                broken = true;
+                return false;
+            }
+        }
+
+        synchronized void close() {
+            if (out == null) return;
+            try {
+                out.close();
+            } catch (IOException e) {
+                broken = true;
+            }
+        }
     }
 
     private int delete(HttpExchange ex, Map<String, Object> entry) throws IOException {

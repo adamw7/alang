@@ -1064,9 +1064,26 @@ unknown, missing or duplicate keys are errors. A parameter with a default (§5) 
 `Option` type, which is `Option.None` when absent, as for `null`.
 
 `alang serve file.al` serves the tools over MCP's stdio transport (JSON-RPC 2.0, one message per line,
-until stdin ends). It answers `initialize` (revisions 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05;
-otherwise the newest), `ping`, `tools/list` and `tools/call` (and, with `--skills`, the methods of skills,
-below), and ignores notifications. Tools carry the
+until stdin ends). It speaks both eras of MCP:
+
+- **Modern** (revision 2026-07-28): no handshake. Each request names its revision in its params'
+  `_meta["io.modelcontextprotocol/protocolVersion"]` and gives the client's capabilities in
+  `_meta["io.modelcontextprotocol/clientCapabilities"]` (`{}` for none; missing: -32602); a revision the server
+  does not speak is -32022 with `"data": {"supported": [...], "requested": ...}`. Each result has `"resultType"`
+  and `_meta["io.modelcontextprotocol/serverInfo"]`. `server/discover` gives `supportedVersions` (2026-07-28,
+  2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05), `capabilities` and `instructions`; it, `tools/list` and the
+  skills' listings and reads are cacheable: `"ttlMs": 300000` (0 with `--watch`) and `"cacheScope": "private"`.
+  `ping` is -32601. `subscriptions/listen {"notifications": {...}}` opens a stream: the server first sends
+  `notifications/subscriptions/acknowledged` with what it agrees to send (`toolsListChanged`, and
+  `resourcesListChanged` with `--skills`, both only with `--watch`; never prompts or resource updates), then
+  those notifications, each with `_meta["io.modelcontextprotocol/subscriptionId"]`, the request's id.
+  `notifications/cancelled` for that id ends it without an answer; the server answers it as it stops.
+- **Legacy** (2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05): `initialize` fixes the revision (otherwise the
+  newest legacy one, also when 2026-07-28 is asked for) and capabilities, and `ping` is answered. A request
+  whose `_meta` names a legacy revision is served the legacy way.
+
+It answers `tools/list` and `tools/call` (and, with `--skills`, the methods of skills, below), and ignores
+notifications. Tools carry the
 `alang tools` schema and description, an `outputSchema` `{"result": <return type schema>}` when they return
 a value, and the annotations read-only, not destructive, idempotent, closed-world (only open-world for one that
 asks the host, §10.1). A call's text is what
@@ -1089,7 +1106,7 @@ Up to `--workers` (4) calls run at once, each on its own thread and still determ
 calls and exits.
 
 Tasks: a client that offers the `io.modelcontextprotocol/tasks` extension, in `initialize`'s
-`capabilities.extensions` or in a request's `_meta["io.modelcontextprotocol/clientCapabilities"].extensions`,
+`capabilities.extensions` (legacy only) or in a request's `_meta["io.modelcontextprotocol/clientCapabilities"].extensions`,
 gets a task for a call still running (or waiting for a worker) after 1 s: the request is answered with
 `{"resultType": "task", "taskId": "task-1", "status": "working", "createdAt", "lastUpdatedAt", "ttlMs",
 "pollIntervalMs": 2000}`, and its id is free again. A call that ends sooner is answered as usual.
@@ -1103,11 +1120,22 @@ ends, calls are answered as they end, not as tasks.
 
 `--http [HOST:]PORT` serves MCP's Streamable HTTP transport at `http://HOST:PORT/mcp` (HOST defaults to
 127.0.0.1). Each `POST /mcp` carries one message: a request gets one `application/json` response when its
-call ends; a notification or response gets 202. `initialize` returns an `Mcp-Session-Id` that later
-messages must carry (400 without, 404 once ended); ids and cancellations are per session, and a cancelled
-request gets -32800. `DELETE /mcp` ends a session and its calls; sessions idle for an hour end, at most
-1024 are open. The server sends nothing of its own: `GET /mcp` is 405 and `listChanged` false. An
-unsupported `MCP-Protocol-Version` is 400; a body over 4 MiB is 413.
+call ends; a notification or response gets 202. An unsupported `MCP-Protocol-Version` is 400 with -32022; a
+body over 4 MiB is 413.
+
+- A modern request (its `MCP-Protocol-Version` header or its `_meta` names 2026-07-28) needs no session: an
+  `Mcp-Session-Id` is ignored and none is made. Its headers must mirror its body: `MCP-Protocol-Version` the
+  `_meta` revision, `Mcp-Method` the method and, for `tools/call`, `resources/read` and `prompts/get`, `Mcp-Name`
+  the `name` or `uri` (plain, or `=?base64?...?=`); otherwise 400 with -32020 (HeaderMismatch). -32022, and
+  -32602 for a missing `_meta` field, are 400 too; an unknown method is 404 with -32601. A call still running
+  after 1 s is answered as `text/event-stream` instead: an SSE comment (`:`) each second, then the answer as
+  one `data:` event; closing the stream cancels the call. `subscriptions/listen` is such a stream (a comment
+  every 15 s), which the server answers as it stops. Modern requests share their tasks, whose ids are 32 random
+  hex digits; a legacy session sees only its own.
+- A legacy request opens with `initialize`, which returns an `Mcp-Session-Id` that later messages must carry
+  (400 without, 404 once ended); ids and cancellations are per session, and a cancelled request gets -32800.
+  `DELETE /mcp` ends a session and its calls; sessions idle for an hour end, at most 1024 are open. Such a
+  session hears nothing of the server's own: `GET /mcp` is 405 and `listChanged` false.
 
 `--token-file FILE` requires `Authorization: Bearer TOKEN` on every request but `GET /health` (TOKEN: the
 file's first line, at least 16 characters, compared in constant time); without it the server listens only

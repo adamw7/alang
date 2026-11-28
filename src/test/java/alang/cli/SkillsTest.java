@@ -263,7 +263,8 @@ class SkillsTest {
         Skills skills = load(tree(dir));
         List<Map<?, ?>> a = serve(skills,
             request(1, "initialize", "{\"protocolVersion\": \"2025-11-25\"}")
-            + request(2, "skills/list", "{\"_meta\": {\"io.modelcontextprotocol/protocolVersion\": \"2026-07-28\"}}")
+            + request(2, "skills/list", "{\"_meta\": {\"io.modelcontextprotocol/protocolVersion\": \"2026-07-28\", "
+                + "\"io.modelcontextprotocol/clientCapabilities\": {}}}")
             + request(3, "skills/get", "{\"uri\": \"skill://acme/refunds/SKILL.md\"}")
             + request(4, "resources/list", "{}")
             + request(5, "resources/read", "{\"uri\": \"skill://bill-splitting/templates/receipt.md\"}")
@@ -281,7 +282,8 @@ class SkillsTest {
         assertEquals(McpServer.INSTRUCTIONS + McpServer.SKILL_INSTRUCTIONS
             + "skill://acme/refunds/SKILL.md, skill://bill-splitting/SKILL.md.", init.get("instructions"));
         Map<?, ?> list = (Map<?, ?>) a.get(1).get("result");
-        assertEquals(List.of("resultType", "skills", "ttlMs", "cacheScope"), new ArrayList<>(list.keySet()));
+        assertEquals(List.of("resultType", "skills", "ttlMs", "cacheScope", "_meta"), new ArrayList<>(list.keySet()));
+        assertEquals(Json.parse(Json.write(Json.obj(McpServer.SERVER_INFO, McpServer.serverInfo()))), list.get("_meta"));
         assertEquals("complete", list.get("resultType"));
         assertEquals(Json.parse(Json.write(skills.list())), list.get("skills"));
         assertEquals("private", list.get("cacheScope"));

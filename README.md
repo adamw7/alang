@@ -188,7 +188,9 @@ See [docs/ERRORS.md](docs/ERRORS.md).
 
 ## Tools in an agent host
 
-`alang serve` speaks the [Model Context Protocol](https://modelcontextprotocol.io) over stdio:
+`alang serve` speaks the [Model Context Protocol](https://modelcontextprotocol.io) over stdio, revision
+2026-07-28 (stateless: no handshake, `server/discover`, `subscriptions/listen`) and the earlier ones that open
+with `initialize`, back to 2024-11-05:
 
 ```json
 {"mcpServers": {"bill": {"command": "/path/to/alang/bin/alang", "args": ["serve", "/path/to/bill.al"]}}}
@@ -200,8 +202,9 @@ that compiles and notifies the host. Up to four calls run at once (`--workers N`
 within its step budget and `--timeout`, cancellable with `notifications/cancelled`. A client that takes MCP
 tasks (Claude Code does) gets a task for a call that runs longer than a second, and keeps working while it runs.
 
-`--http` serves MCP's Streamable HTTP transport instead (it sends no messages of its own, so `--watch` serves
-each new version there without notifying), with sessions, bearer auth (`--token-file`;
+`--http` serves MCP's Streamable HTTP transport instead: sessionless for 2026-07-28 clients, whose long calls
+and `subscriptions/listen` come back as event streams (closing one cancels it), and with sessions for older
+ones (which hear no change notifications), bearer auth (`--token-file`;
 without it, loopback only), HTTPS with TLS 1.3 only (`--tls-cert`, `--tls-key`: PEM), `/health`, Prometheus
 `/metrics`, a JSON log line per call, and graceful SIGTERM:
 
