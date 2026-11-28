@@ -193,7 +193,8 @@ See [docs/ERRORS.md](docs/ERRORS.md).
 Each `tool fn` is listed with its description, input and output schemas, and read-only, idempotent
 annotations; a failing call returns an error result the model can act on. `--watch` serves each new version
 that compiles and notifies the host. Up to four calls run at once (`--workers N`, `--max-queued N`), each
-within its step budget and `--timeout`, cancellable with `notifications/cancelled`.
+within its step budget and `--timeout`, cancellable with `notifications/cancelled`. A client that takes MCP
+tasks (Claude Code does) gets a task for a call that runs longer than a second, and keeps working while it runs.
 
 `--http` serves MCP's Streamable HTTP transport instead, with sessions, bearer auth (`--token-file`;
 without it, loopback only), HTTPS with TLS 1.3 only (`--tls-cert`, `--tls-key`: PEM), `/health`, Prometheus

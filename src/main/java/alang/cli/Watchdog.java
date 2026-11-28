@@ -33,6 +33,11 @@ public final class Watchdog implements AutoCloseable {
         }
     }
 
+    /** The time limit of each call, in ms; 0 means none. */
+    long millis() {
+        return millis;
+    }
+
     /** Starts the clock for a call: {@code meter} is stopped when its time is up, unless the alarm is put away first. */
     public Alarm watch(Meter meter) {
         return watch(meter, millis, " (--timeout)");

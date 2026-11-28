@@ -109,7 +109,8 @@ Every component reports through Diagnostics and may use JSON. The rules, from
 - **I/O at the edge**: only the CLI and API touch files, only the CLI stdin or `System.exit`. Nothing reads
   a clock, randomness or the environment, reflects, logs or depends on the locale. The exceptions are in
   `serve`: call threads, a `--timeout` watchdog, the `--watch` poller, and `HttpTransport` (clock for logs
-  and metrics, random session ids, a shutdown hook). Each call is still one run on one thread, which
+  and metrics, random session ids, a shutdown hook) and `Tasks` (clock for the timestamps of MCP tasks and
+  to forget finished ones). Each call is still one run on one thread, which
   another can only stop through its `Meter`.
 
 ## A tool call
