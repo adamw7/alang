@@ -37,6 +37,8 @@ class ArchitectureTest {
     private static final String HTTP = "alang.cli.HttpTransport";
     /** It and its nested classes, such as the HttpsConfigurator that turns on TLS 1.3. */
     private static final String HTTP_AND_NESTED = HTTP.replace(".", "\\.") + "(\\$.*)?";
+    /** The tasks of an MCP session and its nested classes: they carry timestamps, so they read the clock. */
+    private static final String TASKS = "alang\\.cli\\.Tasks(\\$.*)?";
     private static final String GENERATED_PARSER = "alang.parser..";
 
     // ---------------------------------------------------------------- structure
@@ -230,6 +232,7 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule no_clock_randomness_or_environment = noClasses()
             .that().doNotHaveFullyQualifiedName(HTTP)
+            .and().haveNameNotMatching(TASKS)
             .should().dependOnClassesThat(resideInAnyPackage("java.time..")
                     .or(assignableTo(RandomGenerator.class))
                     .or(assignableTo(Date.class)).or(assignableTo(Calendar.class)).or(assignableTo(TimeZone.class)))
@@ -240,7 +243,8 @@ class ArchitectureTest {
             .orShould().callMethodWhere(calls(UUID.class, "randomUUID"))
             .because("the toolchain must produce the same bytes on every run and machine; take any "
                     + "such input as an explicit argument from alang.cli. The HTTP transport alone reads the clock, "
-                    + "for its log and metrics, and draws session ids; neither reaches a program");
+                    + "for its log and metrics, and draws session ids; the MCP server's task store reads it for the "
+                    + "timestamps of tasks and to forget finished ones; none of this reaches a program");
 
     @ArchTest
     static final ArchRule single_threaded = noClasses()

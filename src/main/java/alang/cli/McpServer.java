@@ -29,6 +29,11 @@ import java.util.function.Consumer;
  * once it compiles, telling the client with notifications/tools/list_changed when its tools changed. Each
  * message is handled with the program current when it is read, so a call still runs one program from start
  * to end.
+ *
+ * <p>A client that offers the Tasks extension ({@link Tasks#EXTENSION}) gets a task for a call still running
+ * {@link #TASK_AFTER_MILLIS} after it was asked for, instead of waiting for its end: the request is answered
+ * with the task, and the client polls it with tasks/get, which gives the call's result once it ends, or stops
+ * it with tasks/cancel. A call that ends sooner is answered as usual.
  */
 final class McpServer {
     /** The protocol revisions this server speaks, newest first. A client asking for another gets the newest. */
@@ -53,6 +58,12 @@ final class McpServer {
     /** Server-defined JSON-RPC errors: every worker is busy and the queue is full; a call was cancelled. */
     static final int SERVER_BUSY = -32001;
     static final int REQUEST_CANCELLED = -32800;
+
+    /** How long a call may run before a client that offers the Tasks extension gets a task for it instead. */
+    static final long TASK_AFTER_MILLIS = 1000;
+
+    /** Where a request carries the client's capabilities in its params' _meta (the stateless revisions). */
+    static final String CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities";
 
     /**
      * The calls that run at once; more wait their turn. A fixed number, not one per processor: the toolchain
@@ -95,17 +106,34 @@ final class McpServer {
      */
     static final class Session {
         final Map<Object, Meter> calls = new ConcurrentHashMap<>();
+        /** The calls that became tasks; their requests have been answered, so they are not among {@link #calls}. */
+        final Tasks tasks;
         volatile boolean initialized;
+        /** Whether initialize said the client takes tasks; a request can also say so in its _meta. */
+        volatile boolean offersTasks;
         final Consumer<Map<String, Object>> notify;
 
-        Session(Consumer<Map<String, Object>> notify) {
+        Session(Consumer<Map<String, Object>> notify, java.util.function.LongSupplier clock) {
             this.notify = notify;
+            this.tasks = new Tasks(clock);
         }
 
-        /** Stops every call of this session, e.g. when it ends; their answers are not sent. */
+        /** Stops every call and task of this session, e.g. when it ends; their answers are not sent. */
         void cancelAll(String why) {
             for (Meter m : calls.values()) m.stop("cancelled", why);
+            tasks.stopAll(why);
         }
+
+        /** Whether a call or task of this session is still waiting or running. */
+        boolean busy() {
+            return !calls.isEmpty() || tasks.running();
+        }
+    }
+
+    /** A call under way: whether it has ended, and the task it became, if it did; guarded by itself. */
+    private static final class Run {
+        boolean done;
+        Tasks.Task task;
     }
 
     private final long maxSteps;
@@ -118,6 +146,12 @@ final class McpServer {
     private final List<Session> listeners = new CopyOnWriteArrayList<>();
     private ThreadPoolExecutor pool;
     private ScheduledExecutorService ticker;
+    /** Turns calls that run long into tasks. */
+    private ScheduledExecutorService timer;
+    /** Set once the input has ended: a call is answered when it ends, as nobody is left to poll a task. */
+    private volatile boolean stopping;
+    private java.util.function.LongSupplier clock = Tasks.SYSTEM_CLOCK;
+    private long taskAfterMillis = TASK_AFTER_MILLIS;
     /** The program served, which a reload replaces, and its main file. */
     private volatile Loaded current;
     /** Whether the client has sent notifications/initialized: notifications/tools/list_changed waits for it. */
@@ -148,6 +182,15 @@ final class McpServer {
     /** Sets what answers the calls of host fns: a fresh host for each tool call. */
     void hosts(java.util.function.Supplier<Host> h) {
         this.hosts = h;
+    }
+
+    /**
+     * For tests: calls become tasks after {@code millis} ms, and tasks read time from {@code clock}. Call it
+     * before {@link #start}.
+     */
+    void tasks(long millis, java.util.function.LongSupplier clock) {
+        this.taskAfterMillis = millis;
+        this.clock = clock;
     }
 
     /** Tells {@code o} of every call from now on. */
@@ -200,19 +243,26 @@ final class McpServer {
             });
             ticker.scheduleWithFixedDelay(this::reload, pollMillis, pollMillis, TimeUnit.MILLISECONDS);
         }
+        timer = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "alang-tasks");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     /** Takes no more calls and waits for those still queued or running, whose answers are sent too. */
     synchronized void stop() {
         if (ticker != null) ticker.shutdown();  // no more polls; one under way may finish
         if (pool == null) return;
+        stopping = true;
         pool.shutdown();
         awaitCalls(pool);
+        timer.shutdownNow();
     }
 
     /** A new client; {@code notify}, unless null, sends it a notification, so it hears of changed tools. */
     Session newSession(Consumer<Map<String, Object>> notify) {
-        Session s = new Session(notify);
+        Session s = new Session(notify, clock);
         sessions.add(s);
         if (notify != null) listeners.add(s);
         return s;
@@ -358,6 +408,12 @@ final class McpServer {
                 case "ping" -> Json.obj();
                 case "tools/list" -> Json.obj("tools", tools(now.program()));
                 case "notifications/cancelled" -> cancel(session, m.get("params"));
+                case "tasks/get" -> task(session, m.get("params")).view("complete");
+                case "tasks/cancel" -> {
+                    Tasks.Task t = task(session, m.get("params"));
+                    t.cancel("the client cancelled the task");
+                    yield t.view("complete");
+                }
                 default -> throw new RpcException(METHOD_NOT_FOUND, "method not found: " + method);
             };
         } catch (RpcException e) {
@@ -373,8 +429,10 @@ final class McpServer {
     private Map<String, Object> initialize(Session session, Object params) {
         Object asked = params instanceof Map<?, ?> p ? p.get("protocolVersion") : null;
         String version = asked instanceof String s && PROTOCOL_VERSIONS.contains(s) ? s : PROTOCOL_VERSIONS.get(0);
+        if (params instanceof Map<?, ?> p && offersTasks(p.get("capabilities"))) session.offersTasks = true;
         return Json.obj("protocolVersion", version,
-            "capabilities", Json.obj("tools", Json.obj("listChanged", reloader != null && session.notify != null)),
+            "capabilities", Json.obj("tools", Json.obj("listChanged", reloader != null && session.notify != null),
+                "extensions", Json.obj(Tasks.EXTENSION, Json.obj())),
             "serverInfo", Json.obj("name", "alang", "version", Main.VERSION),
             "instructions", current.program().itemsOf(FnDecl.class).stream().anyMatch(f -> f.host)
                 ? INSTRUCTIONS + HOST_INSTRUCTIONS : INSTRUCTIONS);
@@ -442,6 +500,7 @@ final class McpServer {
         Object key = key(id);
         session.calls.put(key, meter);
         Object token = o.started(f.name);
+        Run run = new Run();
         try {
             pool.execute(() -> {
                 // What the client hears if the call fails inside the server, from a bug to a full heap, instead of
@@ -463,9 +522,18 @@ final class McpServer {
                     // Before the answer, so that the client can use the id again as soon as it has the answer.
                     session.calls.remove(key, meter);
                     o.ended(token, f.name, report);
-                    later.accept(answer);
+                    Tasks.Task task;
+                    synchronized (run) {
+                        run.done = true;
+                        task = run.task;
+                    }
+                    if (task == null) later.accept(answer);
+                    else task.finish(answer);
                 }
             });
+            if (offersTasks(session, p)) {
+                timer.schedule(() -> toTask(session, run, id, key, meter, later), taskAfterMillis, TimeUnit.MILLISECONDS);
+            }
         } catch (RejectedExecutionException e) {
             session.calls.remove(key, meter);
             o.ended(token, f.name, Json.obj("ok", false, "error", Json.obj("code", "busy", "message", "server busy")));
@@ -473,6 +541,43 @@ final class McpServer {
                 + " are waiting; try again later");
         }
         return PENDING;
+    }
+
+    /**
+     * Turns a call that is still waiting or running into a task, and answers its request with it. Its id is
+     * then free, and tasks/cancel, no longer notifications/cancelled, stops it.
+     */
+    private void toTask(Session session, Run run, Object id, Object key, Meter meter, Consumer<Map<String, Object>> later) {
+        Map<String, Object> answer;
+        synchronized (run) {
+            if (run.done || stopping) return;
+            Long ttl = watchdog.millis() > 0 ? watchdog.millis() + Tasks.KEEP_MILLIS : null;
+            run.task = session.tasks.add(meter, ttl);
+            answer = Json.obj("jsonrpc", "2.0", "id", id, "result", run.task.view("task"));
+        }
+        session.calls.remove(key, meter);
+        later.accept(answer);
+    }
+
+    /** Whether the client takes tasks for this tools/call: it said so in initialize, or in the request's _meta. */
+    private static boolean offersTasks(Session session, Map<?, ?> params) {
+        return session.offersTasks
+            || params.get("_meta") instanceof Map<?, ?> meta && offersTasks(meta.get(CLIENT_CAPABILITIES));
+    }
+
+    /** Whether {@code capabilities} name the Tasks extension among their extensions. */
+    private static boolean offersTasks(Object capabilities) {
+        return capabilities instanceof Map<?, ?> c && c.get("extensions") instanceof Map<?, ?> e && e.containsKey(Tasks.EXTENSION);
+    }
+
+    /** The task a tasks/get or tasks/cancel names; an unknown or forgotten one is -32602. */
+    private static Tasks.Task task(Session session, Object params) {
+        if (!(params instanceof Map<?, ?> p) || !(p.get("taskId") instanceof String id)) {
+            throw new RpcException(INVALID_PARAMS, "the request needs params with a \"taskId\" string");
+        }
+        Tasks.Task t = session.tasks.get(id);
+        if (t == null) throw new RpcException(INVALID_PARAMS, "unknown task: " + id);
+        return t;
     }
 
     /**

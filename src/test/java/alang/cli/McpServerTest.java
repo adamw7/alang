@@ -193,7 +193,7 @@ class McpServerTest {
         assertEquals(List.of(
             msg("""
                 {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18",
-                  "capabilities": {"tools": {"listChanged": false}},
+                  "capabilities": {"tools": {"listChanged": false}, "extensions": {"io.modelcontextprotocol/tasks": {}}},
                   "serverInfo": {"name": "alang", "version": "%s"}, "instructions": %s}}
                 """.formatted(Main.VERSION, Json.write(McpServer.INSTRUCTIONS))),
             msg("""
@@ -290,6 +290,139 @@ class McpServerTest {
             s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \"params\": {}}");
             assertEquals(List.of(), s.end());
         }
+    }
+
+    /** The _meta of a request that tells the server the client takes tasks, as Claude Code sends it. */
+    private static final String TASKS_META = "\"_meta\": {\"io.modelcontextprotocol/clientCapabilities\": "
+        + "{\"extensions\": {\"io.modelcontextprotocol/tasks\": {}}}}";
+
+    /** A tools/call request that offers to take a task. */
+    private static String taskCall(String id, String tool, String arguments) {
+        return "{\"jsonrpc\": \"2.0\", \"id\": " + id + ", \"method\": \"tools/call\", \"params\": {\"name\": \"" + tool
+            + "\", \"arguments\": " + arguments + ", " + TASKS_META + "}}";
+    }
+
+    /** A tasks/get or tasks/cancel request. */
+    private static String taskRequest(String id, String method, String taskId) {
+        return "{\"jsonrpc\": \"2.0\", \"id\": " + id + ", \"method\": \"" + method + "\", \"params\": {\"taskId\": \""
+            + taskId + "\"}}";
+    }
+
+    /** The result of an answer. */
+    private static Map<?, ?> resultOf(String answer) {
+        Object result = ((Map<?, ?>) Json.parse(answer)).get("result");
+        assertNotNull(result, answer);
+        return (Map<?, ?>) result;
+    }
+
+    /** 2023-11-14T22:13:20Z, a clock that does not move. */
+    private static final long NOW = 1_700_000_000_000L;
+
+    /**
+     * A client that offers the Tasks extension gets a task for a call that is still running after a while; it
+     * asks how the task is with tasks/get and stops it with tasks/cancel.
+     */
+    @Test
+    void aLongCallBecomesATask() throws Exception {
+        McpServer server = server(SPIN_PROGRAM, 0, 0, 2);
+        server.tasks(50, () -> NOW);
+        try (Session s = new Session(server)) {
+            s.send(taskCall("1", "spin", "{\"n\": 1000000000000000}"));
+            assertEquals(msg("""
+                {"jsonrpc": "2.0", "id": 1, "result": {"resultType": "task", "taskId": "task-1", "status": "working",
+                  "createdAt": "2023-11-14T22:13:20Z", "lastUpdatedAt": "2023-11-14T22:13:20Z", "ttlMs": null,
+                  "pollIntervalMs": 2000}}
+                """), s.next());
+            // The request is answered, so its id is free again.
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"ping\"}");
+            assertEquals(msg("{\"jsonrpc\": \"2.0\", \"id\": 1, \"result\": {}}"), s.next());
+            s.send(taskRequest("2", "tasks/get", "task-1"));
+            assertEquals("working", resultOf(s.next()).get("status"));
+            s.send(taskRequest("3", "tasks/cancel", "task-1"));
+            assertEquals(msg("""
+                {"jsonrpc": "2.0", "id": 3, "result": {"resultType": "complete", "taskId": "task-1", "status": "cancelled",
+                  "statusMessage": "the client cancelled the task", "createdAt": "2023-11-14T22:13:20Z",
+                  "lastUpdatedAt": "2023-11-14T22:13:20Z", "ttlMs": null}}
+                """), s.next());
+            s.send(taskRequest("4", "tasks/get", "task-1"));
+            assertEquals("cancelled", resultOf(s.next()).get("status"));
+            s.send(taskRequest("5", "tasks/get", "task-9"));
+            assertEquals(msg("{\"jsonrpc\": \"2.0\", \"id\": 5, \"error\": {\"code\": -32602, \"message\": \"unknown task: task-9\"}}"),
+                s.next());
+            assertEquals(List.of(), s.end());
+        }
+    }
+
+    /**
+     * A task's result is the tools/call result the call would have been answered with, and its ttlMs keeps it an
+     * hour past the call's time limit; a call that ends in time is answered as usual, task or not.
+     */
+    @Test
+    void aTaskEndsWithTheCallsResult() throws Exception {
+        McpServer server = server(SPIN_PROGRAM, 0, 60_000, 1);
+        server.tasks(50, () -> NOW);
+        try (Session s = new Session(server)) {
+            // Offered no task, the long call holds the only worker; the next call waits for it, and becomes a task.
+            s.send(longCall("1"));
+            s.send(taskCall("2", "answer", "{}"));
+            Map<?, ?> task = resultOf(s.next());
+            assertEquals("task", task.get("resultType"), task.toString());
+            assertEquals(new java.math.BigInteger("3660000"), task.get("ttlMs"));
+            s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \"params\": {\"requestId\": 1}}");
+            Map<?, ?> done = null;
+            for (int i = 0; i < 100 && done == null; i++) {
+                s.send(taskRequest("3", "tasks/get", "task-1"));
+                Map<?, ?> r = resultOf(s.next());
+                if (r.get("status").equals("completed")) done = r;
+                else Thread.sleep(20);
+            }
+            assertNotNull(done, "the task did not complete");
+            assertEquals(msg("""
+                {"resultType": "complete", "taskId": "task-1", "status": "completed", "createdAt": "2023-11-14T22:13:20Z",
+                  "lastUpdatedAt": "2023-11-14T22:13:20Z", "ttlMs": 3660000,
+                  "result": {"content": [{"type": "text", "text": "{\\"ok\\": true, \\"result\\": 42, \\"stdout\\": \\"\\", \\"steps\\": 1}"}],
+                    "structuredContent": {"result": 42}, "isError": false}}
+                """), Json.write(done));
+            // A quick call is answered with its result, though the client takes tasks.
+            s.send(taskCall("4", "answer", "{}"));
+            assertTrue(s.next().contains("\"structuredContent\": {\"result\": 42}"));
+            assertEquals(List.of(), s.end());
+        }
+    }
+
+    /** A client that says in initialize that it takes tasks gets them without saying so again in each call. */
+    @Test
+    void initializeCanOfferTasks() throws Exception {
+        McpServer server = server(SPIN_PROGRAM, 0, 0, 1);
+        server.tasks(50, () -> NOW);
+        try (Session s = new Session(server)) {
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 0, \"method\": \"initialize\", \"params\": {\"protocolVersion\": \"2025-11-25\", "
+                + "\"capabilities\": {\"extensions\": {\"io.modelcontextprotocol/tasks\": {}}}}}");
+            s.next();
+            s.send(longCall("1"));
+            assertEquals("task-1", resultOf(s.next()).get("taskId"));
+            s.send(taskRequest("2", "tasks/cancel", "task-1"));
+            assertEquals("cancelled", resultOf(s.next()).get("status"));
+            assertEquals(List.of(), s.end());
+        }
+    }
+
+    /** Forgotten: a finished task an hour after it ended. */
+    @Test
+    void finishedTasksAreForgottenAfterAnHour() {
+        long[] now = {NOW};
+        Tasks tasks = new Tasks(() -> now[0]);
+        Tasks.Task t = tasks.add(new alang.interp.Meter(0), null);
+        t.finish(Json.obj("jsonrpc", "2.0", "id", 1, "result", Json.obj("isError", false)));
+        now[0] += Tasks.KEEP_MILLIS - 1;
+        assertSame(t, tasks.get(t.id));
+        now[0] += 1;
+        assertNull(tasks.get(t.id));
+        // A running task is kept however long it runs.
+        Tasks.Task running = tasks.add(new alang.interp.Meter(0), 1L);
+        now[0] += 10 * Tasks.KEEP_MILLIS;
+        assertSame(running, tasks.get(running.id));
+        assertEquals("task-2", running.id);
     }
 
     /**

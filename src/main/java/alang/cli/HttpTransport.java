@@ -333,7 +333,7 @@ final class HttpTransport implements McpServer.Observer {
     private synchronized String newSession() {
         long now = System.nanoTime();
         sessions.entrySet().removeIf(e -> {
-            boolean idle = now - e.getValue().lastUsed > SESSION_IDLE_NANOS && e.getValue().session.calls.isEmpty();
+            boolean idle = now - e.getValue().lastUsed > SESSION_IDLE_NANOS && !e.getValue().session.busy();
             if (idle) mcp.endSession(e.getValue().session, "the session expired");
             return idle;
         });
@@ -341,7 +341,7 @@ final class HttpTransport implements McpServer.Observer {
             String oldest = null;
             long oldestUse = Long.MAX_VALUE;
             for (Map.Entry<String, Entry> e : sessions.entrySet()) {
-                if (e.getValue().session.calls.isEmpty() && e.getValue().lastUsed < oldestUse) {
+                if (!e.getValue().session.busy() && e.getValue().lastUsed < oldestUse) {
                     oldest = e.getKey();
                     oldestUse = e.getValue().lastUsed;
                 }

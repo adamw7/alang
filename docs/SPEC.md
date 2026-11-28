@@ -1087,6 +1087,19 @@ Up to `--workers` (4) calls run at once, each on its own thread and still determ
 `requestId` matches by value; one for an ended call is ignored). When stdin ends, the server finishes its
 calls and exits.
 
+Tasks: a client that offers the `io.modelcontextprotocol/tasks` extension, in `initialize`'s
+`capabilities.extensions` or in a request's `_meta["io.modelcontextprotocol/clientCapabilities"].extensions`,
+gets a task for a call still running (or waiting for a worker) after 1 s: the request is answered with
+`{"resultType": "task", "taskId": "task-1", "status": "working", "createdAt", "lastUpdatedAt", "ttlMs",
+"pollIntervalMs": 2000}`, and its id is free again. A call that ends sooner is answered as usual.
+`tasks/get {"taskId"}` gives the task with `"resultType": "complete"`; once the call ends its `status` is
+`completed` with `result`, the `tools/call` result it would have had (a failing call is `completed` with
+`"isError": true`), `failed` with `error` if the server failed to run it, or `cancelled`. `tasks/cancel
+{"taskId"}` stops it. Tasks are per session; a finished one is kept an hour, and for `ttlMs` from its creation
+(`--timeout` plus an hour; `null` without a time limit), then forgotten, as are the oldest beyond 1024 finished
+ones; an unknown task is -32602. `initialize` lists the extension under `capabilities.extensions`. Once stdin
+ends, calls are answered as they end, not as tasks.
+
 `--http [HOST:]PORT` serves MCP's Streamable HTTP transport at `http://HOST:PORT/mcp` (HOST defaults to
 127.0.0.1). Each `POST /mcp` carries one message: a request gets one `application/json` response when its
 call ends; a notification or response gets 202. `initialize` returns an `Mcp-Session-Id` that later
