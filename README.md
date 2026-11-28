@@ -58,10 +58,13 @@ alang run hello.al
 alang run expenses.al < expenses.in      # sum a CSV per category
 alang test expenses.al
 alang call expenses.al summarize '{"csv": "date,category,amount\n2026-01-02,food,12.50"}'
+echo '{"jsonrpc": "2.0", "id": 1, "method": "skills/list"}' | alang serve expenses.al --skills skills
+                                         # MCP: the tool, and a skill that says how to use it
 ```
 
 Then hand your agent [AGENTS.md](AGENTS.md) (installed as `~/.alang/AGENTS.md`) and ask it for a tool; serve
-what it writes to any MCP client with `alang serve prog.al` ([how](#tools-in-an-agent-host)).
+what it writes to any MCP client with `alang serve prog.al`, and the [skills](#skills-instructions-that-ship-with-the-tools)
+that say how to use it with `--skills` ([how](#tools-in-an-agent-host)).
 
 ## Why
 
@@ -72,6 +75,7 @@ what it writes to any MCP client with `alang serve prog.al` ([how](#tools-in-an-
 | **Deterministic** | No clock, randomness, environment, threads or I/O but `print`; input arrives whole, and outside data only as the replies to `host fn` calls, which are recorded and can be replayed. No undefined behavior: overflow, bad indexes and conversions trap with fixed codes. Floats are correctly rounded, `sin`/`exp`/`pow` included. Tests compare the C backend byte for byte with the interpreter under gcc and clang, `-O0` to `-O3`, and across locales. |
 | **Always terminates** | No recursion; every `while` states a `limit`. |
 | **Safe to run** | Tools take JSON in and give JSON out, within a deterministic step budget (backed by `--timeout`); they reach nothing but the `host fn`s their host chooses to answer. |
+| **Ships its own instructions** | `alang serve --skills` serves [Agent Skills](https://agentskills.io) beside the tools over MCP, so the agent that calls them also learns when and how to. |
 | **Runs anywhere** | A JVM interpreter and a C99 backend emitting heap-free, stdio-free C. |
 
 [docs/COMPARISON.md](docs/COMPARISON.md) compares these with Python, JavaScript, Go, Rust, C and Java.
@@ -196,15 +200,6 @@ that compiles and notifies the host. Up to four calls run at once (`--workers N`
 within its step budget and `--timeout`, cancellable with `notifications/cancelled`. A client that takes MCP
 tasks (Claude Code does) gets a task for a call that runs longer than a second, and keeps working while it runs.
 
-`--skills DIR` ships the instructions for using the tools with the server: each directory in DIR with a
-`SKILL.md` ([Agent Skills](https://agentskills.io)) is served by MCP's
-[Skills extension](https://skills.extensions.modelcontextprotocol.io/), `skills/list` and `skills/get` with
-each file's SHA-256, and its files as `skill://` resources:
-
-```sh
-alang serve bill.al --skills skills/    # skills/splitting-bills/SKILL.md is skill://splitting-bills/SKILL.md
-```
-
 `--http` serves MCP's Streamable HTTP transport instead, with sessions, bearer auth (`--token-file`;
 without it, loopback only), HTTPS with TLS 1.3 only (`--tls-cert`, `--tls-key`: PEM), `/health`, Prometheus
 `/metrics`, a JSON log line per call, and graceful SIGTERM:
@@ -214,6 +209,45 @@ alang serve bill.al --http 0.0.0.0:8443 --token-file token.txt --tls-cert fullch
 ```
 
 Details: [SPEC.md §10](docs/SPEC.md#10-tools-calling-alang-from-an-agent).
+
+### Skills: instructions that ship with the tools
+
+A tool's description says what one call does; a skill says how the tools go together for a task: which to
+call, in what order, and what to do with the result. `alang serve --skills DIR` serves the
+[Agent Skills](https://agentskills.io) in DIR beside the tools, by MCP's
+[Skills extension](https://skills.extensions.modelcontextprotocol.io/) (`io.modelcontextprotocol/skills`),
+so whoever installs the server gets both. A skill is a directory with a `SKILL.md`, whose YAML frontmatter
+gives its `name` (the directory's name) and a `description` that says when to use it, and any files it refers
+to. [examples/skills/summarizing-expenses](examples/skills/summarizing-expenses/SKILL.md) is one for
+`expenses.al`:
+
+```text
+examples/skills/summarizing-expenses/
+  SKILL.md               ---
+                         name: summarizing-expenses
+                         description: "Sum a CSV export of expenses per category with the summarize tool..."
+                         ---
+                         # Summarizing expenses
+                         1. Get the rows into the CSV `summarize` takes: ...
+  examples/request.md    a request and its result, which SKILL.md links to
+```
+
+```json
+{"mcpServers": {"expenses": {"command": "/path/to/alang/bin/alang",
+  "args": ["serve", "/path/to/expenses.al", "--skills", "/path/to/skills"]}}}
+```
+
+- `skills/list` gives each skill's frontmatter and every file with its SHA-256 and size; `skills/get` gives one.
+  Its files are resources at `skill://summarizing-expenses/SKILL.md`, `.../examples/request.md`, read with
+  `resources/read` and browsed with `resources/directory/read`. The server's instructions name the skills, so
+  an agent whose client does not know the extension can still read them as resources.
+- DIR may be one skill or a tree of them: `DIR/billing/refunds/SKILL.md` is `skill://billing/refunds/SKILL.md`.
+  `--skills` may be given more than once.
+- Every file is read and checked at start, so a skill a client would refuse stops the server with the reason
+  and the line: a `name` that is not its directory's, no `description`, more than 512 files or 16 MiB, a
+  symbolic link. The frontmatter is sent as JSON, verbatim, so values that YAML parsers read differently
+  must be quoted: `yes`, `010`, `2024-01-01`, and text holding `: ` (`description: "Use when: ..."`).
+- `--watch` serves each change to the skills too, and tells the client.
 
 ## Reaching outside data
 
