@@ -369,14 +369,11 @@ class McpServerTest {
             assertEquals("task", task.get("resultType"), task.toString());
             assertEquals(new java.math.BigInteger("3660000"), task.get("ttlMs"));
             s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \"params\": {\"requestId\": 1}}");
-            Map<?, ?> done = null;
-            for (int i = 0; i < 100 && done == null; i++) {
-                s.send(taskRequest("3", "tasks/get", "task-1"));
-                Map<?, ?> r = resultOf(s.next());
-                if (r.get("status").equals("completed")) done = r;
-                else Thread.sleep(20);
-            }
-            assertNotNull(done, "the task did not complete");
+            // The one worker takes the calls in turn, so this one is answered only after the task's call ended.
+            s.send(call("3", "answer", "{}"));
+            assertTrue(s.next().contains("\"id\": 3"));
+            s.send(taskRequest("3", "tasks/get", "task-1"));
+            Map<?, ?> done = resultOf(s.next());
             assertEquals(msg("""
                 {"resultType": "complete", "taskId": "task-1", "status": "completed", "createdAt": "2023-11-14T22:13:20Z",
                   "lastUpdatedAt": "2023-11-14T22:13:20Z", "ttlMs": 3660000,
