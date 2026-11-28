@@ -1,0 +1,14 @@
+error[E0216]: cannot tell from the arguments what type `T` of `tally` stands for
+  --> tests/errors/E0216_generic_empty_literal.al:12:11
+   |
+12 |     print(tally([]));
+   |           ^^^^^^^^^
+  = hint: signature: fn tally(xs: list[T; 4]) -> i64
+
+error[E0216]: cannot tell from the arguments what type `T` of `distinct` stands for
+  --> tests/errors/E0216_generic_empty_literal.al:13:11
+   |
+13 |     print(distinct([]));
+   |           ^^^^^^^^^^^^
+  = hint: signature: fn distinct(xs: set[T; _]) -> i64
+

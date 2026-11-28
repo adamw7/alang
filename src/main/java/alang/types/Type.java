@@ -198,6 +198,9 @@ public sealed interface Type {
     static boolean bind(Type param, Type arg, boolean exact, Map<Integer, Integer> caps, Object owner, Map<Integer, Type> types) {
         if (isError(param) || isError(arg)) return true;
         if (param instanceof TypeVar v && v.owner() == owner && types != null) {
+            // An argument typed from the parameter itself, as `[]` is for list[T; 4], says nothing of what T is: leave it
+            // unbound, so that the call is reported, rather than standing for itself in the caller.
+            if (arg instanceof TypeVar a && a.owner() == owner) return true;
             Type bound = types.get(v.index());
             if (bound == null) {
                 types.put(v.index(), arg);

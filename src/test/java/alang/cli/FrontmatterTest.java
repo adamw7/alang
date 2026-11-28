@@ -33,6 +33,7 @@ class FrontmatterTest {
             Map.entry("seq_nested", new String[] {"a:\n  -\n    - 1\n    - 2\n  - - 3\n", "{\"a\": [[1, 2], [3]]}"}),
             Map.entry("quoted_keys", new String[] {"\"a b\": 1\n'c': 2\n", "{\"a b\": 1, \"c\": 2}"}),
             Map.entry("plain_dash", new String[] {"d: foo\n  - bar\n", "{\"d\": \"foo - bar\"}"}),
+            Map.entry("float_ending_in_point", new String[] {"a: 1.\nb: -2.\nc: -b\nd: --\n", "{\"a\": 1.0, \"b\": -2.0, \"c\": \"-b\", \"d\": \"--\"}"}),
             Map.entry("url_and_colon", new String[] {"u: a:b\nv: \"x: y\"\n", "{\"u\": \"a:b\", \"v\": \"x: y\"}"}));
 
     private static Object read(String yaml) throws Frontmatter.FormatException {
@@ -77,6 +78,10 @@ class FrontmatterTest {
         assertTrue(error("a: \"\\q\"", 2).contains("unknown escape"));
         assertTrue(error("a: 1\n  b: 2", 3).contains("cannot go on with a `key: value` line"));
         assertTrue(error("a:\n  - 1\n  b: 2", 4).contains("unexpected indentation"));
+        // PyYAML refuses a sequence or a complex key begun on a key's line; a host would not read the skill.
+        assertTrue(error("name: x\ndescription: - starts with a dash", 3).contains("sequence item"));
+        assertTrue(error("a: -", 2).contains("sequence item"));
+        assertTrue(error("a: ? b", 2).contains("key"));
     }
 
     @Test

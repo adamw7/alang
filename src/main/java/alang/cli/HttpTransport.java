@@ -296,7 +296,12 @@ final class HttpTransport implements McpServer.Observer {
             return respond(ex, 400, McpServer.unsupportedVersion(rid, version));
         }
         if (version != null && McpServer.MODERN_VERSIONS.contains(version) || McpServer.isModern(params)) {
-            return modern(ex, entry, body, (Map<?, ?>) message, version);
+            // A modern request stands alone, so a body that is not one JSON object is answered here, as JSON-RPC asks.
+            if (message == null) return respond(ex, 400, McpServer.error(null, McpServer.PARSE_ERROR, "the message is not valid JSON"));
+            if (!(message instanceof Map<?, ?> m)) {
+                return respond(ex, 400, McpServer.error(null, McpServer.INVALID_REQUEST, "a message must be a JSON object"));
+            }
+            return modern(ex, entry, body, m, version);
         }
         String id = ex.getRequestHeaders().getFirst("Mcp-Session-Id");
         Entry session;

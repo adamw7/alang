@@ -396,7 +396,9 @@ fn shift(p: mut Point, dx: f64) {               // p refers to the caller's vari
 `fn total(xs: list[i64; _])`, `fn shout(s: mut str[_])` or `fn longest(rows: [str[_]; _])`, makes the
 function take a str, list or array of any capacity there; each `_` stands for its own. A call fixes them
 from its arguments: a read-only argument gives its capacity, and a `mut` one must have exactly the
-parameter's type apart from the `_`s. Element types never change: a `list[i32; 4]` does not fit a
+parameter's type apart from the `_`s. A literal argument builds the parameter's list, set, map, array or
+tuple, each `_` taking what the literal needs: `longest(["a", "bbb"])` for `longest(xs: list[str[_]; _])` is a
+call with a `list[str[3]; 2]`. Element types never change: a `list[i32; 4]` does not fit a
 `list[i64; _]` (E0201, E0207).
 
 Inside the function the capacity is not known. `cap(s)` is the caller's, and `push` and `append` trap

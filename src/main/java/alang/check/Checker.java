@@ -3136,7 +3136,8 @@ public final class Checker {
         Type natural = expr(arg, null);
         diags = saved;
         if (Type.isError(natural)) return;
-        Type wantElem = want instanceof Type.ListT || want instanceof Type.ArrayT ? Type.elementOf(want) : null;
+        Type wantElem = want instanceof Type.ListT || want instanceof Type.ArrayT ? Type.elementOf(want)
+            : want instanceof Type.SetT st ? st.elem() : null;
         if (wantElem != null && natural instanceof Type.ArrayT at) {
             Type.bind(wantElem, at.elem(), true, caps, f, types);
         } else {
@@ -3242,17 +3243,116 @@ public final class Checker {
      * The type an argument is checked against: the parameter's, or for one with `_`s, the type a list or array
      * literal gets from it with its own length in place of the `_`. Other arguments have a type of their own.
      */
-    private static Type argExpected(Type param, Expr arg) {
+    private Type argExpected(Type param, Expr arg) {
         if (!Type.hasAnyCapacity(param)) return param;
-        if (arg instanceof ArrayLit a && !Type.hasAnyCapacity(Type.elementOf(param))) {
-            int n = Math.max(1, a.elems.size());
+        if (!isArrayLiteral(arg)) return null;
+        return Type.hasTypeVar(param) ? literalExpectedShallow(param, arg) : literalExpected(param, arg);
+    }
+
+    /**
+     * The type a literal argument is checked as for a parameter with `_`s, before generic type parameters are known:
+     * an array literal of elements of a constant type builds the parameter's list, array or set, with the literal's
+     * length for a `_`. Null when it cannot tell; the literal then has its own type.
+     */
+    private static Type literalExpectedShallow(Type param, Expr arg) {
+        if (!(arg instanceof ArrayLit a)) return null;
+        int n = Math.max(1, a.elems.size());
+        return switch (param) {
             // An array has at least one element, so `[]` is never one; the literal then reports that it has no type.
-            if (param instanceof Type.ArrayT at) {
-                return a.elems.isEmpty() ? null : new Type.ArrayT(at.elem(), at.len() < 0 ? a.elems.size() : at.len());
+            case Type.ArrayT at when !Type.hasAnyCapacity(at.elem()) ->
+                a.elems.isEmpty() ? null : new Type.ArrayT(at.elem(), at.len() < 0 ? a.elems.size() : at.len());
+            case Type.ListT lt when !Type.hasAnyCapacity(lt.elem()) -> new Type.ListT(lt.elem(), lt.cap() < 0 ? n : lt.cap());
+            case Type.SetT st when !Type.hasAnyCapacity(st.elem()) -> new Type.SetT(st.elem(), st.cap() < 0 ? n : st.cap());
+            case Type.MapT mt when a.elems.isEmpty() && !Type.hasAnyCapacity(mt.key()) && !Type.hasAnyCapacity(mt.value()) ->
+                new Type.MapT(mt.key(), mt.value(), mt.cap() < 0 ? 1 : mt.cap());
+            default -> null;
+        };
+    }
+
+    /**
+     * The type, with constant capacities, that argument {@code arg} is checked as for a parameter of type {@code param}
+     * with `_`s and no type parameters. A literal takes the parameter's shape, so that [["a"], ["bc"]] builds a
+     * list[list[str[2]; 1]; 2] for a list[list[str[_]; _]; _]; each `_` gets what the literal needs, the longest of its
+     * elements, as a typed variable would hold them. Any other argument has its own type. Null when the literal has no
+     * such type (`[]` with a `_` in the element type, elements of different shapes): it is then checked on its own.
+     */
+    private Type literalExpected(Type param, Expr arg) {
+        if (!Type.hasAnyCapacity(param)) return param;
+        Type shallow = literalExpectedShallow(param, arg);
+        if (shallow != null) return shallow;
+        if (arg instanceof ArrayLit a && !a.elems.isEmpty()) {
+            Type elem = switch (param) {
+                case Type.ListT lt -> lt.elem();
+                case Type.ArrayT at -> at.elem();
+                case Type.SetT st -> st.elem();
+                default -> null;
+            };
+            if (elem == null) return null;
+            Type joined = null;
+            for (Expr e : a.elems) {
+                Type t = literalExpected(elem, e);
+                joined = t == null ? null : joined == null ? t : join(joined, t);
+                if (joined == null) return null;
             }
-            if (param instanceof Type.ListT lt) return new Type.ListT(lt.elem(), lt.cap() < 0 ? n : lt.cap());
+            int n = a.elems.size();
+            // An array of another length is reported by the literal, checked on its own.
+            if (param instanceof Type.ArrayT at && at.len() >= 0 && at.len() != n) return null;
+            return switch (param) {
+                case Type.ListT lt -> new Type.ListT(joined, lt.cap() < 0 ? n : lt.cap());
+                case Type.ArrayT at -> new Type.ArrayT(joined, at.len() < 0 ? n : at.len());
+                case Type.SetT st -> new Type.SetT(joined, st.cap() < 0 ? n : st.cap());
+                default -> null;
+            };
         }
-        return null;
+        if (arg instanceof TupleLit tl && param instanceof Type.TupleT tt && tt.elems().size() == tl.elems.size()) {
+            List<Type> elems = new ArrayList<>();
+            for (int i = 0; i < tl.elems.size(); i++) {
+                Type t = literalExpected(tt.elems().get(i), tl.elems.get(i));
+                if (t == null) return null;
+                elems.add(t);
+            }
+            return new Type.TupleT(elems);
+        }
+        if (isArrayLiteral(arg)) return null;
+        // Any other value, a variable or a str literal: its own type, worked out quietly, as it is checked again.
+        Diagnostics saved = diags;
+        diags = new Diagnostics(saved.source());
+        try {
+            Type t = expr(arg, null);
+            return Type.isError(t) ? null : t;
+        } finally {
+            diags = saved;
+        }
+    }
+
+    /** The type that holds values of both {@code a} and {@code b}, of one shape with other capacities; null if none. */
+    private static Type join(Type a, Type b) {
+        if (a.equals(b)) return a;
+        return switch (a) {
+            case Type.Str s when b instanceof Type.Str t -> new Type.Str(Math.max(s.cap(), t.cap()));
+            case Type.ListT l when b instanceof Type.ListT m -> {
+                Type e = join(l.elem(), m.elem());
+                yield e == null ? null : new Type.ListT(e, Math.max(l.cap(), m.cap()));
+            }
+            case Type.SetT l when b instanceof Type.SetT m -> {
+                Type e = join(l.elem(), m.elem());
+                yield e == null ? null : new Type.SetT(e, Math.max(l.cap(), m.cap()));
+            }
+            case Type.ArrayT l when b instanceof Type.ArrayT m && l.len() == m.len() -> {
+                Type e = join(l.elem(), m.elem());
+                yield e == null ? null : new Type.ArrayT(e, l.len());
+            }
+            case Type.TupleT l when b instanceof Type.TupleT m && l.elems().size() == m.elems().size() -> {
+                List<Type> elems = new ArrayList<>();
+                for (int i = 0; i < l.elems().size(); i++) {
+                    Type e = join(l.elems().get(i), m.elems().get(i));
+                    if (e == null) yield null;
+                    elems.add(e);
+                }
+                yield new Type.TupleT(elems);
+            }
+            default -> null;
+        };
     }
 
     /** How many `_`s the parameters' types of {@code f} have. */

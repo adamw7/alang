@@ -236,6 +236,11 @@ final class Frontmatter {
             if (c == '&' || c == '*' || c == '!') {
                 throw error(line, "anchors, aliases and tags are not supported in frontmatter");
             }
+            if (ofKey && (t.equals("-") || t.startsWith("- ") || t.equals("?") || t.startsWith("? "))) {
+                // YAML reads `- ` as a sequence and `? ` as a key, neither of which may start on a key's line.
+                throw error(line, "a value cannot begin with `" + c + " `, which YAML reads as a "
+                    + (c == '-' ? "sequence item" : "key") + "; quote the value, or put each item on a line of its own");
+            }
             if (c == '|' || c == '>') return blockScalar(t, indent);
             if (c == '"' || c == '\'') return multilineQuoted(rest.stripLeading(), indent);
             if (c == '[' || c == '{') {
@@ -543,7 +548,11 @@ final class Frontmatter {
         }
         if (INT.matcher(s).matches()) return new BigInteger(s.startsWith("+") ? s.substring(1) : s);
         if (HEX.matcher(s).matches()) return new BigInteger(s.substring(2), 16);
-        if (FLOAT.matcher(s).matches()) return new BigDecimal(s.startsWith("+") ? s.substring(1) : s);
+        if (FLOAT.matcher(s).matches()) {
+            BigDecimal d = new BigDecimal(s.startsWith("+") ? s.substring(1) : s);
+            // `1.` is a float: written as 1 it would come back to a host as an integer.
+            return d.scale() <= 0 ? d.setScale(1) : d;
+        }
         if (SPECIAL_FLOAT.matcher(s).matches()) {
             throw new FormatException(line, "`" + s + "` is a float JSON cannot hold; quote it to make it text");
         }

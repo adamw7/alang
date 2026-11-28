@@ -371,6 +371,14 @@ class HttpTransportTest {
             "Mcp-Name", "split_bill");
         assertEquals(McpServer.UNSUPPORTED_PROTOCOL_VERSION, errorCode(r));
 
+        // A body that is not one JSON object is a JSON-RPC error, not a crash of the server.
+        r = postModern("not json", "tools/list", null);
+        assertEquals(400, r.statusCode());
+        assertEquals(McpServer.PARSE_ERROR, errorCode(r));
+        r = postModern("[1, 2]", "tools/list", null);
+        assertEquals(400, r.statusCode());
+        assertEquals(McpServer.INVALID_REQUEST, errorCode(r));
+
         r = postModern(modern(2, "tools/list", "", "null"), "tools/list", null);
         assertEquals(400, r.statusCode());
         assertEquals(McpServer.INVALID_PARAMS, errorCode(r));
