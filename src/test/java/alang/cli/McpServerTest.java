@@ -232,7 +232,7 @@ class McpServerTest {
         for (String asked : new String[] {"\"1999-01-01\"", "7", "null"}) {
             String reply = serve("{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"initialize\", \"params\": {\"protocolVersion\": "
                 + asked + "}}\n").get(0);
-            assertTrue(reply.contains("\"protocolVersion\": \"" + McpServer.PROTOCOL_VERSIONS.get(0) + "\""), reply);
+            assertTrue(reply.contains("\"protocolVersion\": \"" + McpServer.LEGACY_VERSIONS.get(0) + "\""), reply);
         }
     }
 
@@ -748,5 +748,156 @@ class McpServerTest {
         assertEquals("{\"result\": true}", Json.write(result.get("structuredContent")));
         String text = (String) ((Map<?, ?>) ((List<?>) result.get("content")).get(0)).get("text");
         assertTrue(text.contains("\"host_calls\": [{\"fn\": \"stock\", \"args\": {\"sku\": \"tea\"}, \"result\": 3}]"), text);
+    }
+
+    // ---------------------------------------------------------------- the modern revision (2026-07-28)
+
+    /** What a modern request carries in its params' _meta: its revision and the client's capabilities. */
+    private static final String MODERN_META = "\"_meta\": {\"io.modelcontextprotocol/protocolVersion\": \"2026-07-28\", "
+        + "\"io.modelcontextprotocol/clientInfo\": {\"name\": \"test\", \"version\": \"1\"}, "
+        + "\"io.modelcontextprotocol/clientCapabilities\": {}}";
+
+    /** A modern request; {@code params} without braces, the _meta added. */
+    private static String modern(String id, String method, String params) {
+        return "{\"jsonrpc\": \"2.0\", \"id\": " + id + ", \"method\": \"" + method + "\", \"params\": {"
+            + (params.isEmpty() ? "" : params + ", ") + MODERN_META + "}}";
+    }
+
+    /** What a modern result carries in its _meta: the server's name. */
+    private static final String SERVER_META = "\"_meta\": {\"io.modelcontextprotocol/serverInfo\": {\"name\": \"alang\", "
+        + "\"version\": \"" + Main.VERSION + "\"}}";
+
+    /**
+     * A modern client sends no initialize: each request names its revision and capabilities, and each result says
+     * what it is and who answered. server/discover says what the server speaks.
+     */
+    @Test
+    void modernRequestsStandAlone() throws IOException {
+        String input = modern("1", "server/discover", "") + "\n"
+            + modern("2", "tools/list", "") + "\n"
+            + modern("3", "tools/call", "\"name\": \"split_bill\", \"arguments\": {\"total_cents\": 10, \"people\": 2}") + "\n"
+            + modern("4", "tools/call", "\"name\": \"split_bill\", \"arguments\": {\"total_cents\": 10, \"people\": 0}") + "\n";
+        List<String> out = inRequestOrder(input, serve(input));
+        assertEquals(msg("""
+            {"jsonrpc": "2.0", "id": 1, "result": {"resultType": "complete",
+              "supportedVersions": ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"],
+              "capabilities": {"tools": {"listChanged": false}, "extensions": {"io.modelcontextprotocol/tasks": {}}},
+              "instructions": %s, "ttlMs": 300000, "cacheScope": "private", %s}}
+            """.formatted(Json.write(McpServer.INSTRUCTIONS), SERVER_META)), out.get(0));
+        Map<?, ?> list = resultOf(out.get(1));
+        assertEquals(List.of("resultType", "tools", "ttlMs", "cacheScope", "_meta"), new ArrayList<>(list.keySet()));
+        assertEquals(2, ((List<?>) list.get("tools")).size());
+        assertEquals(msg("""
+            {"jsonrpc": "2.0", "id": 3, "result": {"resultType": "complete",
+              "content": [{"type": "text", "text": "{\\"ok\\": true, \\"result\\": [5, 5], \\"stdout\\": \\"\\", \\"steps\\": 11}"}],
+              "structuredContent": {"result": [5, 5]}, "isError": false, %s}}
+            """.formatted(SERVER_META)), out.get(2));
+        Map<?, ?> failed = resultOf(out.get(3));
+        assertEquals(true, failed.get("isError"));
+        assertEquals("complete", failed.get("resultType"));
+    }
+
+    /**
+     * A modern request names a revision the server speaks (-32022, with the ones it does) and the client's
+     * capabilities (-32602); ping is gone from it. initialize stays legacy, whatever revision it asks for.
+     */
+    @Test
+    void modernRequestsAreChecked() throws IOException {
+        String input = modern("1", "tools/list", "").replace("2026-07-28", "2099-01-01") + "\n"
+            + "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"tools/list\", \"params\": {\"_meta\": "
+            + "{\"io.modelcontextprotocol/protocolVersion\": \"2026-07-28\"}}}\n"
+            + modern("3", "ping", "") + "\n"
+            + "{\"jsonrpc\": \"2.0\", \"id\": 4, \"method\": \"initialize\", \"params\": {\"protocolVersion\": \"2026-07-28\"}}\n"
+            // A legacy revision named in _meta is no modern request: served as before.
+            + modern("5", "ping", "").replace("2026-07-28", "2025-11-25") + "\n"
+            + "{\"jsonrpc\": \"2.0\", \"id\": 6, \"method\": \"server/discover\"}\n";
+        List<String> out = serve(input);
+        assertEquals(msg("""
+            {"jsonrpc": "2.0", "id": 1, "error": {"code": -32022,
+              "message": "Unsupported protocol version: 2099-01-01; supported: 2026-07-28, 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05",
+              "data": {"supported": ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"], "requested": "2099-01-01"}}}
+            """), out.get(0));
+        assertEquals(msg("""
+            {"jsonrpc": "2.0", "id": 2, "error": {"code": -32602, "message":
+              "a request of revision 2026-07-28 needs \\"io.modelcontextprotocol/clientCapabilities\\" in its params' _meta: an object, {} for none"}}
+            """), out.get(1));
+        assertEquals(msg("""
+            {"jsonrpc": "2.0", "id": 3, "error": {"code": -32601, "message": "method not found: ping (removed in 2026-07-28)"}}
+            """), out.get(2));
+        assertEquals("2025-11-25", resultOf(out.get(3)).get("protocolVersion"));
+        assertEquals(msg("{\"jsonrpc\": \"2.0\", \"id\": 5, \"result\": {}}"), out.get(4));
+        assertEquals("complete", resultOf(out.get(5)).get("resultType"));
+    }
+
+    /** A modern request offers to take a task in its own _meta; what initialize said does not count for it. */
+    @Test
+    void aModernCallBecomesATask() throws Exception {
+        McpServer server = server(SPIN_PROGRAM, 0, 0, 2);
+        server.tasks(50, () -> NOW);
+        try (Session s = new Session(server)) {
+            s.send("{\"jsonrpc\": \"2.0\", \"id\": 0, \"method\": \"initialize\", \"params\": {\"protocolVersion\": \"2025-11-25\", "
+                + "\"capabilities\": {\"extensions\": {\"io.modelcontextprotocol/tasks\": {}}}}}");
+            s.next();
+            s.send(modern("1", "tools/call", "\"name\": \"answer\", \"arguments\": {}"));
+            assertEquals("complete", resultOf(s.next()).get("resultType"));
+            s.send(modern("2", "tools/call", "\"name\": \"spin\", \"arguments\": {\"n\": 1000000000000000}").replace(
+                "\"io.modelcontextprotocol/clientCapabilities\": {}",
+                "\"io.modelcontextprotocol/clientCapabilities\": {\"extensions\": {\"io.modelcontextprotocol/tasks\": {}}}"));
+            assertEquals(msg("""
+                {"jsonrpc": "2.0", "id": 2, "result": {"resultType": "task", "taskId": "task-1", "status": "working",
+                  "createdAt": "2023-11-14T22:13:20Z", "lastUpdatedAt": "2023-11-14T22:13:20Z", "ttlMs": null,
+                  "pollIntervalMs": 2000, %s}}
+                """.formatted(SERVER_META)), s.next());
+            s.send(modern("3", "tasks/cancel", "\"taskId\": \"task-1\""));
+            Map<?, ?> cancelled = resultOf(s.next());
+            assertEquals("cancelled", cancelled.get("status"));
+            assertTrue(cancelled.containsKey("_meta"), cancelled.toString());
+            assertEquals(List.of(), s.end());
+        }
+    }
+
+    /**
+     * subscriptions/listen acknowledges what the server will send (list changes, with --watch) and then sends it,
+     * each notification naming the stream; cancelling the stream ends it, and the server ending it answers it.
+     */
+    @Test
+    void subscriptionsListen(@TempDir Path dir) throws Exception {
+        Path main = dir.resolve("main.al");
+        save(main, tool("one", 1));
+        Log log = new Log();
+        try (Session s = new Session(watching(main, log))) {
+            s.send(modern("1", "server/discover", ""));
+            assertTrue(s.next().contains("\"tools\": {\"listChanged\": true}"));
+            s.send(modern("\"tools\"", "subscriptions/listen",
+                "\"notifications\": {\"toolsListChanged\": true, \"promptsListChanged\": true, \"resourceSubscriptions\": [\"skill://x\"]}"));
+            assertEquals(msg("""
+                {"jsonrpc": "2.0", "method": "notifications/subscriptions/acknowledged",
+                  "params": {"_meta": {"io.modelcontextprotocol/subscriptionId": "tools"}, "notifications": {"toolsListChanged": true}}}
+                """), s.next());
+            s.send(modern("\"other\"", "subscriptions/listen", "\"notifications\": {}"));
+            assertTrue(s.next().contains("\"io.modelcontextprotocol/subscriptionId\": \"other\"}, \"notifications\": {}"));
+            // The stream's id is in use while it is open.
+            s.send(modern("\"tools\"", "tools/list", ""));
+            assertTrue(s.next().contains("\"code\": -32600"));
+
+            save(main, tool("one", 1) + tool("two", 2));
+            assertEquals(msg("""
+                {"jsonrpc": "2.0", "method": "notifications/tools/list_changed",
+                  "params": {"_meta": {"io.modelcontextprotocol/subscriptionId": "tools"}}}
+                """), s.next());
+            log.await("reloaded");
+
+            s.send("{\"jsonrpc\": \"2.0\", \"method\": \"notifications/cancelled\", \"params\": {\"requestId\": \"tools\"}}");
+            s.send(modern("2", "tools/list", ""));
+            assertTrue(s.next().contains("\"id\": 2"));
+            save(main, tool("three", 3));
+            log.await("reloaded");
+            // Nothing was sent for the cancelled stream; the one left open is answered as the server stops.
+            assertEquals(List.of(msg("""
+                {"jsonrpc": "2.0", "id": "other", "result": {"resultType": "complete",
+                  "_meta": {"io.modelcontextprotocol/subscriptionId": "other", "io.modelcontextprotocol/serverInfo":
+                    {"name": "alang", "version": "%s"}}}}
+                """.formatted(Main.VERSION))), s.end());
+        }
     }
 }

@@ -32,19 +32,27 @@ final class Tasks {
     static final LongSupplier SYSTEM_CLOCK = System::currentTimeMillis;
 
     private final LongSupplier clock;
+    /** What names a new task; null: task-1, task-2 and on. */
+    private final java.util.function.Supplier<String> ids;
     /** By id, oldest first. */
     private final Map<String, Task> tasks = new LinkedHashMap<>();
     private long made;
 
     Tasks(LongSupplier clock) {
+        this(clock, null);
+    }
+
+    /** Tasks named by {@code ids}, e.g. so that a client cannot guess the id of another's; null: task-1, task-2 and on. */
+    Tasks(LongSupplier clock, java.util.function.Supplier<String> ids) {
         this.clock = clock;
+        this.ids = ids;
     }
 
     /** A new running task for the call {@code meter} measures; {@code ttl} ms from now, or null for no limit. */
     synchronized Task add(Meter meter, Long ttl) {
         forget();
         made++;
-        Task t = new Task("task-" + made, meter, clock.getAsLong(), ttl);
+        Task t = new Task(ids == null ? "task-" + made : ids.get(), meter, clock.getAsLong(), ttl);
         tasks.put(t.id, t);
         return t;
     }

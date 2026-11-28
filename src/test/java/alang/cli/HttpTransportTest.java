@@ -268,6 +268,231 @@ class HttpTransportTest {
         assertEquals(2, cli("serve", prog.toString(), "--workers", "0"));
     }
 
+    // ---------------------------------------------------------------- the modern revision (2026-07-28)
+
+    /** A modern request; {@code params} without braces, the _meta added. */
+    private static String modern(Object id, String method, String params, String capabilities) {
+        return "{\"jsonrpc\": \"2.0\", \"id\": " + id + ", \"method\": \"" + method + "\", \"params\": {"
+            + (params.isEmpty() ? "" : params + ", ") + "\"_meta\": {\"io.modelcontextprotocol/protocolVersion\": \"2026-07-28\", "
+            + "\"io.modelcontextprotocol/clientCapabilities\": " + capabilities + "}}}";
+    }
+
+    private static String modern(Object id, String method, String params) {
+        return modern(id, method, params, "{}");
+    }
+
+    /** POSTs {@code body} with the token and {@code headers}. */
+    private HttpResponse<String> postWith(String body, String... headers) throws Exception {
+        List<String> h = new ArrayList<>(List.of("Authorization", "Bearer " + TOKEN, "Content-Type", "application/json",
+            "Accept", "application/json, text/event-stream"));
+        h.addAll(List.of(headers));
+        return send("POST", "/mcp", body, h.toArray(String[]::new));
+    }
+
+    /** POSTs modern request {@code body} with the headers that mirror it: the revision, the method and, if given, the name. */
+    private HttpResponse<String> postModern(String body, String method, String name) throws Exception {
+        return name == null ? postWith(body, "MCP-Protocol-Version", "2026-07-28", "Mcp-Method", method)
+            : postWith(body, "MCP-Protocol-Version", "2026-07-28", "Mcp-Method", method, "Mcp-Name", name);
+    }
+
+    /** The JSON-RPC message of a response: its body, or the last event of an event stream. */
+    private static Map<?, ?> answerOf(HttpResponse<String> r) {
+        String body = r.body();
+        if (r.headers().firstValue("Content-Type").orElse("").startsWith("text/event-stream")) {
+            List<String> data = body.lines().filter(l -> l.startsWith("data: ")).toList();
+            assertFalse(data.isEmpty(), body);
+            body = data.get(data.size() - 1).substring(6);
+        }
+        return (Map<?, ?>) Json.parse(body);
+    }
+
+    private static int errorCode(HttpResponse<String> r) {
+        Map<?, ?> error = (Map<?, ?>) answerOf(r).get("error");
+        assertNotNull(error, r.body());
+        return ((Number) error.get("code")).intValue();
+    }
+
+    /** A modern request needs no session: none is made, and one it names is not looked at. */
+    @Test
+    void servesModernRequestsWithoutASession() throws Exception {
+        HttpResponse<String> discover = postModern(modern(1, "server/discover", ""), "server/discover", null);
+        assertEquals(200, discover.statusCode(), discover.body());
+        Map<?, ?> result = (Map<?, ?>) answerOf(discover).get("result");
+        assertEquals(McpServer.PROTOCOL_VERSIONS, result.get("supportedVersions"));
+        assertEquals("complete", result.get("resultType"));
+        assertTrue(discover.headers().firstValue("Mcp-Session-Id").isEmpty());
+
+        String call = modern(2, "tools/call", "\"name\": \"split_bill\", \"arguments\": {\"total_cents\": 1000, \"people\": 3}");
+        HttpResponse<String> r = postModern(call, "tools/call", "split_bill");
+        assertEquals(200, r.statusCode(), r.body());
+        assertTrue(r.headers().firstValue("Content-Type").orElseThrow().startsWith("application/json"));
+        Map<?, ?> called = (Map<?, ?>) answerOf(r).get("result");
+        assertEquals(List.of(334, 333, 333), ((List<?>) ((Map<?, ?>) called.get("structuredContent")).get("result"))
+            .stream().map(n -> ((Number) n).intValue()).toList());
+        assertEquals("alang", ((Map<?, ?>) ((Map<?, ?>) called.get("_meta")).get(McpServer.SERVER_INFO)).get("name"));
+        // A name written in Base64, and a session id from an older revision, which is ignored.
+        String encoded = "=?base64?" + Base64.getEncoder().encodeToString("split_bill".getBytes(StandardCharsets.UTF_8)) + "?=";
+        HttpResponse<String> again = postWith(call, "MCP-Protocol-Version", "2026-07-28", "Mcp-Method", "tools/call",
+            "Mcp-Name", encoded, "Mcp-Session-Id", "feed");
+        assertEquals(200, again.statusCode(), again.body());
+        assertTrue(again.headers().firstValue("Mcp-Session-Id").isEmpty());
+        assertTrue(transport.metrics().contains("alang_sessions 0\n"), transport.metrics());
+    }
+
+    /**
+     * The headers must mirror the body (400, -32020); the revision must be one the server speaks (400, -32022,
+     * with the ones it does) and the _meta whole (400, -32602); an unknown method is 404.
+     */
+    @Test
+    void checksModernRequests() throws Exception {
+        String call = modern(1, "tools/call", "\"name\": \"split_bill\", \"arguments\": {\"total_cents\": 10, \"people\": 2}");
+        HttpResponse<String> r = postWith(call, "Mcp-Method", "tools/call", "Mcp-Name", "split_bill");
+        assertEquals(400, r.statusCode());
+        assertEquals(McpServer.HEADER_MISMATCH, errorCode(r));
+        assertTrue(r.body().contains("MCP-Protocol-Version header is missing"), r.body());
+        r = postModern(call, "tools/list", "split_bill");
+        assertEquals(400, r.statusCode());
+        assertTrue(r.body().contains("Mcp-Method header value 'tools/list' does not match body value 'tools/call'"), r.body());
+        r = postModern(call, "tools/call", null);
+        assertEquals(McpServer.HEADER_MISMATCH, errorCode(r));
+        r = postModern(call, "tools/call", "spin");
+        assertEquals(400, r.statusCode());
+        assertTrue(r.body().contains("Mcp-Name header value 'spin' does not match body value 'split_bill'"), r.body());
+        r = postModern(call.replace("2026-07-28", "2025-11-25"), "tools/call", "split_bill");
+        assertEquals(McpServer.HEADER_MISMATCH, errorCode(r));
+
+        r = postWith(call, "MCP-Protocol-Version", "2099-01-01", "Mcp-Method", "tools/call", "Mcp-Name", "split_bill");
+        assertEquals(400, r.statusCode());
+        Map<?, ?> unsupported = (Map<?, ?>) answerOf(r).get("error");
+        assertEquals(McpServer.UNSUPPORTED_PROTOCOL_VERSION, ((Number) unsupported.get("code")).intValue());
+        assertEquals(1, ((Number) answerOf(r).get("id")).intValue());
+        assertEquals(Map.of("supported", McpServer.PROTOCOL_VERSIONS, "requested", "2099-01-01"), unsupported.get("data"));
+        r = postWith(call.replace("2026-07-28", "2099-01-01"), "MCP-Protocol-Version", "2099-01-01", "Mcp-Method", "tools/call",
+            "Mcp-Name", "split_bill");
+        assertEquals(McpServer.UNSUPPORTED_PROTOCOL_VERSION, errorCode(r));
+
+        r = postModern(modern(2, "tools/list", "", "null"), "tools/list", null);
+        assertEquals(400, r.statusCode());
+        assertEquals(McpServer.INVALID_PARAMS, errorCode(r));
+        r = postModern("{\"jsonrpc\": \"2.0\", \"id\": 3, \"method\": \"tools/list\"}", "tools/list", null);
+        assertEquals(400, r.statusCode());
+        assertEquals(McpServer.INVALID_PARAMS, errorCode(r));
+        r = postModern(modern(4, "prompts/list", ""), "prompts/list", null);
+        assertEquals(404, r.statusCode());
+        assertEquals(McpServer.METHOD_NOT_FOUND, errorCode(r));
+        r = postModern(modern(5, "ping", ""), "ping", null);
+        assertEquals(404, r.statusCode());
+        // A failing call is a result, as before.
+        r = postModern(modern(6, "tools/call", "\"name\": \"nope\""), "tools/call", "nope");
+        assertEquals(200, r.statusCode());
+        assertEquals(McpServer.INVALID_PARAMS, errorCode(r));
+    }
+
+    /**
+     * A modern call still running after a second is answered as an event stream, kept alive with comments; a
+     * client that closes it cancels the call.
+     */
+    @Test
+    void closingTheStreamOfAModernCallCancelsIt() throws Exception {
+        String body = modern(7, "tools/call", "\"name\": \"spin\", \"arguments\": {\"n\": 1000000000000000}");
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        try (java.net.Socket socket = new java.net.Socket("127.0.0.1", URI.create(base).getPort())) {
+            socket.setSoTimeout(10_000);
+            OutputStream out = socket.getOutputStream();
+            out.write(("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer " + TOKEN + "\r\n"
+                + "Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
+                + "MCP-Protocol-Version: 2026-07-28\r\nMcp-Method: tools/call\r\nMcp-Name: spin\r\n"
+                + "Content-Length: " + bytes.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            out.write(bytes);
+            out.flush();
+            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            List<String> head = new ArrayList<>();
+            for (String line = in.readLine(); line != null && !line.isEmpty(); line = in.readLine()) head.add(line);
+            assertEquals("HTTP/1.1 200 OK", head.get(0));
+            assertTrue(head.stream().anyMatch(l -> l.equalsIgnoreCase("Content-Type: text/event-stream")), head.toString());
+            // The first chunk: its size, then a comment.
+            in.readLine();
+            assertEquals(":", in.readLine());
+        }
+        awaitInFlight(0);
+        assertTrue(transport.metrics().contains("alang_tool_calls_total{tool=\"spin\",outcome=\"cancelled\"} 1\n"),
+            transport.metrics());
+    }
+
+    /** A stream ends with the call's answer, here the error result of one stopped at its time limit. */
+    @Test
+    void aStreamedCallEndsWithItsAnswer() throws Exception {
+        Watchdog limit = new Watchdog(1500);
+        HttpTransport t = new HttpTransport(server(0, limit, 1, 1), new HttpTransport.Config("127.0.0.1", 0, TOKEN, List.of()),
+            new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        String saved = base;
+        try {
+            base = "http://127.0.0.1:" + t.start();
+            HttpResponse<String> r = postModern(modern(8, "tools/call", "\"name\": \"spin\", \"arguments\": {\"n\": 1000000000000000}"),
+                "tools/call", "spin");
+            assertEquals(200, r.statusCode());
+            assertEquals("text/event-stream", r.headers().firstValue("Content-Type").orElseThrow());
+            Map<?, ?> answer = answerOf(r);
+            assertEquals(8, ((Number) answer.get("id")).intValue());
+            assertEquals(true, ((Map<?, ?>) answer.get("result")).get("isError"));
+        } finally {
+            base = saved;
+            t.stop();
+            limit.close();
+        }
+    }
+
+    /** subscriptions/listen is a stream that starts with its acknowledgment and that the server answers as it stops. */
+    @Test
+    void listensUntilTheServerStops() throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(base + "/mcp")).timeout(Duration.ofSeconds(30))
+            .POST(HttpRequest.BodyPublishers.ofString(modern("\"s\"", "subscriptions/listen", "\"notifications\": {\"toolsListChanged\": true}")))
+            .header("Authorization", "Bearer " + TOKEN).header("Accept", "application/json, text/event-stream")
+            .header("MCP-Protocol-Version", "2026-07-28").header("Mcp-Method", "subscriptions/listen").build();
+        HttpResponse<java.util.stream.Stream<String>> r = client.send(request, HttpResponse.BodyHandlers.ofLines());
+        assertEquals("text/event-stream", r.headers().firstValue("Content-Type").orElseThrow());
+        Iterator<String> lines = r.body().filter(l -> l.startsWith("data: ")).map(l -> l.substring(6)).iterator();
+        // Without --watch, the tools never change: nothing to agree to.
+        assertEquals(Json.parse("""
+            {"jsonrpc": "2.0", "method": "notifications/subscriptions/acknowledged",
+              "params": {"_meta": {"io.modelcontextprotocol/subscriptionId": "s"}, "notifications": {}}}
+            """), Json.parse(lines.next()));
+        transport.stop();
+        Map<?, ?> closing = (Map<?, ?>) Json.parse(lines.next());
+        assertEquals("s", closing.get("id"));
+        assertEquals("s", ((Map<?, ?>) ((Map<?, ?>) closing.get("result")).get("_meta")).get(McpServer.SUBSCRIPTION_ID));
+        assertFalse(lines.hasNext());
+    }
+
+    /** Modern requests share their tasks, whose ids cannot be guessed; a legacy session does not see them. */
+    @Test
+    void modernRequestsShareTasks() throws Exception {
+        McpServer s = server(0, watchdog, 1, 1);
+        s.tasks(50, System::currentTimeMillis);
+        HttpTransport t = new HttpTransport(s, new HttpTransport.Config("127.0.0.1", 0, TOKEN, List.of()),
+            new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        String saved = base;
+        try {
+            base = "http://127.0.0.1:" + t.start();
+            HttpResponse<String> r = postModern(modern(1, "tools/call", "\"name\": \"spin\", \"arguments\": {\"n\": 1000000000000000}",
+                "{\"extensions\": {\"io.modelcontextprotocol/tasks\": {}}}"), "tools/call", "spin");
+            Map<?, ?> task = (Map<?, ?>) answerOf(r).get("result");
+            assertEquals("task", task.get("resultType"), r.body());
+            String id = (String) task.get("taskId");
+            assertTrue(id.matches("[0-9a-f]{32}"), id);
+            r = postModern(modern(1, "tasks/get", "\"taskId\": \"" + id + "\""), "tasks/get", null);
+            assertEquals("working", ((Map<?, ?>) answerOf(r).get("result")).get("status"), r.body());
+            String session = initialize();
+            r = post(session, "{\"jsonrpc\": \"2.0\", \"id\": 2, \"method\": \"tasks/get\", \"params\": {\"taskId\": \"" + id + "\"}}");
+            assertEquals(McpServer.INVALID_PARAMS, errorCode(r));
+            r = postModern(modern(3, "tasks/cancel", "\"taskId\": \"" + id + "\""), "tasks/cancel", null);
+            assertEquals("cancelled", ((Map<?, ?>) answerOf(r).get("result")).get("status"), r.body());
+        } finally {
+            base = saved;
+            t.stop();
+        }
+    }
+
     private static int cli(String... args) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
