@@ -200,7 +200,8 @@ that compiles and notifies the host. Up to four calls run at once (`--workers N`
 within its step budget and `--timeout`, cancellable with `notifications/cancelled`. A client that takes MCP
 tasks (Claude Code does) gets a task for a call that runs longer than a second, and keeps working while it runs.
 
-`--http` serves MCP's Streamable HTTP transport instead, with sessions, bearer auth (`--token-file`;
+`--http` serves MCP's Streamable HTTP transport instead (it sends no messages of its own, so `--watch` serves
+each new version there without notifying), with sessions, bearer auth (`--token-file`;
 without it, loopback only), HTTPS with TLS 1.3 only (`--tls-cert`, `--tls-key`: PEM), `/health`, Prometheus
 `/metrics`, a JSON log line per call, and graceful SIGTERM:
 
@@ -247,7 +248,8 @@ examples/skills/summarizing-expenses/
   and the line: a `name` that is not its directory's, no `description`, more than 512 files or 16 MiB, a
   symbolic link. The frontmatter is sent as JSON, verbatim, so values that YAML parsers read differently
   must be quoted: `yes`, `010`, `2024-01-01`, and text holding `: ` (`description: "Use when: ..."`).
-- `--watch` serves each change to the skills too, and tells the client.
+- `--watch` serves each change to the skills too, and tells a client over stdio. Over `--http` the server
+  sends nothing of its own, so each skills result says it is not to be cached (`"ttlMs": 0`) instead.
 
 ## Reaching outside data
 

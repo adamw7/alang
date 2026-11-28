@@ -132,6 +132,24 @@ class SkillsTest {
         assertNotNull(s.read("skill://refunds/examples/my%20notes.md"));
     }
 
+    /** A `%` in a name is the file's own: encoded in the URI, and named as it is, not read as an escape. */
+    @Test
+    void aPercentInAName(@TempDir Path dir) throws Exception {
+        Path skill = dir.resolve("refunds");
+        write(skill.resolve("SKILL.md"), skillMd("refunds", "Refunds."));
+        write(skill.resolve("50% off.md"), "a\n");
+        write(skill.resolve("100%25.md"), "b\n");
+        write(skill.resolve("50%/x.md"), "c\n");
+        Skills s = load(skill);
+        Map<String, String> names = new TreeMap<>();
+        for (Object o : s.directory("skill://refunds")) names.put((String) ((Map<?, ?>) o).get("uri"), (String) ((Map<?, ?>) o).get("name"));
+        assertEquals(Map.of("skill://refunds/100%2525.md", "100%25.md", "skill://refunds/50%25", "50%",
+            "skill://refunds/50%25%20off.md", "50% off.md", "skill://refunds/SKILL.md", "refunds"), names);
+        assertEquals("a\n", s.read("skill://refunds/50%25%20off.md").get("text"));
+        assertEquals("b\n", s.read("skill://refunds/100%2525.md").get("text"));
+        assertEquals("x.md", ((Map<?, ?>) s.directory("skill://refunds/50%25").get(0)).get("name"));
+    }
+
     /** A skill inside another is a skill of its own, and its files are the outer one's too. */
     @Test
     void nestedSkills(@TempDir Path dir) throws Exception {

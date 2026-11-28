@@ -337,7 +337,8 @@ final class Skills {
 
     private Map<String, Object> metadata(Resource r) {
         Skill s = skills.get(r.uri());
-        Map<String, Object> m = Json.obj("uri", r.uri(), "name", s != null ? s.name() : decode(r.name()));
+        // The name is the file's own, not encoded: decoding it again would read a `%` in it as an escape.
+        Map<String, Object> m = Json.obj("uri", r.uri(), "name", s != null ? s.name() : r.name());
         if (s != null) m.put("description", s.description());
         m.put("mimeType", r.mimeType());
         m.put("size", (long) r.bytes().length);
