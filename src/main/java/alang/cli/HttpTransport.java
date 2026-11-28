@@ -160,7 +160,7 @@ final class HttpTransport implements McpServer.Observer {
         server.start();
         int port = server.getAddress().getPort();
         Map<String, Object> listening = Json.obj("event", "listening", "host", config.host(), "port", port, "endpoint", ENDPOINT,
-            "auth", token != null, "tls", tls == null ? false : TLS_PROTOCOL, "tools", mcp.toolCount());
+            "auth", token != null, "tls", tls == null ? false : TLS_PROTOCOL, "tools", mcp.toolCount(), "skills", mcp.skillCount());
         if (tls == null && !loopbackOnly) {
             listening.put("warning", "the token crosses the network in plain text: give --tls-cert and --tls-key, "
                 + "or serve behind a proxy that terminates TLS");
@@ -222,7 +222,7 @@ final class HttpTransport implements McpServer.Observer {
         String method = ex.getRequestMethod();
         if (path.equals("/health")) {
             if (!method.equals("GET")) return notAllowed(ex, "GET");
-            return respond(ex, 200, Json.obj("status", "ok", "version", Main.VERSION, "tools", mcp.toolCount()));
+            return respond(ex, 200, Json.obj("status", "ok", "version", Main.VERSION, "tools", mcp.toolCount(), "skills", mcp.skillCount()));
         }
         String origin = ex.getRequestHeaders().getFirst("Origin");
         if (origin != null && !originAllowed(origin)) {

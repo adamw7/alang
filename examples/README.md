@@ -26,6 +26,7 @@ agent can call with JSON. CI type-checks every example, runs its tests, compares
 | [tally.al](tally.al) | `import "helpers.al";` instead of copying, `parse_i64`, and a `fn main(input: str[N])` that reads the standard input ([tally.in](tally.in)) |
 | [expenses.al](expenses.al) | A data job: a CSV on the standard input ([expenses.in](expenses.in)) summed per category in exact cents, bad rows counted instead of fatal; the same `tool fn` over `alang call` and `alang serve` |
 | [orders.al](orders.al) | A `host fn` for data the caller does not send: prices from the host ([orders_host.py](orders_host.py), named in [orders.hosts.json](orders.hosts.json)), a test that binds it with `with`, an `Option` field that is `null` in JSON |
+| [skills/](skills) | An [Agent Skill](skills/summarizing-expenses/SKILL.md) that tells an agent how to use expenses.al's `summarize`, served beside it with `alang serve examples/expenses.al --skills examples/skills` |
 | [scoreboard.al](scoreboard.al) | The collection builtins: a `map` with `get_or` and `values`, `transform`, `retain`, `fold`, `extend`, `zip`, and `floor_key` on a `set`, with functions passed by name |
 
 ## Try them

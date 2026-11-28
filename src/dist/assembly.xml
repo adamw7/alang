@@ -11,7 +11,7 @@
          README.md, LICENSE, THIRD-PARTY-NOTICES
          docs/*.md          spec, error catalog, comparison, architecture
          grammar/ALang.g4
-         examples/          complete programs with tests
+         examples/          complete programs with tests, and skills/ to serve beside them
          harness/toon.py    tool results as TOON -->
 <assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -58,6 +58,7 @@
         <include>examples/*.al</include>
         <include>examples/*.in</include>
         <include>examples/README.md</include>
+        <include>examples/skills/**</include>
         <include>harness/toon.py</include>
       </includes>
       <fileMode>0644</fileMode>

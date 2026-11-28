@@ -52,7 +52,7 @@ public final class Main {
           serve <file.al>              serve the `tool fn` functions to an agent host over MCP: JSON-RPC
                                        messages, one per line, on stdin and stdout, or over HTTP with
                                        --http; --watch serves each new version of the program's files
-                                       once it compiles
+                                       once it compiles; --skills serves Agent Skills alongside the tools
           build <file.al> [-o out.c]   compile to heap-free C99 (no malloc; stack and static data only)
           fmt <file.al>                print the file laid out the one way (indentation, spaces, blank
                                        lines; its line breaks and comments are kept); --write rewrites it,
@@ -107,6 +107,9 @@ public final class Main {
           --tls-cert FILE    serve HTTPS, TLS 1.3 only, at https://HOST:PORT/mcp with the PEM certificate
                              chain in FILE, the server's certificate first (serve; with --tls-key)
           --tls-key FILE     the certificate's private key: PEM, unencrypted PKCS#8 (serve; with --tls-cert)
+          --skills DIR       serve the Agent Skills in DIR (a skill, or directories of them, each with a
+                             SKILL.md) by the MCP Skills extension: skills/list, skills/get, and their
+                             files as skill:// resources (serve; may be given more than once)
           --hosts FILE       the commands that answer the program's `host fn` calls, as JSON: {"price":
                              {"command": ["python3", "price.py"], "timeout": 5}} ("*" for any other); each
                              call runs one with {"fn": ..., "args": {...}} on stdin and reads its JSON result
@@ -129,7 +132,7 @@ public final class Main {
         Map.entry("call", Set.of("--json", "--max-steps", "--max-stack", "--timeout", "--hosts", "--replay")),
         Map.entry("fuzz", Set.of("--json", "--max-steps", "--max-stack")),
         Map.entry("serve", Set.of("--max-steps", "--max-stack", "--timeout", "--watch", "--workers", "--max-queued",
-            "--http", "--token-file", "--allow-origin", "--tls-cert", "--tls-key", "--hosts")),
+            "--http", "--token-file", "--allow-origin", "--tls-cert", "--tls-key", "--hosts", "--skills")),
         Map.entry("build", Set.of("-o", "--max-stack")),
         Map.entry("fmt", Set.of("--write", "--check")),
         Map.entry("fix", Set.of("--write", "--json", "--max-stack")),
@@ -144,12 +147,12 @@ public final class Main {
     /** The options that take a value, the next argument. */
     private static final Set<String> VALUE_OPTIONS = Set.of("--max-steps", "--max-stack", "--timeout", "--filter", "-o",
         "--break", "--input", "--test", "--call", "--max-stops", "--workers", "--max-queued", "--http", "--token-file",
-        "--allow-origin", "--tls-cert", "--tls-key", "--hosts", "--replay");
+        "--allow-origin", "--tls-cert", "--tls-key", "--hosts", "--replay", "--skills");
 
     private static final Set<String> KNOWN_OPTIONS = Set.of("--json", "--memory", "--max-steps", "--max-stack", "--timeout",
         "--filter", "-o", "--write", "--check", "--lock", "--watch", "--break", "--input", "--test", "--call", "--max-stops",
         "--workers", "--max-queued", "--http", "--token-file", "--allow-origin", "--tls-cert", "--tls-key", "--hosts",
-        "--replay");
+        "--replay", "--skills");
 
     private final PrintStream out;
     private final PrintStream err;
@@ -180,6 +183,7 @@ public final class Main {
     private String hostsFile;
     private String replayFile;
     private final List<String> allowOrigins = new ArrayList<>();
+    private final List<String> skillDirs = new ArrayList<>();
 
     /** How many stops `alang debug` shows once its commands have run out. */
     static final int DEFAULT_MAX_STOPS = 1000;
@@ -252,6 +256,7 @@ public final class Main {
                         case "--tls-key" -> tlsKey = next(args, ++i, a);
                         case "--hosts" -> hostsFile = next(args, ++i, a);
                         case "--replay" -> replayFile = next(args, ++i, a);
+                        case "--skills" -> skillDirs.add(next(args, ++i, a));
                         default -> throw new IllegalStateException(a);
                     }
                 } else {
@@ -1049,10 +1054,13 @@ public final class Main {
             throw new UsageException("--tls-cert and --tls-key go together: HTTPS needs the certificate and its key");
         }
         HttpTransport.Config config = http == null ? null : httpConfig();
+        Skills skills = skillDirs.isEmpty() ? null : loadSkills();
         try (Watchdog watchdog = new Watchdog(timeoutMillis)) {
             McpServer server = new McpServer(src, r.program(), maxSteps, watchdog, workers, maxQueued);
             server.hosts(Hosts.load(hostsFile, null));
+            if (skills != null) server.skills(skills);
             if (watch) server.watch(new Reloader(r.program(), maxStack), WATCH_MILLIS, err);
+            if (watch && skills != null) server.watchSkills(new Skills.Watcher(skillDirs));
             if (config == null) {
                 server.serve(in, out);
                 return 0;
@@ -1078,6 +1086,21 @@ public final class Main {
             return 1;
         }
         return 0;
+    }
+
+    /** The skills of --skills, read once, at start; skills a host would refuse are a usage error. */
+    private Skills loadSkills() {
+        for (String d : skillDirs) requireDecodable(d);
+        try {
+            Skills s = Skills.load(skillDirs);
+            if (s.count() == 0) {
+                throw new UsageException("--skills: no skill in " + String.join(", ", skillDirs) + ": a skill is a directory "
+                    + "with a SKILL.md, which begins with YAML frontmatter that gives its name and description");
+            }
+            return s;
+        } catch (Skills.InvalidException e) {
+            throw new UsageException("--skills: " + e.getMessage());
+        }
     }
 
     /** The address --http names, [HOST:]PORT, and the token of --token-file, read once, at start. */

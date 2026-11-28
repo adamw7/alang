@@ -558,6 +558,21 @@ for HTTP at `/mcp`, with `--tls-cert cert.pem --tls-key key.pem` for HTTPS, TLS 
 step budget (`steps`: one per statement plus about one per 128 bytes touched; the default 100 million is a
 few seconds), backed by `--timeout` (60 s).
 
+To tell the calling agent how the tools go together for a task, write a skill and add `--skills skills/`: each
+directory in `skills/` with a `SKILL.md` is served by MCP's Skills extension, as `skill://NAME/SKILL.md` and its
+other files. The `SKILL.md` begins with YAML frontmatter whose `name` is its directory's name and whose
+`description` says when to use it; quote a value that holds `: `, and text such as `yes` or `2024-01-01`.
+
+```text
+skills/splitting-bills/SKILL.md:
+---
+name: splitting-bills
+description: "Split a restaurant bill: call split_bill with the total in cents and the number of people."
+---
+# Splitting bills
+...
+```
+
 ## Reaching outside data: host fns
 
 A tool that needs data the caller does not send (a price list, a database, a web page) declares a `host fn`:
